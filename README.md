@@ -161,6 +161,74 @@ cd backend
 .\venv\Scripts\python.exe mqtt_machine_publisher.py
 ```
 
+## PLC Simulator (Phase 30)
+
+FlowMES includes a simulated PLC telemetry generator for industrial testing and real-time MES validation.
+
+The simulator publishes live MQTT telemetry to the FlowMES broker and updates:
+
+* Machine status
+* Utilization %
+* Downtime
+* Production counts
+* Rejection counts
+* Temperature
+* Vibration
+* Machine events
+
+### Start MQTT Broker
+
+Ensure your MQTT broker is running locally on:
+
+```text
+127.0.0.1:1883
+```
+
+### Run PLC Simulator
+
+```bash
+cd backend
+.\venv\Scripts\python.exe phase30_plc_simulator.py
+```
+
+### Example Live Payload
+
+```json
+{
+  "machine": "CNC-01",
+  "status": "Running",
+  "utilization": 87,
+  "downtime": "0 min",
+  "planned_minutes": 480,
+  "runtime_minutes": 390,
+  "ideal_cycle_time_seconds": 60,
+  "total_count": 412,
+  "good_count": 401,
+  "rejected_count": 11,
+  "temperature": 67,
+  "vibration": 4,
+  "source": "phase30_plc_simulator"
+}
+```
+
+### Real-Time Flow
+
+```text
+PLC Simulator
+      ↓
+MQTT Broker
+      ↓
+FlowMES MQTT Service
+      ↓
+PostgreSQL / SQLite
+      ↓
+WebSocket Broadcast
+      ↓
+Live Dashboard Updates
+```
+
+This enables realistic smart factory simulation without requiring physical PLC hardware.
+
 ---
 
 ## Roadmap
@@ -190,3 +258,6 @@ Senior Developer & Technical Consultant
 
 MSc Data Science & Analytics
 Autonomous Systems • MES • Robotics • AI • Industrial IoT
+
+
+

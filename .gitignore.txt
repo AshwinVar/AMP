@@ -1,0 +1,43 @@
+# Python
+
+venv/
+**pycache**/
+*.pyc
+*.pyo
+*.pyd
+.env
+
+# Database
+
+*.db
+*.sqlite3
+
+# Logs
+
+*.log
+
+# Node / Next.js
+
+node_modules/
+.next/
+out/
+
+# VSCode
+
+.vscode/
+
+# OS
+
+.DS_Store
+Thumbs.db
+
+# Build
+
+dist/
+build/
+
+# Secrets
+
+.env.local
+.env.production
+.env.development

@@ -1,0 +1,297 @@
+
+/* FlowMES Modular Dashboard UI Replacement */
+/* Drop this file into: frontend/app/globals-ui.css */
+
+:root {
+  --fm-bg: #020617;
+  --fm-card: rgba(15, 23, 42, 0.86);
+  --fm-card-strong: rgba(15, 23, 42, 0.96);
+  --fm-border: rgba(148, 163, 184, 0.14);
+  --fm-border-strong: rgba(59, 130, 246, 0.34);
+  --fm-muted: #9db5d4;
+  --fm-text: #f8fafc;
+  --fm-blue: #3b82f6;
+  --fm-indigo: #6366f1;
+  --fm-green: #22c55e;
+  --fm-red: #ef4444;
+}
+
+html,
+body {
+  background:
+    radial-gradient(circle at 10% 0%, rgba(59, 130, 246, 0.16), transparent 34rem),
+    radial-gradient(circle at 90% 0%, rgba(99, 102, 241, 0.12), transparent 34rem),
+    var(--fm-bg) !important;
+  overflow-x: hidden;
+}
+
+.flowmes-shell,
+main {
+  min-height: 100vh;
+  background: transparent !important;
+  color: var(--fm-text);
+  padding: 28px 32px 36px 300px !important;
+}
+
+/* First content block becomes left SaaS sidebar */
+main > div:first-child {
+  position: fixed;
+  inset: 0 auto 0 0;
+  width: 270px;
+  height: 100vh;
+  padding: 26px 18px;
+  background:
+    linear-gradient(180deg, rgba(15, 23, 42, 0.98), rgba(2, 6, 23, 0.98));
+  border-right: 1px solid var(--fm-border);
+  box-shadow: 16px 0 55px rgba(0, 0, 0, 0.36);
+  z-index: 60;
+  overflow-y: auto;
+}
+
+/* Brand/title polish */
+main > div:first-child p:first-child {
+  color: #93c5fd !important;
+  font-size: 0.78rem !important;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+h1 {
+  font-size: clamp(2rem, 3vw, 2.85rem) !important;
+  line-height: 1.05 !important;
+  letter-spacing: -0.045em !important;
+  font-weight: 850 !important;
+}
+
+h1 + p {
+  color: var(--fm-muted) !important;
+  margin-top: 0.65rem !important;
+}
+
+/* Navigation modularization */
+nav {
+  display: flex !important;
+  flex-direction: column !important;
+  gap: 7px !important;
+  margin-top: 28px !important;
+  padding: 0 !important;
+  background: transparent !important;
+  border: 0 !important;
+}
+
+nav button {
+  width: 100% !important;
+  justify-content: flex-start !important;
+  text-align: left !important;
+  border-radius: 12px !important;
+  padding: 11px 13px !important;
+  border: 1px solid transparent !important;
+  background: transparent !important;
+  color: #cbd5e1 !important;
+  font-weight: 650 !important;
+  font-size: 0.91rem !important;
+  box-shadow: none !important;
+}
+
+nav button::before {
+  content: "";
+  width: 7px;
+  height: 7px;
+  border-radius: 99px;
+  background: currentColor;
+  opacity: 0.7;
+  margin-right: 9px;
+}
+
+nav button:hover {
+  background: rgba(30, 41, 59, 0.9) !important;
+  color: white !important;
+  transform: translateX(2px);
+}
+
+nav button[class*="bg-white"],
+nav button[class*="text-slate-950"] {
+  background: linear-gradient(135deg, var(--fm-blue), var(--fm-indigo)) !important;
+  color: white !important;
+  border-color: rgba(255, 255, 255, 0.14) !important;
+  box-shadow: 0 12px 30px rgba(59, 130, 246, 0.28) !important;
+}
+
+/* Top logout button spacing */
+main > button,
+button {
+  transition: all 160ms ease;
+}
+
+button:hover {
+  transform: translateY(-1px);
+}
+
+/* Cards */
+.rounded-2xl,
+[class*="rounded-2xl"] {
+  border-radius: 20px !important;
+}
+
+.bg-slate-900,
+[class*="bg-slate-900"] {
+  background:
+    linear-gradient(180deg, rgba(15, 23, 42, 0.94), rgba(15, 23, 42, 0.76)) !important;
+  border-color: var(--fm-border) !important;
+  box-shadow: 0 18px 54px rgba(0, 0, 0, 0.28);
+  backdrop-filter: blur(14px);
+}
+
+.bg-slate-950,
+[class*="bg-slate-950"] {
+  background: rgba(2, 6, 23, 0.82) !important;
+}
+
+/* KPI grid cards */
+.grid > div[class*="rounded"] {
+  min-height: 108px;
+}
+
+.grid > div[class*="rounded"] p {
+  color: var(--fm-muted) !important;
+}
+
+.grid > div[class*="rounded"] h3 {
+  letter-spacing: -0.04em;
+}
+
+/* Section organization */
+section {
+  margin-top: 34px !important;
+}
+
+section > div:first-child h2,
+h2 {
+  font-size: clamp(1.55rem, 2vw, 2.15rem) !important;
+  letter-spacing: -0.04em !important;
+  font-weight: 800 !important;
+}
+
+section > div:first-child p {
+  color: var(--fm-muted) !important;
+}
+
+/* Forms as command bars */
+form {
+  background:
+    linear-gradient(180deg, rgba(15, 23, 42, 0.94), rgba(15, 23, 42, 0.76)) !important;
+  border: 1px solid var(--fm-border) !important;
+  border-radius: 20px !important;
+  box-shadow: 0 18px 54px rgba(0, 0, 0, 0.28);
+}
+
+/* Inputs */
+input,
+select,
+textarea {
+  background: rgba(2, 6, 23, 0.82) !important;
+  border: 1px solid rgba(148, 163, 184, 0.18) !important;
+  color: var(--fm-text) !important;
+  border-radius: 13px !important;
+  outline: none !important;
+}
+
+input:focus,
+select:focus,
+textarea:focus {
+  border-color: rgba(59, 130, 246, 0.72) !important;
+  box-shadow: 0 0 0 4px rgba(59, 130, 246, 0.12);
+}
+
+/* Primary action buttons */
+form button,
+button[class*="bg-white"] {
+  background: linear-gradient(135deg, var(--fm-blue), var(--fm-indigo)) !important;
+  color: white !important;
+  border: 1px solid rgba(255, 255, 255, 0.14) !important;
+  box-shadow: 0 14px 36px rgba(59, 130, 246, 0.25);
+}
+
+/* Logout/danger buttons keep red tone if present */
+button[class*="red"],
+.text-red-400 {
+  color: #f87171 !important;
+}
+
+/* Tables */
+table {
+  border-collapse: separate !important;
+  border-spacing: 0 !important;
+}
+
+thead {
+  background: rgba(2, 6, 23, 0.34);
+}
+
+th {
+  color: var(--fm-muted) !important;
+  font-size: 0.78rem !important;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+td {
+  border-color: rgba(148, 163, 184, 0.09) !important;
+}
+
+tbody tr:hover {
+  background: rgba(59, 130, 246, 0.045);
+}
+
+/* WebSocket status card */
+[class*="connected"] {
+  box-shadow: 0 0 0 1px rgba(34, 197, 94, 0.26), 0 0 22px rgba(34, 197, 94, 0.12);
+}
+
+/* Make content max-width like a proper SaaS canvas */
+main > section,
+main > div:not(:first-child) {
+  max-width: 1740px;
+}
+
+/* Better scrollbars */
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-track {
+  background: rgba(2, 6, 23, 0.75);
+}
+::-webkit-scrollbar-thumb {
+  background: rgba(71, 85, 105, 0.85);
+  border-radius: 999px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(100, 116, 139, 0.95);
+}
+
+/* Responsive */
+@media (max-width: 1180px) {
+  .flowmes-shell,
+  main {
+    padding: 20px !important;
+  }
+
+  main > div:first-child {
+    position: static;
+    width: auto;
+    height: auto;
+    border: 1px solid var(--fm-border);
+    border-radius: 22px;
+    margin-bottom: 20px;
+  }
+
+  nav {
+    flex-direction: row !important;
+    flex-wrap: wrap !important;
+  }
+
+  nav button {
+    width: auto !important;
+  }
+}

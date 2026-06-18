@@ -1,9 +1,13 @@
 import asyncio
 import csv
 import io
+import os
 import re
 from datetime import datetime
 from typing import List
+
+from dotenv import load_dotenv
+load_dotenv()
 
 from fastapi import (
     FastAPI,
@@ -45,9 +49,12 @@ def startup_event():
     start_mqtt_service()
 
 
+_raw_origins = os.environ.get("ALLOWED_ORIGINS", "http://localhost:3000")
+ALLOWED_ORIGINS = [o.strip() for o in _raw_origins.split(",") if o.strip()]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=ALLOWED_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

@@ -29,7 +29,8 @@ export function connectLiveSocket(
     status: "connected" | "disconnected" | "error"
   ) => void
 ) {
-  const wsUrl = "ws://localhost:8000/ws/live";
+  const apiBase = process.env.NEXT_PUBLIC_API_URL ?? "http://127.0.0.1:8000";
+  const wsUrl = apiBase.replace(/^http/, "ws") + "/ws/live";
 
   console.log("Connecting WebSocket:", wsUrl);
 

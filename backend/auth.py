@@ -1,9 +1,14 @@
+import os
 from datetime import datetime, timedelta
+
+from dotenv import load_dotenv
 from jose import jwt, JWTError
 from fastapi import Depends, HTTPException
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 
-SECRET_KEY = "flowmes_super_secret_key_change_in_production"
+load_dotenv()
+
+SECRET_KEY = os.environ.get("SECRET_KEY", "flowmes_super_secret_key_change_in_production")
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 240
 

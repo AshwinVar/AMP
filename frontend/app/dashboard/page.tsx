@@ -57,6 +57,16 @@ import type { AIInsights, AIRecommendation, IoTCommandCenter, IoTTelemetry } fro
 import type { CompanyTenant, CostingAnalytics, CostRecord, OperatorAnalytics, OperatorJobExecution, SaaSAnalytics } from "../../lib/mega-pack3-types";
 import type { AuditLog, FinalExecutiveSummary, NotificationItem, ReportRequest, SystemHealth } from "../../lib/phase27-types";
 import { connectLiveSocket, type LiveEvent } from "../../lib/live";
+import {
+  NAV_ITEMS,
+  MODULE_CATALOG,
+  PLAN_MODULES,
+  getEnabledModules,
+  isViewEnabled,
+  getViewModule,
+  type PlanName,
+} from "../../lib/modules";
+import LockedModuleView from "../../components/LockedModuleView";
 
 type Machine = {
   id: number;
@@ -81,7 +91,7 @@ type Shift = {
   actual_output: number;
 };
 
-const API_URL = "http://127.0.0.1:8000";
+const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://127.0.0.1:8000";
 
 function getToken() {
   if (typeof window === "undefined") return "";
@@ -396,6 +406,15 @@ export default function DashboardPage() {
   const [lastLiveEvent, setLastLiveEvent] = useState(
     "Waiting for live events..."
   );
+
+  const [plan, setPlan] = useState<PlanName>("demo");
+
+  useEffect(() => {
+    const stored = localStorage.getItem("plan") as PlanName | null;
+    if (stored && stored in PLAN_MODULES) setPlan(stored);
+  }, []);
+
+  const enabledModules = getEnabledModules(plan);
 
   function logout() {
     localStorage.clear();
@@ -1586,47 +1605,16 @@ export default function DashboardPage() {
     count,
   }));
 
-  const navItems = [
-    { key: "overview", label: "Overview", icon: "⌂", group: "Core MES" },
-    { key: "machines", label: "Machines", icon: "▦", group: "Core MES" },
-    { key: "downtime", label: "Downtime", icon: "◷", group: "Core MES" },
-    { key: "shifts", label: "Shifts", icon: "◴", group: "Core MES" },
-    { key: "analytics", label: "Analytics", icon: "▧", group: "Core MES" },
-    { key: "timeline", label: "Timeline", icon: "↔", group: "Core MES" },
-    { key: "workorders", label: "Work Orders", icon: "▣", group: "Operations" },
-    { key: "planning", label: "Production Plan", icon: "▤", group: "Operations" },
-    { key: "scheduling", label: "Scheduling", icon: "◫", group: "Operations" },
-    { key: "operator", label: "Operator Terminal", icon: "▶", group: "Operations" },
-    { key: "orders", label: "Orders & Dispatch", icon: "⇄", group: "Operations" },
-    { key: "maintenance_ai", label: "Maintenance AI", icon: "◇", group: "Factory" },
-    { key: "cmms", label: "CMMS", icon: "⚙", group: "Factory" },
-    { key: "quality", label: "Quality", icon: "✓", group: "Factory" },
-    { key: "inventory", label: "Inventory", icon: "▥", group: "Factory" },
-    { key: "purchasing", label: "Purchasing", icon: "◈", group: "Factory" },
-    { key: "digitaltwin", label: "Digital Twin", icon: "◎", group: "Factory" },
-    { key: "iot", label: "IoT Command", icon: "◉", group: "Intelligence" },
-    { key: "ai", label: "AI Insights", icon: "✦", group: "Intelligence" },
-    { key: "executive", label: "Executive OEE", icon: "▰", group: "Intelligence" },
-    { key: "escalations", label: "Escalations", icon: "!", group: "Intelligence" },
-    { key: "notifications", label: "Notifications", icon: "●", group: "Intelligence" },
-    { key: "documents", label: "Documents", icon: "▱", group: "Admin" },
-    { key: "saas", label: "SaaS Admin", icon: "◌", group: "Admin" },
-    { key: "costing", label: "Costing", icon: "£", group: "Admin" },
-    { key: "enterprise", label: "Enterprise Polish", icon: "◆", group: "Admin" },
-  ];
-
-  const groupedNavItems = navItems.reduce<Record<string, typeof navItems>>(
-    (groups, item) => {
-      const group = item.group || "General";
-      if (!groups[group]) groups[group] = [];
-      groups[group].push(item);
-      return groups;
-    },
-    {}
-  );
-
   const activeLabel =
-    navItems.find((item) => item.key === activeView)?.label || "Overview";
+    NAV_ITEMS.find((item) => item.key === activeView)?.label || "Overview";
+
+  function renderSection(viewKey: string, node: React.ReactNode) {
+    if (activeView !== viewKey) return null;
+    if (!isViewEnabled(viewKey, enabledModules)) {
+      return <LockedModuleView moduleKey={getViewModule(viewKey)} />;
+    }
+    return <>{node}</>;
+  }
 
 
   return (
@@ -1641,23 +1629,31 @@ export default function DashboardPage() {
   </div>
 
   <nav className="phase29-nav">
-    {Object.entries(groupedNavItems).map(([group, items]) => (
-      <div key={group} className="phase29-nav-group">
-        <div className="phase29-nav-group-title">{group}</div>
-        {items.map((item) => (
-          <button
-            key={item.key}
-            onClick={() => setActiveView(item.key)}
-            className={`phase29-nav-item ${
-              activeView === item.key ? "phase29-nav-item-active" : ""
-            }`}
-          >
-            <span className="phase29-nav-icon">{item.icon}</span>
-            <span>{item.label}</span>
-          </button>
-        ))}
-      </div>
-    ))}
+    {MODULE_CATALOG.map((mod) => {
+      const items = NAV_ITEMS.filter((n) => n.module === mod.key);
+      const unlocked = enabledModules.includes(mod.key);
+      return (
+        <div key={mod.key} className="phase29-nav-group">
+          <div className="phase29-nav-group-title flex items-center gap-1">
+            <span>{mod.label}</span>
+            {!unlocked && <span className="text-slate-600 text-xs">🔒</span>}
+          </div>
+          {items.map((item) => (
+            <button
+              key={item.key}
+              onClick={() => setActiveView(item.key)}
+              className={`phase29-nav-item ${
+                activeView === item.key ? "phase29-nav-item-active" : ""
+              } ${!unlocked ? "opacity-40 cursor-pointer" : ""}`}
+            >
+              <span className="phase29-nav-icon">{item.icon}</span>
+              <span>{item.label}</span>
+              {!unlocked && <span className="ml-auto text-slate-600 text-xs">🔒</span>}
+            </button>
+          ))}
+        </div>
+      );
+    })}
   </nav>
 </aside>
 
@@ -1691,20 +1687,26 @@ export default function DashboardPage() {
       </section>
 
       <section className="mb-6 flex flex-wrap gap-3">
-        {navItems.map((item) => (
-          <button
-            key={item.key}
-            type="button"
-            onClick={() => setActiveView(item.key)}
-            className={`rounded-xl px-4 py-2 text-sm font-semibold border ${
-              activeView === item.key
-                ? "bg-white text-slate-950 border-white"
-                : "bg-slate-900 text-slate-300 border-slate-800 hover:bg-slate-800"
-            }`}
-          >
-            {item.label}
-          </button>
-        ))}
+        {NAV_ITEMS.map((item) => {
+          const unlocked = isViewEnabled(item.key, enabledModules);
+          return (
+            <button
+              key={item.key}
+              type="button"
+              onClick={() => setActiveView(item.key)}
+              className={`rounded-xl px-4 py-2 text-sm font-semibold border flex items-center gap-1 ${
+                activeView === item.key
+                  ? "bg-white text-slate-950 border-white"
+                  : unlocked
+                  ? "bg-slate-900 text-slate-300 border-slate-800 hover:bg-slate-800"
+                  : "bg-slate-900 text-slate-600 border-slate-800 hover:bg-slate-800"
+              }`}
+            >
+              {item.label}
+              {!unlocked && <span className="text-xs">🔒</span>}
+            </button>
+          );
+        })}
       </section>
 
       <section className="mb-6 rounded-2xl bg-slate-900 border border-slate-800 p-4 flex flex-col md:flex-row md:items-center md:justify-between gap-3">
@@ -2089,7 +2091,7 @@ export default function DashboardPage() {
         </>
       )}
 
-      {activeView === "workorders" && (
+      {renderSection("workorders", (
         <WorkOrdersSection
           machines={machines}
           workOrders={workOrders}
@@ -2101,9 +2103,9 @@ export default function DashboardPage() {
           deleteWorkOrder={deleteWorkOrder}
           getMachineName={getMachineName}
         />
-      )}
+      ))}
 
-      {activeView === "planning" && (
+      {renderSection("planning", (
         <ProductionPlanSection
           machines={machines}
           workOrders={workOrders}
@@ -2116,13 +2118,13 @@ export default function DashboardPage() {
           deletePlan={deleteProductionPlan}
           getMachineName={getMachineName}
         />
-      )}
+      ))}
 
-      {activeView === "maintenance_ai" && (
+      {renderSection("maintenance_ai", (
         <PredictiveMaintenanceSection risks={predictiveRisks} />
-      )}
+      ))}
 
-      {activeView === "escalations" && (
+      {renderSection("escalations", (
         <EscalationSection
           machines={machines}
           escalations={escalations}
@@ -2135,9 +2137,9 @@ export default function DashboardPage() {
           generateFromSmartAlerts={generateEscalationsFromSmartAlerts}
           getMachineName={getMachineName}
         />
-      )}
+      ))}
 
-      {activeView === "inventory" && (
+      {renderSection("inventory", (
         <InventorySection
           items={inventoryItems}
           transactions={inventoryTransactions}
@@ -2152,9 +2154,9 @@ export default function DashboardPage() {
           createTransaction={createInventoryTransaction}
           generateLowStockEscalations={generateLowStockEscalations}
         />
-      )}
+      ))}
 
-      {activeView === "quality" && (
+      {renderSection("quality", (
         <QualitySection
           machines={machines}
           workOrders={workOrders}
@@ -2169,13 +2171,13 @@ export default function DashboardPage() {
           generateDefectEscalations={generateDefectEscalations}
           getMachineName={getMachineName}
         />
-      )}
+      ))}
 
-      {activeView === "executive" && (
+      {renderSection("executive", (
         <ExecutiveOeeSection data={executiveOee} />
-      )}
+      ))}
 
-      {activeView === "digitaltwin" && (
+      {renderSection("digitaltwin", (
         <DigitalTwinSection
           machines={machines}
           nodes={factoryNodes}
@@ -2187,9 +2189,9 @@ export default function DashboardPage() {
           deleteNode={deleteFactoryNode}
           autoGenerateLayout={autoGenerateFactoryLayout}
         />
-      )}
+      ))}
 
-      {activeView === "orders" && (
+      {renderSection("orders", (
         <OrdersDispatchSection
           workOrders={workOrders}
           productionPlans={productionPlans}
@@ -2202,9 +2204,9 @@ export default function DashboardPage() {
           deleteOrder={deleteCustomerOrder}
           generateLateOrderEscalations={generateLateOrderEscalations}
         />
-      )}
+      ))}
 
-      {activeView === "purchasing" && (
+      {renderSection("purchasing", (
         <PurchasingSection
           suppliers={suppliers}
           purchaseOrders={purchaseOrders}
@@ -2222,47 +2224,47 @@ export default function DashboardPage() {
           deletePurchaseOrder={deletePurchaseOrder}
           generateOverdueEscalations={generateOverduePoEscalations}
         />
-      )}
-    
-      {activeView === "documents" && (
+      ))}
+
+      {renderSection("documents", (
         <DocumentsSection documents={documents} analytics={documentAnalytics} form={documentForm} setForm={setDocumentForm} createDocument={createDocument} updateDocument={updateDocument} deleteDocument={deleteDocument} generateReviewEscalations={generateDocumentReviewEscalations} />
-      )}
+      ))}
 
-      {activeView === "cmms" && (
+      {renderSection("cmms", (
         <MaintenanceSection machines={machines} tasks={maintenanceTasks} analytics={maintenanceAnalytics} form={maintenanceForm} setForm={setMaintenanceForm} createTask={createMaintenanceTask} updateTask={updateMaintenanceTask} deleteTask={deleteMaintenanceTask} generateOverdueEscalations={generateMaintenanceOverdueEscalations} getMachineName={getMachineName} />
-      )}
+      ))}
 
-      {activeView === "scheduling" && (
+      {renderSection("scheduling", (
         <SchedulingSection machines={machines} workOrders={workOrders} productionPlans={productionPlans} schedules={productionSchedules} analytics={scheduleAnalytics} form={scheduleForm} setForm={setScheduleForm} createSchedule={createProductionSchedule} updateSchedule={updateProductionSchedule} deleteSchedule={deleteProductionSchedule} getMachineName={getMachineName} />
-      )}
-    
-      {activeView === "iot" && (
+      ))}
+
+      {renderSection("iot", (
         <IoTCommandSection machines={machines} telemetry={iotTelemetry} command={iotCommand} form={iotForm} setForm={setIotForm} createTelemetry={createIotTelemetry} />
-      )}
+      ))}
 
-      {activeView === "ai" && (
+      {renderSection("ai", (
         <AIInsightsSection recommendations={aiRecommendations} insights={aiInsights} generateRecommendations={generateAiRecommendations} updateRecommendation={updateAiRecommendation} />
-      )}
-    
-      {activeView === "saas" && (
+      ))}
+
+      {renderSection("saas", (
         <SaaSAdminSection tenants={tenants} analytics={saasAnalytics} form={tenantForm} setForm={setTenantForm} createTenant={createTenant} updateTenant={updateTenant} deleteTenant={deleteTenant} />
-      )}
+      ))}
 
-      {activeView === "costing" && (
+      {renderSection("costing", (
         <CostingSection costs={costRecords} analytics={costingAnalytics} form={costForm} setForm={setCostForm} createCost={createCost} updateCost={updateCost} deleteCost={deleteCost} />
-      )}
+      ))}
 
-      {activeView === "operator" && (
+      {renderSection("operator", (
         <OperatorTerminalSection machines={machines} workOrders={workOrders} productionPlans={productionPlans} executions={operatorExecutions} analytics={operatorAnalytics} form={operatorForm} setForm={setOperatorForm} createExecution={createOperatorExecution} updateExecution={updateOperatorExecution} deleteExecution={deleteOperatorExecution} getMachineName={getMachineName} />
-      )}
-    
-      {activeView === "notifications" && (
-        <NotificationsSection notifications={notifications} generateNotifications={generateSystemNotifications} updateNotification={updateNotification} />
-      )}
+      ))}
 
-      {activeView === "enterprise" && (
+      {renderSection("notifications", (
+        <NotificationsSection notifications={notifications} generateNotifications={generateSystemNotifications} updateNotification={updateNotification} />
+      ))}
+
+      {renderSection("enterprise", (
         <EnterprisePolishSection auditLogs={auditLogs} reports={reports} health={systemHealth} summary={finalSummary} reportForm={reportForm} setReportForm={setReportForm} createReport={createReport} />
-      )}
+      ))}
     </main>
   );
 }

@@ -1,8 +1,12 @@
 import asyncio
 import json
+import os
 import threading
 
+from dotenv import load_dotenv
 import paho.mqtt.client as mqtt
+
+load_dotenv()
 
 from database import SessionLocal
 import models
@@ -14,9 +18,9 @@ except Exception:
         print("Live WebSocket broadcast skipped:", event)
 
 
-MQTT_BROKER = "127.0.0.1"
-MQTT_PORT = 1883
-TOPIC = "flowmes/machines"
+MQTT_BROKER = os.environ.get("MQTT_BROKER", "127.0.0.1")
+MQTT_PORT = int(os.environ.get("MQTT_PORT", "1883"))
+TOPIC = os.environ.get("MQTT_TOPIC", "flowmes/machines")
 
 
 def get_or_create_machine(db, name: str):

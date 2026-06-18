@@ -66,7 +66,7 @@ export default function EscalationSection({
     department?: string,
     resolutionNotes?: string
   ) => void;
-  deleteEscalation: (id: number) => void;
+  deleteEscalation?: (id: number) => void;
   generateFromSmartAlerts: () => void;
   getMachineName: (id: number) => string;
 }) {
@@ -277,7 +277,7 @@ export default function EscalationSection({
 
                   <td className="py-3 px-4">
                     <button
-                      onClick={() => deleteEscalation(row.id)}
+                      onClick={() => deleteEscalation?.(row.id)}
                       className="text-red-400 border border-red-500/40 rounded-lg px-3 py-1 hover:bg-red-500/10"
                     >
                       Delete

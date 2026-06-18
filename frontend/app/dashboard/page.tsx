@@ -420,6 +420,9 @@ export default function DashboardPage() {
   );
 
   const [plan, setPlan] = useState<PlanName>("demo");
+  const isAdmin = getUserRole() === "Admin";
+  const isSupervisor = getUserRole() === "Supervisor";
+  const isAdminOrSupervisor = isAdmin || isSupervisor;
 
   useEffect(() => {
     const stored = localStorage.getItem("plan") as PlanName | null;
@@ -2111,12 +2114,12 @@ export default function DashboardPage() {
             analytics={workOrderAnalytics}
             form={workOrderForm}
             setForm={setWorkOrderForm}
-            createWorkOrder={createWorkOrder}
+            createWorkOrder={isAdminOrSupervisor ? createWorkOrder : async () => {}}
             updateWorkOrder={updateWorkOrder}
-            deleteWorkOrder={deleteWorkOrder}
+            deleteWorkOrder={isAdmin ? deleteWorkOrder : undefined}
             getMachineName={getMachineName}
           />
-          {getUserRole() === "Admin" && <BomViewer />}
+          {isAdmin && <BomViewer />}
         </>
       ))}
 
@@ -2128,9 +2131,9 @@ export default function DashboardPage() {
           analytics={productionPlanAnalytics}
           form={productionPlanForm}
           setForm={setProductionPlanForm}
-          createPlan={createProductionPlan}
+          createPlan={isAdminOrSupervisor ? createProductionPlan : async () => {}}
           updatePlan={updateProductionPlan}
-          deletePlan={deleteProductionPlan}
+          deletePlan={isAdmin ? deleteProductionPlan : undefined}
           getMachineName={getMachineName}
         />
       ))}
@@ -2148,8 +2151,8 @@ export default function DashboardPage() {
           setForm={setEscalationForm}
           createEscalation={createEscalation}
           updateEscalation={updateEscalation}
-          deleteEscalation={deleteEscalation}
-          generateFromSmartAlerts={generateEscalationsFromSmartAlerts}
+          deleteEscalation={isAdmin ? deleteEscalation : undefined}
+          generateFromSmartAlerts={isAdminOrSupervisor ? generateEscalationsFromSmartAlerts : async () => {}}
           getMachineName={getMachineName}
         />
       ))}
@@ -2163,11 +2166,11 @@ export default function DashboardPage() {
           setItemForm={setInventoryItemForm}
           transactionForm={inventoryTransactionForm}
           setTransactionForm={setInventoryTransactionForm}
-          createItem={createInventoryItem}
-          updateItem={updateInventoryItem}
-          deleteItem={deleteInventoryItem}
+          createItem={isAdminOrSupervisor ? createInventoryItem : async () => {}}
+          updateItem={isAdminOrSupervisor ? updateInventoryItem : async () => {}}
+          deleteItem={isAdmin ? deleteInventoryItem : undefined}
           createTransaction={createInventoryTransaction}
-          generateLowStockEscalations={generateLowStockEscalations}
+          generateLowStockEscalations={isAdminOrSupervisor ? generateLowStockEscalations : async () => {}}
         />
       ))}
 
@@ -2182,8 +2185,8 @@ export default function DashboardPage() {
           setForm={setQualityForm}
           createInspection={createQualityInspection}
           updateInspection={updateQualityInspection}
-          deleteInspection={deleteQualityInspection}
-          generateDefectEscalations={generateDefectEscalations}
+          deleteInspection={isAdmin ? deleteQualityInspection : undefined}
+          generateDefectEscalations={isAdminOrSupervisor ? generateDefectEscalations : async () => {}}
           getMachineName={getMachineName}
         />
       ))}
@@ -2199,10 +2202,10 @@ export default function DashboardPage() {
           commandCenter={factoryCommandCenter}
           form={factoryNodeForm}
           setForm={setFactoryNodeForm}
-          createNode={createFactoryNode}
-          updateNode={updateFactoryNode}
-          deleteNode={deleteFactoryNode}
-          autoGenerateLayout={autoGenerateFactoryLayout}
+          createNode={isAdminOrSupervisor ? createFactoryNode : async () => {}}
+          updateNode={isAdminOrSupervisor ? updateFactoryNode : async () => {}}
+          deleteNode={isAdmin ? deleteFactoryNode : undefined}
+          autoGenerateLayout={isAdminOrSupervisor ? autoGenerateFactoryLayout : async () => {}}
         />
       ))}
 
@@ -2214,10 +2217,10 @@ export default function DashboardPage() {
           analytics={customerOrderAnalytics}
           form={customerOrderForm}
           setForm={setCustomerOrderForm}
-          createOrder={createCustomerOrder}
+          createOrder={isAdminOrSupervisor ? createCustomerOrder : async () => {}}
           updateOrder={updateCustomerOrder}
-          deleteOrder={deleteCustomerOrder}
-          generateLateOrderEscalations={generateLateOrderEscalations}
+          deleteOrder={isAdmin ? deleteCustomerOrder : undefined}
+          generateLateOrderEscalations={isAdminOrSupervisor ? generateLateOrderEscalations : async () => {}}
         />
       ))}
 
@@ -2231,46 +2234,46 @@ export default function DashboardPage() {
           setSupplierForm={setSupplierForm}
           poForm={poForm}
           setPoForm={setPoForm}
-          createSupplier={createSupplier}
-          updateSupplier={updateSupplier}
-          deleteSupplier={deleteSupplier}
-          createPurchaseOrder={createPurchaseOrder}
+          createSupplier={isAdminOrSupervisor ? createSupplier : async () => {}}
+          updateSupplier={isAdminOrSupervisor ? updateSupplier : async () => {}}
+          deleteSupplier={isAdmin ? deleteSupplier : undefined}
+          createPurchaseOrder={isAdminOrSupervisor ? createPurchaseOrder : async () => {}}
           updatePurchaseOrder={updatePurchaseOrder}
-          deletePurchaseOrder={deletePurchaseOrder}
-          generateOverdueEscalations={generateOverduePoEscalations}
+          deletePurchaseOrder={isAdmin ? deletePurchaseOrder : undefined}
+          generateOverdueEscalations={isAdminOrSupervisor ? generateOverduePoEscalations : async () => {}}
         />
       ))}
 
       {renderSection("documents", (
-        <DocumentsSection documents={documents} analytics={documentAnalytics} form={documentForm} setForm={setDocumentForm} createDocument={createDocument} updateDocument={updateDocument} deleteDocument={deleteDocument} generateReviewEscalations={generateDocumentReviewEscalations} />
+        <DocumentsSection documents={documents} analytics={documentAnalytics} form={documentForm} setForm={setDocumentForm} createDocument={isAdminOrSupervisor ? createDocument : async () => {}} updateDocument={isAdminOrSupervisor ? updateDocument : async () => {}} deleteDocument={isAdmin ? deleteDocument : undefined} generateReviewEscalations={isAdminOrSupervisor ? generateDocumentReviewEscalations : async () => {}} />
       ))}
 
       {renderSection("cmms", (
-        <MaintenanceSection machines={machines} tasks={maintenanceTasks} analytics={maintenanceAnalytics} form={maintenanceForm} setForm={setMaintenanceForm} createTask={createMaintenanceTask} updateTask={updateMaintenanceTask} deleteTask={deleteMaintenanceTask} generateOverdueEscalations={generateMaintenanceOverdueEscalations} getMachineName={getMachineName} />
+        <MaintenanceSection machines={machines} tasks={maintenanceTasks} analytics={maintenanceAnalytics} form={maintenanceForm} setForm={setMaintenanceForm} createTask={createMaintenanceTask} updateTask={updateMaintenanceTask} deleteTask={isAdmin ? deleteMaintenanceTask : undefined} generateOverdueEscalations={isAdminOrSupervisor ? generateMaintenanceOverdueEscalations : async () => {}} getMachineName={getMachineName} />
       ))}
 
       {renderSection("scheduling", (
-        <SchedulingSection machines={machines} workOrders={workOrders} productionPlans={productionPlans} schedules={productionSchedules} analytics={scheduleAnalytics} form={scheduleForm} setForm={setScheduleForm} createSchedule={createProductionSchedule} updateSchedule={updateProductionSchedule} deleteSchedule={deleteProductionSchedule} getMachineName={getMachineName} />
+        <SchedulingSection machines={machines} workOrders={workOrders} productionPlans={productionPlans} schedules={productionSchedules} analytics={scheduleAnalytics} form={scheduleForm} setForm={setScheduleForm} createSchedule={isAdminOrSupervisor ? createProductionSchedule : async () => {}} updateSchedule={updateProductionSchedule} deleteSchedule={isAdmin ? deleteProductionSchedule : undefined} getMachineName={getMachineName} />
       ))}
 
       {renderSection("iot", (
-        <IoTCommandSection machines={machines} telemetry={iotTelemetry} command={iotCommand} form={iotForm} setForm={setIotForm} createTelemetry={createIotTelemetry} />
+        <IoTCommandSection machines={machines} telemetry={iotTelemetry} command={iotCommand} form={iotForm} setForm={setIotForm} createTelemetry={isAdminOrSupervisor ? createIotTelemetry : async () => {}} />
       ))}
 
       {renderSection("ai", (
-        <AIInsightsSection recommendations={aiRecommendations} insights={aiInsights} generateRecommendations={generateAiRecommendations} updateRecommendation={updateAiRecommendation} />
+        <AIInsightsSection recommendations={aiRecommendations} insights={aiInsights} generateRecommendations={isAdminOrSupervisor ? generateAiRecommendations : async () => {}} updateRecommendation={updateAiRecommendation} />
       ))}
 
       {renderSection("saas", (
-        <SaaSAdminSection tenants={tenants} analytics={saasAnalytics} form={tenantForm} setForm={setTenantForm} createTenant={createTenant} updateTenant={updateTenant} deleteTenant={deleteTenant} />
+        <SaaSAdminSection tenants={tenants} analytics={saasAnalytics} form={tenantForm} setForm={setTenantForm} createTenant={isAdmin ? createTenant : async () => {}} updateTenant={isAdmin ? updateTenant : async () => {}} deleteTenant={isAdmin ? deleteTenant : undefined} />
       ))}
 
       {renderSection("costing", (
-        <CostingSection costs={costRecords} analytics={costingAnalytics} form={costForm} setForm={setCostForm} createCost={createCost} updateCost={updateCost} deleteCost={deleteCost} />
+        <CostingSection costs={costRecords} analytics={costingAnalytics} form={costForm} setForm={setCostForm} createCost={isAdminOrSupervisor ? createCost : async () => {}} updateCost={isAdminOrSupervisor ? updateCost : async () => {}} deleteCost={isAdmin ? deleteCost : undefined} />
       ))}
 
       {renderSection("operator", (
-        <OperatorTerminalSection machines={machines} workOrders={workOrders} productionPlans={productionPlans} executions={operatorExecutions} analytics={operatorAnalytics} form={operatorForm} setForm={setOperatorForm} createExecution={createOperatorExecution} updateExecution={updateOperatorExecution} deleteExecution={deleteOperatorExecution} getMachineName={getMachineName} />
+        <OperatorTerminalSection machines={machines} workOrders={workOrders} productionPlans={productionPlans} executions={operatorExecutions} analytics={operatorAnalytics} form={operatorForm} setForm={setOperatorForm} createExecution={createOperatorExecution} updateExecution={updateOperatorExecution} deleteExecution={isAdmin ? deleteOperatorExecution : undefined} getMachineName={getMachineName} />
       ))}
 
       {renderSection("notifications", (

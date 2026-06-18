@@ -69,7 +69,7 @@ export default function QualitySection({
     scrap?: number,
     notes?: string
   ) => void;
-  deleteInspection: (id: number) => void;
+  deleteInspection?: (id: number) => void;
   generateDefectEscalations: () => void;
   getMachineName: (id: number) => string;
 }) {
@@ -352,7 +352,7 @@ export default function QualitySection({
 
                   <td className="py-3 px-4">
                     <button
-                      onClick={() => deleteInspection(row.id)}
+                      onClick={() => deleteInspection?.(row.id)}
                       className="text-red-400 border border-red-500/40 rounded-lg px-3 py-1 hover:bg-red-500/10"
                     >
                       Delete

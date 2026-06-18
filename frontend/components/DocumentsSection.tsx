@@ -18,7 +18,7 @@ export default function DocumentsSection({
   setForm: (value: any) => void;
   createDocument: (e: React.FormEvent) => void;
   updateDocument: (id: number, approval_status: string, version?: string) => void;
-  deleteDocument: (id: number) => void;
+  deleteDocument?: (id: number) => void;
   generateReviewEscalations: () => void;
 }) {
   return (
@@ -67,7 +67,7 @@ export default function DocumentsSection({
             <td className="py-3 px-4">{row.owner}</td>
             <td className="py-3 px-4">{row.review_due_date}</td>
             <td className="py-3 px-4"><select className={`rounded-full px-3 py-1 text-xs border bg-slate-950 ${statusStyle(row.approval_status)}`} value={row.approval_status} onChange={(e) => updateDocument(row.id, e.target.value, row.version)}><option>Draft</option><option>Under Review</option><option>Approved</option><option>Obsolete</option></select></td>
-            <td className="py-3 px-4"><button onClick={() => deleteDocument(row.id)} className="text-red-400 border border-red-500/40 rounded-lg px-3 py-1">Delete</button></td>
+            <td className="py-3 px-4"><button onClick={() => deleteDocument?.(row.id)} className="text-red-400 border border-red-500/40 rounded-lg px-3 py-1">Delete</button></td>
           </tr>
         ))}
       </DataTable>

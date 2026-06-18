@@ -50,7 +50,7 @@ export default function DigitalTwinSection({
   setForm: (value: any) => void;
   createNode: (e: React.FormEvent) => void;
   updateNode: (id: number, x: number, y: number, zone: string) => void;
-  deleteNode: (id: number) => void;
+  deleteNode?: (id: number) => void;
   autoGenerateLayout: () => void;
 }) {
   function machineForNode(node: FactoryLayoutNode) {
@@ -155,7 +155,7 @@ export default function DigitalTwinSection({
                       <p className="font-bold">{node.node_name}</p>
                       <p className="text-xs opacity-80">{node.zone}</p>
                     </div>
-                    <button onClick={() => deleteNode(node.id)} className="text-xs border border-red-400/50 rounded-lg px-2 py-1 text-red-300">
+                    <button onClick={() => deleteNode?.(node.id)} className="text-xs border border-red-400/50 rounded-lg px-2 py-1 text-red-300">
                       X
                     </button>
                   </div>

@@ -60,7 +60,7 @@ export default function OrdersDispatchSection({
   setForm: (value: any) => void;
   createOrder: (e: React.FormEvent) => void;
   updateOrder: (id: number, dispatchedQty: number, status?: string, priority?: string) => void;
-  deleteOrder: (id: number) => void;
+  deleteOrder?: (id: number) => void;
   generateLateOrderEscalations: () => void;
 }) {
   function getWorkOrderName(id?: number | null) {
@@ -214,7 +214,7 @@ export default function OrdersDispatchSection({
                       </select>
                     </td>
                     <td className="py-3 px-4">
-                      <button onClick={() => deleteOrder(row.id)} className="text-red-400 border border-red-500/40 rounded-lg px-3 py-1 hover:bg-red-500/10">
+                      <button onClick={() => deleteOrder?.(row.id)} className="text-red-400 border border-red-500/40 rounded-lg px-3 py-1 hover:bg-red-500/10">
                         Delete
                       </button>
                     </td>

@@ -49,7 +49,7 @@ export default function WorkOrdersSection({
   setForm: (value: any) => void;
   createWorkOrder: (e: React.FormEvent) => void;
   updateWorkOrder: (id: number, actualQuantity: number, status?: string) => void;
-  deleteWorkOrder: (id: number) => void;
+  deleteWorkOrder?: (id: number) => void;
   getMachineName: (id: number) => string;
 }) {
   return (
@@ -232,7 +232,7 @@ export default function WorkOrdersSection({
                     </td>
                     <td className="py-3 px-4">
                       <button
-                        onClick={() => deleteWorkOrder(wo.id)}
+                        onClick={() => deleteWorkOrder?.(wo.id)}
                         className="text-red-400 border border-red-500/40 rounded-lg px-3 py-1 hover:bg-red-500/10"
                       >
                         Delete

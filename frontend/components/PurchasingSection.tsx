@@ -60,10 +60,10 @@ export default function PurchasingSection({
   setPoForm: (value: any) => void;
   createSupplier: (e: React.FormEvent) => void;
   updateSupplier: (id: number, status: string) => void;
-  deleteSupplier: (id: number) => void;
+  deleteSupplier?: (id: number) => void;
   createPurchaseOrder: (e: React.FormEvent) => void;
   updatePurchaseOrder: (id: number, receivedQty: number, status?: string) => void;
-  deletePurchaseOrder: (id: number) => void;
+  deletePurchaseOrder?: (id: number) => void;
   generateOverdueEscalations: () => void;
 }) {
   function getSupplierName(id: number) {
@@ -178,7 +178,7 @@ export default function PurchasingSection({
                       </select>
                     </td>
                     <td className="py-3 px-4">
-                      <button onClick={() => deleteSupplier(row.id)} className="text-red-400 border border-red-500/40 rounded-lg px-3 py-1 hover:bg-red-500/10">Delete</button>
+                      <button onClick={() => deleteSupplier?.(row.id)} className="text-red-400 border border-red-500/40 rounded-lg px-3 py-1 hover:bg-red-500/10">Delete</button>
                     </td>
                   </tr>
                 ))}
@@ -227,7 +227,7 @@ export default function PurchasingSection({
                         </select>
                       </td>
                       <td className="py-3 px-4">
-                        <button onClick={() => deletePurchaseOrder(row.id)} className="text-red-400 border border-red-500/40 rounded-lg px-3 py-1 hover:bg-red-500/10">Delete</button>
+                        <button onClick={() => deletePurchaseOrder?.(row.id)} className="text-red-400 border border-red-500/40 rounded-lg px-3 py-1 hover:bg-red-500/10">Delete</button>
                       </td>
                     </tr>
                   );

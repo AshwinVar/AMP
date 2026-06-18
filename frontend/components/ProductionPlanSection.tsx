@@ -53,7 +53,7 @@ export default function ProductionPlanSection({
   setForm: (value: any) => void;
   createPlan: (e: React.FormEvent) => void;
   updatePlan: (id: number, actualQuantity: number, status?: string) => void;
-  deletePlan: (id: number) => void;
+  deletePlan?: (id: number) => void;
   getMachineName: (id: number) => string;
 }) {
   return (
@@ -163,7 +163,7 @@ export default function ProductionPlanSection({
                       </select>
                     </td>
                     <td className="py-3 px-4">
-                      <button onClick={() => deletePlan(plan.id)} className="text-red-400 border border-red-500/40 rounded-lg px-3 py-1 hover:bg-red-500/10">
+                      <button onClick={() => deletePlan?.(plan.id)} className="text-red-400 border border-red-500/40 rounded-lg px-3 py-1 hover:bg-red-500/10">
                         Delete
                       </button>
                     </td>

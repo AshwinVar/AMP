@@ -63,7 +63,7 @@ export default function InventorySection({
   setTransactionForm: (value: any) => void;
   createItem: (e: React.FormEvent) => void;
   updateItem: (id: number, currentStock: number, reorderLevel: number) => void;
-  deleteItem: (id: number) => void;
+  deleteItem?: (id: number) => void;
   createTransaction: (e: React.FormEvent) => void;
   generateLowStockEscalations: () => void;
 }) {
@@ -307,12 +307,14 @@ export default function InventorySection({
                     </span>
                   </td>
                   <td className="py-3 px-4">
-                    <button
-                      onClick={() => deleteItem(item.id)}
-                      className="text-red-400 border border-red-500/40 rounded-lg px-3 py-1 hover:bg-red-500/10"
-                    >
-                      Delete
-                    </button>
+                    {deleteItem && (
+                      <button
+                        onClick={() => deleteItem(item.id)}
+                        className="text-red-400 border border-red-500/40 rounded-lg px-3 py-1 hover:bg-red-500/10"
+                      >
+                        Delete
+                      </button>
+                    )}
                   </td>
                 </tr>
               ))}

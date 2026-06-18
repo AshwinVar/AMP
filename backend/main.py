@@ -2743,7 +2743,7 @@ def get_iot_telemetry(db: Session = Depends(get_db), current_user: dict = Depend
 
 
 @app.post("/iot/telemetry", response_model=schemas.IoTTelemetryResponse)
-def create_iot_telemetry(telemetry: schemas.IoTTelemetryCreate, db: Session = Depends(get_db), current_user: dict = Depends(require_roles(["Admin", "Supervisor", "Operator"]))):
+def create_iot_telemetry(telemetry: schemas.IoTTelemetryCreate, db: Session = Depends(get_db), current_user: dict = Depends(require_roles(["Admin", "Supervisor"]))):
     machine = db.query(models.Machine).filter(models.Machine.id == telemetry.machine_id).first()
     if not machine:
         raise HTTPException(status_code=404, detail="Machine not found")
@@ -3276,7 +3276,7 @@ def get_industrial_signals(db: Session = Depends(get_db), current_user: dict = D
 
 
 @app.post("/industrial/signals", response_model=schemas.IndustrialSignalResponse)
-def create_industrial_signal(signal: schemas.IndustrialSignalCreate, db: Session = Depends(get_db), current_user: dict = Depends(require_roles(["Admin", "Supervisor", "Operator"]))):
+def create_industrial_signal(signal: schemas.IndustrialSignalCreate, db: Session = Depends(get_db), current_user: dict = Depends(require_roles(["Admin", "Supervisor"]))):
     device = db.query(models.IndustrialDevice).filter(models.IndustrialDevice.id == signal.device_id).first()
     if not device:
         raise HTTPException(status_code=404, detail="Industrial device not found")

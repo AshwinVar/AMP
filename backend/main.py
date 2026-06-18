@@ -607,6 +607,16 @@ def create_work_order(
     return new_work_order
 
 
+# Bill of Materials: part_number → (raw_material_item_code, kg_per_unit, finished_goods_item_code)
+PART_BOM = {
+    "SHAFT-001": {"raw": "RM-STEEL-001",     "consume_per_unit": 2,  "fg": "FG-SHAFT-001"},
+    "PLATE-002": {"raw": "RM-SHEET-002",     "consume_per_unit": 1,  "fg": "FG-PLATE-002"},
+    "BEAR-003":  {"raw": "RM-STEEL-001",     "consume_per_unit": 3,  "fg": None},
+    "GEAR-004":  {"raw": "RM-ALUM-003",      "consume_per_unit": 2,  "fg": "FG-GEAR-003"},
+    "ASSY-005":  {"raw": None,               "consume_per_unit": 0,  "fg": "FG-BRACKET-004"},
+    "PKG-006":   {"raw": "PKG-MAT-001",      "consume_per_unit": 1,  "fg": None},
+}
+
 @app.patch("/work-orders/{work_order_id}", response_model=schemas.WorkOrderResponse)
 def update_work_order(
     work_order_id: int,
@@ -617,12 +627,53 @@ def update_work_order(
     work_order = db.query(models.WorkOrder).filter(models.WorkOrder.id == work_order_id).first()
     if not work_order:
         raise HTTPException(status_code=404, detail="Work order not found")
+
+    prev_status = work_order.status
+
     if payload.actual_quantity is not None:
         work_order.actual_quantity = payload.actual_quantity
         if work_order.actual_quantity >= work_order.target_quantity:
             work_order.status = "Completed"
     if payload.status is not None:
         work_order.status = payload.status
+
+    # Auto inventory movements when WO transitions to Completed
+    if prev_status != "Completed" and work_order.status == "Completed":
+        bom = PART_BOM.get(work_order.part_number)
+        qty = work_order.actual_quantity or work_order.target_quantity
+
+        if bom:
+            # Deduct raw material
+            if bom["raw"]:
+                raw_item = db.query(models.InventoryItem).filter(
+                    models.InventoryItem.item_code == bom["raw"]
+                ).first()
+                if raw_item:
+                    consume = min(qty * bom["consume_per_unit"], raw_item.current_stock)
+                    raw_item.current_stock -= consume
+                    db.add(models.InventoryTransaction(
+                        item_id=raw_item.id,
+                        transaction_type="Issue",
+                        quantity=consume,
+                        reference=work_order.work_order_no,
+                        notes=f"Auto-issued for WO {work_order.work_order_no} — {work_order.part_number}",
+                    ))
+
+            # Add finished goods
+            if bom["fg"]:
+                fg_item = db.query(models.InventoryItem).filter(
+                    models.InventoryItem.item_code == bom["fg"]
+                ).first()
+                if fg_item:
+                    fg_item.current_stock += qty
+                    db.add(models.InventoryTransaction(
+                        item_id=fg_item.id,
+                        transaction_type="Receive",
+                        quantity=qty,
+                        reference=work_order.work_order_no,
+                        notes=f"Auto-received from WO {work_order.work_order_no} completion",
+                    ))
+
     db.commit()
     db.refresh(work_order)
     return work_order

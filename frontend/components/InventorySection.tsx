@@ -1,3 +1,4 @@
+import React, { useState } from "react";
 import type {
   InventoryAnalytics,
   InventoryItem,
@@ -14,6 +15,14 @@ function stockStyle(item: InventoryItem) {
   }
 
   return "border-green-500/40 bg-green-500/10 text-green-300";
+}
+
+function txnStyle(type: string) {
+  const t = type.toLowerCase();
+  if (t === "in" || t === "receive") return "text-green-400 border-green-500/40 bg-green-500/10";
+  if (t === "out" || t === "issue") return "text-red-400 border-red-500/40 bg-red-500/10";
+  if (t === "return") return "text-blue-400 border-blue-500/40 bg-blue-500/10";
+  return "text-yellow-400 border-yellow-500/40 bg-yellow-500/10"; // adjustment
 }
 
 export default function InventorySection({
@@ -58,6 +67,11 @@ export default function InventorySection({
   createTransaction: (e: React.FormEvent) => void;
   generateLowStockEscalations: () => void;
 }) {
+  const [categoryFilter, setCategoryFilter] = React.useState("All");
+
+  const categories = ["All", ...Array.from(new Set(items.map((i) => i.category))).sort()];
+  const filteredItems = categoryFilter === "All" ? items : items.filter((i) => i.category === categoryFilter);
+
   function getItemName(id: number) {
     const item = items.find((row) => row.id === id);
     return item ? `${item.item_code} - ${item.item_name}` : `Item ${id}`;
@@ -87,6 +101,23 @@ export default function InventorySection({
         <Kpi title="Low Stock" value={analytics?.low_stock_items ?? 0} />
         <Kpi title="Stock Units" value={analytics?.total_stock_units ?? 0} />
         <Kpi title="Transactions" value={analytics?.transactions ?? 0} />
+      </div>
+
+      <div className="flex flex-wrap gap-2">
+        {categories.map((cat) => (
+          <button
+            key={cat}
+            type="button"
+            onClick={() => setCategoryFilter(cat)}
+            className={`rounded-full px-4 py-1.5 text-sm border transition-colors ${
+              categoryFilter === cat
+                ? "bg-white text-slate-950 border-white font-semibold"
+                : "border-slate-700 text-slate-400 hover:border-slate-500"
+            }`}
+          >
+            {cat}
+          </button>
+        ))}
       </div>
 
       <form
@@ -220,6 +251,7 @@ export default function InventorySection({
                 <th className="py-3 px-4">Item</th>
                 <th className="py-3 px-4">Category</th>
                 <th className="py-3 px-4">Supplier</th>
+                <th className="py-3 px-4">Location</th>
                 <th className="py-3 px-4">Stock</th>
                 <th className="py-3 px-4">Reorder</th>
                 <th className="py-3 px-4">Unit</th>
@@ -229,12 +261,13 @@ export default function InventorySection({
             </thead>
 
             <tbody>
-              {items.map((item) => (
+              {filteredItems.map((item) => (
                 <tr key={item.id} className="border-b border-slate-800">
                   <td className="py-3 px-4 font-semibold">{item.item_code}</td>
                   <td className="py-3 px-4">{item.item_name}</td>
                   <td className="py-3 px-4">{item.category}</td>
                   <td className="py-3 px-4">{item.supplier || "-"}</td>
+                  <td className="py-3 px-4 text-slate-400 text-xs">{item.location || "-"}</td>
                   <td className="py-3 px-4">
                     <input
                       className="w-24 bg-slate-950 border border-slate-700 rounded-lg px-2 py-1"
@@ -284,9 +317,9 @@ export default function InventorySection({
                 </tr>
               ))}
 
-              {items.length === 0 && (
+              {filteredItems.length === 0 && (
                 <tr>
-                  <td colSpan={9} className="py-6 px-4 text-slate-400">
+                  <td colSpan={10} className="py-6 px-4 text-slate-400">
                     No inventory items yet.
                   </td>
                 </tr>
@@ -315,7 +348,11 @@ export default function InventorySection({
               {transactions.slice(0, 80).map((row) => (
                 <tr key={row.id} className="border-b border-slate-800">
                   <td className="py-3 px-4">{getItemName(row.item_id)}</td>
-                  <td className="py-3 px-4">{row.transaction_type}</td>
+                  <td className="py-3 px-4">
+                    <span className={`rounded-full px-3 py-1 text-xs border ${txnStyle(row.transaction_type)}`}>
+                      {row.transaction_type}
+                    </span>
+                  </td>
                   <td className="py-3 px-4">{row.quantity}</td>
                   <td className="py-3 px-4">{row.reference || "-"}</td>
                   <td className="py-3 px-4 text-slate-400">{row.notes || "-"}</td>

@@ -54,16 +54,37 @@ SUPPLIERS_SEED = [
 ]
 
 INVENTORY_SEED = [
-    {"code": "RM-STEEL-001",  "name": "Steel Rod 50mm",          "cat": "Raw Material",    "unit": "kg",   "stock": 850, "reorder": 200},
-    {"code": "RM-SHEET-002",  "name": "MS Sheet 3mm",            "cat": "Raw Material",    "unit": "pcs",  "stock": 320, "reorder": 100},
-    {"code": "RM-ALUM-003",   "name": "Aluminium Billet",        "cat": "Raw Material",    "unit": "kg",   "stock": 140, "reorder": 50},
-    {"code": "TOOL-001",      "name": "Carbide Insert CNMG",     "cat": "Tooling",         "unit": "pcs",  "stock": 45,  "reorder": 20},
-    {"code": "TOOL-002",      "name": "End Mill 10mm",           "cat": "Tooling",         "unit": "pcs",  "stock": 12,  "reorder": 10},
-    {"code": "CONS-001",      "name": "Cutting Fluid 20L",       "cat": "Consumables",     "unit": "cans", "stock": 8,   "reorder": 5},
-    {"code": "PKG-MAT-001",   "name": "Corrugated Box L",        "cat": "Packaging",       "unit": "pcs",  "stock": 500, "reorder": 150},
-    {"code": "FG-SHAFT-001",  "name": "Finished Shaft Assembly", "cat": "Finished Goods",  "unit": "pcs",  "stock": 68,  "reorder": 30},
-    {"code": "FG-PLATE-002",  "name": "Finished Cut Plate",      "cat": "Finished Goods",  "unit": "pcs",  "stock": 42,  "reorder": 20},
-    {"code": "SPARE-001",     "name": "Bearing SKF 6205",        "cat": "Spare Parts",     "unit": "pcs",  "stock": 6,   "reorder": 4},
+    # Raw Materials
+    {"code": "RM-STEEL-001",  "name": "Steel Rod 50mm",           "cat": "Raw Material",   "unit": "kg",   "stock": 850,  "reorder": 200, "loc": "RM Store A1",  "supplier": "Metallica Steels Pvt Ltd"},
+    {"code": "RM-SHEET-002",  "name": "MS Sheet 3mm",             "cat": "Raw Material",   "unit": "pcs",  "stock": 320,  "reorder": 100, "loc": "RM Store A2",  "supplier": "Metallica Steels Pvt Ltd"},
+    {"code": "RM-ALUM-003",   "name": "Aluminium Billet 6061",    "cat": "Raw Material",   "unit": "kg",   "stock": 140,  "reorder": 50,  "loc": "RM Store A3",  "supplier": "Alco Metals India"},
+    {"code": "RM-COPPER-004", "name": "Copper Strip 2mm",         "cat": "Raw Material",   "unit": "kg",   "stock": 38,   "reorder": 40,  "loc": "RM Store A4",  "supplier": "Alco Metals India"},
+    {"code": "RM-STAINLESS-005","name":"SS Rod 316L 40mm",        "cat": "Raw Material",   "unit": "kg",   "stock": 210,  "reorder": 80,  "loc": "RM Store A1",  "supplier": "Metallica Steels Pvt Ltd"},
+    {"code": "RM-RUBBER-006", "name": "NBR Rubber Sheet 5mm",     "cat": "Raw Material",   "unit": "pcs",  "stock": 60,   "reorder": 25,  "loc": "RM Store B1",  "supplier": "PolyPack Industries"},
+    # Tooling
+    {"code": "TOOL-001",      "name": "Carbide Insert CNMG 120408","cat": "Tooling",       "unit": "pcs",  "stock": 45,   "reorder": 20,  "loc": "Tool Crib T1", "supplier": "Kennametal India"},
+    {"code": "TOOL-002",      "name": "End Mill 10mm 4-Flute",    "cat": "Tooling",        "unit": "pcs",  "stock": 12,   "reorder": 10,  "loc": "Tool Crib T1", "supplier": "Kennametal India"},
+    {"code": "TOOL-003",      "name": "Drill Bit HSS 8mm",        "cat": "Tooling",        "unit": "pcs",  "stock": 7,    "reorder": 10,  "loc": "Tool Crib T2", "supplier": "Kennametal India"},
+    {"code": "TOOL-004",      "name": "Boring Bar 25mm",          "cat": "Tooling",        "unit": "pcs",  "stock": 3,    "reorder": 2,   "loc": "Tool Crib T1", "supplier": "Kennametal India"},
+    # Consumables
+    {"code": "CONS-001",      "name": "Cutting Fluid Hocut 795 20L","cat": "Consumables",  "unit": "cans", "stock": 8,    "reorder": 5,   "loc": "Consumables C1","supplier": "Blaser Swisslube India"},
+    {"code": "CONS-002",      "name": "Grinding Wheel 200x25mm",  "cat": "Consumables",    "unit": "pcs",  "stock": 14,   "reorder": 6,   "loc": "Consumables C1","supplier": "Saint-Gobain India"},
+    {"code": "CONS-003",      "name": "Sandpaper 120 Grit Roll",  "cat": "Consumables",    "unit": "rolls","stock": 22,   "reorder": 10,  "loc": "Consumables C2","supplier": "3M India"},
+    {"code": "CONS-004",      "name": "Safety Gloves Nitrile M",  "cat": "Consumables",    "unit": "pairs","stock": 150,  "reorder": 50,  "loc": "Safety Store", "supplier": "3M India"},
+    # Packaging
+    {"code": "PKG-MAT-001",   "name": "Corrugated Box Large",     "cat": "Packaging",      "unit": "pcs",  "stock": 500,  "reorder": 150, "loc": "Packaging P1", "supplier": "PolyPack Industries"},
+    {"code": "PKG-MAT-002",   "name": "Bubble Wrap Roll 50m",     "cat": "Packaging",      "unit": "rolls","stock": 18,   "reorder": 8,   "loc": "Packaging P1", "supplier": "PolyPack Industries"},
+    {"code": "PKG-MAT-003",   "name": "Stretch Film 500mm",       "cat": "Packaging",      "unit": "rolls","stock": 30,   "reorder": 12,  "loc": "Packaging P1", "supplier": "PolyPack Industries"},
+    # Finished Goods
+    {"code": "FG-SHAFT-001",  "name": "Precision Shaft 50mm Ø",   "cat": "Finished Goods", "unit": "pcs",  "stock": 68,   "reorder": 30,  "loc": "FG Store F1",  "supplier": "—"},
+    {"code": "FG-PLATE-002",  "name": "Laser Cut Plate 300x200",  "cat": "Finished Goods", "unit": "pcs",  "stock": 42,   "reorder": 20,  "loc": "FG Store F1",  "supplier": "—"},
+    {"code": "FG-GEAR-003",   "name": "Spur Gear M2 Z40",         "cat": "Finished Goods", "unit": "pcs",  "stock": 25,   "reorder": 15,  "loc": "FG Store F2",  "supplier": "—"},
+    {"code": "FG-BRACKET-004","name": "Welded Bracket Assembly",  "cat": "Finished Goods", "unit": "pcs",  "stock": 11,   "reorder": 10,  "loc": "FG Store F2",  "supplier": "—"},
+    # Spare Parts
+    {"code": "SPARE-001",     "name": "Bearing SKF 6205-2RS",     "cat": "Spare Parts",    "unit": "pcs",  "stock": 6,    "reorder": 4,   "loc": "Spares S1",    "supplier": "SKF India"},
+    {"code": "SPARE-002",     "name": "V-Belt A50 Gates",         "cat": "Spare Parts",    "unit": "pcs",  "stock": 4,    "reorder": 3,   "loc": "Spares S1",    "supplier": "SKF India"},
+    {"code": "SPARE-003",     "name": "Hydraulic Seal Kit CNC-01","cat": "Spare Parts",    "unit": "kits", "stock": 2,    "reorder": 2,   "loc": "Spares S2",    "supplier": "Bosch Rexroth India"},
+    {"code": "SPARE-004",     "name": "Servo Motor Drive 5.5kW",  "cat": "Spare Parts",    "unit": "pcs",  "stock": 1,    "reorder": 1,   "loc": "Spares S2",    "supplier": "Siemens India"},
 ]
 
 DOCS_SEED = [
@@ -115,10 +136,80 @@ def _inventory(db):
             item_code=item["code"], item_name=item["name"],
             category=item["cat"], unit=item["unit"],
             current_stock=item["stock"], reorder_level=item["reorder"],
-            location="Warehouse A", supplier="Metallica Steels Pvt Ltd",
+            location=item.get("loc", "Warehouse A"),
+            supplier=item.get("supplier", "—"),
         ))
     db.commit()
     print("[SEED] Inventory")
+
+
+def _inventory_transactions(db):
+    if db.query(models.InventoryTransaction).count() > 0:
+        return
+    items = {i.item_code: i for i in db.query(models.InventoryItem).all()}
+    if not items:
+        return
+
+    txn_templates = [
+        # (item_code, type, qty, reference, notes, days_ago)
+        ("RM-STEEL-001",    "IN",         500, "PO-2025-041", "Monthly steel stock replenishment", 28),
+        ("RM-STEEL-001",    "OUT",         80, "WO-1001",     "Consumed for shaft batch WO-1001",   25),
+        ("RM-STEEL-001",    "OUT",         60, "WO-1003",     "Consumed for gear batch WO-1003",    20),
+        ("RM-STEEL-001",    "IN",         400, "PO-2025-055", "Emergency restock — low buffer",     14),
+        ("RM-STEEL-001",    "OUT",        110, "WO-1007",     "CNC shaft run WO-1007",               7),
+        ("RM-SHEET-002",    "IN",         200, "PO-2025-042", "MS sheet delivery from Metallica",   27),
+        ("RM-SHEET-002",    "OUT",         50, "WO-1002",     "Laser cut plate run WO-1002",        22),
+        ("RM-SHEET-002",    "OUT",         30, "WO-1006",     "Bracket fabrication batch",          10),
+        ("RM-ALUM-003",     "IN",         100, "PO-2025-043", "Aluminium billet — Alco Metals",     26),
+        ("RM-ALUM-003",     "OUT",         40, "WO-1005",     "Gear machining WO-1005",             18),
+        ("RM-ALUM-003",     "OUT",         20, "WO-1009",     "Prototype run WO-1009",               5),
+        ("RM-COPPER-004",   "IN",          60, "PO-2025-048", "Copper strip procurement",           20),
+        ("RM-COPPER-004",   "OUT",         22, "WO-1004",     "Electrical bracket WO-1004",         12),
+        ("RM-STAINLESS-005","IN",         300, "PO-2025-050", "SS rod — hygiene-grade parts order", 15),
+        ("RM-STAINLESS-005","OUT",         90, "WO-1010",     "SS shaft run WO-1010",                8),
+        ("TOOL-001",        "IN",          30, "PO-2025-044", "Carbide insert quarterly order",     30),
+        ("TOOL-001",        "OUT",         10, "WO-1001",     "Tooling issue — CNC-01 setup",       25),
+        ("TOOL-001",        "OUT",          5, "WO-1007",     "Tooling issue — CNC-02 setup",        6),
+        ("TOOL-002",        "IN",          15, "PO-2025-045", "End mill restock",                   28),
+        ("TOOL-002",        "OUT",          3, "WO-1003",     "Milling op — CNC-01",                20),
+        ("TOOL-003",        "IN",          10, "PO-2025-051", "Drill bit restock",                  18),
+        ("TOOL-003",        "OUT",          3, "WO-1008",     "Drilling op — CNC-02",                9),
+        ("CONS-001",        "IN",          10, "PO-2025-046", "Cutting fluid bulk order",           25),
+        ("CONS-001",        "OUT",          2, "MAINT-JUNE",  "Monthly CNC coolant top-up",         15),
+        ("CONS-002",        "IN",          20, "PO-2025-052", "Grinding wheel stock",               16),
+        ("CONS-002",        "OUT",          6, "WO-1005",     "Surface grinding op",                11),
+        ("PKG-MAT-001",     "IN",         300, "PO-2025-047", "Box stock for Q2 dispatch",          22),
+        ("PKG-MAT-001",     "OUT",        100, "SHIP-BF-031", "Dispatch to Bharat Forge",           10),
+        ("PKG-MAT-001",     "OUT",         80, "SHIP-TC-019", "Dispatch to Tata AutoComp",           4),
+        ("FG-SHAFT-001",    "IN",          40, "WO-1001",     "Shaft batch WO-1001 completed",      23),
+        ("FG-SHAFT-001",    "OUT",         20, "SHIP-BF-031", "Delivery — Bharat Forge PO BF-031",  10),
+        ("FG-SHAFT-001",    "OUT",         10, "SHIP-MG-012", "Delivery — Mahindra Gears PO MG-012", 3),
+        ("FG-PLATE-002",    "IN",          30, "WO-1002",     "Plate batch WO-1002 completed",      21),
+        ("FG-PLATE-002",    "OUT",         18, "SHIP-TC-019", "Delivery — Tata AutoComp",            4),
+        ("FG-GEAR-003",     "IN",          20, "WO-1005",     "Gear batch WO-1005 completed",       17),
+        ("FG-GEAR-003",     "OUT",          8, "SHIP-MG-012", "Delivery — Mahindra Gears",           3),
+        ("SPARE-001",       "IN",           5, "PO-2025-049", "Bearing restock — maintenance kit",  20),
+        ("SPARE-001",       "OUT",          2, "MAINT-CNC01", "Bearing replaced — CNC-01 PM",       12),
+        ("SPARE-002",       "IN",           4, "PO-2025-053", "V-belt restock",                     14),
+        ("SPARE-002",       "OUT",          1, "MAINT-CNC02", "Belt replaced — CNC-02 PM",           7),
+        ("SPARE-003",       "IN",           2, "PO-2025-054", "Hydraulic seal kit — preventive",    10),
+        ("SPARE-004",       "ADJUSTMENT",   1, "ADJ-2025-01", "Stock audit — count verified",        5),
+    ]
+
+    for code, txn_type, qty, ref, notes, days_ago in txn_templates:
+        item = items.get(code)
+        if not item:
+            continue
+        db.add(models.InventoryTransaction(
+            item_id=item.id,
+            transaction_type=txn_type,
+            quantity=qty,
+            reference=ref,
+            notes=notes,
+            created_at=datetime.now() - timedelta(days=days_ago),
+        ))
+    db.commit()
+    print("[SEED] Inventory Transactions")
 
 
 def _documents(db):
@@ -534,6 +625,7 @@ def seed_all(db):
     _machines(db)
     _suppliers(db)
     _inventory(db)
+    _inventory_transactions(db)
     _documents(db)
     _work_orders(db)
     _production_plans(db)

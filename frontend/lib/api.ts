@@ -5,6 +5,17 @@ export function getToken() {
   return localStorage.getItem("token") || "";
 }
 
+export function getUserRole(): string {
+  const token = getToken();
+  if (!token) return "";
+  try {
+    const payload = JSON.parse(atob(token.split(".")[1]));
+    return payload.role || "";
+  } catch {
+    return "";
+  }
+}
+
 export function getAuthHeaders() {
   return {
     "Content-Type": "application/json",

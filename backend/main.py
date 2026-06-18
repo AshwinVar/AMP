@@ -617,6 +617,37 @@ PART_BOM = {
     "PKG-006":   {"raw": "PKG-MAT-001",      "consume_per_unit": 1,  "fg": None},
 }
 
+@app.get("/bom")
+def get_bom(
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(require_roles(["Admin"])),
+):
+    rows = []
+    for part_code, bom in PART_BOM.items():
+        raw_item = None
+        fg_item = None
+        if bom["raw"]:
+            raw_item = db.query(models.InventoryItem).filter(
+                models.InventoryItem.item_code == bom["raw"]
+            ).first()
+        if bom["fg"]:
+            fg_item = db.query(models.InventoryItem).filter(
+                models.InventoryItem.item_code == bom["fg"]
+            ).first()
+        rows.append({
+            "part_number": part_code,
+            "raw_material_code": bom["raw"] or "—",
+            "raw_material_name": raw_item.item_name if raw_item else "—",
+            "consume_per_unit": bom["consume_per_unit"],
+            "raw_unit": raw_item.unit if raw_item else "—",
+            "finished_goods_code": bom["fg"] or "—",
+            "finished_goods_name": fg_item.item_name if fg_item else "—",
+            "raw_current_stock": raw_item.current_stock if raw_item else None,
+            "raw_reorder_level": raw_item.reorder_level if raw_item else None,
+        })
+    return rows
+
+
 @app.patch("/work-orders/{work_order_id}", response_model=schemas.WorkOrderResponse)
 def update_work_order(
     work_order_id: int,

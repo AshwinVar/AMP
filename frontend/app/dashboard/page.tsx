@@ -15,6 +15,7 @@ import {
 import MachineTimeline from "../../components/MachineTimeline";
 import MachineStateSummary from "../../components/MachineStateSummary";
 import WorkOrdersSection from "../../components/WorkOrdersSection";
+import BomViewer from "../../components/BomViewer";
 import PredictiveMaintenanceSection from "../../components/PredictiveMaintenanceSection";
 import ProductionPlanSection from "../../components/ProductionPlanSection";
 import EscalationSection from "../../components/EscalationSection";
@@ -96,6 +97,17 @@ const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://127.0.0.1:8000";
 function getToken() {
   if (typeof window === "undefined") return "";
   return localStorage.getItem("token") || "";
+}
+
+function getUserRole(): string {
+  const token = getToken();
+  if (!token) return "";
+  try {
+    const payload = JSON.parse(atob(token.split(".")[1]));
+    return payload.role || "";
+  } catch {
+    return "";
+  }
 }
 
 function getHeaders() {
@@ -2092,17 +2104,20 @@ export default function DashboardPage() {
       )}
 
       {renderSection("workorders", (
-        <WorkOrdersSection
-          machines={machines}
-          workOrders={workOrders}
-          analytics={workOrderAnalytics}
-          form={workOrderForm}
-          setForm={setWorkOrderForm}
-          createWorkOrder={createWorkOrder}
-          updateWorkOrder={updateWorkOrder}
-          deleteWorkOrder={deleteWorkOrder}
-          getMachineName={getMachineName}
-        />
+        <>
+          <WorkOrdersSection
+            machines={machines}
+            workOrders={workOrders}
+            analytics={workOrderAnalytics}
+            form={workOrderForm}
+            setForm={setWorkOrderForm}
+            createWorkOrder={createWorkOrder}
+            updateWorkOrder={updateWorkOrder}
+            deleteWorkOrder={deleteWorkOrder}
+            getMachineName={getMachineName}
+          />
+          {getUserRole() === "Admin" && <BomViewer />}
+        </>
       ))}
 
       {renderSection("planning", (

@@ -55,7 +55,7 @@ ALLOWED_ORIGINS = [o.strip() for o in _raw_origins.split(",") if o.strip()]
 app.add_middleware(
     CORSMiddleware,
     allow_origins=ALLOWED_ORIGINS,
-    allow_credentials=True,
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -719,6 +719,7 @@ def delete_work_order(
     work_order = db.query(models.WorkOrder).filter(models.WorkOrder.id == work_order_id).first()
     if not work_order:
         raise HTTPException(status_code=404, detail="Work order not found")
+    db.query(models.ProductionPlan).filter(models.ProductionPlan.work_order_id == work_order_id).delete()
     db.delete(work_order)
     db.commit()
     return {"message": "Work order deleted successfully"}

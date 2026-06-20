@@ -104,11 +104,20 @@ today = date.today()
 # SEED FUNCTIONS  (idempotent — skip if data already exists)
 # ─────────────────────────────────────────────────────────────────
 
+_MACHINE_SEED_STATUS = [
+    {"status": "Running",   "utilization": 87, "downtime": "0 min"},
+    {"status": "Running",   "utilization": 73, "downtime": "0 min"},
+    {"status": "Running",   "utilization": 91, "downtime": "0 min"},
+    {"status": "Breakdown", "utilization": 0,  "downtime": "2 hrs 15 min"},
+    {"status": "Running",   "utilization": 68, "downtime": "0 min"},
+]
+
 def _machines(db):
     if db.query(models.Machine).count() > 0:
         return
-    for name in MACHINES:
-        db.add(models.Machine(name=name, status="Idle", utilization=0, downtime="0 min"))
+    for i, name in enumerate(MACHINES):
+        s = _MACHINE_SEED_STATUS[i % len(_MACHINE_SEED_STATUS)]
+        db.add(models.Machine(name=name, status=s["status"], utilization=s["utilization"], downtime=s["downtime"]))
     db.commit()
     print("[SEED] Machines")
 

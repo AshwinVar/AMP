@@ -44,9 +44,49 @@ Base.metadata.create_all(bind=engine)
 app = FastAPI(title="FlowMES API")
 
 
+async def _simulation_loop():
+    """Background task: runs factory simulation ticks every 45 seconds."""
+    import random
+    from factory_simulator import (
+        tick_work_order_progress,
+        tick_shift_entry,
+        tick_quality,
+        tick_operator,
+        tick_iot,
+        tick_inventory,
+        MACHINES,
+    )
+    await asyncio.sleep(10)  # let the server fully start first
+    while True:
+        try:
+            db = SessionLocal()
+            tick_work_order_progress(db)
+            tick_iot(db)
+            tick_inventory(db)
+            if random.random() < 0.5:
+                tick_quality(db)
+            if random.random() < 0.4:
+                tick_shift_entry(db)
+            if random.random() < 0.3:
+                tick_operator(db)
+
+            # Randomly vary machine utilization to keep dashboard alive
+            machines = db.query(models.Machine).filter(
+                models.Machine.status == "Running"
+            ).all()
+            for m in machines:
+                m.utilization = max(40, min(99, m.utilization + random.randint(-5, 5)))
+            db.commit()
+            db.close()
+        except Exception as e:
+            print(f"[SIM TICK ERROR] {e}")
+        await asyncio.sleep(45)
+
+
 @app.on_event("startup")
-def startup_event():
+async def startup_event():
     start_mqtt_service()
+    asyncio.create_task(_simulation_loop())
 
 
 app.add_middleware(

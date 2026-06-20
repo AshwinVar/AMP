@@ -14,12 +14,12 @@ STATUSES = [
 ]
 
 DOWNTIME_SEED = [
-    {"machine": "Packaging-01",     "reason": "Mechanical Failure", "duration": "2 hrs 15 min", "severity": "High",   "notes": "Drive belt snapped. Replacement ordered."},
-    {"machine": "CNC-01",           "reason": "Tooling Change",     "duration": "45 min",        "severity": "Low",    "notes": "Scheduled insert change between jobs."},
-    {"machine": "CNC-02",           "reason": "Setup / Changeover", "duration": "30 min",        "severity": "Low",    "notes": "Job changeover from SHAFT-001 to BEAR-003."},
-    {"machine": "Laser-Cutter-01",  "reason": "Power Fluctuation",  "duration": "15 min",        "severity": "Medium", "notes": "UPS tripped. Power restored, recalibrated."},
-    {"machine": "CNC-01",           "reason": "Quality Hold",       "duration": "1 hr 10 min",   "severity": "Medium", "notes": "Batch QI-7003 failed dimensional check. Rework in progress."},
-    {"machine": "Assembly-Robot-01","reason": "Sensor Fault",       "duration": "50 min",        "severity": "High",   "notes": "End-effector proximity sensor error. Reset and tested OK."},
+    {"machine": "Packaging-01",     "reason": "Mechanical Failure", "duration": "2 hrs 15 min", "notes": "Drive belt snapped. Replacement ordered."},
+    {"machine": "CNC-01",           "reason": "Tooling Change",     "duration": "45 min",        "notes": "Scheduled insert change between jobs."},
+    {"machine": "CNC-02",           "reason": "Setup / Changeover", "duration": "30 min",        "notes": "Job changeover from SHAFT-001 to BEAR-003."},
+    {"machine": "Laser-Cutter-01",  "reason": "Power Fluctuation",  "duration": "15 min",        "notes": "UPS tripped. Power restored, recalibrated."},
+    {"machine": "CNC-01",           "reason": "Quality Hold",       "duration": "1 hr 10 min",   "notes": "Batch QI-7003 failed dimensional check. Rework in progress."},
+    {"machine": "Assembly-Robot-01","reason": "Sensor Fault",       "duration": "50 min",        "notes": "End-effector proximity sensor error. Reset and tested OK."},
 ]
 
 db = SessionLocal()
@@ -45,7 +45,6 @@ if db.query(models.DowntimeLog).count() == 0:
             machine_id=mid,
             reason=entry["reason"],
             duration=entry["duration"],
-            severity=entry["severity"],
             notes=entry["notes"],
         ))
     db.commit()

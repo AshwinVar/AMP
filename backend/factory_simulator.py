@@ -613,6 +613,35 @@ def _notifications(db):
     print("[SEED] Notifications")
 
 
+def _downtime_logs(db):
+    if db.query(models.DowntimeLog).count() > 0:
+        return
+    machines = db.query(models.Machine).all()
+    machine_map = {m.name: m.id for m in machines}
+
+    logs = [
+        {"machine": "Packaging-01",    "reason": "Mechanical Failure", "duration": "2 hrs 15 min", "severity": "High",   "notes": "Drive belt snapped. Replacement ordered."},
+        {"machine": "CNC-01",          "reason": "Tooling Change",     "duration": "45 min",        "severity": "Low",    "notes": "Scheduled insert change between jobs."},
+        {"machine": "CNC-02",          "reason": "Setup / Changeover", "duration": "30 min",        "severity": "Low",    "notes": "Job changeover from SHAFT-001 to BEAR-003."},
+        {"machine": "Laser-Cutter-01", "reason": "Power Fluctuation",  "duration": "15 min",        "severity": "Medium", "notes": "UPS tripped. Power restored, recalibrated."},
+        {"machine": "CNC-01",          "reason": "Quality Hold",       "duration": "1 hr 10 min",   "severity": "Medium", "notes": "Batch QI-7003 failed dimensional check. Rework in progress."},
+        {"machine": "Assembly-Robot-01","reason": "Sensor Fault",      "duration": "50 min",        "severity": "High",   "notes": "End-effector proximity sensor error. Reset and tested OK."},
+    ]
+    for entry in logs:
+        mid = machine_map.get(entry["machine"])
+        if not mid:
+            continue
+        db.add(models.DowntimeLog(
+            machine_id=mid,
+            reason=entry["reason"],
+            duration=entry["duration"],
+            severity=entry["severity"],
+            notes=entry["notes"],
+        ))
+    db.commit()
+    print("[SEED] Downtime Logs")
+
+
 def _tenant(db):
     if db.query(models.CompanyTenant).count() > 0:
         return
@@ -646,6 +675,7 @@ def seed_all(db):
     _maintenance(db)
     _operator_jobs(db)
     _costs(db)
+    _downtime_logs(db)
     _escalations(db)
     _iot(db)
     _ai_recs(db)

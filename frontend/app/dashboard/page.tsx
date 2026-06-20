@@ -223,6 +223,8 @@ export default function DashboardPage() {
   const [downtimeLogs, setDowntimeLogs] = useState<DowntimeLog[]>([]);
   const [shifts, setShifts] = useState<Shift[]>([]);
   const [activeView, setActiveView] = useState("overview");
+  const [searchQuery, setSearchQuery] = useState("");
+  const [searchResults, setSearchResults] = useState<typeof NAV_ITEMS>([]);
 
   const [name, setName] = useState("");
   const [status, setStatus] = useState("Running");
@@ -1678,7 +1680,53 @@ export default function DashboardPage() {
     <h1>{activeLabel}</h1>
   </div>
   <div className="phase29-topbar-actions">
-    <div className="phase29-search">Search modules / records</div>
+    <div className="relative">
+      <input
+        className="phase29-search bg-transparent outline-none w-full"
+        placeholder="Search modules / records"
+        value={searchQuery}
+        onChange={(e) => {
+          const q = e.target.value;
+          setSearchQuery(q);
+          setSearchResults(
+            q.trim().length > 0
+              ? NAV_ITEMS.filter((n) =>
+                  n.label.toLowerCase().includes(q.toLowerCase())
+                )
+              : []
+          );
+        }}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" && searchResults.length > 0) {
+            setActiveView(searchResults[0].key);
+            setSearchQuery("");
+            setSearchResults([]);
+          }
+          if (e.key === "Escape") {
+            setSearchQuery("");
+            setSearchResults([]);
+          }
+        }}
+      />
+      {searchResults.length > 0 && (
+        <div className="absolute top-full left-0 mt-1 w-64 bg-slate-900 border border-slate-700 rounded-xl shadow-xl z-50 overflow-hidden">
+          {searchResults.map((r) => (
+            <button
+              key={r.key}
+              className="w-full text-left px-4 py-2.5 text-sm hover:bg-slate-800 flex items-center gap-2"
+              onClick={() => {
+                setActiveView(r.key);
+                setSearchQuery("");
+                setSearchResults([]);
+              }}
+            >
+              <span>{r.icon}</span>
+              <span>{r.label}</span>
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
     <div className="phase29-pill">All Plants</div>
     <div className="phase29-user">Ashwin · Admin</div>
   </div>

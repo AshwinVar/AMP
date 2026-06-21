@@ -1680,9 +1680,9 @@ export default function DashboardPage() {
     <h1>{activeLabel}</h1>
   </div>
   <div className="phase29-topbar-actions">
-    <div className="relative">
+    <div className="phase29-search relative" style={{padding: 0}}>
       <input
-        className="phase29-search bg-transparent outline-none w-full"
+        className="bg-transparent outline-none w-full h-full px-3.5 text-sm text-slate-300 placeholder-slate-500"
         placeholder="Search modules / records"
         value={searchQuery}
         onChange={(e) => {

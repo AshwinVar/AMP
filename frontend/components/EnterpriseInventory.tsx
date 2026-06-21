@@ -7,7 +7,7 @@ import { apiGet, apiPost, apiPatch, API_URL, getAuthHeaders } from "../lib/api";
 interface InventoryItem {
   id: number; item_code: string; item_name: string; category: string;
   unit: string; current_stock: number; reorder_level: number;
-  location?: string; supplier?: string;
+  location?: string | null; supplier?: string | null;
 }
 
 interface Remnant {

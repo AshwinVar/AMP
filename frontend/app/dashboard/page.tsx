@@ -2207,21 +2207,23 @@ export default function DashboardPage() {
       ))}
 
       {renderSection("inventory", (
-        <InventorySection
-          items={inventoryItems}
-          transactions={inventoryTransactions}
-          analytics={inventoryAnalytics}
-          itemForm={inventoryItemForm}
-          setItemForm={setInventoryItemForm}
-          transactionForm={inventoryTransactionForm}
-          setTransactionForm={setInventoryTransactionForm}
-          createItem={isAdminOrSupervisor ? createInventoryItem : async () => {}}
-          updateItem={isAdminOrSupervisor ? updateInventoryItem : async () => {}}
-          deleteItem={isAdmin ? deleteInventoryItem : undefined}
-          createTransaction={createInventoryTransaction}
-          generateLowStockEscalations={isAdminOrSupervisor ? generateLowStockEscalations : async () => {}}
-        />
-        <EnterpriseInventory items={inventoryItems} />
+        <>
+          <InventorySection
+            items={inventoryItems}
+            transactions={inventoryTransactions}
+            analytics={inventoryAnalytics}
+            itemForm={inventoryItemForm}
+            setItemForm={setInventoryItemForm}
+            transactionForm={inventoryTransactionForm}
+            setTransactionForm={setInventoryTransactionForm}
+            createItem={isAdminOrSupervisor ? createInventoryItem : async () => {}}
+            updateItem={isAdminOrSupervisor ? updateInventoryItem : async () => {}}
+            deleteItem={isAdmin ? deleteInventoryItem : undefined}
+            createTransaction={createInventoryTransaction}
+            generateLowStockEscalations={isAdminOrSupervisor ? generateLowStockEscalations : async () => {}}
+          />
+          <EnterpriseInventory items={inventoryItems} />
+        </>
       ))}
 
       {renderSection("quality", (

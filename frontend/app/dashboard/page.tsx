@@ -20,6 +20,7 @@ import PredictiveMaintenanceSection from "../../components/PredictiveMaintenance
 import ProductionPlanSection from "../../components/ProductionPlanSection";
 import EscalationSection from "../../components/EscalationSection";
 import InventorySection from "../../components/InventorySection";
+import EnterpriseInventory from "../../components/EnterpriseInventory";
 import QualitySection from "../../components/QualitySection";
 import ExecutiveOeeSection from "../../components/ExecutiveOeeSection";
 import DigitalTwinSection from "../../components/DigitalTwinSection";
@@ -2220,6 +2221,7 @@ export default function DashboardPage() {
           createTransaction={createInventoryTransaction}
           generateLowStockEscalations={isAdminOrSupervisor ? generateLowStockEscalations : async () => {}}
         />
+        <EnterpriseInventory items={inventoryItems} />
       ))}
 
       {renderSection("quality", (

@@ -419,6 +419,91 @@ class ReportRequest(Base):
     notes = Column(String, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
 
+class Remnant(Base):
+    __tablename__ = "remnants"
+
+    id = Column(Integer, primary_key=True, index=True)
+    tag_no = Column(String, unique=True, nullable=False)
+    item_id = Column(Integer, ForeignKey("inventory_items.id"))
+    source_reference = Column(String, nullable=True)   # WO or PO that generated this remnant
+    original_qty = Column(Integer, nullable=False)
+    remaining_qty = Column(Integer, nullable=False)
+    unit = Column(String, nullable=False)
+    location = Column(String, nullable=True)
+    status = Column(String, default="Available")       # Available / In Use / Consumed / Scrapped
+    notes = Column(String, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class MaterialIssueSlip(Base):
+    __tablename__ = "material_issue_slips"
+
+    id = Column(Integer, primary_key=True, index=True)
+    slip_no = Column(String, unique=True, nullable=False)
+    item_id = Column(Integer, ForeignKey("inventory_items.id"))
+    remnant_id = Column(Integer, ForeignKey("remnants.id"), nullable=True)
+    work_order_ref = Column(String, nullable=True)
+    requested_qty = Column(Integer, nullable=False)
+    issued_qty = Column(Integer, default=0)
+    requested_by = Column(String, nullable=False)
+    approved_by = Column(String, nullable=True)
+    status = Column(String, default="Pending")         # Pending / Approved / Issued / Rejected
+    notes = Column(String, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    issued_at = Column(DateTime, nullable=True)
+
+
+class GoodsReceiptNote(Base):
+    __tablename__ = "goods_receipt_notes"
+
+    id = Column(Integer, primary_key=True, index=True)
+    grn_no = Column(String, unique=True, nullable=False)
+    purchase_order_ref = Column(String, nullable=True)
+    supplier_name = Column(String, nullable=False)
+    received_by = Column(String, nullable=False)
+    status = Column(String, default="Draft")           # Draft / Accepted / Partial
+    notes = Column(String, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class GRNItem(Base):
+    __tablename__ = "grn_items"
+
+    id = Column(Integer, primary_key=True, index=True)
+    grn_id = Column(Integer, ForeignKey("goods_receipt_notes.id"))
+    item_id = Column(Integer, ForeignKey("inventory_items.id"))
+    lot_no = Column(String, nullable=True)
+    ordered_qty = Column(Integer, default=0)
+    received_qty = Column(Integer, nullable=False)
+    accepted_qty = Column(Integer, nullable=False)
+    rejected_qty = Column(Integer, default=0)
+    inspection_status = Column(String, default="Accepted")  # Accepted / Rejected / Partial
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class CycleCount(Base):
+    __tablename__ = "cycle_counts"
+
+    id = Column(Integer, primary_key=True, index=True)
+    count_no = Column(String, unique=True, nullable=False)
+    counted_by = Column(String, nullable=False)
+    status = Column(String, default="Draft")           # Draft / Submitted / Approved
+    notes = Column(String, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class CycleCountItem(Base):
+    __tablename__ = "cycle_count_items"
+
+    id = Column(Integer, primary_key=True, index=True)
+    count_id = Column(Integer, ForeignKey("cycle_counts.id"))
+    item_id = Column(Integer, ForeignKey("inventory_items.id"))
+    book_qty = Column(Integer, nullable=False)
+    physical_qty = Column(Integer, nullable=False)
+    variance = Column(Integer, nullable=False)          # physical - book
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
 class IndustrialDevice(Base):
     __tablename__ = "industrial_devices"
 

@@ -37,6 +37,7 @@ from predictive_engine import calculate_predictive_risk
 
 import models
 import schemas
+import enterprise_inventory_routes
 
 
 Base.metadata.create_all(bind=engine)
@@ -87,6 +88,7 @@ async def _simulation_loop():
 async def startup_event():
     start_mqtt_service()
     asyncio.create_task(_simulation_loop())
+    enterprise_inventory_routes.register(app)
 
 
 app.add_middleware(

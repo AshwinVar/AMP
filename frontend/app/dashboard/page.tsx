@@ -1682,7 +1682,7 @@ export default function DashboardPage() {
   <div className="phase29-topbar-actions">
     <div className="relative" style={{width:280,minHeight:38,display:"flex",alignItems:"center",border:"1px solid rgba(255,255,255,0.1)",borderRadius:12,background:"rgba(15,23,42,0.6)"}}>
       <input
-        style={{background:"transparent",border:"none",outline:"none",width:"100%",padding:"0 14px",fontSize:"0.84rem",color:"#94a3b8",cursor:"text"}}
+        style={{background:"transparent",border:"none",outline:"none",width:"100%",padding:"0 14px",fontSize:"0.84rem",color:"#94a3b8",cursor:"text",pointerEvents:"auto",userSelect:"text",WebkitUserSelect:"text"}}
         placeholder="Search modules / records"
         value={searchQuery}
         onChange={(e) => {

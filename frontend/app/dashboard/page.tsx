@@ -433,7 +433,10 @@ export default function DashboardPage() {
     const stored = localStorage.getItem("plan") as PlanName | null;
     if (stored && stored in PLAN_MODULES) setPlan(stored);
     const storedCompany = localStorage.getItem("company");
-    if (storedCompany) setCompany(storedCompany);
+    if (storedCompany) {
+      setCompany(storedCompany);
+      if (storedCompany === "GMATS") setActiveView("inventory");
+    }
   }, []);
 
   function switchCompany(code: string) {

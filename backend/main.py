@@ -101,6 +101,11 @@ async def startup_event():
     try:
         db = SessionLocal()
         gmats_inventory_routes.seed_gmats(db)
+        # Seed a dedicated GMATS client login (Supervisor — full access to GMATS inventory)
+        if not db.query(models.User).filter(models.User.username == "gmats").first():
+            db.add(models.User(username="gmats", password=hash_password("gmats@2026"), role="Supervisor"))
+            db.commit()
+            print("[SEED] GMATS client login (gmats / gmats@2026)")
         db.close()
     except Exception as e:
         print(f"[GMATS SEED ERROR] {e}")
@@ -115,6 +120,10 @@ app.add_middleware(
 )
 
 VALID_ROLES = ["Admin", "Supervisor", "Operator"]
+
+# Maps a client login to its tenant/company. Added to the JWT so the frontend
+# lands that user on their own company's data. Extend per onboarded client.
+CLIENT_TENANTS = {"gmats": "GMATS"}
 
 
 def get_db():
@@ -284,12 +293,14 @@ def login(user: schemas.UserLogin, db: Session = Depends(get_db)):
     if not password_ok:
         raise HTTPException(status_code=401, detail="Invalid password")
 
-    token = create_access_token(data={"sub": db_user.username, "role": db_user.role})
+    tenant = CLIENT_TENANTS.get(db_user.username.lower(), "DEFAULT")
+    token = create_access_token(data={"sub": db_user.username, "role": db_user.role, "tenant": tenant})
 
     return {
         "access_token": token,
         "token_type": "bearer",
         "role": db_user.role,
+        "tenant": tenant,
     }
 
 

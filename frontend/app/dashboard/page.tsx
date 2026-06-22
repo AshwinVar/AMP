@@ -114,6 +114,17 @@ function getUserRole(): string {
   }
 }
 
+function getUserTenant(): string {
+  const token = getToken();
+  if (!token) return "DEFAULT";
+  try {
+    const payload = JSON.parse(atob(token.split(".")[1]));
+    return payload.tenant || "DEFAULT";
+  } catch {
+    return "DEFAULT";
+  }
+}
+
 function getHeaders() {
   return {
     "Content-Type": "application/json",
@@ -426,7 +437,9 @@ export default function DashboardPage() {
   );
 
   const [plan, setPlan] = useState<PlanName>("demo");
-  const [company, setCompany] = useState("DEFAULT");
+  const homeTenant = getUserTenant();          // the tenant baked into the login token
+  const isFounder = homeTenant === "DEFAULT";  // only the internal/founder account may switch companies
+  const [company, setCompany] = useState(homeTenant);
   const isAdmin = getUserRole() === "Admin";
   const isSupervisor = getUserRole() === "Supervisor";
   const isAdminOrSupervisor = isAdmin || isSupervisor;
@@ -434,14 +447,23 @@ export default function DashboardPage() {
   useEffect(() => {
     const stored = localStorage.getItem("plan") as PlanName | null;
     if (stored && stored in PLAN_MODULES) setPlan(stored);
+    if (!isFounder) {
+      // Client login: locked to its own company, cannot switch.
+      setCompany(homeTenant);
+      localStorage.setItem("company", homeTenant);
+      setActiveView("inventory");
+      return;
+    }
     const storedCompany = localStorage.getItem("company");
     if (storedCompany) {
       setCompany(storedCompany);
       if (storedCompany === "GMATS") setActiveView("inventory");
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   function switchCompany(code: string) {
+    if (!isFounder) return;   // clients cannot switch companies
     setCompany(code);
     localStorage.setItem("company", code);
     if (code === "GMATS") setActiveView("inventory");
@@ -484,6 +506,10 @@ export default function DashboardPage() {
     } catch (error) {
       console.error(error);
     }
+  }
+
+  async function resetUserPassword(id: number, password: string) {
+    await apiPatch(`/users/${id}/password`, { password });
   }
 
   const enabledModules = getEnabledModules(plan);
@@ -1782,16 +1808,22 @@ export default function DashboardPage() {
         </div>
       )}
     </div>
-    <select
-      className="phase29-pill"
-      style={{ cursor: "pointer", appearance: "auto", color: company === "GMATS" ? "#a5b4fc" : undefined }}
-      value={company}
-      onChange={(e) => switchCompany(e.target.value)}
-      title="Switch company / tenant"
-    >
-      <option value="DEFAULT">Default Factory</option>
-      <option value="GMATS">GMATS Compressors</option>
-    </select>
+    {isFounder ? (
+      <select
+        className="phase29-pill"
+        style={{ cursor: "pointer", appearance: "auto", color: company === "GMATS" ? "#a5b4fc" : undefined }}
+        value={company}
+        onChange={(e) => switchCompany(e.target.value)}
+        title="Switch company / tenant"
+      >
+        <option value="DEFAULT">Default Factory</option>
+        <option value="GMATS">GMATS Compressors</option>
+      </select>
+    ) : (
+      <div className="phase29-pill" style={{ color: "#a5b4fc" }}>
+        {company === "GMATS" ? "GMATS Compressors" : company}
+      </div>
+    )}
     <div className="phase29-user">Ashwin · Admin</div>
   </div>
 </header>
@@ -2301,6 +2333,7 @@ export default function DashboardPage() {
             addEmployee={addEmployee}
             updateUserRole={updateUserRole}
             deleteUser={deleteUserAccount}
+            resetPassword={resetUserPassword}
           />
         ) : (
           <section className="mt-8 rounded-2xl bg-slate-900 border border-slate-800 p-8 text-center">

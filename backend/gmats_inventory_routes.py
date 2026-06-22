@@ -23,6 +23,23 @@ from auth import get_current_user, require_roles
 from database import SessionLocal
 
 
+def _effective_tenant(current_user, requested):
+    """The tenant a request may actually touch.
+    A DEFAULT (internal/founder) login may view any tenant it asks for;
+    a client login is locked to its own tenant regardless of what it requests."""
+    jwt_tenant = (current_user.get("tenant") or "DEFAULT")
+    if jwt_tenant == "DEFAULT":
+        return requested or "GMATS"
+    return jwt_tenant
+
+
+def _guard_record(current_user, record_tenant):
+    """Block a client from touching a record outside its own tenant (by guessing an id)."""
+    jwt_tenant = (current_user.get("tenant") or "DEFAULT")
+    if jwt_tenant != "DEFAULT" and record_tenant != jwt_tenant:
+        raise HTTPException(status_code=403, detail="This record belongs to another company")
+
+
 def register(app):
     def get_db():
         db = SessionLocal()
@@ -59,11 +76,13 @@ def register(app):
 
     @app.get("/gmats/items")
     def gmats_items(tenant: str = "GMATS", db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
+        tenant = _effective_tenant(current_user, tenant)
         rows = db.query(models.GmatsItem).filter(models.GmatsItem.tenant_code == tenant).order_by(models.GmatsItem.item_name).all()
         return [_item_dict(db, r) for r in rows]
 
     @app.get("/gmats/summary")
     def gmats_summary(tenant: str = "GMATS", db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
+        tenant = _effective_tenant(current_user, tenant)
         rows = db.query(models.GmatsItem).filter(models.GmatsItem.tenant_code == tenant).all()
         physical = sum(r.physical_stock for r in rows)
         reserved = sum(r.reserved_stock for r in rows)
@@ -83,7 +102,7 @@ def register(app):
     @app.post("/gmats/items")
     def gmats_create_item(payload: dict, db: Session = Depends(get_db), current_user: dict = Depends(require_roles(["Admin", "Supervisor"]))):
         item = models.GmatsItem(
-            tenant_code=payload.get("tenant", "GMATS"),
+            tenant_code=_effective_tenant(current_user, payload.get("tenant")),
             item_code=payload["item_code"],
             item_name=payload["item_name"],
             category=payload.get("category", "General"),
@@ -107,6 +126,7 @@ def register(app):
         item = db.query(models.GmatsItem).filter(models.GmatsItem.id == item_id).first()
         if not item:
             raise HTTPException(status_code=404, detail="Item not found")
+        _guard_record(current_user, item.tenant_code)
         if "reorder_level" in payload:
             item.reorder_level = int(payload["reorder_level"])
         if "purchase_rate" in payload:
@@ -122,6 +142,7 @@ def register(app):
         item = db.query(models.GmatsItem).filter(models.GmatsItem.id == item_id).first()
         if not item:
             raise HTTPException(status_code=404, detail="Item not found")
+        _guard_record(current_user, item.tenant_code)
         qty = int(payload["qty"])
         if qty <= 0:
             raise HTTPException(status_code=400, detail="Quantity must be positive")
@@ -138,6 +159,7 @@ def register(app):
         item = db.query(models.GmatsItem).filter(models.GmatsItem.id == item_id).first()
         if not item:
             raise HTTPException(status_code=404, detail="Item not found")
+        _guard_record(current_user, item.tenant_code)
         name = payload["alias_name"].strip()
         if name:
             db.add(models.GmatsAlias(tenant_code=item.tenant_code, item_id=item.id, alias_name=name))
@@ -147,6 +169,7 @@ def register(app):
     @app.get("/gmats/resolve")
     def gmats_resolve(name: str, tenant: str = "GMATS", db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
         """Resolve any alias / code / name to the single master item — demonstrates the alias system."""
+        tenant = _effective_tenant(current_user, tenant)
         q = name.strip().lower()
         items = db.query(models.GmatsItem).filter(models.GmatsItem.tenant_code == tenant).all()
         for it in items:
@@ -164,6 +187,7 @@ def register(app):
 
     @app.get("/gmats/proformas")
     def gmats_proformas(tenant: str = "GMATS", db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
+        tenant = _effective_tenant(current_user, tenant)
         rows = db.query(models.GmatsProforma).filter(models.GmatsProforma.tenant_code == tenant).order_by(models.GmatsProforma.id.desc()).all()
         items = {i.id: i for i in db.query(models.GmatsItem).all()}
         out = []
@@ -183,7 +207,7 @@ def register(app):
 
     @app.post("/gmats/proformas")
     def gmats_create_proforma(payload: dict, db: Session = Depends(get_db), current_user: dict = Depends(require_roles(["Admin", "Supervisor"]))):
-        tenant = payload.get("tenant", "GMATS")
+        tenant = _effective_tenant(current_user, payload.get("tenant"))
         lines = payload.get("lines", [])
         if not lines:
             raise HTTPException(status_code=400, detail="At least one line item required")
@@ -217,6 +241,7 @@ def register(app):
         p = db.query(models.GmatsProforma).filter(models.GmatsProforma.id == pid).first()
         if not p or p.status != "Open":
             raise HTTPException(status_code=400, detail="Only open proformas can be cancelled")
+        _guard_record(current_user, p.tenant_code)
         lines = db.query(models.GmatsProformaLine).filter(models.GmatsProformaLine.proforma_id == pid).all()
         for l in lines:
             item = db.query(models.GmatsItem).filter(models.GmatsItem.id == l.item_id).first()
@@ -230,6 +255,7 @@ def register(app):
 
     @app.get("/gmats/invoices")
     def gmats_invoices(tenant: str = "GMATS", db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
+        tenant = _effective_tenant(current_user, tenant)
         rows = db.query(models.GmatsInvoice).filter(models.GmatsInvoice.tenant_code == tenant).order_by(models.GmatsInvoice.id.desc()).all()
         return [
             {"id": v.id, "invoice_no": v.invoice_no, "proforma_id": v.proforma_id,
@@ -243,6 +269,7 @@ def register(app):
         p = db.query(models.GmatsProforma).filter(models.GmatsProforma.id == pid).first()
         if not p or p.status != "Open":
             raise HTTPException(status_code=400, detail="Only open proformas can be invoiced")
+        _guard_record(current_user, p.tenant_code)
         lines = db.query(models.GmatsProformaLine).filter(models.GmatsProformaLine.proforma_id == pid).all()
         for l in lines:
             item = db.query(models.GmatsItem).filter(models.GmatsItem.id == l.item_id).first()
@@ -266,6 +293,7 @@ def register(app):
 
     @app.get("/gmats/min")
     def gmats_min_list(tenant: str = "GMATS", db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
+        tenant = _effective_tenant(current_user, tenant)
         rows = db.query(models.GmatsMIN).filter(models.GmatsMIN.tenant_code == tenant).order_by(models.GmatsMIN.id.desc()).all()
         items = {i.id: i for i in db.query(models.GmatsItem).all()}
         out = []
@@ -285,7 +313,7 @@ def register(app):
 
     @app.post("/gmats/min")
     def gmats_create_min(payload: dict, db: Session = Depends(get_db), current_user: dict = Depends(require_roles(["Admin", "Supervisor"]))):
-        tenant = payload.get("tenant", "GMATS")
+        tenant = _effective_tenant(current_user, payload.get("tenant"))
         lines = payload.get("lines", [])
         if not lines:
             raise HTTPException(status_code=400, detail="At least one spare line required")

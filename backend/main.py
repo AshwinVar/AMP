@@ -417,6 +417,29 @@ def delete_user(
     return {"message": "User deleted successfully"}
 
 
+@app.patch("/users/{user_id}/password")
+def reset_user_password(
+    user_id: int,
+    payload: dict,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(require_roles(["Admin"])),
+):
+    """Admin resets an employee's password (within their own company)."""
+    user = db.query(models.User).filter(models.User.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    _same_tenant_or_403(user, current_user)
+
+    new_password = (payload.get("password") or "").strip()
+    if len(new_password) < 4:
+        raise HTTPException(status_code=400, detail="Password must be at least 4 characters")
+
+    user.password = hash_password(new_password)
+    db.commit()
+    return {"message": "Password reset successfully"}
+
+
 @app.get("/machines", response_model=List[schemas.MachineResponse])
 def get_machines(db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
     return db.query(models.Machine).order_by(models.Machine.id.asc()).all()

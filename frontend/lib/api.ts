@@ -30,7 +30,8 @@ export function getDownloadHeaders() {
 }
 
 export async function apiGet<T>(path: string): Promise<T> {
-  const res = await fetch(`${API_URL}${path}?t=${Date.now()}`, {
+  const sep = path.includes("?") ? "&" : "?";
+  const res = await fetch(`${API_URL}${path}${sep}t=${Date.now()}`, {
     method: "GET",
     headers: getAuthHeaders(),
     cache: "no-store",

@@ -419,6 +419,94 @@ class ReportRequest(Base):
     notes = Column(String, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
 
+# ─────────────────────────────────────────────────────────────────
+# GMATS — Tenant-scoped enterprise inventory (4-bucket stock model)
+# Reusable multi-tenant inventory rig. tenant_code isolates each client.
+# ─────────────────────────────────────────────────────────────────
+
+class GmatsItem(Base):
+    __tablename__ = "gmats_items"
+
+    id = Column(Integer, primary_key=True, index=True)
+    tenant_code = Column(String, default="GMATS", index=True)
+    item_code = Column(String, nullable=False)
+    item_name = Column(String, nullable=False)
+    category = Column(String, default="General")
+    unit = Column(String, default="Nos")
+    physical_stock = Column(Integer, default=0)     # what's actually on the rack
+    reserved_stock = Column(Integer, default=0)     # blocked by open proformas
+    reorder_level = Column(Integer, default=0)      # min stock → purchase alert
+    location = Column(String, nullable=True)
+    purchase_rate = Column(Integer, default=0)
+    supplier = Column(String, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    # available = physical_stock - reserved_stock (computed in API)
+
+
+class GmatsAlias(Base):
+    __tablename__ = "gmats_aliases"
+
+    id = Column(Integer, primary_key=True, index=True)
+    tenant_code = Column(String, default="GMATS", index=True)
+    item_id = Column(Integer, ForeignKey("gmats_items.id"))
+    alias_name = Column(String, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class GmatsProforma(Base):
+    __tablename__ = "gmats_proformas"
+
+    id = Column(Integer, primary_key=True, index=True)
+    tenant_code = Column(String, default="GMATS", index=True)
+    proforma_no = Column(String, nullable=False)
+    customer_name = Column(String, nullable=False)
+    status = Column(String, default="Open")          # Open / Invoiced / Cancelled
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class GmatsProformaLine(Base):
+    __tablename__ = "gmats_proforma_lines"
+
+    id = Column(Integer, primary_key=True, index=True)
+    proforma_id = Column(Integer, ForeignKey("gmats_proformas.id"))
+    item_id = Column(Integer, ForeignKey("gmats_items.id"))
+    qty = Column(Integer, nullable=False)
+
+
+class GmatsInvoice(Base):
+    __tablename__ = "gmats_invoices"
+
+    id = Column(Integer, primary_key=True, index=True)
+    tenant_code = Column(String, default="GMATS", index=True)
+    invoice_no = Column(String, nullable=False)
+    proforma_id = Column(Integer, ForeignKey("gmats_proformas.id"), nullable=True)
+    customer_name = Column(String, nullable=False)
+    status = Column(String, default="Generated")     # Generated
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class GmatsMIN(Base):
+    """Material Issue Note — free spares supplied with a machine (not billed)."""
+    __tablename__ = "gmats_min"
+
+    id = Column(Integer, primary_key=True, index=True)
+    tenant_code = Column(String, default="GMATS", index=True)
+    min_no = Column(String, nullable=False)
+    customer_name = Column(String, nullable=False)
+    machine_ref = Column(String, nullable=True)      # e.g. "20 HP Screw Compressor"
+    status = Column(String, default="Issued")
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class GmatsMINLine(Base):
+    __tablename__ = "gmats_min_lines"
+
+    id = Column(Integer, primary_key=True, index=True)
+    min_id = Column(Integer, ForeignKey("gmats_min.id"))
+    item_id = Column(Integer, ForeignKey("gmats_items.id"))
+    qty = Column(Integer, nullable=False)
+
+
 class Remnant(Base):
     __tablename__ = "remnants"
 

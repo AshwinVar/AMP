@@ -38,6 +38,7 @@ from predictive_engine import calculate_predictive_risk
 import models
 import schemas
 import enterprise_inventory_routes
+import gmats_inventory_routes
 
 
 Base.metadata.create_all(bind=engine)
@@ -47,6 +48,10 @@ app = FastAPI(title="FlowMES API")
 # Register enterprise inventory routes at import time (remnants, issue slips,
 # GRN, cycle count, variance report, CSV import).
 enterprise_inventory_routes.register(app)
+
+# Register GMATS tenant-scoped enterprise inventory (4-bucket stock, aliases,
+# proforma reservation, tax-invoice deduction, free-spares material issue note).
+gmats_inventory_routes.register(app)
 
 
 async def _simulation_loop():
@@ -93,6 +98,12 @@ async def _simulation_loop():
 async def startup_event():
     start_mqtt_service()
     asyncio.create_task(_simulation_loop())
+    try:
+        db = SessionLocal()
+        gmats_inventory_routes.seed_gmats(db)
+        db.close()
+    except Exception as e:
+        print(f"[GMATS SEED ERROR] {e}")
 
 
 app.add_middleware(

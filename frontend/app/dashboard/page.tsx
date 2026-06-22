@@ -21,6 +21,7 @@ import ProductionPlanSection from "../../components/ProductionPlanSection";
 import EscalationSection from "../../components/EscalationSection";
 import InventorySection from "../../components/InventorySection";
 import EnterpriseInventory from "../../components/EnterpriseInventory";
+import GmatsInventory from "../../components/GmatsInventory";
 import QualitySection from "../../components/QualitySection";
 import ExecutiveOeeSection from "../../components/ExecutiveOeeSection";
 import DigitalTwinSection from "../../components/DigitalTwinSection";
@@ -423,6 +424,7 @@ export default function DashboardPage() {
   );
 
   const [plan, setPlan] = useState<PlanName>("demo");
+  const [company, setCompany] = useState("DEFAULT");
   const isAdmin = getUserRole() === "Admin";
   const isSupervisor = getUserRole() === "Supervisor";
   const isAdminOrSupervisor = isAdmin || isSupervisor;
@@ -430,7 +432,15 @@ export default function DashboardPage() {
   useEffect(() => {
     const stored = localStorage.getItem("plan") as PlanName | null;
     if (stored && stored in PLAN_MODULES) setPlan(stored);
+    const storedCompany = localStorage.getItem("company");
+    if (storedCompany) setCompany(storedCompany);
   }, []);
+
+  function switchCompany(code: string) {
+    setCompany(code);
+    localStorage.setItem("company", code);
+    if (code === "GMATS") setActiveView("inventory");
+  }
 
   const enabledModules = getEnabledModules(plan);
 
@@ -1728,7 +1738,16 @@ export default function DashboardPage() {
         </div>
       )}
     </div>
-    <div className="phase29-pill">All Plants</div>
+    <select
+      className="phase29-pill"
+      style={{ cursor: "pointer", appearance: "auto", color: company === "GMATS" ? "#a5b4fc" : undefined }}
+      value={company}
+      onChange={(e) => switchCompany(e.target.value)}
+      title="Switch company / tenant"
+    >
+      <option value="DEFAULT">Default Factory</option>
+      <option value="GMATS">GMATS Compressors</option>
+    </select>
     <div className="phase29-user">Ashwin · Admin</div>
   </div>
 </header>
@@ -2207,6 +2226,9 @@ export default function DashboardPage() {
       ))}
 
       {renderSection("inventory", (
+        company === "GMATS" ? (
+          <GmatsInventory tenant="GMATS" />
+        ) : (
         <>
           <EnterpriseInventory items={inventoryItems} />
           <InventorySection
@@ -2224,6 +2246,7 @@ export default function DashboardPage() {
             generateLowStockEscalations={isAdminOrSupervisor ? generateLowStockEscalations : async () => {}}
           />
         </>
+        )
       ))}
 
       {renderSection("quality", (

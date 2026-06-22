@@ -131,6 +131,14 @@ async def startup_event():
             db.add(models.User(username=gmats_admin_user, password=hash_password(gmats_admin_pw), role="Admin", tenant_code="GMATS"))
             db.commit()
             print(f"[SEED] GMATS Admin '{gmats_admin_user}' created from GMATS_ADMIN_PASSWORD env")
+        # Reconcile client logins to their correct tenant. Users created before the
+        # tenant_code column existed were backfilled to DEFAULT by the migration.
+        for uname, tcode in CLIENT_TENANTS.items():
+            u = db.query(models.User).filter(models.User.username == uname).first()
+            if u and (u.tenant_code or "DEFAULT") != tcode:
+                u.tenant_code = tcode
+                db.commit()
+                print(f"[MIGRATE] {uname} tenant_code -> {tcode}")
         db.close()
     except Exception as e:
         print(f"[GMATS SEED ERROR] {e}")

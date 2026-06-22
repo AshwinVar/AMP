@@ -2283,7 +2283,7 @@ export default function DashboardPage() {
 
       {renderSection("inventory", (
         company === "GMATS" ? (
-          <GmatsInventory tenant="GMATS" />
+          <GmatsInventory tenant="GMATS" isAdmin={isAdmin} />
         ) : (
         <>
           <EnterpriseInventory items={inventoryItems} />

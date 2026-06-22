@@ -13,9 +13,12 @@ Implements the client's exact spec:
 Every record carries a tenant_code so the same rig serves any future client.
 The frontend company switcher supplies the tenant; defaults to "GMATS".
 """
+import csv as csv_lib
+import io
+import re
 from datetime import datetime
 
-from fastapi import Depends, HTTPException
+from fastapi import Depends, File, HTTPException, UploadFile
 from sqlalchemy.orm import Session
 
 import models
@@ -340,6 +343,132 @@ def register(app):
             db.add(models.GmatsMINLine(min_id=m.id, item_id=item.id, qty=qty))
         db.commit()
         return {"id": m.id, "min_no": m.min_no}
+
+    # ── Admin corrections (fix operator mistakes) ─────────────────
+
+    @app.post("/gmats/items/{item_id}/correct")
+    def gmats_correct_item(item_id: int, payload: dict, db: Session = Depends(get_db), current_user: dict = Depends(require_roles(["Admin"]))):
+        """Admin directly corrects an item's stock figures (e.g. a wrong stock-in)."""
+        item = db.query(models.GmatsItem).filter(models.GmatsItem.id == item_id).first()
+        if not item:
+            raise HTTPException(status_code=404, detail="Item not found")
+        _guard_record(current_user, item.tenant_code)
+        if "physical_stock" in payload:
+            item.physical_stock = max(0, int(payload["physical_stock"]))
+        if "reserved_stock" in payload:
+            item.reserved_stock = max(0, int(payload["reserved_stock"]))
+        if "reorder_level" in payload:
+            item.reorder_level = int(payload["reorder_level"])
+        if "purchase_rate" in payload:
+            item.purchase_rate = int(payload["purchase_rate"])
+        db.commit()
+        return _item_dict(db, item)
+
+    @app.delete("/gmats/invoices/{inv_id}")
+    def gmats_void_invoice(inv_id: int, db: Session = Depends(get_db), current_user: dict = Depends(require_roles(["Admin"]))):
+        """Admin voids a tax invoice: restores the deducted physical stock and cancels the proforma."""
+        inv = db.query(models.GmatsInvoice).filter(models.GmatsInvoice.id == inv_id).first()
+        if not inv:
+            raise HTTPException(status_code=404, detail="Invoice not found")
+        _guard_record(current_user, inv.tenant_code)
+        if inv.proforma_id:
+            lines = db.query(models.GmatsProformaLine).filter(models.GmatsProformaLine.proforma_id == inv.proforma_id).all()
+            for l in lines:
+                item = db.query(models.GmatsItem).filter(models.GmatsItem.id == l.item_id).first()
+                if item:
+                    item.physical_stock += l.qty            # restore what the invoice deducted
+            p = db.query(models.GmatsProforma).filter(models.GmatsProforma.id == inv.proforma_id).first()
+            if p:
+                p.status = "Cancelled"
+        db.delete(inv)
+        db.commit()
+        return {"ok": True}
+
+    @app.delete("/gmats/min/{min_id}")
+    def gmats_void_min(min_id: int, db: Session = Depends(get_db), current_user: dict = Depends(require_roles(["Admin"]))):
+        """Admin voids a material issue note: restores the issued free-spare stock."""
+        m = db.query(models.GmatsMIN).filter(models.GmatsMIN.id == min_id).first()
+        if not m:
+            raise HTTPException(status_code=404, detail="MIN not found")
+        _guard_record(current_user, m.tenant_code)
+        lines = db.query(models.GmatsMINLine).filter(models.GmatsMINLine.min_id == min_id).all()
+        for l in lines:
+            item = db.query(models.GmatsItem).filter(models.GmatsItem.id == l.item_id).first()
+            if item:
+                item.physical_stock += l.qty                # restore the issued spares
+            db.delete(l)
+        db.delete(m)
+        db.commit()
+        return {"ok": True}
+
+    # ── CSV import (Tally / Excel) ────────────────────────────────
+
+    @app.post("/gmats/import-csv")
+    async def gmats_import_csv(
+        file: UploadFile = File(...),
+        tenant: str = "GMATS",
+        db: Session = Depends(get_db),
+        current_user: dict = Depends(require_roles(["Admin"])),
+    ):
+        tenant = _effective_tenant(current_user, tenant)
+        content = await file.read()
+        text = content.decode("utf-8-sig")
+        reader = csv_lib.DictReader(io.StringIO(text))
+        created = updated = skipped = 0
+        errors = []
+        for i, row in enumerate(reader, start=2):
+            try:
+                code = (row.get("item_code") or row.get("Item Code") or "").strip()
+                name = (row.get("item_name") or row.get("Item Name") or "").strip()
+                if not code or not name:
+                    skipped += 1
+                    continue
+                category = (row.get("category") or row.get("Category") or "General").strip()
+                unit = (row.get("unit") or row.get("Unit") or "Nos").strip()
+                physical = int(float((row.get("physical_stock") or row.get("Opening Stock") or row.get("Stock") or "0").strip() or 0))
+                reorder = int(float((row.get("reorder_level") or row.get("Reorder Level") or "0").strip() or 0))
+                rate = int(float((row.get("purchase_rate") or row.get("Rate") or "0").strip() or 0))
+                supplier = (row.get("supplier") or row.get("Supplier") or "").strip()
+                location = (row.get("location") or row.get("Location") or "").strip()
+                aliases_raw = (row.get("aliases") or row.get("Aliases") or "").strip()
+                existing = db.query(models.GmatsItem).filter(
+                    models.GmatsItem.tenant_code == tenant, models.GmatsItem.item_code == code
+                ).first()
+                if existing:
+                    existing.item_name = name
+                    existing.category = category
+                    existing.unit = unit
+                    existing.physical_stock = physical
+                    existing.reorder_level = reorder
+                    if rate:
+                        existing.purchase_rate = rate
+                    if supplier:
+                        existing.supplier = supplier
+                    if location:
+                        existing.location = location
+                    target = existing
+                    updated += 1
+                else:
+                    target = models.GmatsItem(
+                        tenant_code=tenant, item_code=code, item_name=name, category=category,
+                        unit=unit, physical_stock=physical, reserved_stock=0, reorder_level=reorder,
+                        purchase_rate=rate, location=location, supplier=supplier,
+                    )
+                    db.add(target); db.commit(); db.refresh(target)
+                    created += 1
+                if aliases_raw:
+                    for a in re.split(r"[;,|]", aliases_raw):
+                        a = a.strip()
+                        if a and not db.query(models.GmatsAlias).filter(
+                            models.GmatsAlias.tenant_code == tenant,
+                            models.GmatsAlias.item_id == target.id,
+                            models.GmatsAlias.alias_name == a,
+                        ).first():
+                            db.add(models.GmatsAlias(tenant_code=tenant, item_id=target.id, alias_name=a))
+            except Exception as e:
+                errors.append(f"Row {i}: {str(e)}")
+        db.commit()
+        return {"created": created, "updated": updated, "skipped": skipped, "errors": errors[:10]}
 
 
 # ─────────────────────────────────────────────────────────────────

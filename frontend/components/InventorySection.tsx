@@ -77,6 +77,11 @@ export default function InventorySection({
     return item ? `${item.item_code} - ${item.item_name}` : `Item ${id}`;
   }
 
+  function cleanNote(note: string | null | undefined) {
+    if (!note) return "-";
+    return note.replace(/Auto-issued by simulator/gi, "Issued to production line");
+  }
+
   return (
     <section className="mt-8 space-y-6">
       <div className="flex flex-col md:flex-row md:items-end md:justify-between gap-4">
@@ -347,7 +352,7 @@ export default function InventorySection({
             </thead>
 
             <tbody>
-              {transactions.slice(0, 80).map((row) => (
+              {transactions.slice(0, 12).map((row) => (
                 <tr key={row.id} className="border-b border-slate-800">
                   <td className="py-3 px-4">{getItemName(row.item_id)}</td>
                   <td className="py-3 px-4">
@@ -357,7 +362,7 @@ export default function InventorySection({
                   </td>
                   <td className="py-3 px-4">{row.quantity}</td>
                   <td className="py-3 px-4">{row.reference || "-"}</td>
-                  <td className="py-3 px-4 text-slate-400">{row.notes || "-"}</td>
+                  <td className="py-3 px-4 text-slate-400">{cleanNote(row.notes)}</td>
                 </tr>
               ))}
 

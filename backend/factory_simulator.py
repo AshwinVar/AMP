@@ -823,7 +823,7 @@ def tick_inventory(db):
     db.add(models.InventoryTransaction(
         item_id=item.id, transaction_type="Issue",
         quantity=qty, reference="Production",
-        notes="Auto-issued by simulator",
+        notes="Issued to production line",
     ))
     item.current_stock = max(0, item.current_stock - qty)
     db.commit()

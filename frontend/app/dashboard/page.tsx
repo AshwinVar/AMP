@@ -2208,6 +2208,7 @@ export default function DashboardPage() {
 
       {renderSection("inventory", (
         <>
+          <EnterpriseInventory items={inventoryItems} />
           <InventorySection
             items={inventoryItems}
             transactions={inventoryTransactions}
@@ -2222,7 +2223,6 @@ export default function DashboardPage() {
             createTransaction={createInventoryTransaction}
             generateLowStockEscalations={isAdminOrSupervisor ? generateLowStockEscalations : async () => {}}
           />
-          <EnterpriseInventory items={inventoryItems} />
         </>
       ))}
 

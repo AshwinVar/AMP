@@ -1825,47 +1825,25 @@ export default function DashboardPage() {
       </div>
     )}
     <div className="phase29-user">Ashwin · Admin</div>
+    <button
+      onClick={logout}
+      className="phase29-pill"
+      style={{ cursor: "pointer", color: "#fca5a5", borderColor: "rgba(239,68,68,0.4)" }}
+      title="Logout"
+    >
+      Logout
+    </button>
   </div>
 </header>
 
-      <section className="mb-8 flex flex-col md:flex-row md:items-start md:justify-between gap-4">
-        <div>
-          <p className="text-sm text-slate-400">MES Lite SaaS MVP</p>
-          <h1 className="text-4xl font-bold mt-2">FlowMES Dashboard</h1>
-          <p className="text-slate-400 mt-2">
-            Real-time machine downtime visibility for SME factories.
-          </p>
-        </div>
-
-        <button
-          onClick={logout}
-          className="rounded-xl border border-red-500/40 bg-red-500/10 text-red-300 px-5 py-3 font-semibold hover:bg-red-500/20"
-        >
-          Logout
-        </button>
-      </section>
-
-      <section className="mb-6 flex flex-wrap gap-3">
-        {NAV_ITEMS.map((item) => {
-          const unlocked = isViewEnabled(item.key, enabledModules);
-          return (
-            <button
-              key={item.key}
-              type="button"
-              onClick={() => setActiveView(item.key)}
-              className={`rounded-xl px-4 py-2 text-sm font-semibold border flex items-center gap-1 ${
-                activeView === item.key
-                  ? "bg-white text-slate-950 border-white"
-                  : unlocked
-                  ? "bg-slate-900 text-slate-300 border-slate-800 hover:bg-slate-800"
-                  : "bg-slate-900 text-slate-600 border-slate-800 hover:bg-slate-800"
-              }`}
-            >
-              {item.label}
-              {!unlocked && <span className="text-xs">🔒</span>}
-            </button>
-          );
-        })}
+      {activeView === "overview" && (
+        <>
+      <section className="mb-8">
+        <p className="text-sm text-slate-400">MES Lite SaaS MVP</p>
+        <h1 className="text-4xl font-bold mt-2">FlowMES Dashboard</h1>
+        <p className="text-slate-400 mt-2">
+          Real-time machine downtime visibility for SME factories.
+        </p>
       </section>
 
       <section className="mb-6 rounded-2xl bg-slate-900 border border-slate-800 p-4 flex flex-col md:flex-row md:items-center md:justify-between gap-3">
@@ -1896,6 +1874,8 @@ export default function DashboardPage() {
         <KpiCard title="Avg Shift Eff." value={`${avgShiftEfficiency}%`} />
         <KpiCard title="Top Reason" value={topReason} small />
       </section>
+        </>
+      )}
 
       {(activeView === "overview" || activeView === "machines") && (
         <>

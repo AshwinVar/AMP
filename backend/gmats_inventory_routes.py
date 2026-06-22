@@ -364,6 +364,18 @@ def register(app):
         db.commit()
         return _item_dict(db, item)
 
+    @app.delete("/gmats/items/{item_id}")
+    def gmats_delete_item(item_id: int, db: Session = Depends(get_db), current_user: dict = Depends(require_roles(["Admin"]))):
+        """Admin deletes an item (and its aliases) — e.g. a wrongly imported row."""
+        item = db.query(models.GmatsItem).filter(models.GmatsItem.id == item_id).first()
+        if not item:
+            raise HTTPException(status_code=404, detail="Item not found")
+        _guard_record(current_user, item.tenant_code)
+        db.query(models.GmatsAlias).filter(models.GmatsAlias.item_id == item_id).delete()
+        db.delete(item)
+        db.commit()
+        return {"ok": True}
+
     @app.delete("/gmats/invoices/{inv_id}")
     def gmats_void_invoice(inv_id: int, db: Session = Depends(get_db), current_user: dict = Depends(require_roles(["Admin"]))):
         """Admin voids a tax invoice: restores the deducted physical stock and cancels the proforma."""

@@ -270,6 +270,18 @@ function StockTab({ tenant, items, reload, isAdmin }: { tenant: string; items: G
     }
   }
 
+  async function deleteItem(it: GItem) {
+    if (!confirm(`Delete ${it.item_code} – ${it.item_name} and its aliases?`)) return;
+    setMsg("");
+    try {
+      await apiDelete(`/gmats/items/${it.id}`);
+      setMsg("✓ Item deleted.");
+      reload();
+    } catch (e: any) {
+      setMsg(e?.message?.replace(/^DELETE .* failed: \d+ /, "") || "Delete failed");
+    }
+  }
+
   return (
     <div className="space-y-5">
       <div className="rounded-2xl bg-slate-900 border border-slate-800 p-5">
@@ -359,6 +371,7 @@ function StockTab({ tenant, items, reload, isAdmin }: { tenant: string; items: G
                       <div className="flex gap-1">
                         <button onClick={() => { setStockInId(it.id); setStockInQty(""); setMsg(""); }} className="text-xs text-slate-300 border border-slate-700 rounded-lg px-2 py-1 hover:border-slate-500">+ Stock</button>
                         {isAdmin && <button onClick={() => startEdit(it)} className="text-xs text-indigo-300 border border-indigo-500/30 rounded-lg px-2 py-1 hover:bg-indigo-500/10">Edit</button>}
+                        {isAdmin && <button onClick={() => deleteItem(it)} className="text-xs text-red-400 border border-red-500/30 rounded-lg px-2 py-1 hover:bg-red-500/10">Del</button>}
                       </div>
                     )}
                   </td>

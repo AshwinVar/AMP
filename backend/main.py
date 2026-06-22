@@ -44,6 +44,10 @@ Base.metadata.create_all(bind=engine)
 
 app = FastAPI(title="FlowMES API")
 
+# Register enterprise inventory routes at import time (remnants, issue slips,
+# GRN, cycle count, variance report, CSV import).
+enterprise_inventory_routes.register(app)
+
 
 async def _simulation_loop():
     """Background task: runs factory simulation ticks every 45 seconds."""
@@ -89,7 +93,6 @@ async def _simulation_loop():
 async def startup_event():
     start_mqtt_service()
     asyncio.create_task(_simulation_loop())
-    enterprise_inventory_routes.register(app)
 
 
 app.add_middleware(

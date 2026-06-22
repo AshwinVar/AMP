@@ -22,6 +22,8 @@ import EscalationSection from "../../components/EscalationSection";
 import InventorySection from "../../components/InventorySection";
 import EnterpriseInventory from "../../components/EnterpriseInventory";
 import GmatsInventory from "../../components/GmatsInventory";
+import UsersSection from "../../components/UsersSection";
+import type { User } from "../../lib/types";
 import QualitySection from "../../components/QualitySection";
 import ExecutiveOeeSection from "../../components/ExecutiveOeeSection";
 import DigitalTwinSection from "../../components/DigitalTwinSection";
@@ -443,6 +445,45 @@ export default function DashboardPage() {
     setCompany(code);
     localStorage.setItem("company", code);
     if (code === "GMATS") setActiveView("inventory");
+  }
+
+  const [users, setUsers] = useState<User[]>([]);
+
+  async function loadUsers() {
+    if (!isAdmin) return;
+    try {
+      setUsers(await apiGet<User[]>("/users"));
+    } catch {
+      setUsers([]);
+    }
+  }
+
+  useEffect(() => {
+    loadUsers();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  async function addEmployee(username: string, password: string, role: string) {
+    await apiPost("/users", { username, password, role });
+    await loadUsers();
+  }
+
+  async function updateUserRole(id: number, role: string) {
+    try {
+      await apiPatch(`/users/${id}/role`, { role });
+      loadUsers();
+    } catch (error) {
+      console.error(error);
+    }
+  }
+
+  async function deleteUserAccount(id: number) {
+    try {
+      await apiDelete(`/users/${id}`);
+      loadUsers();
+    } catch (error) {
+      console.error(error);
+    }
   }
 
   const enabledModules = getEnabledModules(plan);
@@ -2249,6 +2290,23 @@ export default function DashboardPage() {
             generateLowStockEscalations={isAdminOrSupervisor ? generateLowStockEscalations : async () => {}}
           />
         </>
+        )
+      ))}
+
+      {renderSection("users", (
+        isAdmin ? (
+          <UsersSection
+            users={users}
+            company={company}
+            addEmployee={addEmployee}
+            updateUserRole={updateUserRole}
+            deleteUser={deleteUserAccount}
+          />
+        ) : (
+          <section className="mt-8 rounded-2xl bg-slate-900 border border-slate-800 p-8 text-center">
+            <h3 className="text-2xl font-semibold mb-2">User Management</h3>
+            <p className="text-slate-400">Only an Admin can add or manage employees.</p>
+          </section>
         )
       ))}
 

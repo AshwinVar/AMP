@@ -43,6 +43,24 @@ import gmats_inventory_routes
 
 Base.metadata.create_all(bind=engine)
 
+
+def _ensure_user_tenant_column():
+    """Idempotent migration: add users.tenant_code to an existing table.
+    create_all only creates missing tables, it never alters existing ones."""
+    from sqlalchemy import inspect, text
+    try:
+        insp = inspect(engine)
+        cols = [c["name"] for c in insp.get_columns("users")]
+        if "tenant_code" not in cols:
+            with engine.begin() as conn:
+                conn.execute(text("ALTER TABLE users ADD COLUMN tenant_code VARCHAR DEFAULT 'DEFAULT'"))
+            print("[MIGRATE] users.tenant_code added")
+    except Exception as e:
+        print(f"[MIGRATE] tenant_code skipped: {e}")
+
+
+_ensure_user_tenant_column()
+
 app = FastAPI(title="FlowMES API")
 
 # Register enterprise inventory routes at import time (remnants, issue slips,
@@ -103,7 +121,7 @@ async def startup_event():
         gmats_inventory_routes.seed_gmats(db)
         # Seed a dedicated GMATS client login (Supervisor — full access to GMATS inventory)
         if not db.query(models.User).filter(models.User.username == "gmats").first():
-            db.add(models.User(username="gmats", password=hash_password("gmats@2026"), role="Supervisor"))
+            db.add(models.User(username="gmats", password=hash_password("gmats@2026"), role="Supervisor", tenant_code="GMATS"))
             db.commit()
             print("[SEED] GMATS client login (gmats / gmats@2026)")
         db.close()
@@ -245,37 +263,61 @@ def get_me(current_user: dict = Depends(get_current_user)):
 
 @app.post("/register", response_model=schemas.UserResponse)
 def register_user(user: schemas.UserCreate, db: Session = Depends(get_db)):
+    """Bootstrap only: creates the very first Admin when the system has no users.
+    Once any user exists, self-registration is disabled — an Admin must add employees."""
+    if db.query(models.User).count() > 0:
+        raise HTTPException(status_code=403, detail="Self-registration is disabled. Ask your Admin to add you.")
+
+    try:
+        new_user = models.User(
+            username=user.username,
+            password=hash_password(user.password),
+            role="Admin",            # the first account is always the Admin
+            tenant_code="DEFAULT",
+        )
+        db.add(new_user)
+        db.commit()
+        db.refresh(new_user)
+        return new_user
+    except IntegrityError as e:
+        db.rollback()
+        raise HTTPException(status_code=400, detail=f"Database integrity error: {str(e)}")
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Register failed: {str(e)}")
+
+
+@app.post("/users", response_model=schemas.UserResponse)
+def create_employee(
+    user: schemas.UserCreate,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(require_roles(["Admin"])),
+):
+    """Admin adds an employee. New employee inherits the Admin's company (tenant)."""
     if user.role not in VALID_ROLES:
         raise HTTPException(status_code=400, detail="Invalid role")
 
+    if db.query(models.User).filter(models.User.username == user.username).first():
+        raise HTTPException(status_code=400, detail="Username already exists")
+
+    tenant = current_user.get("tenant", "DEFAULT")
     try:
-        existing_user = db.query(models.User).filter(models.User.username == user.username).first()
-
-        if existing_user:
-            raise HTTPException(status_code=400, detail="Username already exists")
-
         new_user = models.User(
             username=user.username,
             password=hash_password(user.password),
             role=user.role,
+            tenant_code=tenant,
         )
-
         db.add(new_user)
         db.commit()
         db.refresh(new_user)
-
         return new_user
-
-    except HTTPException:
-        raise
-
     except IntegrityError as e:
         db.rollback()
         raise HTTPException(status_code=400, detail=f"Database integrity error: {str(e)}")
-
     except Exception as e:
         db.rollback()
-        raise HTTPException(status_code=500, detail=f"Register failed: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Create employee failed: {str(e)}")
 
 
 @app.post("/login")
@@ -293,7 +335,7 @@ def login(user: schemas.UserLogin, db: Session = Depends(get_db)):
     if not password_ok:
         raise HTTPException(status_code=401, detail="Invalid password")
 
-    tenant = CLIENT_TENANTS.get(db_user.username.lower(), "DEFAULT")
+    tenant = getattr(db_user, "tenant_code", None) or CLIENT_TENANTS.get(db_user.username.lower(), "DEFAULT")
     token = create_access_token(data={"sub": db_user.username, "role": db_user.role, "tenant": tenant})
 
     return {
@@ -306,7 +348,20 @@ def login(user: schemas.UserLogin, db: Session = Depends(get_db)):
 
 @app.get("/users", response_model=List[schemas.UserResponse])
 def list_users(db: Session = Depends(get_db), current_user: dict = Depends(require_roles(["Admin"]))):
-    return db.query(models.User).order_by(models.User.id.asc()).all()
+    tenant = current_user.get("tenant", "DEFAULT")
+    q = db.query(models.User)
+    if tenant == "DEFAULT":
+        q = q.filter((models.User.tenant_code == "DEFAULT") | (models.User.tenant_code.is_(None)))
+    else:
+        q = q.filter(models.User.tenant_code == tenant)
+    return q.order_by(models.User.id.asc()).all()
+
+
+def _same_tenant_or_403(user, current_user):
+    tenant = current_user.get("tenant", "DEFAULT")
+    user_tenant = user.tenant_code or "DEFAULT"
+    if user_tenant != tenant:
+        raise HTTPException(status_code=403, detail="You can only manage users in your own company")
 
 
 @app.patch("/users/{user_id}/role", response_model=schemas.UserResponse)
@@ -323,6 +378,8 @@ def update_user_role(
 
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
+
+    _same_tenant_or_403(user, current_user)
 
     user.role = payload.role
     db.commit()
@@ -341,6 +398,8 @@ def delete_user(
 
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
+
+    _same_tenant_or_403(user, current_user)
 
     if user.username == current_user.get("sub"):
         raise HTTPException(status_code=400, detail="You cannot delete your own account")

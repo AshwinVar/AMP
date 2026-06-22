@@ -74,6 +74,7 @@ class User(Base):
     username = Column(String, unique=True, nullable=False)
     password = Column(String, nullable=False)
     role = Column(String, nullable=False)
+    tenant_code = Column(String, default="DEFAULT", nullable=True)
 
 
 class MachineEvent(Base):

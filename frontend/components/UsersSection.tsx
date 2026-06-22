@@ -1,63 +1,126 @@
+import React, { useState } from "react";
 import type { User } from "../lib/types";
 import { INPUT_CLASS } from "../lib/utils";
 
 export default function UsersSection({
   users,
+  company,
+  addEmployee,
   updateUserRole,
   deleteUser,
 }: {
   users: User[];
+  company: string;
+  addEmployee: (username: string, password: string, role: string) => Promise<void>;
   updateUserRole: (id: number, role: string) => void;
   deleteUser: (id: number) => void;
 }) {
+  const [username, setUsername] = useState("");
+  const [password, setPassword] = useState("");
+  const [role, setRole] = useState("Operator");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+
+  async function submit(e: React.FormEvent) {
+    e.preventDefault();
+    setError("");
+    setBusy(true);
+    try {
+      await addEmployee(username.trim(), password, role);
+      setUsername("");
+      setPassword("");
+      setRole("Operator");
+    } catch (err: any) {
+      setError(err?.message?.replace(/^POST \/users failed: \d+ /, "") || "Failed to add employee");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const companyLabel = company === "GMATS" ? "GMATS Compressors" : "Default Factory";
+
   return (
-    <section className="mt-8 rounded-2xl bg-slate-900 border border-slate-800 p-6">
-      <h3 className="text-2xl font-semibold mb-2">User Management</h3>
+    <section className="mt-8 space-y-6">
+      <div>
+        <div className="flex items-center gap-3">
+          <h3 className="text-3xl font-bold">User Management</h3>
+          <span className="rounded-lg bg-indigo-500/20 border border-indigo-500/40 px-3 py-1 text-xs text-indigo-300 font-semibold tracking-wider">
+            {companyLabel}
+          </span>
+        </div>
+        <p className="text-slate-400 mt-2 text-sm">
+          Add and manage employees for your company. New employees can only sign in with the role you assign — they cannot self-register.
+        </p>
+      </div>
 
-      <p className="text-slate-400 mb-6">
-        Admin-only user role management.
-      </p>
+      <form onSubmit={submit} className="rounded-2xl bg-slate-900 border border-slate-800 p-5 grid grid-cols-1 md:grid-cols-4 gap-3">
+        <input
+          className={INPUT_CLASS}
+          placeholder="Username"
+          value={username}
+          onChange={(e) => setUsername(e.target.value)}
+          required
+        />
+        <input
+          className={INPUT_CLASS}
+          type="password"
+          placeholder="Temporary password"
+          value={password}
+          onChange={(e) => setPassword(e.target.value)}
+          required
+        />
+        <select className={INPUT_CLASS} value={role} onChange={(e) => setRole(e.target.value)}>
+          <option>Operator</option>
+          <option>Supervisor</option>
+          <option>Admin</option>
+        </select>
+        <button type="submit" disabled={busy} className="rounded-xl bg-white text-slate-950 font-semibold px-4 py-3 disabled:opacity-50">
+          {busy ? "Adding…" : "Add Employee"}
+        </button>
+        {error && <p className="md:col-span-4 text-red-400 text-sm">{error}</p>}
+      </form>
 
-      <div className="overflow-x-auto">
-        <table className="w-full text-left text-sm">
-          <thead className="text-slate-400 border-b border-slate-800">
-            <tr>
-              <th className="py-3">ID</th>
-              <th>Username</th>
-              <th>Role</th>
-              <th>Update Role</th>
-              <th>Action</th>
-            </tr>
-          </thead>
-
-          <tbody>
-            {users.map((user) => (
-              <tr key={user.id} className="border-b border-slate-800">
-                <td className="py-3">{user.id}</td>
-                <td>{user.username}</td>
-                <td>{user.role}</td>
-                <td>
-                  <select className={INPUT_CLASS} value={user.role} onChange={(e) => updateUserRole(user.id, e.target.value)}>
-                    <option>Admin</option>
-                    <option>Supervisor</option>
-                    <option>Operator</option>
-                  </select>
-                </td>
-                <td>
-                  <button onClick={() => deleteUser(user.id)} className="rounded-xl border border-red-500/40 px-4 py-2 text-red-400 hover:bg-red-500/10">
-                    Delete
-                  </button>
-                </td>
-              </tr>
-            ))}
-
-            {users.length === 0 && (
+      <div className="rounded-2xl bg-slate-900 border border-slate-800 p-5">
+        <h4 className="text-lg font-semibold mb-4">Employees <span className="text-slate-500 text-sm font-normal">({users.length})</span></h4>
+        <div className="overflow-x-auto">
+          <table className="w-full text-left text-sm">
+            <thead className="text-slate-400 border-b border-slate-800">
               <tr>
-                <td colSpan={5} className="py-6 text-slate-400">No users found.</td>
+                <th className="py-3 px-4">ID</th>
+                <th className="py-3 px-4">Username</th>
+                <th className="py-3 px-4">Role</th>
+                <th className="py-3 px-4">Change Role</th>
+                <th className="py-3 px-4">Action</th>
               </tr>
-            )}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {users.map((user) => (
+                <tr key={user.id} className="border-b border-slate-800">
+                  <td className="py-3 px-4">{user.id}</td>
+                  <td className="py-3 px-4 font-medium">{user.username}</td>
+                  <td className="py-3 px-4">{user.role}</td>
+                  <td className="py-3 px-4">
+                    <select className={INPUT_CLASS} value={user.role} onChange={(e) => updateUserRole(user.id, e.target.value)}>
+                      <option>Admin</option>
+                      <option>Supervisor</option>
+                      <option>Operator</option>
+                    </select>
+                  </td>
+                  <td className="py-3 px-4">
+                    <button onClick={() => deleteUser(user.id)} className="rounded-xl border border-red-500/40 px-4 py-2 text-red-400 hover:bg-red-500/10">
+                      Delete
+                    </button>
+                  </td>
+                </tr>
+              ))}
+              {users.length === 0 && (
+                <tr>
+                  <td colSpan={5} className="py-6 px-4 text-slate-400">No employees yet — add one above.</td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
       </div>
     </section>
   );

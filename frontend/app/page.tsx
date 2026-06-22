@@ -100,16 +100,8 @@ export default function LoginPage() {
           </button>
         </form>
 
-        <div className="mt-6 text-center text-slate-400 text-sm">
-          No account?{" "}
-          <button
-            onClick={() =>
-              router.push("/register")
-            }
-            className="text-white underline"
-          >
-            Register
-          </button>
+        <div className="mt-6 text-center text-slate-500 text-xs">
+          Accounts are created by your administrator.
         </div>
       </div>
     </main>

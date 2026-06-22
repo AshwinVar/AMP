@@ -33,6 +33,7 @@ export const NAV_ITEMS: NavItem[] = [
   { key: "notifications",  label: "Notifications",      icon: "●", module: "intelligence" },
   { key: "documents",      label: "Documents",          icon: "▱", module: "admin" },
   { key: "saas",           label: "SaaS Admin",         icon: "◌", module: "admin" },
+  { key: "users",          label: "User Management",    icon: "◔", module: "admin" },
   { key: "costing",        label: "Costing",            icon: "£", module: "admin" },
   { key: "enterprise",     label: "Enterprise Polish",  icon: "◆", module: "admin" },
 ];

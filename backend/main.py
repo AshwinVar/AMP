@@ -124,6 +124,13 @@ async def startup_event():
             db.add(models.User(username="gmats", password=hash_password("gmats@2026"), role="Supervisor", tenant_code="GMATS"))
             db.commit()
             print("[SEED] GMATS client login (gmats / gmats@2026)")
+        # Seed a GMATS Admin from env (password never hardcoded — set GMATS_ADMIN_PASSWORD in Railway).
+        gmats_admin_user = os.environ.get("GMATS_ADMIN_USERNAME", "gmats_admin")
+        gmats_admin_pw = os.environ.get("GMATS_ADMIN_PASSWORD")
+        if gmats_admin_pw and not db.query(models.User).filter(models.User.username == gmats_admin_user).first():
+            db.add(models.User(username=gmats_admin_user, password=hash_password(gmats_admin_pw), role="Admin", tenant_code="GMATS"))
+            db.commit()
+            print(f"[SEED] GMATS Admin '{gmats_admin_user}' created from GMATS_ADMIN_PASSWORD env")
         db.close()
     except Exception as e:
         print(f"[GMATS SEED ERROR] {e}")

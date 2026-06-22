@@ -63,7 +63,8 @@ async def _simulation_loop():
             db = SessionLocal()
             tick_work_order_progress(db)
             tick_iot(db)
-            tick_inventory(db)
+            if random.random() < 0.15:
+                tick_inventory(db)
             if random.random() < 0.5:
                 tick_quality(db)
             if random.random() < 0.4:

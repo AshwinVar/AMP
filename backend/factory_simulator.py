@@ -806,7 +806,12 @@ def tick_iot(db):
 
 
 def tick_inventory(db):
-    """Consume raw material inventory for production."""
+    """Consume raw material inventory for production — capped at 120 auto transactions."""
+    count = db.query(models.InventoryTransaction).filter(
+        models.InventoryTransaction.notes == "Auto-issued by simulator"
+    ).count()
+    if count >= 120:
+        return
     items = db.query(models.InventoryItem).filter(
         models.InventoryItem.category == "Raw Material",
         models.InventoryItem.current_stock > 20,
@@ -815,7 +820,6 @@ def tick_inventory(db):
         return
     item = random.choice(items)
     qty  = random.randint(5, 25)
-    count = db.query(models.InventoryTransaction).count()
     db.add(models.InventoryTransaction(
         item_id=item.id, transaction_type="Issue",
         quantity=qty, reference="Production",

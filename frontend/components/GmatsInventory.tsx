@@ -31,15 +31,16 @@ interface MIN {
 }
 
 // Seller details printed on the tax-invoice PDF.
-// TODO: replace the placeholders below with GMATS's real legal details + logo.
 const COMPANY = {
-  name: "GMATS Machineries India Pvt Ltd",
-  address: "Plot No. 00, Industrial Estate, Coimbatore, Tamil Nadu 641021",
-  cin: "U29120TZ20XXPTC0XXXXX",
-  gstin: "33XXXXX0000X1Z5",
-  phone: "+91 90000 00000",
-  email: "sales@gmats.in",
-  logoUrl: "", // optional: paste a logo image URL to show it on the invoice
+  name: "GMATS MACHINERIES INDIA PRIVATE LIMITED",
+  address: "No.01, Old Survey No.08/1C, Floors 1-3, Near Nadakerappa Industrial Area, Sri Veerabhadreshwara Nagar, Hegganahalli Main Road, Bengaluru, Karnataka 560091",
+  cin: "U29297KA2020PTC139267",
+  gstin: "29AAFCI8335Q1ZQ",
+  phone: "+91 80888 88405",
+  email: "info@gmats.in · sales@gmats.in",
+  // Leave blank to use the built-in branded wordmark. To use your exact logo,
+  // drop the file at frontend/public/gmats-logo.png and set this to "/gmats-logo.png".
+  logoUrl: "",
 };
 
 const TABS = ["Stock", "Proforma (Reserve)", "Tax Invoice", "Free Spares (MIN)", "Reorder Alerts", "Import"] as const;
@@ -126,9 +127,17 @@ function printInvoice(invoiceNo: string, customer: string, lines: { name: string
   const total = subtotal + cgst + sgst;
   const fmt = (n: number) => "₹" + n.toLocaleString("en-IN");
   const date = new Date().toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" });
-  const logo = COMPANY.logoUrl
-    ? `<img src="${COMPANY.logoUrl}" alt="logo" style="height:54px"/>`
-    : `<div style="height:54px;width:54px;border-radius:10px;background:#1e293b;color:#fff;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:20px">GM</div>`;
+  const logoSrc = COMPANY.logoUrl
+    ? (COMPANY.logoUrl.startsWith("http") ? COMPANY.logoUrl : window.location.origin + COMPANY.logoUrl)
+    : "";
+  const logo = logoSrc
+    ? `<img src="${logoSrc}" alt="logo" style="height:60px"/>`
+    : `<div style="line-height:1">
+         <div style="font-size:30px;font-weight:800;letter-spacing:-1px;font-family:Arial,Helvetica,sans-serif">
+           <span style="color:#111">GMAT</span><span style="color:#e11d2a">S</span><span style="font-size:11px;vertical-align:super;color:#111">&reg;</span>
+         </div>
+         <div style="font-family:'Brush Script MT','Segoe Script',cursive;font-style:italic;color:#e11d2a;font-size:17px;text-align:right;margin-top:-3px">Best Choice</div>
+       </div>`;
 
   const lineRows = rows
     .map(

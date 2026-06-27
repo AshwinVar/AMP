@@ -517,7 +517,7 @@ export default function DashboardPage() {
   function logout() {
     localStorage.clear();
     sessionStorage.clear();
-    window.location.href = "/";
+    window.location.href = "/login";
   }
 
   async function fetchAll() {
@@ -720,7 +720,7 @@ export default function DashboardPage() {
 
   useEffect(() => {
     if (!getToken()) {
-      window.location.href = "/";
+      window.location.href = "/login";
       return;
     }
 

@@ -215,7 +215,15 @@ function printInvoice(invoiceNo: string, customer: string, lines: { name: string
   w.document.write(html);
   w.document.close();
   w.focus();
-  setTimeout(() => w.print(), 400);
+  const triggerPrint = () => { try { w.print(); } catch {} };
+  const img = w.document.querySelector("img") as HTMLImageElement | null;
+  if (img && !img.complete) {
+    img.addEventListener("load", triggerPrint);
+    img.addEventListener("error", triggerPrint);
+    setTimeout(triggerPrint, 2000); // fallback if the image stalls
+  } else {
+    setTimeout(triggerPrint, 300);
+  }
 }
 
 // ── Stock tab ─────────────────────────────────────────────────────

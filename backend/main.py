@@ -22,7 +22,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy.exc import IntegrityError
 
 from database import engine, SessionLocal, Base
-from security import hash_password, verify_password
+from security import hash_password, verify_password, needs_rehash
 from auth import create_access_token, get_current_user, require_roles
 from live_ws import manager
 from mqtt_service import start_mqtt_service
@@ -60,6 +60,16 @@ def _ensure_user_tenant_column():
 
 
 _ensure_user_tenant_column()
+
+# Optional error monitoring — active only when SENTRY_DSN is set in the env.
+_SENTRY_DSN = os.environ.get("SENTRY_DSN")
+if _SENTRY_DSN:
+    try:
+        import sentry_sdk
+        sentry_sdk.init(dsn=_SENTRY_DSN, traces_sample_rate=0.1, environment=os.environ.get("ENV", "production"))
+        print("[sentry] error monitoring enabled")
+    except Exception as e:
+        print(f"[sentry] init skipped: {e}")
 
 app = FastAPI(title="FlowMES API")
 
@@ -144,9 +154,19 @@ async def startup_event():
         print(f"[GMATS SEED ERROR] {e}")
 
 
+# Locked-down CORS. Production origins come from ALLOWED_ORIGINS (comma-separated);
+# the regex keeps Vercel preview deploys working. Add a custom domain by setting
+# ALLOWED_ORIGINS in the Railway env.
+ALLOWED_ORIGINS = [
+    o.strip()
+    for o in os.environ.get("ALLOWED_ORIGINS", "https://flow-mes.vercel.app").split(",")
+    if o.strip()
+]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=ALLOWED_ORIGINS,
+    allow_origin_regex=r"https://flow-[a-z0-9-]+-ashwinvars-projects\.vercel\.app|http://localhost:3000|http://127\.0\.0\.1:3000",
     allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -342,13 +362,16 @@ def login(user: schemas.UserLogin, db: Session = Depends(get_db)):
     if not db_user:
         raise HTTPException(status_code=401, detail="Invalid username")
 
-    try:
-        password_ok = verify_password(user.password, db_user.password)
-    except Exception:
-        password_ok = user.password == db_user.password
-
-    if not password_ok:
+    if not verify_password(user.password, db_user.password):
         raise HTTPException(status_code=401, detail="Invalid password")
+
+    # Transparently upgrade legacy SHA-256 hashes to bcrypt on successful login.
+    if needs_rehash(db_user.password):
+        try:
+            db_user.password = hash_password(user.password)
+            db.commit()
+        except Exception:
+            db.rollback()
 
     tenant = getattr(db_user, "tenant_code", None) or CLIENT_TENANTS.get(db_user.username.lower(), "DEFAULT")
     token = create_access_token(data={"sub": db_user.username, "role": db_user.role, "tenant": tenant})

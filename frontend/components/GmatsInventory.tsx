@@ -40,7 +40,7 @@ const COMPANY = {
   email: "info@gmats.in · sales@gmats.in",
   // Leave blank to use the built-in branded wordmark. To use your exact logo,
   // drop the file at frontend/public/gmats-logo.png and set this to "/gmats-logo.png".
-  logoUrl: "",
+  logoUrl: "/gmats-logo.jpeg",
 };
 
 const TABS = ["Stock", "Proforma (Reserve)", "Tax Invoice", "Free Spares (MIN)", "Reorder Alerts", "Import"] as const;

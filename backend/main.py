@@ -41,6 +41,7 @@ import enterprise_inventory_routes
 import gmats_inventory_routes
 import platform_routes
 from platform_routes import log_audit
+import ai_copilot
 
 
 Base.metadata.create_all(bind=engine)
@@ -86,6 +87,9 @@ gmats_inventory_routes.register(app)
 # Register the platform layer: per-tenant licensing/feature-flags, white-label
 # branding, audit log and health check.
 platform_routes.register(app)
+
+# Register the AI Factory Copilot (off until ANTHROPIC_API_KEY is set).
+ai_copilot.register(app)
 
 
 async def _simulation_loop():

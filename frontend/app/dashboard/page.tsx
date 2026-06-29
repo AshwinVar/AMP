@@ -23,6 +23,7 @@ import InventorySection from "../../components/InventorySection";
 import EnterpriseInventory from "../../components/EnterpriseInventory";
 import GmatsInventory from "../../components/GmatsInventory";
 import UsersSection from "../../components/UsersSection";
+import AICopilot from "../../components/AICopilot";
 import type { User } from "../../lib/types";
 import QualitySection from "../../components/QualitySection";
 import ExecutiveOeeSection from "../../components/ExecutiveOeeSection";
@@ -2336,6 +2337,10 @@ export default function DashboardPage() {
             <p className="text-slate-400">Only an Admin can add or manage employees.</p>
           </section>
         )
+      ))}
+
+      {renderSection("copilot", (
+        <AICopilot />
       ))}
 
       {renderSection("quality", (

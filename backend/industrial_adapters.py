@@ -49,10 +49,11 @@ _PROTOCOL_BY_KEY = {p["key"]: p for p in PROTOCOLS}
 
 
 def protocol_for(device) -> str:
-    """Map a stored device.protocol string to a known protocol key (default modbus)."""
-    p = (device.protocol or "").lower()
+    """Map a stored device.protocol string to a known protocol key (default modbus).
+    Normalise away spaces/hyphens so "OPC UA" -> "opcua", "Modbus TCP" -> "modbus"."""
+    p = (device.protocol or "").lower().replace(" ", "").replace("-", "")
     for key in _SIGNAL_TEMPLATES:
-        if key in p or p in key:
+        if key in p:
             return key
     if "siemens" in p:
         return "s7"

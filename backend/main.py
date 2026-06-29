@@ -39,6 +39,8 @@ import models
 import schemas
 import enterprise_inventory_routes
 import gmats_inventory_routes
+import platform_routes
+from platform_routes import log_audit
 
 
 Base.metadata.create_all(bind=engine)
@@ -80,6 +82,10 @@ enterprise_inventory_routes.register(app)
 # Register GMATS tenant-scoped enterprise inventory (4-bucket stock, aliases,
 # proforma reservation, tax-invoice deduction, free-spares material issue note).
 gmats_inventory_routes.register(app)
+
+# Register the platform layer: per-tenant licensing/feature-flags, white-label
+# branding, audit log and health check.
+platform_routes.register(app)
 
 
 async def _simulation_loop():
@@ -138,6 +144,8 @@ async def startup_event():
         from factory_simulator import _production_records, _machine_events
         _production_records(db)
         _machine_events(db)
+        # Seed per-tenant config (licensing + branding) for DEFAULT and GMATS.
+        platform_routes.seed_tenant_configs(db)
         # Seed a dedicated GMATS client login (Supervisor — full access to GMATS inventory)
         if not db.query(models.User).filter(models.User.username == "gmats").first():
             db.add(models.User(username="gmats", password=hash_password("gmats@2026"), role="Supervisor", tenant_code="GMATS"))
@@ -355,6 +363,7 @@ def create_employee(
         db.add(new_user)
         db.commit()
         db.refresh(new_user)
+        log_audit(db, current_user.get("sub"), "create_employee", "user", new_user.id, f"{user.username} ({user.role}) in {tenant}")
         return new_user
     except IntegrityError as e:
         db.rollback()
@@ -383,6 +392,7 @@ def login(user: schemas.UserLogin, db: Session = Depends(get_db)):
             db.rollback()
 
     tenant = getattr(db_user, "tenant_code", None) or CLIENT_TENANTS.get(db_user.username.lower(), "DEFAULT")
+    log_audit(db, db_user.username, "login", "user", db_user.id, f"tenant={tenant}")
     token = create_access_token(data={"sub": db_user.username, "role": db_user.role, "tenant": tenant})
 
     return {
@@ -451,8 +461,10 @@ def delete_user(
     if user.username == current_user.get("sub"):
         raise HTTPException(status_code=400, detail="You cannot delete your own account")
 
+    deleted_name = user.username
     db.delete(user)
     db.commit()
+    log_audit(db, current_user.get("sub"), "delete_user", "user", user_id, deleted_name)
 
     return {"message": "User deleted successfully"}
 

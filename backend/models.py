@@ -338,6 +338,25 @@ class AIRecommendation(Base):
 
 
 
+class TenantConfig(Base):
+    """Per-tenant licensing, feature flags and white-label branding.
+    Keyed by tenant_code (the same identity used across users and GMATS inventory).
+    One row drives: which module packs a company can see (licensing/feature flags),
+    its branding (white-label), and its subscription/trial state (billing)."""
+    __tablename__ = "tenant_configs"
+
+    id = Column(Integer, primary_key=True, index=True)
+    tenant_code = Column(String, unique=True, index=True, nullable=False)
+    plan = Column(String, default="enterprise")                 # starter / growth / enterprise / demo
+    enabled_modules = Column(String, default="core,operations,factory,intelligence,admin")  # CSV of module keys
+    brand_name = Column(String, default="FlowMES")
+    brand_color = Column(String, default="#6366f1")
+    brand_logo_url = Column(String, nullable=True)
+    subscription_status = Column(String, default="trial")       # trial / active / past_due / cancelled
+    trial_ends_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
 class CompanyTenant(Base):
     __tablename__ = "company_tenants"
 

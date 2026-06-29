@@ -9,4 +9,3 @@ websockets==16.0
 bcrypt==4.2.1
 python-multipart==0.0.28
 sentry-sdk[fastapi]>=2.0,<3.0
-anthropic>=0.40,<1.0

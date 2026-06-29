@@ -12,6 +12,8 @@ grounded in the company's real machines, downtime, OEE, shifts and inventory.
     4. Redeploy. That's it — the copilot detects the key and switches on.
 
 No code change is needed to connect; the key lives only in the environment.
+Calls the Anthropic Messages REST API via the standard library (no SDK
+dependency), so adding the copilot never affects the deploy build.
 """
 import os
 
@@ -80,18 +82,36 @@ def _build_factory_context(db: Session, tenant: str) -> str:
 
 
 def _ask_claude(system: str, user: str) -> str:
-    """Single call to Claude via the official Anthropic SDK (imported lazily so the
-    app runs fine even when the package/key are absent)."""
-    import anthropic
+    """Single call to the Anthropic Messages REST API using only the standard
+    library — no SDK dependency, so deploys never break on it."""
+    import json
+    import urllib.error
+    import urllib.request
 
-    client = anthropic.Anthropic()  # reads ANTHROPIC_API_KEY from the environment
-    resp = client.messages.create(
-        model=AI_MODEL,
-        max_tokens=1500,
-        system=system,
-        messages=[{"role": "user", "content": user}],
+    body = json.dumps({
+        "model": AI_MODEL,
+        "max_tokens": 1500,
+        "system": system,
+        "messages": [{"role": "user", "content": user}],
+    }).encode("utf-8")
+    req = urllib.request.Request(
+        "https://api.anthropic.com/v1/messages",
+        data=body,
+        headers={
+            "x-api-key": os.environ.get("ANTHROPIC_API_KEY", ""),
+            "anthropic-version": "2023-06-01",
+            "content-type": "application/json",
+        },
+        method="POST",
     )
-    return "".join(block.text for block in resp.content if block.type == "text").strip()
+    try:
+        with urllib.request.urlopen(req, timeout=60) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+    except urllib.error.HTTPError as e:
+        detail = e.read().decode("utf-8", "ignore")
+        raise RuntimeError(f"Anthropic API {e.code}: {detail[:300]}")
+    parts = [b.get("text", "") for b in data.get("content", []) if b.get("type") == "text"]
+    return "".join(parts).strip()
 
 
 def register(app):

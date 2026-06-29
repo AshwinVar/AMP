@@ -92,6 +92,8 @@ async def _simulation_loop():
         tick_operator,
         tick_iot,
         tick_inventory,
+        tick_production,
+        tick_machine_status,
         MACHINES,
     )
     await asyncio.sleep(10)  # let the server fully start first
@@ -100,6 +102,9 @@ async def _simulation_loop():
             db = SessionLocal()
             tick_work_order_progress(db)
             tick_iot(db)
+            tick_production(db)              # keep OEE trends live
+            if random.random() < 0.2:
+                tick_machine_status(db)      # occasional status change -> timeline event
             if random.random() < 0.15:
                 tick_inventory(db)
             if random.random() < 0.5:
@@ -129,6 +134,10 @@ async def startup_event():
     try:
         db = SessionLocal()
         gmats_inventory_routes.seed_gmats(db)
+        # Core MES: ensure OEE + timeline have data (production records & machine events).
+        from factory_simulator import _production_records, _machine_events
+        _production_records(db)
+        _machine_events(db)
         # Seed a dedicated GMATS client login (Supervisor — full access to GMATS inventory)
         if not db.query(models.User).filter(models.User.username == "gmats").first():
             db.add(models.User(username="gmats", password=hash_password("gmats@2026"), role="Supervisor", tenant_code="GMATS"))

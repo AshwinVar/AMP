@@ -657,6 +657,93 @@ def _tenant(db):
     print("[SEED] Demo Tenant")
 
 
+def _production_records(db):
+    """Seed realistic per-machine production records so OEE (availability x
+    performance x quality) can be computed. Without these OEE shows 0%."""
+    if db.query(models.ProductionRecord).count() > 0:
+        return
+    machines = db.query(models.Machine).all()
+    for machine in machines:
+        for _ in range(3):
+            runtime = random.randint(400, 465)             # of a 480-min planned shift
+            ideal_cycle = random.randint(25, 40)            # seconds per part
+            total = int((runtime * 60 / ideal_cycle) * random.uniform(0.85, 0.97))
+            rejected = int(total * random.uniform(0.01, 0.06))
+            db.add(models.ProductionRecord(
+                machine_id=machine.id,
+                planned_minutes=480,
+                runtime_minutes=runtime,
+                ideal_cycle_time_seconds=ideal_cycle,
+                total_count=total,
+                good_count=total - rejected,
+                rejected_count=rejected,
+            ))
+    db.commit()
+    print("[SEED] Production Records")
+
+
+def _machine_events(db):
+    """Seed a few historical status-change events so the machine timeline isn't empty."""
+    if db.query(models.MachineEvent).count() > 0:
+        return
+    machines = db.query(models.Machine).all()
+    transitions = [
+        ("Idle", "Running"), ("Running", "Idle"), ("Running", "Breakdown"),
+        ("Breakdown", "Running"), ("Running", "Maintenance"), ("Maintenance", "Running"),
+    ]
+    for machine in machines:
+        for old, new in random.sample(transitions, 3):
+            db.add(models.MachineEvent(
+                machine_id=machine.id, machine_name=machine.name,
+                old_status=old, new_status=new,
+                utilization=machine.utilization, source="simulator",
+            ))
+    db.commit()
+    print("[SEED] Machine Events")
+
+
+def tick_production(db):
+    """Add a fresh production record for a running machine — keeps OEE trends live."""
+    machines = db.query(models.Machine).filter(models.Machine.status == "Running").all()
+    if not machines:
+        return
+    machine = random.choice(machines)
+    runtime = random.randint(400, 465)
+    ideal_cycle = random.randint(25, 40)
+    total = int((runtime * 60 / ideal_cycle) * random.uniform(0.85, 0.97))
+    rejected = int(total * random.uniform(0.01, 0.06))
+    db.add(models.ProductionRecord(
+        machine_id=machine.id, planned_minutes=480, runtime_minutes=runtime,
+        ideal_cycle_time_seconds=ideal_cycle, total_count=total,
+        good_count=total - rejected, rejected_count=rejected,
+    ))
+    db.commit()
+    print(f"  Production record added for {machine.name}")
+
+
+def tick_machine_status(db):
+    """Occasionally flip a machine's status and log the event — keeps the timeline live."""
+    machines = db.query(models.Machine).all()
+    if not machines:
+        return
+    machine = random.choice(machines)
+    old = machine.status
+    new = random.choices(
+        ["Running", "Idle", "Maintenance", "Breakdown"], weights=[70, 15, 10, 5]
+    )[0]
+    if new == old:
+        return
+    machine.status = new
+    machine.utilization = random.randint(55, 95) if new == "Running" else 0
+    db.add(models.MachineEvent(
+        machine_id=machine.id, machine_name=machine.name,
+        old_status=old, new_status=new,
+        utilization=machine.utilization, source="simulator",
+    ))
+    db.commit()
+    print(f"  {machine.name}: {old} -> {new}")
+
+
 def seed_all(db):
     print("\n=== FlowMES Factory Simulator — Initial Seed ===\n")
     _machines(db)
@@ -675,6 +762,8 @@ def seed_all(db):
     _operator_jobs(db)
     _costs(db)
     _downtime_logs(db)
+    _production_records(db)
+    _machine_events(db)
     _escalations(db)
     _iot(db)
     _ai_recs(db)

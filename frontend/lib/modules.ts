@@ -27,6 +27,7 @@ export const NAV_ITEMS: NavItem[] = [
   { key: "purchasing",     label: "Purchasing",         icon: "◈", module: "factory" },
   { key: "digitaltwin",    label: "Digital Twin",       icon: "◎", module: "factory" },
   { key: "iot",            label: "IoT Command",        icon: "◉", module: "intelligence" },
+  { key: "connectivity",   label: "Connectivity",       icon: "⇄", module: "intelligence" },
   { key: "ai",             label: "AI Insights",        icon: "✦", module: "intelligence" },
   { key: "copilot",        label: "AI Copilot",         icon: "✸", module: "intelligence" },
   { key: "executive",      label: "Executive OEE",      icon: "▰", module: "intelligence" },

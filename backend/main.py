@@ -42,6 +42,7 @@ import gmats_inventory_routes
 import platform_routes
 from platform_routes import log_audit
 import ai_copilot
+import industrial_adapters
 
 
 Base.metadata.create_all(bind=engine)
@@ -91,6 +92,10 @@ platform_routes.register(app)
 # Register the AI Factory Copilot (off until ANTHROPIC_API_KEY is set).
 ai_copilot.register(app)
 
+# Register the industrial connectivity adapter framework (OPC UA, Modbus, S7,
+# Allen-Bradley, Beckhoff, Omron) — GET /industrial/protocols.
+industrial_adapters.register(app)
+
 
 async def _simulation_loop():
     """Background task: runs factory simulation ticks every 45 seconds."""
@@ -112,6 +117,7 @@ async def _simulation_loop():
             db = SessionLocal()
             tick_work_order_progress(db)
             tick_iot(db)
+            industrial_adapters.tick_industrial(db)   # poll PLCs -> live signals
             tick_production(db)              # keep OEE trends live
             if random.random() < 0.2:
                 tick_machine_status(db)      # occasional status change -> timeline event
@@ -150,6 +156,8 @@ async def startup_event():
         _machine_events(db)
         # Seed per-tenant config (licensing + branding) for DEFAULT and GMATS.
         platform_routes.seed_tenant_configs(db)
+        # Seed one demo PLC per industrial protocol.
+        industrial_adapters.seed_industrial(db)
         # Seed a dedicated GMATS client login (Supervisor — full access to GMATS inventory)
         if not db.query(models.User).filter(models.User.username == "gmats").first():
             db.add(models.User(username="gmats", password=hash_password("gmats@2026"), role="Supervisor", tenant_code="GMATS"))

@@ -1,0 +1,31 @@
+# Local development stack: Postgres + the FlowMES backend.
+# Usage:  docker compose up --build
+# Then point the frontend at http://localhost:8080 via NEXT_PUBLIC_API_URL.
+version: "3.9"
+
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: flowmes
+      POSTGRES_PASSWORD: flowmes
+      POSTGRES_DB: flowmes
+    ports:
+      - "5432:5432"
+    volumes:
+      - flowmes_pgdata:/var/lib/postgresql/data
+
+  backend:
+    build: ./backend
+    environment:
+      DATABASE_URL: postgresql://flowmes:flowmes@db:5432/flowmes
+      SECRET_KEY: local-dev-secret-change-me
+      ALLOWED_ORIGINS: http://localhost:3000
+      PORT: "8080"
+    ports:
+      - "8080:8080"
+    depends_on:
+      - db
+
+volumes:
+  flowmes_pgdata:

@@ -512,7 +512,22 @@ export default function DashboardPage() {
     await apiPatch(`/users/${id}/password`, { password });
   }
 
-  const enabledModules = getEnabledModules(plan);
+  // Per-tenant licensing + branding fetched from the platform layer.
+  const [tenantCfg, setTenantCfg] = useState<{ enabled_modules: string[]; brand_name: string; brand_color: string } | null>(null);
+  useEffect(() => {
+    apiGet<{ enabled_modules: string[]; brand_name: string; brand_color: string }>("/tenant-config")
+      .then(setTenantCfg)
+      .catch(() => {});
+  }, []);
+
+  // Effective modules come from the tenant's licence; core + admin are always
+  // available so no one is locked out of basics or account management.
+  const enabledModules = (
+    tenantCfg
+      ? Array.from(new Set([...tenantCfg.enabled_modules, "core", "admin"]))
+      : getEnabledModules(plan)
+  ) as ReturnType<typeof getEnabledModules>;
+  const brandName = tenantCfg?.brand_name || "FlowMES";
 
   function logout() {
     localStorage.clear();
@@ -1721,8 +1736,8 @@ export default function DashboardPage() {
   <div className="phase29-brand">
     <div className="phase29-brand-mark">⌁</div>
     <div>
-      <div className="phase29-brand-title">FlowMES</div>
-      <div className="phase29-brand-subtitle">Enterprise MES MVP</div>
+      <div className="phase29-brand-title">{brandName}</div>
+      <div className="phase29-brand-subtitle">Manufacturing Execution System</div>
     </div>
   </div>
 

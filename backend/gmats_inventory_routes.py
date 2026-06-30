@@ -408,8 +408,10 @@ def register(app):
             item = db.query(models.GmatsItem).filter(models.GmatsItem.id == l.item_id).first()
             if item:
                 item.physical_stock += l.qty                # restore the issued spares
-            db.delete(l)
-        db.delete(m)
+        db.flush()
+        # Delete children before the parent explicitly (no relationship() to order the flush).
+        db.query(models.GmatsMINLine).filter(models.GmatsMINLine.min_id == min_id).delete(synchronize_session=False)
+        db.query(models.GmatsMIN).filter(models.GmatsMIN.id == min_id).delete(synchronize_session=False)
         db.commit()
         return {"ok": True}
 

@@ -106,3 +106,29 @@ export function isViewEnabled(viewKey: string, enabledModules: ModuleKey[]): boo
 export function getViewModule(viewKey: string): ModuleKey {
   return NAV_ITEMS.find((n) => n.key === viewKey)?.module ?? "core";
 }
+
+// ── Role-based view access ────────────────────────────────────────
+// Plans gate by feature pack (above); roles gate by who's logged in.
+// Admin sees everything (except cross-tenant founder-only views); a
+// Supervisor manages the floor but not account/owner administration; an
+// Operator only gets the shop-floor execution screens they work in.
+
+// The shop-floor screens an Operator is allowed to open.
+export const OPERATOR_VIEWS = new Set<string>([
+  "overview", "machines", "downtime", "workorders",
+  "operator", "quality", "cmms", "inventory", "notifications",
+]);
+
+// Owner/account administration — hidden from Supervisors.
+export const ADMIN_ONLY_VIEWS = new Set<string>(["users", "saas", "enterprise"]);
+
+// Cross-tenant SaaS administration — only the internal founder (DEFAULT
+// tenant) may manage other companies, even a client's own Admin cannot.
+export const FOUNDER_ONLY_VIEWS = new Set<string>(["saas"]);
+
+export function canRoleSeeView(viewKey: string, role: string, isFounder: boolean): boolean {
+  if (FOUNDER_ONLY_VIEWS.has(viewKey) && !isFounder) return false;
+  if (role === "Operator") return OPERATOR_VIEWS.has(viewKey);
+  if (role === "Supervisor") return !ADMIN_ONLY_VIEWS.has(viewKey);
+  return true; // Admin (and the founder super-admin)
+}

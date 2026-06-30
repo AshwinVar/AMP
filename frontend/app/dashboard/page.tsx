@@ -71,6 +71,7 @@ import {
   getEnabledModules,
   isViewEnabled,
   getViewModule,
+  canRoleSeeView,
   type PlanName,
 } from "../../lib/modules";
 import LockedModuleView from "../../components/LockedModuleView";
@@ -124,6 +125,17 @@ function getUserTenant(): string {
     return payload.tenant || "DEFAULT";
   } catch {
     return "DEFAULT";
+  }
+}
+
+function getUserName(): string {
+  const token = getToken();
+  if (!token) return "";
+  try {
+    const payload = JSON.parse(atob(token.split(".")[1]));
+    return payload.sub || "";
+  } catch {
+    return "";
   }
 }
 
@@ -442,8 +454,10 @@ export default function DashboardPage() {
   const homeTenant = getUserTenant();          // the tenant baked into the login token
   const isFounder = homeTenant === "DEFAULT";  // only the internal/founder account may switch companies
   const [company, setCompany] = useState(homeTenant);
-  const isAdmin = getUserRole() === "Admin";
-  const isSupervisor = getUserRole() === "Supervisor";
+  const role = getUserRole();
+  const userName = getUserName();
+  const isAdmin = role === "Admin";
+  const isSupervisor = role === "Supervisor";
   const isAdminOrSupervisor = isAdmin || isSupervisor;
 
   useEffect(() => {
@@ -1725,6 +1739,18 @@ export default function DashboardPage() {
 
   function renderSection(viewKey: string, node: React.ReactNode) {
     if (activeView !== viewKey) return null;
+    if (!canRoleSeeView(viewKey, role, isFounder)) {
+      return (
+        <div className="rounded-2xl border border-slate-800 bg-slate-900/60 p-10 text-center">
+          <div className="text-3xl mb-3">🔒</div>
+          <h2 className="text-lg font-semibold text-white">Restricted</h2>
+          <p className="text-slate-400 mt-1 text-sm">
+            Your role ({role || "Operator"}) doesn&apos;t have access to this section.
+            Contact an administrator if you need it.
+          </p>
+        </div>
+      );
+    }
     if (!isViewEnabled(viewKey, enabledModules)) {
       return <LockedModuleView moduleKey={getViewModule(viewKey)} />;
     }
@@ -1745,7 +1771,10 @@ export default function DashboardPage() {
 
   <nav className="phase29-nav">
     {MODULE_CATALOG.map((mod) => {
-      const items = NAV_ITEMS.filter((n) => n.module === mod.key);
+      const items = NAV_ITEMS.filter(
+        (n) => n.module === mod.key && canRoleSeeView(n.key, role, isFounder)
+      );
+      if (items.length === 0) return null;   // hide groups with nothing for this role
       const unlocked = enabledModules.includes(mod.key);
       return (
         <div key={mod.key} className="phase29-nav-group">
@@ -1774,7 +1803,7 @@ export default function DashboardPage() {
 
 <header className="phase29-topbar">
   <div>
-    <p className="phase29-eyebrow">Welcome back, Mr.Ash</p>
+    <p className="phase29-eyebrow">Welcome back, {userName || "there"}</p>
     <h1>{activeLabel}</h1>
   </div>
   <div className="phase29-topbar-actions">
@@ -1788,8 +1817,10 @@ export default function DashboardPage() {
           setSearchQuery(q);
           setSearchResults(
             q.trim().length > 0
-              ? NAV_ITEMS.filter((n) =>
-                  n.label.toLowerCase().includes(q.toLowerCase())
+              ? NAV_ITEMS.filter(
+                  (n) =>
+                    n.label.toLowerCase().includes(q.toLowerCase()) &&
+                    canRoleSeeView(n.key, role, isFounder)
                 )
               : []
           );
@@ -1841,7 +1872,7 @@ export default function DashboardPage() {
         {company === "GMATS" ? "GMATS Compressors" : company}
       </div>
     )}
-    <div className="phase29-user">Ashwin · Admin</div>
+    <div className="phase29-user">{userName || "User"} · {role || "—"}</div>
     <button
       onClick={logout}
       className="phase29-pill"

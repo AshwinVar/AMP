@@ -15,3 +15,9 @@ frontend/.env
 # OS
 .DS_Store
 Thumbs.db
+
+# Python (general: ignore bytecode and virtualenvs anywhere)
+__pycache__/
+*.pyc
+venv/
+.venv/

@@ -42,7 +42,7 @@ Pick one:
 
 ## 5. Custom domain
 
-1. Buy `flowmes.in` (or similar).
+1. Buy `marx8.com` (or similar).
 2. Point it at Vercel (frontend) and add it to the Vercel project domains.
 3. Add the apex/`api.` subdomain for the backend in Railway if you want a branded API.
 4. Add the new origin(s) to `ALLOWED_ORIGINS` in Railway.

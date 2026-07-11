@@ -36,7 +36,7 @@ export default function Sidebar({
     <aside className="hidden md:flex w-72 bg-slate-900 border-r border-slate-800 p-5 flex-col">
       <div className="mb-8">
         <p className="text-xs text-slate-400">MES Lite SaaS MVP</p>
-        <h1 className="text-2xl font-bold mt-1">FlowMES</h1>
+        <h1 className="text-2xl font-bold mt-1">AMP</h1>
         <p className="text-xs text-slate-500 mt-2">Factory command centre</p>
       </div>
 

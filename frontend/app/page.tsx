@@ -4,7 +4,7 @@ const FEATURES = [
   { icon: "▣", title: "Work orders & BOM", body: "Plan and track production. Completing a work order auto-deducts raw material and adds finished goods via the bill of materials." },
   { icon: "✓", title: "Quality & maintenance", body: "Log inspections against work orders and schedule preventive maintenance — full traceability for every batch and machine." },
   { icon: "◔", title: "Roles & multi-company", body: "Admin, Supervisor and Operator access. Each company's data is isolated and enforced on the server, not just hidden." },
-  { icon: "↻", title: "Tally-friendly", body: "Import your existing item master from Tally in seconds. Keep Tally for accounts; FlowMES owns the shop-floor truth." },
+  { icon: "↻", title: "Tally-friendly", body: "Import your existing item master from Tally in seconds. Keep Tally for accounts; AMP owns the shop-floor truth." },
 ];
 
 const PLANS = [
@@ -35,7 +35,7 @@ export default function LandingPage() {
       <header className="max-w-6xl mx-auto px-6 py-5 flex items-center justify-between">
         <div className="flex items-center gap-2">
           <div className="w-9 h-9 rounded-xl bg-white text-slate-950 flex items-center justify-center font-bold">⌁</div>
-          <span className="text-xl font-bold">FlowMES</span>
+          <span className="text-xl font-bold">AMP</span>
         </div>
         <nav className="flex items-center gap-6 text-sm">
           <a href="#features" className="text-slate-300 hover:text-white hidden sm:inline">Features</a>
@@ -51,11 +51,11 @@ export default function LandingPage() {
           Run your factory floor<br />from one live dashboard
         </h1>
         <p className="text-slate-400 text-lg mt-6 max-w-2xl mx-auto">
-          FlowMES gives Indian SME manufacturers real-time machine monitoring, smart inventory, and production tracking —
+          AMP gives Indian SME manufacturers real-time machine monitoring, smart inventory, and production tracking —
           the visibility large plants pay crores for, built for the way you actually work.
         </p>
         <div className="flex flex-col sm:flex-row gap-3 justify-center mt-9">
-          <a href="mailto:hello@flowmes.in?subject=FlowMES%20demo%20request" className="rounded-xl bg-white text-slate-950 font-semibold px-6 py-3 hover:opacity-90">Book a demo</a>
+          <a href="mailto:info@marx8.com?subject=AMP%20demo%20request" className="rounded-xl bg-white text-slate-950 font-semibold px-6 py-3 hover:opacity-90">Book a demo</a>
           <a href="/login" className="rounded-xl border border-slate-700 text-white font-semibold px-6 py-3 hover:bg-slate-900">Sign in</a>
         </div>
         <p className="text-slate-500 text-sm mt-6">No spreadsheets. No WhatsApp updates. No guesswork.</p>
@@ -97,7 +97,7 @@ export default function LandingPage() {
                   </li>
                 ))}
               </ul>
-              <a href={`mailto:hello@flowmes.in?subject=FlowMES%20-%20${p.name}%20plan`} className={`block text-center mt-7 rounded-xl font-semibold px-4 py-3 ${p.highlight ? "bg-white text-slate-950 hover:opacity-90" : "border border-slate-700 text-white hover:bg-slate-800"}`}>
+              <a href={`mailto:info@marx8.com?subject=AMP%20-%20${p.name}%20plan`} className={`block text-center mt-7 rounded-xl font-semibold px-4 py-3 ${p.highlight ? "bg-white text-slate-950 hover:opacity-90" : "border border-slate-700 text-white hover:bg-slate-800"}`}>
                 {p.cta}
               </a>
             </div>
@@ -108,9 +108,9 @@ export default function LandingPage() {
 
       {/* CTA */}
       <section className="max-w-4xl mx-auto px-6 py-20 text-center border-t border-slate-900">
-        <h2 className="text-3xl md:text-4xl font-bold">See FlowMES on your own factory data</h2>
+        <h2 className="text-3xl md:text-4xl font-bold">See AMP on your own factory data</h2>
         <p className="text-slate-400 mt-4">Book a 30-minute demo. We'll import a sample of your items and show you the difference live.</p>
-        <a href="mailto:hello@flowmes.in?subject=FlowMES%20demo%20request" className="inline-block mt-8 rounded-xl bg-white text-slate-950 font-semibold px-7 py-3 hover:opacity-90">Book a demo</a>
+        <a href="mailto:info@marx8.com?subject=AMP%20demo%20request" className="inline-block mt-8 rounded-xl bg-white text-slate-950 font-semibold px-7 py-3 hover:opacity-90">Book a demo</a>
       </section>
 
       {/* Footer */}
@@ -118,7 +118,7 @@ export default function LandingPage() {
         <div className="max-w-6xl mx-auto px-6 py-8 flex flex-col sm:flex-row items-center justify-between gap-4 text-sm text-slate-500">
           <div className="flex items-center gap-2">
             <div className="w-7 h-7 rounded-lg bg-slate-800 flex items-center justify-center">⌁</div>
-            <span>FlowMES — Manufacturing Execution System</span>
+            <span>AMP — Manufacturing Execution System</span>
           </div>
           <div className="flex gap-6">
             <a href="#features" className="hover:text-white">Features</a>

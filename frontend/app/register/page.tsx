@@ -61,7 +61,7 @@ export default function RegisterPage() {
           </h1>
 
           <p className="text-slate-400 mt-2">
-            Register for FlowMES
+            Register for AMP
           </p>
         </div>
 

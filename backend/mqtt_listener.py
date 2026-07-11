@@ -146,5 +146,5 @@ client.on_message = on_message
 print("CONNECTING TO MQTT BROKER...")
 client.connect(MQTT_BROKER, MQTT_PORT, 60)
 
-print("FLOWMES MQTT LISTENER RUNNING...")
+print("AMP MQTT LISTENER RUNNING...")
 client.loop_forever()

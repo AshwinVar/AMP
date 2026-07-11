@@ -1124,7 +1124,7 @@ def export_intelligence_summary(db: Session = Depends(get_db), current_user: dic
     shift_kpis = build_shift_kpis(shifts)
     alerts = build_smart_alerts(machines, production_records, downtime_logs)
     report = build_daily_summary_text(summary, shift_kpis, alerts)
-    return Response(content=report, media_type="text/plain", headers={"Content-Disposition": "attachment; filename=flowmes_intelligence_report.txt"})
+    return Response(content=report, media_type="text/plain", headers={"Content-Disposition": "attachment; filename=amp_intelligence_report.txt"})
 
 
 

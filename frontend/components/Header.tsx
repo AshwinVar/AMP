@@ -14,7 +14,7 @@ export default function Header({
           Factory Operations Command Center
         </p>
         <h2 className="text-4xl font-bold mt-2">
-          FlowMES Dashboard
+          AMP Dashboard
         </h2>
         <p className="text-slate-400 mt-2">
           Real-time downtime, production, OEE, quality, shift performance and alerts.

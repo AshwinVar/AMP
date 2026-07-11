@@ -37,7 +37,7 @@ export function connectLiveSocket(
   const socket = new WebSocket(wsUrl);
 
   socket.onopen = () => {
-    console.log("FlowMES WebSocket connected");
+    console.log("AMP WebSocket connected");
     onStatus?.("connected");
   };
 
@@ -58,7 +58,7 @@ export function connectLiveSocket(
 
   socket.onerror = (error) => {
     console.error(
-      "FlowMES WebSocket error",
+      "AMP WebSocket error",
       error
     );
 
@@ -67,7 +67,7 @@ export function connectLiveSocket(
 
   socket.onclose = (event) => {
     console.warn(
-      "FlowMES WebSocket disconnected",
+      "AMP WebSocket disconnected",
       event
     );
 

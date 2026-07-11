@@ -49,7 +49,7 @@ export default function LoginPage() {
     <main className="min-h-screen bg-slate-950 flex items-center justify-center p-6">
       <div className="w-full max-w-md bg-slate-900 border border-slate-800 rounded-3xl p-8 shadow-2xl">
         <div className="mb-8 text-center">
-          <button onClick={() => router.push("/")} className="text-slate-400 text-sm hover:text-white">← FlowMES</button>
+          <button onClick={() => router.push("/")} className="text-slate-400 text-sm hover:text-white">← AMP</button>
           <h1 className="text-4xl font-bold text-white mt-3">Sign in</h1>
           <p className="text-slate-400 mt-2">Manufacturing Execution System</p>
         </div>

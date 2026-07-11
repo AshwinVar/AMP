@@ -25,7 +25,7 @@ body {
   overflow-x: hidden;
 }
 
-.flowmes-shell,
+.amp-shell,
 main {
   min-height: 100vh;
   background: transparent !important;
@@ -272,7 +272,7 @@ main > div:not(:first-child) {
 
 /* Responsive */
 @media (max-width: 1180px) {
-  .flowmes-shell,
+  .amp-shell,
   main {
     padding: 20px !important;
   }

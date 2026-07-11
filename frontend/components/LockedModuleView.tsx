@@ -32,7 +32,7 @@ export default function LockedModuleView({ moduleKey }: { moduleKey: ModuleKey }
           This module is not included in your current plan. Contact us to unlock it for your workspace.
         </p>
         <a
-          href="mailto:sales@flowmes.com"
+          href="mailto:info@marx8.com"
           className="block w-full rounded-xl bg-white text-slate-950 font-semibold py-3 text-sm hover:opacity-90 transition"
         >
           Contact Sales to Unlock

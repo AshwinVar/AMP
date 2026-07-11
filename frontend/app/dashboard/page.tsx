@@ -543,7 +543,7 @@ export default function DashboardPage() {
       ? Array.from(new Set([...tenantCfg.enabled_modules, "core", "admin"]))
       : getEnabledModules(plan)
   ) as ReturnType<typeof getEnabledModules>;
-  const brandName = tenantCfg?.brand_name || "FlowMES";
+  const brandName = tenantCfg?.brand_name || "AMP";
 
   function logout() {
     localStorage.clear();
@@ -1888,7 +1888,7 @@ export default function DashboardPage() {
         <>
       <section className="mb-8">
         <p className="text-sm text-slate-400">MES Lite SaaS MVP</p>
-        <h1 className="text-4xl font-bold mt-2">FlowMES Dashboard</h1>
+        <h1 className="text-4xl font-bold mt-2">AMP Dashboard</h1>
         <p className="text-slate-400 mt-2">
           Real-time machine downtime visibility for SME factories.
         </p>

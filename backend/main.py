@@ -75,7 +75,7 @@ if _SENTRY_DSN:
     except Exception as e:
         print(f"[sentry] init skipped: {e}")
 
-app = FastAPI(title="FlowMES API")
+app = FastAPI(title="AMP API")
 
 # Register enterprise inventory routes at import time (remnants, issue slips,
 # GRN, cycle count, variance report, CSV import).
@@ -317,7 +317,7 @@ def generate_alerts(db: Session):
 
 @app.get("/")
 def root():
-    return {"message": "FlowMES Backend Running"}
+    return {"message": "AMP Backend Running"}
 
 
 @app.get("/me")
@@ -1091,7 +1091,7 @@ def export_oee_csv(db: Session = Depends(get_db), current_user: dict = Depends(r
 def daily_summary_report(db: Session = Depends(get_db), current_user: dict = Depends(require_roles(["Admin", "Supervisor"]))):
     summary = analytics_summary(db, current_user)
     report = f"""
-FlowMES Daily Factory Summary
+AMP Daily Factory Summary
 Generated: {datetime.utcnow().isoformat()} UTC
 
 Machines: {summary["machines"]}
@@ -3590,7 +3590,7 @@ def get_industrial_gateway_analytics(db: Session = Depends(get_db), current_user
 async def websocket_live_dashboard(websocket: WebSocket):
     await manager.connect(websocket)
     try:
-        await websocket.send_json({"event": "connected", "message": "FlowMES live WebSocket connected"})
+        await websocket.send_json({"event": "connected", "message": "AMP live WebSocket connected"})
         while True:
             await asyncio.sleep(30)
             try:

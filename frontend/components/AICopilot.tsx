@@ -65,7 +65,7 @@ export default function AICopilot() {
           <h3 className="text-lg font-semibold mb-3">Connect in 3 steps (~2 minutes)</h3>
           <ol className="space-y-3 text-sm text-slate-300 list-decimal ml-5">
             <li>Create an API key at <span className="text-indigo-300">console.anthropic.com</span> (free trial credits to start).</li>
-            <li>In Railway → your <strong>FlowMES</strong> service → <strong>Variables</strong>, add: <code className="bg-slate-950 border border-slate-700 rounded px-2 py-0.5 text-indigo-300">ANTHROPIC_API_KEY</code> = your key</li>
+            <li>In Railway → your <strong>AMP</strong> service → <strong>Variables</strong>, add: <code className="bg-slate-950 border border-slate-700 rounded px-2 py-0.5 text-indigo-300">ANTHROPIC_API_KEY</code> = your key</li>
             <li>Save — Railway redeploys and the copilot switches on automatically.</li>
           </ol>
           <p className="text-slate-500 text-xs mt-4">

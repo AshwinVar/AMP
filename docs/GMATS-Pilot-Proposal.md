@@ -1,7 +1,7 @@
-# FlowMES — Pilot Proposal for GMATS Machineries India Pvt Ltd
+# AMP — Pilot Proposal for GMATS Machineries India Pvt Ltd
 
 **Prepared for:** GMATS Machineries India Private Limited, Bengaluru
-**Prepared by:** FlowMES
+**Prepared by:** AMP
 **Date:** _<fill in>_
 
 ---
@@ -28,7 +28,7 @@ A live, GMATS-only inventory system that mirrors how your store actually works:
 | **Tally import** | Your existing item master comes in via CSV — no re-typing |
 | **Admin controls** | Admin can correct/void any operator mistake; full audit trail |
 
-Tally stays your system of record for accounting. FlowMES owns the shop-floor truth.
+Tally stays your system of record for accounting. AMP owns the shop-floor truth.
 
 ## 3. Pilot scope & timeline
 
@@ -72,7 +72,7 @@ After a successful pilot, an annual plan at ₹ _<e.g. 15,000–25,000>_/month p
 
 ---
 
-**Agreed for GMATS Machineries India Pvt Ltd**            **Agreed for FlowMES**
+**Agreed for GMATS Machineries India Pvt Ltd**            **Agreed for AMP**
 
 _____________________________                              _____________________________
 Name / Designation / Date                                  Name / Date

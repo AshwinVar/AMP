@@ -69,7 +69,7 @@ export default function IndustrialConnectivity() {
       <div>
         <h2 className="text-3xl font-bold">Industrial Connectivity</h2>
         <p className="text-slate-400 mt-2 text-sm">
-          Connect shop-floor PLCs over their native protocols through FlowMES's adapter layer. Live signals update every few seconds.
+          Connect shop-floor PLCs over their native protocols through AMP's adapter layer. Live signals update every few seconds.
         </p>
       </div>
 

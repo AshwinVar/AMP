@@ -1,10 +1,10 @@
 """
 Industrial connectivity — protocol adapter framework + simulator.
 
-FlowMES talks to shop-floor PLCs through a small adapter layer. Each industrial
+AMP talks to shop-floor PLCs through a small adapter layer. Each industrial
 protocol (OPC UA, Modbus TCP, Siemens S7, Allen-Bradley, Beckhoff, Omron) has an
 adapter that knows how to read tags/registers from that protocol and normalise
-them into FlowMES signals.
+them into AMP signals.
 
 Real drivers run on an on-site edge agent (they need the PLC hardware + the
 vendor library noted in PROTOCOLS below). In the cloud demo we can't reach a
@@ -148,5 +148,5 @@ def tick_industrial(db):
 def register(app):
     @app.get("/industrial/protocols")
     def industrial_protocols():
-        """The supported protocol adapters — the connectivity surface FlowMES speaks."""
+        """The supported protocol adapters — the connectivity surface AMP speaks."""
         return PROTOCOLS

@@ -1,5 +1,5 @@
 """
-FlowMES Factory Simulator
+AMP Factory Simulator
 - Seeds every module with realistic, interconnected factory data on first run
 - Then continuously drives the factory: WOs progress, shifts log, quality checks run,
   operator jobs update, inventory gets consumed, IoT signals flow, escalations fire
@@ -745,7 +745,7 @@ def tick_machine_status(db):
 
 
 def seed_all(db):
-    print("\n=== FlowMES Factory Simulator — Initial Seed ===\n")
+    print("\n=== AMP Factory Simulator — Initial Seed ===\n")
     _machines(db)
     _suppliers(db)
     _inventory(db)

@@ -1,5 +1,5 @@
 """
-Render docs/FlowMES-Complete-Documentation.md into a polished, branded PDF.
+Render docs/AMP-Complete-Documentation.md into a polished, branded PDF.
 
 Pipeline:  Markdown  ->  HTML (python-markdown)  ->  PDF (xhtml2pdf / reportlab)
 
@@ -14,8 +14,8 @@ from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-SRC = os.path.join(HERE, "FlowMES-Complete-Documentation.md")
-OUT = os.path.join(HERE, "FlowMES-Complete-Documentation.pdf")
+SRC = os.path.join(HERE, "AMP-Complete-Documentation.md")
+OUT = os.path.join(HERE, "AMP-Complete-Documentation.pdf")
 
 # ── Fonts ─────────────────────────────────────────────────────────
 # Register Windows Unicode fonts so em-dashes, arrows and box-drawing

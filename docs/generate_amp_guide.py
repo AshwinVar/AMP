@@ -1,4 +1,4 @@
-# Generates "FlowMES_Complete_Guide.pdf" — an end-to-end walkthrough of the
+# Generates "AMP_Complete_Guide.pdf" — an end-to-end walkthrough of the
 # whole product: architecture, where it starts, and every module's functionality
 # plus where its data comes from in a real factory and how to connect it.
 from reportlab.lib.pagesizes import A4
@@ -10,7 +10,7 @@ from reportlab.platypus import (
     SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, HRFlowable, PageBreak,
 )
 
-OUTPUT = "FlowMES_Complete_Guide.pdf"
+OUTPUT = "AMP_Complete_Guide.pdf"
 
 DARK = colors.HexColor("#0f172a")
 ACCENT = colors.HexColor("#4f46e5")
@@ -47,7 +47,7 @@ def module(title, what, source, connect):
 
 # ── Cover ─────────────────────────────────────────────────────────
 story.append(Spacer(1, 5 * cm))
-story.append(Paragraph("FlowMES", cover_t))
+story.append(Paragraph("AMP", cover_t))
 story.append(Spacer(1, 0.3 * cm))
 story.append(Paragraph("Manufacturing Execution System — Complete Walkthrough", cover_s))
 story.append(Spacer(1, 0.2 * cm))
@@ -56,11 +56,11 @@ story.append(Spacer(1, 6 * cm))
 story.append(Paragraph("Live: flow-mes.vercel.app &nbsp;|&nbsp; API: flowmes-production.up.railway.app", cover_m))
 story.append(PageBreak())
 
-# ── 1. What FlowMES is + where it starts ──────────────────────────
-story.append(Paragraph("1. What FlowMES is, and where it starts", h1))
+# ── 1. What AMP is + where it starts ──────────────────────────
+story.append(Paragraph("1. What AMP is, and where it starts", h1))
 hr()
 story.append(Paragraph(
-    "FlowMES is a Manufacturing Execution System (MES) for small and mid-sized manufacturers. It puts the whole factory "
+    "AMP is a Manufacturing Execution System (MES) for small and mid-sized manufacturers. It puts the whole factory "
     "— machines, materials, production, quality, maintenance and live machine data — into one web dashboard the team can "
     "use from any device, replacing spreadsheets, WhatsApp updates and guesswork.", body))
 story.append(Paragraph("The stack", h2))
@@ -83,7 +83,7 @@ story.append(Paragraph("Two kinds of data — this is the key idea", h2))
 story.append(Paragraph(
     "<b>(A) Human / system data</b> — work orders, inventory, quality checks, purchase orders, maintenance. In a real "
     "factory this is entered by people (operators, supervisors, store, QC) or imported from an existing system "
-    "(Tally, an ERP, Excel). FlowMES then keeps it live and connected.", body))
+    "(Tally, an ERP, Excel). AMP then keeps it live and connected.", body))
 story.append(Paragraph(
     "<b>(B) Machine / sensor data</b> — temperature, vibration, RPM, power, run status, part counts. This comes "
     "straight off the machines and their PLCs through a small <b>edge agent</b> on your shop floor (explained in "
@@ -154,7 +154,7 @@ hr()
 module("Maintenance AI",
        "Predictive-maintenance risk scoring per machine, flagging machines likely to need attention.",
        "Computed from each machine's downtime history and vibration/telemetry.",
-       "Derived from the machine and IoT data already in FlowMES.")
+       "Derived from the machine and IoT data already in AMP.")
 module("CMMS",
        "Maintenance management: preventive and breakdown tasks, schedules, spare parts used and downtime per task, building a service history per machine.",
        "The maintenance team.",
@@ -186,19 +186,19 @@ hr()
 module("IoT Command",
        "Live machine telemetry — temperature, vibration, spindle speed, power — refreshed every few seconds, with alerts when a machine runs outside safe limits.",
        "Sensors on the machines.",
-       "An edge device on your network reads the sensors and publishes the readings over MQTT to FlowMES.")
+       "An edge device on your network reads the sensors and publishes the readings over MQTT to AMP.")
 module("AI Insights",
        "Rule-based recommendations (schedule a bearing inspection, change tooling, lubrication overdue) each with a confidence score.",
        "Computed from machine, quality and downtime patterns.",
        "Derived automatically.")
 module("AI Copilot",
        "Ask questions about your factory in plain English ('why is OEE low?', 'what should I reorder?'), get AI root-cause analysis and a one-click daily management report — powered by Claude.",
-       "It reads the live data already in FlowMES; nothing extra to enter.",
+       "It reads the live data already in AMP; nothing extra to enter.",
        "Off by default. To switch on: add ANTHROPIC_API_KEY in Railway (optionally AI_MODEL, default a cheap fast model). That single environment variable is the only step.")
 module("Connectivity",
        "The industrial protocol adapter layer — OPC UA, Modbus TCP, Siemens S7, Allen-Bradley, Beckhoff and Omron — listing connected PLCs and their live signals.",
        "The PLCs that control your machines.",
-       "Run the FlowMES edge agent on a small PC on your shop-floor network. It speaks each PLC's native protocol (using the vendor library), reads the tags/registers, normalises them and pushes them to FlowMES over an outbound connection. See Section 7.")
+       "Run the AMP edge agent on a small PC on your shop-floor network. It speaks each PLC's native protocol (using the vendor library), reads the tags/registers, normalises them and pushes them to AMP over an outbound connection. See Section 7.")
 module("Executive OEE",
        "Management-level OEE dashboards and trends for the plant.",
        "Production records.",
@@ -240,7 +240,7 @@ module("Enterprise Polish",
 story.append(PageBreak())
 
 # ── 7. How machine data physically gets in ────────────────────────
-story.append(Paragraph("7. How real machine data gets into FlowMES", h1))
+story.append(Paragraph("7. How real machine data gets into AMP", h1))
 hr()
 story.append(Paragraph(
     "This is the question every factory asks. The path is the same whether the machine speaks MQTT or a PLC protocol:", body))
@@ -250,7 +250,7 @@ flow = Table([[
     Paragraph("&#8594;", h2),
     Paragraph("<b>Edge agent</b><br/>small PC on your local network", small),
     Paragraph("&#8594;", h2),
-    Paragraph("<b>FlowMES cloud</b><br/>FastAPI + PostgreSQL", small),
+    Paragraph("<b>AMP cloud</b><br/>FastAPI + PostgreSQL", small),
     Paragraph("&#8594;", h2),
     Paragraph("<b>Dashboard</b><br/>live in the browser", small),
 ]], colWidths=[3.3 * cm, 0.8 * cm, 3.6 * cm, 0.8 * cm, 3.3 * cm, 0.8 * cm, 3.0 * cm])
@@ -269,11 +269,11 @@ story.append(Paragraph(
     "A lightweight program on a small industrial PC or Raspberry Pi sitting on your factory's local network. It reads from your "
     "machines two ways: (1) modern machines that already publish data — it subscribes over <b>MQTT</b>; (2) PLC-controlled machines "
     "— it speaks the PLC's protocol directly (OPC UA, Modbus, Siemens S7, Allen-Bradley, Beckhoff, Omron) using that protocol's "
-    "library. It then sends the readings to the FlowMES cloud.", body))
+    "library. It then sends the readings to the AMP cloud.", body))
 story.append(Paragraph('"But our PLCs don\'t allow external connections"', h2))
 story.append(Paragraph(
     "That's exactly why the edge agent exists, and it's the common case. You do <b>not</b> open any port on the PLC to the internet. "
-    "The edge agent talks to the PLC <b>locally</b>, and makes only <b>outbound</b> connections to FlowMES — the same direction your "
+    "The edge agent talks to the PLC <b>locally</b>, and makes only <b>outbound</b> connections to AMP — the same direction your "
     "web browser uses. The PLC never sees external traffic. If a machine has no digital output at all, simple add-on sensors "
     "(temperature, current, vibration) feed the edge agent instead — no change to the machine.", body))
 story.append(Paragraph("Latency and safety", h2))
@@ -293,7 +293,7 @@ story.append(Paragraph(
     "<b>isolated by tenant</b> and enforced on the backend, so one client can never see another's data.", body))
 story.append(Paragraph("Multi-company (white-label SaaS)", h2))
 story.append(Paragraph(
-    "FlowMES is multi-tenant: each customer is a 'company' with its own data, its own logins, its own branding (name, logo, "
+    "AMP is multi-tenant: each customer is a 'company' with its own data, its own logins, its own branding (name, logo, "
     "colour) and its own licensed module packs (Starter / Growth / Enterprise). Onboarding a new client is a checklist — create "
     "the company, pick its plan, import or seed its data, create its admin login — no code change.", body))
 story.append(Paragraph("Where it's deployed", h2))
@@ -309,10 +309,10 @@ story.append(Spacer(1, 8))
 story.append(HRFlowable(width="100%", thickness=0.7, color=LINE))
 story.append(Spacer(1, 4))
 story.append(Paragraph(
-    "FlowMES — one system for machines, materials, production and quality, built for the way Indian SME manufacturers actually work.",
+    "AMP — one system for machines, materials, production and quality, built for the way Indian SME manufacturers actually work.",
     cover_m))
 
 doc = SimpleDocTemplate(OUTPUT, pagesize=A4, rightMargin=1.8 * cm, leftMargin=1.8 * cm, topMargin=1.8 * cm, bottomMargin=1.6 * cm,
-                        title="FlowMES — Complete Guide", author="FlowMES")
+                        title="AMP — Complete Guide", author="AMP")
 doc.build(story)
 print("Wrote", OUTPUT)

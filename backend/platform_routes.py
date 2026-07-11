@@ -1,5 +1,5 @@
 """
-FlowMES platform layer — the SaaS plumbing that sits under every module.
+AMP platform layer — the SaaS plumbing that sits under every module.
 
 This one module delivers several "enterprise platform" capabilities:
   * Licensing / feature flags  -> TenantConfig.enabled_modules + plan
@@ -27,7 +27,7 @@ from database import SessionLocal, engine
 # workspace (everything on); GMATS is the first client (growth plan, own brand).
 _TENANT_DEFAULTS = {
     "DEFAULT": dict(plan="demo",   enabled_modules="core,operations,factory,intelligence,admin",
-                    brand_name="FlowMES",            brand_color="#6366f1"),
+                    brand_name="AMP",            brand_color="#6366f1"),
     "GMATS":   dict(plan="growth", enabled_modules="core,operations,factory",
                     brand_name="GMATS Compressors",  brand_color="#e11d2a"),
 }
@@ -65,7 +65,7 @@ def get_or_create_config(db, tenant_code):
         d = _TENANT_DEFAULTS.get(tenant_code, dict(
             plan="enterprise",
             enabled_modules="core,operations,factory,intelligence,admin",
-            brand_name="FlowMES", brand_color="#6366f1",
+            brand_name="AMP", brand_color="#6366f1",
         ))
         c = models.TenantConfig(
             tenant_code=tenant_code, subscription_status="trial",

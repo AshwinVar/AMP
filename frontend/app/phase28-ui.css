@@ -107,7 +107,7 @@ nav {
 /* Add sidebar brand using CSS so nav has context */
 main > nav::before,
 nav::before {
-  content: "FlowMES\A MES Lite SaaS MVP";
+  content: "AMP\A MES Lite SaaS MVP";
   white-space: pre-line;
   display: block;
   color: white;

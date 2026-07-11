@@ -349,7 +349,7 @@ class TenantConfig(Base):
     tenant_code = Column(String, unique=True, index=True, nullable=False)
     plan = Column(String, default="enterprise")                 # starter / growth / enterprise / demo
     enabled_modules = Column(String, default="core,operations,factory,intelligence,admin")  # CSV of module keys
-    brand_name = Column(String, default="FlowMES")
+    brand_name = Column(String, default="AMP")
     brand_color = Column(String, default="#6366f1")
     brand_logo_url = Column(String, nullable=True)
     subscription_status = Column(String, default="trial")       # trial / active / past_due / cancelled

@@ -646,7 +646,7 @@ function ImportCSVTab() {
       <div className="rounded-2xl bg-slate-900 border border-slate-800 p-5">
         <h3 className="text-lg font-semibold mb-1">Import from Tally / Excel CSV</h3>
         <p className="text-slate-400 text-sm mb-3">
-          Export your stock ledger or item master from Tally as CSV and upload here. FlowMES accepts both Tally column names and generic names.
+          Export your stock ledger or item master from Tally as CSV and upload here. AMP accepts both Tally column names and generic names.
           Existing items are updated; new ones are created.
         </p>
         <div className="bg-slate-950 rounded-xl border border-slate-800 p-4 text-xs font-mono text-slate-400">

@@ -7,7 +7,7 @@ grounded in the company's real machines, downtime, OEE, shifts and inventory.
 
   OFF BY DEFAULT. To turn it on later (when a client signs up):
     1. Get an API key at console.anthropic.com
-    2. In Railway -> FlowMES -> Variables, add  ANTHROPIC_API_KEY = <the key>
+    2. In Railway -> AMP -> Variables, add  ANTHROPIC_API_KEY = <the key>
     3. (optional) AI_MODEL  — defaults to claude-haiku-4-5 (cheapest/fastest)
     4. Redeploy. That's it — the copilot detects the key and switches on.
 
@@ -137,7 +137,7 @@ def register(app):
         tenant = current_user.get("tenant", "DEFAULT")
         context = _build_factory_context(db, tenant)
         system = (
-            "You are FlowMES Copilot, a no-nonsense assistant for a factory manager at an Indian SME "
+            "You are AMP Copilot, a no-nonsense assistant for a factory manager at an Indian SME "
             "manufacturer. Answer using ONLY the factory data provided. If the data doesn't contain the "
             "answer, say so plainly. Be concise and practical — give shop-floor advice a supervisor can act on. "
             "When asked 'why', do a short root-cause analysis from the data."
@@ -155,7 +155,7 @@ def register(app):
         tenant = current_user.get("tenant", "DEFAULT")
         context = _build_factory_context(db, tenant)
         system = (
-            "You are FlowMES Copilot. Write a brief daily management report for a factory manager from the data. "
+            "You are AMP Copilot. Write a brief daily management report for a factory manager from the data. "
             "Use short sections with these headings: Summary, Machine status, Key issues, Recommended actions. "
             "Be specific and concise — no fluff."
         )

@@ -1,15 +1,15 @@
-# FlowMES — Complete Project Documentation
+# AMP — Complete Project Documentation
 
 *The whole story, end to end: why it was built, what it does, how it works technically, and what every single code file is for — written so a non‑programmer can follow along.*
 
-> **One‑line summary:** FlowMES is a web‑based "control tower" for a factory. It watches every machine in real time, calculates how efficiently the factory is running (a score called **OEE**), tracks work orders, inventory, quality and maintenance, and warns managers before things go wrong — all through a browser, with no expensive hardware required.
+> **One‑line summary:** AMP is a web‑based "control tower" for a factory. It watches every machine in real time, calculates how efficiently the factory is running (a score called **OEE**), tracks work orders, inventory, quality and maintenance, and warns managers before things go wrong — all through a browser, with no expensive hardware required.
 
 ---
 
 ## Table of contents
 
-1. [Part 1 — The Story: why FlowMES was built](#part-1--the-story-why-flowmes-was-built)
-2. [Part 2 — What FlowMES actually does (in plain English)](#part-2--what-flowmes-actually-does-in-plain-english)
+1. [Part 1 — The Story: why AMP was built](#part-1--the-story-why-amp-was-built)
+2. [Part 2 — What AMP actually does (in plain English)](#part-2--what-amp-actually-does-in-plain-english)
 3. [Part 3 — How it works technically](#part-3--how-it-works-technically)
 4. [Part 4 — Every code file explained](#part-4--every-code-file-explained)
 5. [Part 5 — How to run, deploy and extend it](#part-5--how-to-run-deploy-and-extend-it)
@@ -19,7 +19,7 @@
 
 ---
 
-# Part 1 — The Story: why FlowMES was built
+# Part 1 — The Story: why AMP was built
 
 ## 1.1 The problem
 
@@ -41,15 +41,15 @@ Large corporations solve this with software called an **MES — a Manufacturing 
 
 ## 1.2 The idea
 
-**FlowMES exists to close that gap:** an *enterprise‑grade* MES that an SME can actually afford and switch on in days, delivered as a website (Software‑as‑a‑Service) instead of a giant on‑premise installation.
+**AMP exists to close that gap:** an *enterprise‑grade* MES that an SME can actually afford and switch on in days, delivered as a website (Software‑as‑a‑Service) instead of a giant on‑premise installation.
 
-The wedge — the specific first customer the product was shaped around — is **GMATS Machineries**, a compressor manufacturer in Bengaluru, India, who provided a detailed real‑world spec for how their inventory and sales process works. That spec became the **GMATS inventory module** (see [Part 3.9](#39-the-gmats-inventory-lifecycle-a-real-clients-workflow)), which proves FlowMES can model a real client's exact workflow rather than a generic textbook one.
+The wedge — the specific first customer the product was shaped around — is **GMATS Machineries**, a compressor manufacturer in Bengaluru, India, who provided a detailed real‑world spec for how their inventory and sales process works. That spec became the **GMATS inventory module** (see [Part 3.9](#39-the-gmats-inventory-lifecycle-a-real-clients-workflow)), which proves AMP can model a real client's exact workflow rather than a generic textbook one.
 
-FlowMES is the flagship product of **MARX8** (marx8.com), an industrial‑technology studio. FlowMES is the "Manufacturing Execution" pillar of that brand.
+AMP is the flagship product of **MARX8** (marx8.com), an industrial‑technology studio. AMP is the "Manufacturing Execution" pillar of that brand.
 
 ## 1.3 What makes it different
 
-| Traditional MES | FlowMES |
+| Traditional MES | AMP |
 |---|---|
 | Costs $100k+ | SaaS subscription an SME can afford |
 | 6–12 month installation | Live in days |
@@ -59,17 +59,17 @@ FlowMES is the flagship product of **MARX8** (marx8.com), an industrial‑techno
 
 ## 1.4 How it was built
 
-FlowMES was developed **solo, in ~30 incremental "phases"** — you'll still see that history in the code (files and TypeScript types named `phase8`, `phase27`, `mega-pack1`, etc.). Each phase added one slice of functionality (machines → OEE → work orders → inventory → quality → predictive AI → IoT → multi‑tenancy). This is why the frontend has ~50 self‑contained "section" components: each is one module bolted on in one phase.
+AMP was developed **solo, in ~30 incremental "phases"** — you'll still see that history in the code (files and TypeScript types named `phase8`, `phase27`, `mega-pack1`, etc.). Each phase added one slice of functionality (machines → OEE → work orders → inventory → quality → predictive AI → IoT → multi‑tenancy). This is why the frontend has ~50 self‑contained "section" components: each is one module bolted on in one phase.
 
 ---
 
-# Part 2 — What FlowMES actually does (in plain English)
+# Part 2 — What AMP actually does (in plain English)
 
-Think of FlowMES as **five layers of usefulness stacked on top of each other.**
+Think of AMP as **five layers of usefulness stacked on top of each other.**
 
 ## 2.1 Layer 1 — See the factory (Core MES)
 
-The foundation is **real‑time visibility**. FlowMES knows, right now:
+The foundation is **real‑time visibility**. AMP knows, right now:
 
 - Which machines are **Running / Idle / in Breakdown / under Maintenance**
 - How **busy** each machine is (utilization %)
@@ -84,11 +84,11 @@ OEE  =  Availability   ×   Performance      ×   Quality
                             enough?)             good?)
 ```
 
-A machine that's on 90% of the time, running at 91% of its ideal speed, making 97% good parts has an OEE of `0.90 × 0.91 × 0.97 ≈ 79%`. World‑class is ~85%. FlowMES computes this continuously for every machine and for the whole factory.
+A machine that's on 90% of the time, running at 91% of its ideal speed, making 97% good parts has an OEE of `0.90 × 0.91 × 0.97 ≈ 79%`. World‑class is ~85%. AMP computes this continuously for every machine and for the whole factory.
 
 ## 2.2 Layer 2 — Run the factory (Operations)
 
-- **Work Orders** — "make 500 of part SHAFT‑001 on CNC‑01." FlowMES tracks each order from *Planned → In Progress → Completed*, and — cleverly — when an order finishes it **automatically deducts the raw material used and adds the finished goods to inventory** (this is the "BOM movement", explained in [3.10](#310-work-order-bom-automatic-material-movement)).
+- **Work Orders** — "make 500 of part SHAFT‑001 on CNC‑01." AMP tracks each order from *Planned → In Progress → Completed*, and — cleverly — when an order finishes it **automatically deducts the raw material used and adds the finished goods to inventory** (this is the "BOM movement", explained in [3.10](#310-work-order-bom-automatic-material-movement)).
 - **Production Planning & Scheduling** — what runs on which machine, on which shift, on which day.
 - **Operator Terminal** — the screen a machine operator uses to log the job they're running and how many good/rejected parts they made.
 - **Orders & Dispatch** — customer orders and how much has shipped.
@@ -96,7 +96,7 @@ A machine that's on 90% of the time, running at 91% of its ideal speed, making 9
 ## 2.3 Layer 3 — Improve the factory (Manufacturing Intelligence)
 
 - **Executive OEE dashboards** — the boss's view.
-- **Predictive Maintenance** — FlowMES scores each machine's *risk of failing soon* based on its downtime history, breakdown frequency, reject rate and workload, and recommends action *before* it breaks.
+- **Predictive Maintenance** — AMP scores each machine's *risk of failing soon* based on its downtime history, breakdown frequency, reject rate and workload, and recommends action *before* it breaks.
 - **Smart Alerts & Escalations** — automatically raises a flag when OEE drops, a machine breaks down, quality slips, or stock runs low, and turns those flags into trackable "escalations" assigned to a person.
 - **AI Factory Copilot** *(optional)* — a chat assistant you can ask *"why is my OEE low today?"* or *"what should I reorder?"* and it answers using your real factory data. It also writes a daily management report.
 
@@ -112,7 +112,7 @@ A machine that's on 90% of the time, running at 91% of its ideal speed, making 9
 ## 2.5 Layer 5 — Connect & sell the factory (IoT + Platform)
 
 - **Industrial IoT / Connectivity** — the layer that talks to the physical machines. Today it *simulates* live PLC (machine‑controller) signals; the architecture is ready to plug into real machines over industrial protocols (OPC UA, Modbus, Siemens S7, Allen‑Bradley, Beckhoff, Omron).
-- **Multi‑tenancy & white‑label** — one FlowMES installation can serve many companies at once, each seeing only its own data, its own logo and its own colour scheme, on its own subscription plan. This is what makes it a *SaaS product*, not just one factory's tool.
+- **Multi‑tenancy & white‑label** — one AMP installation can serve many companies at once, each seeing only its own data, its own logo and its own colour scheme, on its own subscription plan. This is what makes it a *SaaS product*, not just one factory's tool.
 - **Roles** — every user is an **Admin**, **Supervisor** or **Operator**, and only sees/does what their role allows.
 
 ---
@@ -121,7 +121,7 @@ A machine that's on 90% of the time, running at 91% of its ideal speed, making 9
 
 ## 3.1 The big picture
 
-FlowMES is split into two programs that talk over the internet, plus a database and a real‑time messaging layer:
+AMP is split into two programs that talk over the internet, plus a database and a real‑time messaging layer:
 
 ```
         YOUR BROWSER                         THE CLOUD
@@ -175,12 +175,12 @@ Because the token carries your *company* and *role*, the backend can automatical
 
 ## 3.4 How "real‑time" actually works (two engines)
 
-FlowMES stays live through **two independent mechanisms**:
+AMP stays live through **two independent mechanisms**:
 
 **Engine 1 — the real telemetry pipeline (MQTT → WebSocket).** This is the "production" path meant for real machines:
 
 ```
- Machine / PLC  ──▶  MQTT broker  ──▶  FlowMES MQTT service  ──▶  Database
+ Machine / PLC  ──▶  MQTT broker  ──▶  AMP MQTT service  ──▶  Database
  (or simulator)      (topic:            (mqtt_service.py:            │
                      flowmes/machines)   updates machine,            │
                                          logs events, records        ▼
@@ -211,7 +211,7 @@ SQLAlchemy turns each table into a Python class, so the code says `db.query(mode
 
 ## 3.6 Multi‑tenancy — one app, many companies
 
-This is the feature that makes FlowMES a *product* rather than one factory's tool. The key is a single text field: **`tenant_code`**.
+This is the feature that makes AMP a *product* rather than one factory's tool. The key is a single text field: **`tenant_code`**.
 
 - **`DEFAULT`** is the founder/internal workspace — a super‑admin who can switch between companies and see everything.
 - A **named tenant** like **`GMATS`** is a real client — locked to its own data, its own branding, its own subscription.
@@ -270,7 +270,7 @@ It also supports **item aliases** (one part known by many names) and **admin "un
 
 ## 3.10 Work‑order BOM automatic material movement
 
-A **BOM (Bill of Materials)** is the recipe for a product — e.g. one SHAFT‑001 needs 2 kg of steel. In `main.py` there's a `PART_BOM` recipe book. When a work order is marked **Completed**, FlowMES automatically:
+A **BOM (Bill of Materials)** is the recipe for a product — e.g. one SHAFT‑001 needs 2 kg of steel. In `main.py` there's a `PART_BOM` recipe book. When a work order is marked **Completed**, AMP automatically:
 
 1. **Deducts** the raw material used (`quantity × consume_per_unit`) from inventory, and
 2. **Adds** the finished goods produced,
@@ -312,7 +312,7 @@ An **optional** assistant (`ai_copilot.py`). It's **off** unless an `ANTHROPIC_A
 - **Technical:** Reads `DATABASE_URL` from the environment, builds the SQLAlchemy `engine` (with `pool_pre_ping` to survive dropped connections), the `SessionLocal` factory, and the `Base` class every model inherits from. `get_db()` yields a session and always closes it.
 
 ### `backend/models.py` — the shape of all data (~50 tables)
-- **Plain English:** The blueprint of the factory's memory. Every kind of thing FlowMES remembers — a machine, an order, a part, an inspection, a user, a company — is described here as a table.
+- **Plain English:** The blueprint of the factory's memory. Every kind of thing AMP remembers — a machine, an order, a part, an inspection, a user, a company — is described here as a table.
 - **Technical:** ~50 SQLAlchemy ORM classes (each `= one table`), with columns, defaults, foreign‑key links and a few relationships. Includes the core MES tables, the SaaS/platform tables (`User`, `TenantConfig`, `CompanyTenant`, `AuditLog`), the industrial‑IoT tables, and the tenant‑scoped GMATS inventory tables.
 
 ### `backend/schemas.py` — the API's data contracts
@@ -385,7 +385,7 @@ An **optional** assistant (`ai_copilot.py`). It's **off** unless an `ANTHROPIC_A
 | `live_simulator.py` | Older standalone live‑data simulator (predecessor of `factory_simulator.py`). | Loops and writes rows directly. |
 | `reseed_inventory.py` | Resets/reloads inventory demo data. | Deletes and re‑seeds inventory rows. |
 | `reset_machines.py` | Resets machine rows to a clean state. | Utility DB script. |
-| `generate_pdf.py` *(repo root)* | Builds the printable "FlowMES Complete Guide" PDF walkthrough. | Uses a PDF library to render `docs/FlowMES_Complete_Guide.pdf`. |
+| `generate_pdf.py` *(repo root)* | Builds the printable "AMP Complete Guide" PDF walkthrough. | Uses a PDF library to render `docs/AMP_Complete_Guide.pdf`. |
 
 ### Staging / not‑yet‑merged files (present but **not wired into the running app**)
 These are development artifacts kept for reference — they are *not* imported by `main.py` and don't affect the running app:
@@ -443,8 +443,8 @@ The dashboard is assembled from many self‑contained **"Section" components**, 
 | `README.md` | Project overview, features, stack, phase roadmap, and local‑run instructions. |
 | `docs/GMATS-Pilot-Proposal.md` | The paid‑pilot proposal for the GMATS client (₹ pricing placeholders). |
 | `docs/Production-Setup.md` | The go‑live checklist (DB backups, monitoring, custom domain, secret rotation). |
-| `docs/FlowMES_Complete_Guide.pdf` | A printable end‑to‑end walkthrough guide. |
-| `docs/FlowMES-Complete-Documentation.md` | **This document.** |
+| `docs/AMP_Complete_Guide.pdf` | A printable end‑to‑end walkthrough guide. |
+| `docs/AMP-Complete-Documentation.md` | **This document.** |
 
 ---
 
@@ -509,7 +509,7 @@ GET    /analytics/things  → summary/KPIs for that module
 ### Authentication & users
 | Method | Endpoint | What it does |
 |---|---|---|
-| `GET` | `/` 🌍 | Liveness ping — returns "FlowMES Backend Running". |
+| `GET` | `/` 🌍 | Liveness ping — returns "AMP Backend Running". |
 | `GET` | `/me` | The current user, decoded from the token. |
 | `POST` | `/register` 🌍 | Bootstrap the very first Admin (blocked once any user exists). |
 | `POST` | `/login` 🌍 | Log in; returns the JWT, role and tenant. |
@@ -743,7 +743,7 @@ The dashboard (`app/dashboard/page.tsx`) is one big menu that swaps in a differe
 |---|---|
 | **MES** | Manufacturing Execution System — software that runs and monitors a factory floor. |
 | **OEE** | Overall Equipment Effectiveness — the master efficiency score (Availability × Performance × Quality). |
-| **SME** | Small/Medium Enterprise — a smaller company (FlowMES's target customer). |
+| **SME** | Small/Medium Enterprise — a smaller company (AMP's target customer). |
 | **SaaS** | Software‑as‑a‑Service — software you rent and use through a browser, not install. |
 | **Frontend / Backend** | The part you see (browser) vs. the brain on the server. |
 | **API** | Application Programming Interface — the set of web addresses the frontend calls to get/change data. |
@@ -766,4 +766,4 @@ The dashboard (`app/dashboard/page.tsx`) is one big menu that swaps in a differe
 
 ---
 
-*FlowMES — the Manufacturing Execution pillar of MARX8 (marx8.com). Built by Ashwin Vardharajan.*
+*AMP — the Manufacturing Execution pillar of MARX8 (marx8.com). Built by Ashwin Vardharajan.*

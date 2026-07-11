@@ -1,10 +1,10 @@
-# FlowMES — Production setup checklist
+# AMP — Production setup checklist
 
 The code-level hardening is done (bcrypt passwords, locked CORS, optional Sentry).
 The items below need your accounts/dashboards — they can't be done from code alone.
 Do all of these **before** a paying customer's real data goes in.
 
-## 1. Environment variables (Railway → FlowMES service → Variables)
+## 1. Environment variables (Railway → AMP service → Variables)
 
 | Variable | Set to | Why |
 |---|---|---|

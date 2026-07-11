@@ -3,7 +3,7 @@ from datetime import datetime
 
 def build_daily_summary_text(summary: dict, shift_kpis: list, alerts: list):
     lines = [
-        "FlowMES Daily Factory Intelligence Report",
+        "AMP Daily Factory Intelligence Report",
         f"Generated: {datetime.utcnow().isoformat()} UTC",
         "",
         "Executive Summary",

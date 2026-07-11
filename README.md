@@ -1,8 +1,8 @@
-# FlowMES Enterprise
+# AMP Enterprise
 
 Enterprise-grade MES (Manufacturing Execution System) platform for SMEs and smart factories.
 
-FlowMES provides real-time shopfloor visibility, machine monitoring, downtime tracking, production analytics, predictive maintenance, operator execution, and industrial IoT integration.
+AMP provides real-time shopfloor visibility, machine monitoring, downtime tracking, production analytics, predictive maintenance, operator execution, and industrial IoT integration.
 
 ---
 
@@ -78,7 +78,7 @@ FlowMES provides real-time shopfloor visibility, machine monitoring, downtime tr
 ## Project Architecture
 
 ```text
-FlowMES/
+AMP/
 ├── backend/
 │   ├── main.py
 │   ├── models.py
@@ -127,7 +127,7 @@ FlowMES/
 
 ## Real-Time Capabilities
 
-FlowMES supports:
+AMP supports:
 
 * MQTT live machine telemetry
 * WebSocket live updates
@@ -163,9 +163,9 @@ cd backend
 
 ## PLC Simulator (Phase 30)
 
-FlowMES includes a simulated PLC telemetry generator for industrial testing and real-time MES validation.
+AMP includes a simulated PLC telemetry generator for industrial testing and real-time MES validation.
 
-The simulator publishes live MQTT telemetry to the FlowMES broker and updates:
+The simulator publishes live MQTT telemetry to the AMP broker and updates:
 
 * Machine status
 * Utilization %
@@ -218,7 +218,7 @@ PLC Simulator
       ↓
 MQTT Broker
       ↓
-FlowMES MQTT Service
+AMP MQTT Service
       ↓
 PostgreSQL / SQLite
       ↓

@@ -72,6 +72,7 @@ def _ensure_user_tenant_column():
 
 _ensure_user_tenant_column()
 tenancy.ensure_tenant_columns(engine)  # ADR-0002: tenant_code on core tables
+tenancy.install_scoping()              # ADR-0002: auto-enforce tenant scoping
 
 # Optional error monitoring — active only when SENTRY_DSN is set in the env.
 _SENTRY_DSN = os.environ.get("SENTRY_DSN")
@@ -208,6 +209,20 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.middleware("http")
+async def _tenant_scope(request, call_next):
+    """Bind the caller's tenant (from the JWT) for the request so the ORM
+    auto-scopes core-table queries (ADR-0002). No/invalid token -> no tenant ->
+    no scoping, leaving public and background/system work unaffected."""
+    header = request.headers.get("authorization")
+    token = header.split(" ", 1)[1].strip() if header and header.lower().startswith("bearer ") else None
+    reset = tenancy.set_current_tenant(tenancy.tenant_from_token(token))
+    try:
+        return await call_next(request)
+    finally:
+        tenancy.reset_current_tenant(reset)
 
 VALID_ROLES = ["Admin", "Supervisor", "Operator"]
 

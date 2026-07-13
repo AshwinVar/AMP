@@ -30,7 +30,11 @@ export function connectLiveSocket(
   ) => void
 ) {
   const apiBase = process.env.NEXT_PUBLIC_API_URL ?? "http://127.0.0.1:8000";
-  const wsUrl = apiBase.replace(/^http/, "ws") + "/ws/live";
+  const token = typeof window !== "undefined" ? localStorage.getItem("token") : null;
+  const wsUrl =
+    apiBase.replace(/^http/, "ws") +
+    "/ws/live" +
+    (token ? `?token=${encodeURIComponent(token)}` : "");
 
   console.log("Connecting WebSocket:", wsUrl);
 

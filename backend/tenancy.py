@@ -15,7 +15,13 @@ This PR ships the mechanism and the schema. Wiring endpoints through the
 repository (read-enforcement) is rolled out table-by-table in follow-up PRs,
 once ownership of existing rows is settled — see ADR-0002.
 """
-from sqlalchemy import inspect, text
+import contextvars
+
+from sqlalchemy import event, inspect, text
+from sqlalchemy.orm import Session, with_loader_criteria
+
+import models
+from auth import decode_token_optional
 
 DEFAULT_TENANT = "DEFAULT"
 
@@ -91,3 +97,101 @@ class TenantScopedRepository:
         obj.tenant_code = self.tenant
         self.db.add(obj)
         return obj
+
+
+# ── Automatic request-scoped tenant enforcement (ADR-0002) ─────────────
+# One chokepoint instead of editing ~80 query sites: a per-request tenant is set
+# from the JWT (middleware in main.py); a do_orm_execute hook adds
+# `tenant_code = :tenant` to every SELECT of a scoped model; a before_flush hook
+# stamps new rows. When no tenant is set (background/system work, seeding), both
+# are no-ops — so the simulation loop, MQTT ingestion and startup seeding are
+# unaffected. Because read-by-id also goes through a SELECT, this transparently
+# protects get/update/delete-by-id too (a foreign row simply isn't found).
+
+_current_tenant = contextvars.ContextVar("amp_current_tenant", default=None)
+
+# Models under automatic scoping. Each has a tenant_code column (see models.py).
+SCOPED_MODELS = (
+    models.Machine,
+    models.WorkOrder,
+    models.InventoryItem,
+    models.InventoryTransaction,
+)
+
+
+def set_current_tenant(tenant):
+    """Bind the tenant for the current request/context; returns a reset token."""
+    return _current_tenant.set(tenant)
+
+
+def reset_current_tenant(token):
+    _current_tenant.reset(token)
+
+
+def current_tenant():
+    return _current_tenant.get()
+
+
+def tenant_from_token(token):
+    """Tenant claim from a JWT, or None if the token is missing/invalid."""
+    payload = decode_token_optional(token)
+    return payload.get("tenant") if payload else None
+
+
+_scoping_installed = False
+
+
+def install_scoping():
+    """Register the read-filter and write-stamp on the ORM Session (once)."""
+    global _scoping_installed
+    if _scoping_installed:
+        return
+    _scoping_installed = True
+
+    @event.listens_for(Session, "do_orm_execute")
+    def _apply_tenant_filter(state):
+        if not state.is_select:
+            return
+        tenant = current_tenant()
+        if tenant is None:
+            return
+        for model in SCOPED_MODELS:
+            state.statement = state.statement.options(
+                with_loader_criteria(model, model.tenant_code == tenant, include_aliases=True)
+            )
+
+    @event.listens_for(Session, "before_flush")
+    def _stamp_tenant_on_new(session, flush_context, instances):
+        tenant = current_tenant()
+        if tenant is None:
+            return
+        for obj in session.new:
+            if isinstance(obj, SCOPED_MODELS) and getattr(obj, "tenant_code", None) is None:
+                obj.tenant_code = tenant
+
+
+class TenantScopeMiddleware:
+    """Pure-ASGI middleware that binds the request's tenant (from the JWT) so the
+    ORM auto-scopes core-table queries. Pure ASGI — not BaseHTTPMiddleware — so it
+    shares the endpoint's task (contextvars propagate) and never buffers the
+    request body (POST bodies stream normally, no deadlock)."""
+
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope.get("type") != "http":
+            await self.app(scope, receive, send)
+            return
+        token = None
+        for key, value in scope.get("headers") or []:
+            if key == b"authorization":
+                parts = value.decode("latin-1").split(" ", 1)
+                if len(parts) == 2 and parts[0].lower() == "bearer":
+                    token = parts[1].strip()
+                break
+        reset = set_current_tenant(tenant_from_token(token))
+        try:
+            await self.app(scope, receive, send)
+        finally:
+            reset_current_tenant(reset)

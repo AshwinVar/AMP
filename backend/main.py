@@ -72,6 +72,7 @@ def _ensure_user_tenant_column():
 
 _ensure_user_tenant_column()
 tenancy.ensure_tenant_columns(engine)  # ADR-0002: tenant_code on core tables
+tenancy.install_scoping()              # ADR-0002: auto-enforce tenant scoping
 
 # Optional error monitoring — active only when SENTRY_DSN is set in the env.
 _SENTRY_DSN = os.environ.get("SENTRY_DSN")
@@ -208,6 +209,12 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+# Bind the caller's tenant (from the JWT) per request so the ORM auto-scopes
+# core-table queries (ADR-0002). Pure-ASGI (tenancy.TenantScopeMiddleware) to
+# avoid BaseHTTPMiddleware's request-body deadlock and to propagate contextvars.
+app.add_middleware(tenancy.TenantScopeMiddleware)
 
 VALID_ROLES = ["Admin", "Supervisor", "Operator"]
 

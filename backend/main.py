@@ -37,6 +37,7 @@ from predictive_engine import calculate_predictive_risk
 
 import models
 import schemas
+import tenancy
 import enterprise_inventory_routes
 import gmats_inventory_routes
 import platform_routes
@@ -70,6 +71,7 @@ def _ensure_user_tenant_column():
 
 
 _ensure_user_tenant_column()
+tenancy.ensure_tenant_columns(engine)  # ADR-0002: tenant_code on core tables
 
 # Optional error monitoring — active only when SENTRY_DSN is set in the env.
 _SENTRY_DSN = os.environ.get("SENTRY_DSN")

@@ -23,6 +23,7 @@ class DowntimeLog(Base):
     __tablename__ = "downtime_logs"
 
     id = Column(Integer, primary_key=True, index=True)
+    tenant_code = Column(String, index=True, nullable=False, default="DEFAULT")
     machine_id = Column(Integer, ForeignKey("machines.id"))
     reason = Column(String, nullable=False)
     duration = Column(String, nullable=False)
@@ -36,6 +37,7 @@ class ShiftData(Base):
     __tablename__ = "shift_data"
 
     id = Column(Integer, primary_key=True, index=True)
+    tenant_code = Column(String, index=True, nullable=False, default="DEFAULT")
     shift_name = Column(String, nullable=False)
     target_output = Column(Integer, nullable=False)
     actual_output = Column(Integer, nullable=False)
@@ -46,6 +48,7 @@ class ProductionRecord(Base):
     __tablename__ = "production_records"
 
     id = Column(Integer, primary_key=True, index=True)
+    tenant_code = Column(String, index=True, nullable=False, default="DEFAULT")
     machine_id = Column(Integer, ForeignKey("machines.id"))
     planned_minutes = Column(Integer, nullable=False)
     runtime_minutes = Column(Integer, nullable=False)
@@ -62,6 +65,7 @@ class Alert(Base):
     __tablename__ = "alerts"
 
     id = Column(Integer, primary_key=True, index=True)
+    tenant_code = Column(String, index=True, nullable=False, default="DEFAULT")
     alert_type = Column(String, nullable=False)
     severity = Column(String, nullable=False)
     message = Column(String, nullable=False)
@@ -82,6 +86,7 @@ class MachineEvent(Base):
     __tablename__ = "machine_events"
 
     id = Column(Integer, primary_key=True, index=True)
+    tenant_code = Column(String, index=True, nullable=False, default="DEFAULT")
     machine_id = Column(Integer, ForeignKey("machines.id"))
     machine_name = Column(String, nullable=False)
     old_status = Column(String, nullable=True)
@@ -112,6 +117,7 @@ class ProductionPlan(Base):
     __tablename__ = "production_plans"
 
     id = Column(Integer, primary_key=True, index=True)
+    tenant_code = Column(String, index=True, nullable=False, default="DEFAULT")
     plan_no = Column(String, unique=True, nullable=False)
     work_order_id = Column(Integer, ForeignKey("work_orders.id"))
     machine_id = Column(Integer, ForeignKey("machines.id"))
@@ -128,6 +134,7 @@ class Escalation(Base):
     __tablename__ = "escalations"
 
     id = Column(Integer, primary_key=True, index=True)
+    tenant_code = Column(String, index=True, nullable=False, default="DEFAULT")
     machine_id = Column(Integer, ForeignKey("machines.id"), nullable=True)
     title = Column(String, nullable=False)
     severity = Column(String, nullable=False)
@@ -189,6 +196,7 @@ class QualityInspection(Base):
     __tablename__ = "quality_inspections"
 
     id = Column(Integer, primary_key=True, index=True)
+    tenant_code = Column(String, index=True, nullable=False, default="DEFAULT")
     inspection_no = Column(String, unique=True, nullable=False)
     work_order_id = Column(Integer, ForeignKey("work_orders.id"), nullable=True)
     production_plan_id = Column(Integer, ForeignKey("production_plans.id"), nullable=True)
@@ -210,6 +218,7 @@ class FactoryLayoutNode(Base):
     __tablename__ = "factory_layout_nodes"
 
     id = Column(Integer, primary_key=True, index=True)
+    tenant_code = Column(String, index=True, nullable=False, default="DEFAULT")
     machine_id = Column(Integer, ForeignKey("machines.id"), nullable=True)
     node_name = Column(String, nullable=False)
     node_type = Column(String, default="Machine")
@@ -226,6 +235,7 @@ class CustomerOrder(Base):
     __tablename__ = "customer_orders"
 
     id = Column(Integer, primary_key=True, index=True)
+    tenant_code = Column(String, index=True, nullable=False, default="DEFAULT")
     order_no = Column(String, unique=True, nullable=False)
     customer_name = Column(String, nullable=False)
     product_name = Column(String, nullable=False)
@@ -245,6 +255,7 @@ class Supplier(Base):
     __tablename__ = "suppliers"
 
     id = Column(Integer, primary_key=True, index=True)
+    tenant_code = Column(String, index=True, nullable=False, default="DEFAULT")
     supplier_code = Column(String, unique=True, nullable=False)
     supplier_name = Column(String, nullable=False)
     contact_person = Column(String, nullable=True)
@@ -259,6 +270,7 @@ class PurchaseOrder(Base):
     __tablename__ = "purchase_orders"
 
     id = Column(Integer, primary_key=True, index=True)
+    tenant_code = Column(String, index=True, nullable=False, default="DEFAULT")
     po_no = Column(String, unique=True, nullable=False)
     supplier_id = Column(Integer, ForeignKey("suppliers.id"))
     item_id = Column(Integer, ForeignKey("inventory_items.id"), nullable=True)
@@ -277,6 +289,7 @@ class ComplianceDocument(Base):
     __tablename__ = "compliance_documents"
 
     id = Column(Integer, primary_key=True, index=True)
+    tenant_code = Column(String, index=True, nullable=False, default="DEFAULT")
     document_no = Column(String, unique=True, nullable=False)
     title = Column(String, nullable=False)
     document_type = Column(String, nullable=False)
@@ -294,6 +307,7 @@ class MaintenanceTask(Base):
     __tablename__ = "maintenance_tasks"
 
     id = Column(Integer, primary_key=True, index=True)
+    tenant_code = Column(String, index=True, nullable=False, default="DEFAULT")
     task_no = Column(String, unique=True, nullable=False)
     machine_id = Column(Integer, ForeignKey("machines.id"))
     task_type = Column(String, nullable=False)
@@ -312,6 +326,7 @@ class ProductionSchedule(Base):
     __tablename__ = "production_schedules"
 
     id = Column(Integer, primary_key=True, index=True)
+    tenant_code = Column(String, index=True, nullable=False, default="DEFAULT")
     schedule_no = Column(String, unique=True, nullable=False)
     work_order_id = Column(Integer, ForeignKey("work_orders.id"), nullable=True)
     production_plan_id = Column(Integer, ForeignKey("production_plans.id"), nullable=True)
@@ -331,6 +346,7 @@ class IoTTelemetry(Base):
     __tablename__ = "iot_telemetry"
 
     id = Column(Integer, primary_key=True, index=True)
+    tenant_code = Column(String, index=True, nullable=False, default="DEFAULT")
     machine_id = Column(Integer, ForeignKey("machines.id"))
     signal_name = Column(String, nullable=False)
     signal_value = Column(String, nullable=False)
@@ -344,6 +360,7 @@ class AIRecommendation(Base):
     __tablename__ = "ai_recommendations"
 
     id = Column(Integer, primary_key=True, index=True)
+    tenant_code = Column(String, index=True, nullable=False, default="DEFAULT")
     recommendation_type = Column(String, nullable=False)
     severity = Column(String, default="Medium")
     title = Column(String, nullable=False)
@@ -392,6 +409,7 @@ class CostRecord(Base):
     __tablename__ = "cost_records"
 
     id = Column(Integer, primary_key=True, index=True)
+    tenant_code = Column(String, index=True, nullable=False, default="DEFAULT")
     cost_no = Column(String, unique=True, nullable=False)
     cost_type = Column(String, nullable=False)
     reference_type = Column(String, nullable=True)
@@ -406,6 +424,7 @@ class OperatorJobExecution(Base):
     __tablename__ = "operator_job_executions"
 
     id = Column(Integer, primary_key=True, index=True)
+    tenant_code = Column(String, index=True, nullable=False, default="DEFAULT")
     execution_no = Column(String, unique=True, nullable=False)
     operator_name = Column(String, nullable=False)
     machine_id = Column(Integer, ForeignKey("machines.id"))
@@ -436,6 +455,7 @@ class Notification(Base):
     __tablename__ = "notifications"
 
     id = Column(Integer, primary_key=True, index=True)
+    tenant_code = Column(String, index=True, nullable=False, default="DEFAULT")
     notification_type = Column(String, nullable=False)
     severity = Column(String, default="Info")
     title = Column(String, nullable=False)
@@ -448,6 +468,7 @@ class ReportRequest(Base):
     __tablename__ = "report_requests"
 
     id = Column(Integer, primary_key=True, index=True)
+    tenant_code = Column(String, index=True, nullable=False, default="DEFAULT")
     report_no = Column(String, unique=True, nullable=False)
     report_type = Column(String, nullable=False)
     requested_by = Column(String, default="Admin")
@@ -633,6 +654,7 @@ class IndustrialDevice(Base):
     __tablename__ = "industrial_devices"
 
     id = Column(Integer, primary_key=True, index=True)
+    tenant_code = Column(String, index=True, nullable=False, default="DEFAULT")
     device_code = Column(String, unique=True, nullable=False)
     device_name = Column(String, nullable=False)
     device_type = Column(String, default="PLC")
@@ -648,6 +670,7 @@ class IndustrialSignal(Base):
     __tablename__ = "industrial_signals"
 
     id = Column(Integer, primary_key=True, index=True)
+    tenant_code = Column(String, index=True, nullable=False, default="DEFAULT")
     device_id = Column(Integer, ForeignKey("industrial_devices.id"))
     machine_id = Column(Integer, ForeignKey("machines.id"), nullable=True)
     signal_name = Column(String, nullable=False)
@@ -663,6 +686,7 @@ class PlcSignalMapping(Base):
     __tablename__ = "plc_signal_mappings"
 
     id = Column(Integer, primary_key=True, index=True)
+    tenant_code = Column(String, index=True, nullable=False, default="DEFAULT")
     mapping_code = Column(String, unique=True, nullable=False)
     device_id = Column(Integer, ForeignKey("industrial_devices.id"))
     source_signal = Column(String, nullable=False)

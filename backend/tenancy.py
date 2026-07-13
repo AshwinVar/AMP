@@ -29,10 +29,14 @@ DEFAULT_TENANT = "DEFAULT"
 # the core tables follow in later PRs; platform and GMATS tables are already
 # tenant-aware, and event_log is already tenant-stamped (ADR-0001).
 CORE_TENANT_TABLES = [
-    "machines",
-    "work_orders",
-    "inventory_items",
-    "inventory_transactions",
+    "machines", "work_orders", "inventory_items", "inventory_transactions",
+    "downtime_logs", "shift_data", "production_records", "alerts",
+    "machine_events", "production_plans", "escalations", "quality_inspections",
+    "factory_layout_nodes", "customer_orders", "suppliers", "purchase_orders",
+    "compliance_documents", "maintenance_tasks", "production_schedules",
+    "iot_telemetry", "ai_recommendations", "cost_records",
+    "operator_job_executions", "notifications", "report_requests",
+    "industrial_devices", "industrial_signals", "plc_signal_mappings",
 ]
 
 
@@ -112,10 +116,14 @@ _current_tenant = contextvars.ContextVar("amp_current_tenant", default=None)
 
 # Models under automatic scoping. Each has a tenant_code column (see models.py).
 SCOPED_MODELS = (
-    models.Machine,
-    models.WorkOrder,
-    models.InventoryItem,
-    models.InventoryTransaction,
+    models.Machine, models.WorkOrder, models.InventoryItem, models.InventoryTransaction,
+    models.DowntimeLog, models.ShiftData, models.ProductionRecord, models.Alert,
+    models.MachineEvent, models.ProductionPlan, models.Escalation, models.QualityInspection,
+    models.FactoryLayoutNode, models.CustomerOrder, models.Supplier, models.PurchaseOrder,
+    models.ComplianceDocument, models.MaintenanceTask, models.ProductionSchedule,
+    models.IoTTelemetry, models.AIRecommendation, models.CostRecord,
+    models.OperatorJobExecution, models.Notification, models.ReportRequest,
+    models.IndustrialDevice, models.IndustrialSignal, models.PlcSignalMapping,
 )
 
 

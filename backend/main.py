@@ -43,6 +43,12 @@ import platform_routes
 from platform_routes import log_audit
 import ai_copilot
 import industrial_adapters
+from bom import PART_BOM
+from events import event_bus, ProductionCompleted
+import subscribers
+
+# Wire domain-event subscribers to the in-process event bus (ADR-0001).
+subscribers.register(event_bus)
 
 
 Base.metadata.create_all(bind=engine)
@@ -825,15 +831,8 @@ def create_work_order(
     return new_work_order
 
 
-# Bill of Materials: part_number → (raw_material_item_code, kg_per_unit, finished_goods_item_code)
-PART_BOM = {
-    "SHAFT-001": {"raw": "RM-STEEL-001",     "consume_per_unit": 2,  "fg": "FG-SHAFT-001"},
-    "PLATE-002": {"raw": "RM-SHEET-002",     "consume_per_unit": 1,  "fg": "FG-PLATE-002"},
-    "BEAR-003":  {"raw": "RM-STEEL-001",     "consume_per_unit": 3,  "fg": None},
-    "GEAR-004":  {"raw": "RM-ALUM-003",      "consume_per_unit": 2,  "fg": "FG-GEAR-003"},
-    "ASSY-005":  {"raw": None,               "consume_per_unit": 0,  "fg": "FG-BRACKET-004"},
-    "PKG-006":   {"raw": "PKG-MAT-001",      "consume_per_unit": 1,  "fg": None},
-}
+# Bill of Materials now lives in bom.py (imported above) so subscribers can
+# consume it without importing this module.
 
 @app.get("/bom")
 def get_bom(
@@ -886,42 +885,21 @@ def update_work_order(
     if payload.status is not None:
         work_order.status = payload.status
 
-    # Auto inventory movements when WO transitions to Completed
+    # When a WO transitions to Completed, publish a domain event. The inventory
+    # BOM movement is now a subscriber (subscribers.py / ADR-0001); it runs
+    # synchronously on this same DB session, so it still commits atomically below.
     if prev_status != "Completed" and work_order.status == "Completed":
-        bom = PART_BOM.get(work_order.part_number)
-        qty = work_order.actual_quantity or work_order.target_quantity
-
-        if bom:
-            # Deduct raw material
-            if bom["raw"]:
-                raw_item = db.query(models.InventoryItem).filter(
-                    models.InventoryItem.item_code == bom["raw"]
-                ).first()
-                if raw_item:
-                    consume = min(qty * bom["consume_per_unit"], raw_item.current_stock)
-                    raw_item.current_stock -= consume
-                    db.add(models.InventoryTransaction(
-                        item_id=raw_item.id,
-                        transaction_type="Issue",
-                        quantity=consume,
-                        reference=work_order.work_order_no,
-                        notes=f"Auto-issued for WO {work_order.work_order_no} — {work_order.part_number}",
-                    ))
-
-            # Add finished goods
-            if bom["fg"]:
-                fg_item = db.query(models.InventoryItem).filter(
-                    models.InventoryItem.item_code == bom["fg"]
-                ).first()
-                if fg_item:
-                    fg_item.current_stock += qty
-                    db.add(models.InventoryTransaction(
-                        item_id=fg_item.id,
-                        transaction_type="Receive",
-                        quantity=qty,
-                        reference=work_order.work_order_no,
-                        notes=f"Auto-received from WO {work_order.work_order_no} completion",
-                    ))
+        event_bus.publish(
+            ProductionCompleted(
+                tenant_code=current_user.get("tenant", "DEFAULT"),
+                work_order_id=work_order.id,
+                work_order_no=work_order.work_order_no,
+                part_number=work_order.part_number,
+                quantity=work_order.actual_quantity or work_order.target_quantity,
+                machine_id=work_order.machine_id,
+            ),
+            db,
+        )
 
     db.commit()
     db.refresh(work_order)

@@ -1,5 +1,5 @@
 from datetime import datetime
-from sqlalchemy import Column, Integer, String, ForeignKey, DateTime, Date
+from sqlalchemy import Column, Integer, String, ForeignKey, DateTime, Date, Text
 from sqlalchemy.orm import relationship
 
 from database import Base
@@ -166,6 +166,19 @@ class InventoryTransaction(Base):
     notes = Column(String, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
 
+
+class EventLog(Base):
+    """Append-only log of domain events — the factory's history and the
+    substrate for analytics, AI and the digital twin (ADR-0001)."""
+    __tablename__ = "event_log"
+
+    id = Column(Integer, primary_key=True, index=True)
+    tenant_code = Column(String, index=True, nullable=False, default="DEFAULT")
+    event_type = Column(String, index=True, nullable=False)
+    event_version = Column(Integer, default=1)
+    payload = Column(Text)
+    occurred_at = Column(DateTime, default=datetime.utcnow, index=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
 
 
 class QualityInspection(Base):

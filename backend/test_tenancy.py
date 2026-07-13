@@ -86,9 +86,22 @@ def test_automatic_scoping_filters_reads_and_stamps_writes():
     assert default_seen == ["SEED-01"], default_seen   # DEFAULT sees only the seed; filter not baked
 
 
+def test_scoped_models_and_migration_tables_stay_in_lockstep():
+    from tenancy import SCOPED_MODELS, CORE_TENANT_TABLES
+    assert len(SCOPED_MODELS) == len(CORE_TENANT_TABLES) == 28
+    # a few of the newly-added core tables are covered
+    for m in (models.DowntimeLog, models.Escalation, models.QualityInspection,
+              models.OperatorJobExecution, models.MaintenanceTask):
+        assert m in SCOPED_MODELS, m.__name__
+    # every scoped model actually carries the tenant_code column
+    for m in SCOPED_MODELS:
+        assert hasattr(m, "tenant_code"), m.__name__
+
+
 if __name__ == "__main__":
     test_repository_isolates_and_stamps_tenants()
     test_tenant_of_reads_jwt_principal()
     test_migration_adds_and_backfills_tenant_code_idempotently()
     test_automatic_scoping_filters_reads_and_stamps_writes()
-    print("TENANCY OK: repository + automatic scoping isolate tenants and stamp writes; migration adds/backfills idempotently")
+    test_scoped_models_and_migration_tables_stay_in_lockstep()
+    print("TENANCY OK: repository + automatic scoping isolate tenants and stamp writes; 28 core tables scoped; migration idempotent")

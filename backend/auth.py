@@ -45,6 +45,17 @@ def verify_token(token: str):
         )
 
 
+def decode_token_optional(token: str):
+    """Decode a token WITHOUT raising — returns the payload, or None if the token
+    is missing or invalid. For non-critical uses such as tenant scoping."""
+    if not token:
+        return None
+    try:
+        return jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+    except JWTError:
+        return None
+
+
 def get_current_user(
     credentials: HTTPAuthorizationCredentials = Depends(security)
 ):

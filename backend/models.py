@@ -9,6 +9,7 @@ class Machine(Base):
     __tablename__ = "machines"
 
     id = Column(Integer, primary_key=True, index=True)
+    tenant_code = Column(String, index=True, nullable=False, default="DEFAULT")
     name = Column(String, nullable=False)
     status = Column(String, nullable=False)
     utilization = Column(Integer, default=0)
@@ -94,6 +95,7 @@ class WorkOrder(Base):
     __tablename__ = "work_orders"
 
     id = Column(Integer, primary_key=True, index=True)
+    tenant_code = Column(String, index=True, nullable=False, default="DEFAULT")
     work_order_no = Column(String, unique=True, nullable=False)
     part_number = Column(String, nullable=False)
     batch_number = Column(String, nullable=False)
@@ -144,6 +146,7 @@ class InventoryItem(Base):
     __tablename__ = "inventory_items"
 
     id = Column(Integer, primary_key=True, index=True)
+    tenant_code = Column(String, index=True, nullable=False, default="DEFAULT")
     item_code = Column(String, unique=True, nullable=False)
     item_name = Column(String, nullable=False)
     category = Column(String, nullable=False)
@@ -159,6 +162,7 @@ class InventoryTransaction(Base):
     __tablename__ = "inventory_transactions"
 
     id = Column(Integer, primary_key=True, index=True)
+    tenant_code = Column(String, index=True, nullable=False, default="DEFAULT")
     item_id = Column(Integer, ForeignKey("inventory_items.id"))
     transaction_type = Column(String, nullable=False)
     quantity = Column(Integer, nullable=False)

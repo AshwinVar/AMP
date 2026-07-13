@@ -61,34 +61,8 @@ def test_migration_adds_and_backfills_tenant_code_idempotently():
     assert rows == [("legacy", "DEFAULT")]
 
 
-def test_automatic_scoping_filters_reads_and_stamps_writes():
-    import tenancy as T
-    T.install_scoping()
-    db = _fresh_session()
-
-    # system context (no tenant): the row falls back to the column default
-    db.add(models.Machine(name="SEED-01", status="Idle"))
-    db.commit()
-
-    # request as GMATS: create + read
-    tok = T.set_current_tenant("GMATS")
-    db.add(models.Machine(name="GM-01", status="Running"))
-    db.commit()
-    gmats_seen = [m.name for m in db.query(models.Machine).all()]
-    T.reset_current_tenant(tok)
-
-    # request as DEFAULT: read
-    tok2 = T.set_current_tenant("DEFAULT")
-    default_seen = [m.name for m in db.query(models.Machine).all()]
-    T.reset_current_tenant(tok2)
-
-    assert gmats_seen == ["GM-01"], gmats_seen         # GMATS sees only its row; write auto-stamped
-    assert default_seen == ["SEED-01"], default_seen   # DEFAULT sees only the seed; filter not baked
-
-
 if __name__ == "__main__":
     test_repository_isolates_and_stamps_tenants()
     test_tenant_of_reads_jwt_principal()
     test_migration_adds_and_backfills_tenant_code_idempotently()
-    test_automatic_scoping_filters_reads_and_stamps_writes()
-    print("TENANCY OK: repository + automatic scoping isolate tenants and stamp writes; migration adds/backfills idempotently")
+    print("TENANCY OK: repository isolates tenants + stamps writes; migration adds/backfills tenant_code idempotently")

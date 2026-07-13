@@ -52,3 +52,21 @@ Pick one:
 - Automated tests + CI (none yet) — add as the codebase grows.
 - Token refresh / shorter JWT expiry.
 - Per-company invoice/branding settings (currently a constant for GMATS).
+
+## 7. Post-deploy smoke test — run after EVERY deploy
+
+Sync endpoints run in a threadpool; a bad middleware or a broken startup can pass
+unit tests yet deadlock or crash in production. After every deploy, confirm the
+server boots and a **POST** round-trips — not just a GET:
+
+    BASE=https://flowmes-production.up.railway.app
+    curl -s $BASE/health          # -> {"status":"ok",...}
+    curl -s -X POST $BASE/login \  # -> 200 + access_token (NOT a hang)
+      -H "Content-Type: application/json" \
+      -d '{"username":"gmats","password":"gmats@2026"}'
+
+If `/health` is 200 but `POST /login` hangs, a request-body/middleware problem
+shipped — revert immediately (`git revert HEAD && git push`), then fix forward.
+For any middleware or auth change, also run the app **locally** (`uvicorn
+main:app`) and hit `POST /login` before merging — unit tests don't exercise the
+HTTP layer. (This is the check PR #3 skipped; see the ADR-0002 postmortem.)

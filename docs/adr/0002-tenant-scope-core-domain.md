@@ -50,3 +50,11 @@ The vision ("power thousands of factories") — and simply onboarding customer #
 ## Sequencing note
 
 ADR-0001 and 0002 are complementary — events carry `tenant_code`, so deriving tenant (0002) alongside the event envelope (0001) avoids rework. **Recommended order: 0001 first** (smaller, proves the pattern), then 0002.
+
+## Postmortem — PR #3 enforcement (2026-07-13)
+
+The enforcement PR first bound the request tenant with `@app.middleware("http")` (Starlette `BaseHTTPMiddleware`). That buffers the request body and runs the endpoint in a **separate task**, which (a) **deadlocked every POST** — `POST /login` hung in production — and (b) would not have propagated the tenant `contextvar` into the threadpool handler anyway. It passed unit tests because they never exercised the HTTP layer.
+
+**Fix:** bind the tenant with a **pure-ASGI middleware** (`TenantScopeMiddleware`) that shares the endpoint's task — POST bodies stream and the contextvar reaches the ORM. Verified on a running server (`POST /login` → 200; a GMATS login saw 0 of 7 `DEFAULT` machines) before redeploy.
+
+**Rule going forward:** never use `BaseHTTPMiddleware` for request-context/tenant binding — use pure ASGI. **Any middleware or auth change must be smoke-tested against a running server (boot + `POST /login`), not only unit tests** — see the deploy checklist (`docs/Production-Setup.md` §7).

@@ -24,9 +24,11 @@ function severityStyle(sev: string) {
 }
 
 function sourceBadge(source: string) {
-  return source === "recommendation"
-    ? { label: "AI recommendation", cls: "bg-indigo-500/15 text-indigo-300 border-indigo-500/40" }
-    : { label: "Event", cls: "bg-slate-500/15 text-slate-300 border-slate-600/40" };
+  if (source === "recommendation")
+    return { label: "AI recommendation", cls: "bg-indigo-500/15 text-indigo-300 border-indigo-500/40" };
+  if (source === "action")
+    return { label: "Agent action", cls: "bg-emerald-500/15 text-emerald-300 border-emerald-500/40" };
+  return { label: "Event", cls: "bg-slate-500/15 text-slate-300 border-slate-600/40" };
 }
 
 function timeAgo(iso: string) {

@@ -16,7 +16,7 @@ from events import ProductionCompleted, DowntimeStarted, event_bus
 # Autonomy threshold: act only on Critical risk (see predictive_engine.classify_risk).
 CRITICAL_RISK = 75
 
-_AUTO_TASK_TYPE = "Predictive (auto)"
+AUTO_TASK_TYPE = "Predictive (auto)"
 
 
 def _open_auto_task_exists(db, machine_id) -> bool:
@@ -24,7 +24,7 @@ def _open_auto_task_exists(db, machine_id) -> bool:
         db.query(models.MaintenanceTask)
         .filter(
             models.MaintenanceTask.machine_id == machine_id,
-            models.MaintenanceTask.task_type == _AUTO_TASK_TYPE,
+            models.MaintenanceTask.task_type == AUTO_TASK_TYPE,
             models.MaintenanceTask.status == "Open",
         )
         .first()
@@ -42,7 +42,7 @@ def _open_maintenance_task(db, risk) -> bool:
     db.add(models.MaintenanceTask(
         task_no=f"AUTO-MAINT-{machine_id}-{int(now.timestamp())}",
         machine_id=machine_id,
-        task_type=_AUTO_TASK_TYPE,
+        task_type=AUTO_TASK_TYPE,
         priority="Critical",
         assigned_to="Maintenance team",
         planned_date=now.date(),

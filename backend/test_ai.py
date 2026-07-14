@@ -10,6 +10,7 @@ Run:  python backend/test_ai.py     (exit 0 = pass)
 Also collectable by pytest.
 """
 import json
+from datetime import date
 
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
@@ -129,22 +130,28 @@ def test_insights_feed_is_unified_and_tenant_scoped():
                                    title="Reorder Steel", message="...", status="Open", severity="Medium"))
     db.add(models.EventLog(tenant_code="DEFAULT", event_type="DowntimeStarted", event_version=1,
                            payload=json.dumps({"machine_id": 1, "reason": "Breakdown", "duration": "90 min"})))
+    db.add(models.MaintenanceTask(tenant_code="DEFAULT", task_no="AUTO-7", machine_id=7,
+                                  task_type="Predictive (auto)", priority="Critical",
+                                  assigned_to="Maintenance team", planned_date=date.today(), status="Open"))
     db.add(models.EventLog(tenant_code="DEFAULT", event_type="ProductionCompleted", event_version=1, payload="{}"))
-    # another tenant's data must NOT leak (event_log is not auto-scoped)
+    # another tenant's data must NOT leak (event_log + maintenance_tasks scoped by tenant)
     db.add(models.AIRecommendation(tenant_code="GMATS", recommendation_type="reorder_stock",
                                    title="GMATS secret rec", message="...", status="Open"))
-    db.add(models.EventLog(tenant_code="GMATS", event_type="QualityInspectionFailed", event_version=1,
-                           payload=json.dumps({"inspection_no": "G-9"})))
+    db.add(models.MaintenanceTask(tenant_code="GMATS", task_no="AUTO-G", machine_id=1,
+                                  task_type="Predictive (auto)", priority="Critical",
+                                  assigned_to="x", planned_date=date.today(), status="Open"))
     db.commit()
 
     feed = insights.build_feed(db, "DEFAULT")
-    assert {i["source"] for i in feed} == {"recommendation", "event"}   # unified
-    assert len(feed) == 2                                                # routine + other-tenant excluded
-    assert not any("GMATS" in i["title"] for i in feed)                 # no cross-tenant leak
-    assert not any(i["kind"] == "ProductionCompleted" for i in feed)    # routine events omitted
+    assert {i["source"] for i in feed} == {"recommendation", "event", "action"}   # advice + context + action
+    assert len(feed) == 3                                                          # routine + other-tenant excluded
+    assert not any("GMATS" in i["title"] for i in feed)                            # no cross-tenant leak
+    assert not any(i["kind"] == "ProductionCompleted" for i in feed)              # routine events omitted
     rec = next(i for i in feed if i["source"] == "recommendation")
     evt = next(i for i in feed if i["source"] == "event")
-    assert rec["ref_id"] is not None and evt["ref_id"] is None           # recs carry an id to action; events don't
+    act = next(i for i in feed if i["source"] == "action")
+    assert rec["ref_id"] is not None and evt["ref_id"] is None                     # recs action-able; events not
+    assert act["kind"] == "maintenance_task" and act["severity"] == "Critical"     # the agent's action, surfaced
 
 
 def test_register_wires_ai_subscriber_to_the_bus():

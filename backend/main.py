@@ -826,6 +826,13 @@ def get_predictive_maintenance(db: Session = Depends(get_db), current_user: dict
     return ai.prediction.assess_from_db(db)
 
 
+@app.get("/insights")
+def get_insights(db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
+    # Mission Control read-model (ADR-0003 step 3): open AI recommendations +
+    # recent notable events, unified into one tenant-scoped feed.
+    return ai.insights.build_feed(db, current_user.get("tenant", "DEFAULT"))
+
+
 @app.get("/work-orders", response_model=List[schemas.WorkOrderResponse])
 def get_work_orders(db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
     return db.query(models.WorkOrder).order_by(models.WorkOrder.id.desc()).limit(200).all()

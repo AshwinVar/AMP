@@ -10,7 +10,7 @@ from sqlalchemy.orm import sessionmaker
 
 import models
 from database import Base
-from events import EventBus, ProductionCompleted, DowntimeStarted
+from events import EventBus, ProductionCompleted, DowntimeStarted, InventoryLow
 import ai.agents as agents
 
 
@@ -52,14 +52,38 @@ def test_agent_opens_task_only_on_critical_risk_idempotently():
     assert db.query(models.MaintenanceTask).count() == 1
 
 
-def test_register_wires_agent_to_the_stream():
+def test_reorder_agent_drafts_po_on_low_stock_idempotently():
+    db = _fresh_session()
+    db.add(models.InventoryItem(id=5, item_code="RM-STEEL-001", item_name="Steel Rod",
+                                category="Raw", unit="pcs", current_stock=3, reorder_level=10))
+    db.commit()
+    low = InventoryLow(tenant_code="DEFAULT", item_id=5, item_code="RM-STEEL-001",
+                       item_name="Steel Rod", current_stock=3, reorder_level=10)
+
+    agents.draft_reorder_on_inventory_low(low, db)
+    db.commit()
+    pos = db.query(models.PurchaseOrder).all()
+    assert len(pos) == 1
+    assert pos[0].item_id == 5 and pos[0].status == "Draft" and pos[0].supplier_id is None
+    assert pos[0].order_quantity == 17 and pos[0].unit == "pcs"   # 2*10 - 3 = 17; unit from the item
+    assert pos[0].po_no.startswith("AUTO-PO")
+
+    # idempotent: a second low-stock event doesn't draft a duplicate
+    agents.draft_reorder_on_inventory_low(low, db)
+    db.commit()
+    assert db.query(models.PurchaseOrder).count() == 1
+
+
+def test_register_wires_agents_to_the_stream():
     bus = EventBus()
     agents.register(bus)
     assert agents.act_on_machine_event in bus._subscribers[ProductionCompleted]
     assert agents.act_on_machine_event in bus._subscribers[DowntimeStarted]
+    assert agents.draft_reorder_on_inventory_low in bus._subscribers[InventoryLow]
 
 
 if __name__ == "__main__":
     test_agent_opens_task_only_on_critical_risk_idempotently()
-    test_register_wires_agent_to_the_stream()
-    print("AGENT OK: Maintenance agent opens a task only on Critical risk, idempotently; wired to the event stream")
+    test_reorder_agent_drafts_po_on_low_stock_idempotently()
+    test_register_wires_agents_to_the_stream()
+    print("AGENT OK: Maintenance agent opens a task on Critical risk; Reorder agent drafts a PO on low stock; idempotent; wired")

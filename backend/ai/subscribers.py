@@ -2,12 +2,18 @@
 
 The AI platform doesn't only answer HTTP requests — it *subscribes to the event
 stream*. As more domain events flow (production completed, downtime started,
-inventory low), the platform reacts: re-scoring machines and storing per-tenant
-maintenance or reorder suggestions. This is where factory events become
-intelligence.
+inventory low, quality failed), the platform reacts: re-scoring machines and
+storing per-tenant maintenance, reorder or quality suggestions. This is where
+factory events become intelligence.
 """
 from ai import prediction, recommendations
-from events import ProductionCompleted, DowntimeStarted, InventoryLow, event_bus
+from events import (
+    ProductionCompleted,
+    DowntimeStarted,
+    InventoryLow,
+    QualityInspectionFailed,
+    event_bus,
+)
 
 # Only surface a maintenance suggestion when the machine's risk reaches "High" or
 # above (see predictive_engine.classify_risk) — keeps recommendations signal, not
@@ -37,8 +43,13 @@ def recommend_reorder_on_inventory_low(event: InventoryLow, db) -> None:
     recommendations.persist(db, recommendations.from_low_stock(event))
 
 
+def recommend_on_quality_failed(event: QualityInspectionFailed, db) -> None:
+    recommendations.persist(db, recommendations.from_quality_defect(event))
+
+
 def register(bus=event_bus) -> None:
     """Wire AI subscribers to the bus. Called once at startup."""
     bus.subscribe(ProductionCompleted, recommend_on_production_completed)
     bus.subscribe(DowntimeStarted, recommend_on_downtime_started)
     bus.subscribe(InventoryLow, recommend_reorder_on_inventory_low)
+    bus.subscribe(QualityInspectionFailed, recommend_on_quality_failed)

@@ -36,6 +36,23 @@ def from_low_stock(event) -> Recommendation:
     )
 
 
+def from_quality_defect(event) -> Recommendation:
+    """Build a quality recommendation from a QualityInspectionFailed event."""
+    rate = round((event.failed_quantity / event.inspected_quantity) * 100, 1) if event.inspected_quantity else 0.0
+    defect = event.defect_category or "unspecified defects"
+    return Recommendation(
+        recommendation_type="quality_defect",
+        title=f"Quality: {event.failed_quantity} failed on {event.inspection_no}",
+        message=(
+            f"{event.failed_quantity} of {event.inspected_quantity} units failed ({rate}%) - {defect}. "
+            f"Investigate the process/tooling before the next run."
+        ),
+        severity="Critical" if rate >= 10 else ("High" if rate >= 5 else "Medium"),
+        confidence=85,
+        related_machine_id=event.machine_id,
+    )
+
+
 def persist(db, rec: Recommendation) -> bool:
     """Store a recommendation unless an identical *open* one already exists.
 

@@ -15,7 +15,7 @@ from sqlalchemy.orm import sessionmaker
 import models
 from database import Base
 from predictive_engine import calculate_predictive_risk
-from events import EventBus, ProductionCompleted, DowntimeStarted, InventoryLow
+from events import EventBus, ProductionCompleted, DowntimeStarted, InventoryLow, QualityInspectionFailed
 from ai import prediction, recommendations
 import ai.subscribers as ai_subscribers
 
@@ -100,12 +100,32 @@ def test_bus_publish_records_event_and_triggers_ai():
     assert db.query(models.AIRecommendation).count() == 1                                   # and reacted to
 
 
+def test_quality_failed_event_recommends_investigation():
+    db = _fresh_session()
+    ai_subscribers.recommend_on_quality_failed(
+        QualityInspectionFailed(tenant_code="DEFAULT", inspection_no="QC-1001",
+                                failed_quantity=12, inspected_quantity=100,
+                                machine_id=3, defect_category="surface finish"), db)
+    db.commit()
+    recs = db.query(models.AIRecommendation).filter_by(recommendation_type="quality_defect").all()
+    assert len(recs) == 1 and recs[0].related_machine_id == 3
+    assert "QC-1001" in recs[0].title
+
+
+def test_copilot_service_exposes_platform_surface():
+    from ai import copilot
+    assert copilot.name == "copilot"
+    assert isinstance(copilot.is_enabled(), bool)   # returns cleanly whether or not a key is set
+    assert callable(copilot.register)
+
+
 def test_register_wires_ai_subscriber_to_the_bus():
     bus = EventBus()
     ai_subscribers.register(bus)
     assert ai_subscribers.recommend_on_production_completed in bus._subscribers[ProductionCompleted]
     assert ai_subscribers.recommend_on_downtime_started in bus._subscribers[DowntimeStarted]
     assert ai_subscribers.recommend_reorder_on_inventory_low in bus._subscribers[InventoryLow]
+    assert ai_subscribers.recommend_on_quality_failed in bus._subscribers[QualityInspectionFailed]
 
 
 if __name__ == "__main__":
@@ -113,6 +133,8 @@ if __name__ == "__main__":
     test_subscriber_recommends_only_when_risk_is_elevated()
     test_downtime_event_recommends_maintenance_when_risky()
     test_inventory_low_event_recommends_reorder_idempotently()
+    test_quality_failed_event_recommends_investigation()
     test_bus_publish_records_event_and_triggers_ai()
+    test_copilot_service_exposes_platform_surface()
     test_register_wires_ai_subscriber_to_the_bus()
-    print("AI OK: prediction wraps the engine; production/downtime -> maintenance, inventory-low -> reorder; events recorded + reacted; subscribers wired")
+    print("AI OK: prediction + copilot wrapped; production/downtime -> maintenance, inventory-low -> reorder, quality-failed -> defect; events recorded + reacted; wired")

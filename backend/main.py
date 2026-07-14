@@ -41,10 +41,9 @@ import enterprise_inventory_routes
 import gmats_inventory_routes
 import platform_routes
 from platform_routes import log_audit
-import ai_copilot
 import industrial_adapters
 from bom import PART_BOM
-from events import event_bus, ProductionCompleted, DowntimeStarted, InventoryLow
+from events import event_bus, ProductionCompleted, DowntimeStarted, InventoryLow, QualityInspectionFailed
 import subscribers
 import ai
 import ai.subscribers
@@ -101,8 +100,8 @@ gmats_inventory_routes.register(app)
 # branding, audit log and health check.
 platform_routes.register(app)
 
-# Register the AI Factory Copilot (off until ANTHROPIC_API_KEY is set).
-ai_copilot.register(app)
+# Register the AI Factory Copilot behind the platform (off until ANTHROPIC_API_KEY is set).
+ai.copilot.register(app)
 
 # Register the industrial connectivity adapter framework (OPC UA, Modbus, S7,
 # Allen-Bradley, Beckhoff, Omron) — GET /industrial/protocols.
@@ -1600,6 +1599,19 @@ def create_quality_inspection(
 
     new_inspection = models.QualityInspection(**inspection.model_dump())
     db.add(new_inspection)
+
+    # Widen the event stream: a quality inspection recorded failures (ADR-0003).
+    if (new_inspection.failed_quantity or 0) > 0:
+        event_bus.publish(QualityInspectionFailed(
+            tenant_code=current_user.get("tenant", "DEFAULT"),
+            inspection_no=new_inspection.inspection_no,
+            failed_quantity=new_inspection.failed_quantity,
+            inspected_quantity=new_inspection.inspected_quantity,
+            machine_id=new_inspection.machine_id,
+            work_order_id=new_inspection.work_order_id,
+            defect_category=new_inspection.defect_category,
+        ), db)
+
     db.commit()
     db.refresh(new_inspection)
 

@@ -157,6 +157,7 @@ def on_message(client, userdata, msg):
 
         live_event = {
             "event": "machine_update",
+            "tenant_code": machine.tenant_code,
             "machine": {
                 "id": machine.id,
                 "name": machine.name,

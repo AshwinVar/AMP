@@ -3575,7 +3575,10 @@ def get_industrial_gateway_analytics(db: Session = Depends(get_db), current_user
 
 @app.websocket("/ws/live")
 async def websocket_live_dashboard(websocket: WebSocket):
-    await manager.connect(websocket)
+    # Authenticate the live feed by the JWT passed as ?token= (browsers can't set
+    # WS auth headers). The connection then only receives its own tenant's updates.
+    tenant = tenancy.tenant_from_token(websocket.query_params.get("token"))
+    await manager.connect(websocket, tenant)
     try:
         await websocket.send_json({"event": "connected", "message": "AMP live WebSocket connected"})
         while True:

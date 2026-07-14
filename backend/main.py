@@ -3115,6 +3115,24 @@ def list_agent_actions(status: str = None, db: Session = Depends(get_db), curren
     return [_agent_action_dict(a) for a in rows]
 
 
+@app.get("/agent-actions/stats")
+def agent_action_stats(db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
+    # Agent oversight metrics (ADR-0005), tenant-scoped.
+    from collections import Counter
+    tenant = current_user.get("tenant", "DEFAULT")
+    rows = db.query(models.AgentAction).filter(models.AgentAction.tenant_code == tenant).all()
+    by_status = Counter(r.status for r in rows)
+    by_agent = Counter(r.agent for r in rows)
+    return {
+        "total": len(rows),
+        "proposed": by_status.get("Proposed", 0),
+        "approved": by_status.get("Approved", 0),
+        "rejected": by_status.get("Rejected", 0),
+        "auto_approved": sum(1 for r in rows if r.decided_by == "auto-policy"),
+        "by_agent": {a: by_agent.get(a, 0) for a in ("maintenance", "quality", "reorder")},
+    }
+
+
 @app.post("/agent-actions/{action_id}/approve")
 def approve_agent_action(action_id: int, db: Session = Depends(get_db), current_user: dict = Depends(require_roles(["Admin", "Supervisor"]))):
     return _decide_agent_action(action_id, "approve", db, current_user)

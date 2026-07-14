@@ -19,6 +19,11 @@ type AgentAction = {
   decided_at: string | null;
 };
 
+type Stats = {
+  total: number; proposed: number; approved: number; rejected: number;
+  auto_approved: number; by_agent: Record<string, number>;
+};
+
 const FILTERS = ["All", "Proposed", "Approved", "Rejected"];
 
 function statusStyle(s: string) {
@@ -43,6 +48,7 @@ function fmt(iso: string | null) {
 
 export default function AgentActivitySection() {
   const [rows, setRows] = useState<AgentAction[]>([]);
+  const [stats, setStats] = useState<Stats | null>(null);
   const [filter, setFilter] = useState("All");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -52,7 +58,12 @@ export default function AgentActivitySection() {
     setError(null);
     try {
       const q = filter === "All" ? "" : `?status=${filter}`;
-      setRows(await apiGet<AgentAction[]>(`/agent-actions${q}`));
+      const [list, s] = await Promise.all([
+        apiGet<AgentAction[]>(`/agent-actions${q}`),
+        apiGet<Stats>("/agent-actions/stats"),
+      ]);
+      setRows(list);
+      setStats(s);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to load agent activity");
     } finally {
@@ -81,6 +92,16 @@ export default function AgentActivitySection() {
           Every autonomous agent action — proposed, approved or rejected — with a full audit trail.
         </p>
       </div>
+
+      {stats && (
+        <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
+          <Stat title="Total actions" value={stats.total} />
+          <Stat title="Pending" value={stats.proposed} />
+          <Stat title="Approved" value={stats.approved} />
+          <Stat title="Rejected" value={stats.rejected} />
+          <Stat title="Auto-approved" value={stats.auto_approved} />
+        </div>
+      )}
 
       <div className="flex gap-2 flex-wrap">
         {FILTERS.map((f) => (
@@ -141,5 +162,14 @@ export default function AgentActivitySection() {
         </div>
       )}
     </section>
+  );
+}
+
+function Stat({ title, value }: { title: string; value: number }) {
+  return (
+    <div className="rounded-2xl bg-slate-900 border border-slate-800 p-5">
+      <p className="text-slate-400 text-sm">{title}</p>
+      <h3 className="text-2xl font-bold mt-2">{value}</h3>
+    </div>
   );
 }

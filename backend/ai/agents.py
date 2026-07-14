@@ -9,6 +9,7 @@ Approve advances the item, reject cancels it. Three agents today:
   * Quality     — on a high-fail inspection, proposes a machine inspection task.
   * Reorder     — on low stock, drafts a purchase order (auto-approved by policy).
 """
+import os
 from datetime import datetime, timedelta
 
 import models
@@ -27,10 +28,12 @@ AUTO_PO_PREFIX = "AUTO-PO"
 
 # ── Oversight: propose, policy, decide ─────────────────────────────
 def should_auto_approve(action) -> bool:
-    """Trusted low-risk actions skip the gate. Reorder drafts are reversible — no
-    live order until a supplier is assigned and it's sent — so they auto-approve;
-    maintenance and quality tasks wait for a human."""
-    return action.agent == "reorder"
+    """Trusted low-risk actions skip the gate. Which agents auto-approve is
+    configurable via the AUTO_APPROVE_AGENTS env var (comma-separated agent
+    names); it defaults to 'reorder' (reversible drafts). Maintenance and quality
+    stay gated unless explicitly trusted."""
+    trusted = {a.strip() for a in os.environ.get("AUTO_APPROVE_AGENTS", "reorder").split(",") if a.strip()}
+    return action.agent in trusted
 
 
 def apply_decision(db, action, decision, decided_by=None) -> None:

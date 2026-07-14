@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { apiGet } from "../lib/api";
+import { apiGet, apiPatch } from "../lib/api";
 
 // Mirrors the backend Insight shape (ai/insights.py build_feed).
 type Insight = {
@@ -12,6 +12,7 @@ type Insight = {
   message: string;
   occurred_at: string;       // ISO-8601
   related_machine_id: number | null;
+  ref_id: number | null;     // recommendation id (for actioning); null for events
 };
 
 function severityStyle(sev: string) {
@@ -56,6 +57,15 @@ export default function MissionControlSection() {
       setLoading(false);
     }
   }, []);
+
+  const act = useCallback(async (refId: number, status: string) => {
+    try {
+      await apiPatch(`/ai/recommendations/${refId}`, { status });
+      await load();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to update the recommendation");
+    }
+  }, [load]);
 
   useEffect(() => {
     load();
@@ -122,6 +132,18 @@ export default function MissionControlSection() {
                   <span>{timeAgo(i.occurred_at)}</span>
                   {i.related_machine_id != null && <span>· machine #{i.related_machine_id}</span>}
                 </div>
+                {i.source === "recommendation" && i.ref_id != null && (
+                  <div className="mt-4 flex gap-2">
+                    <button onClick={() => act(i.ref_id as number, "Acknowledged")}
+                      className="rounded-lg border border-slate-700 px-3 py-1.5 text-sm text-slate-300 hover:bg-slate-800">
+                      Acknowledge
+                    </button>
+                    <button onClick={() => act(i.ref_id as number, "Closed")}
+                      className="rounded-lg bg-white text-slate-950 font-semibold px-3 py-1.5 text-sm">
+                      Resolve
+                    </button>
+                  </div>
+                )}
               </div>
             );
           })}

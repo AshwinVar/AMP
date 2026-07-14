@@ -36,6 +36,7 @@ class Insight:
     message: str
     occurred_at: str                # ISO-8601
     related_machine_id: Optional[int] = None
+    ref_id: Optional[int] = None    # source row id (recommendation) for actioning; None for events
 
 
 def _describe_event(event_type: str, p: dict):
@@ -80,6 +81,7 @@ def _rec_to_insight(r) -> Insight:
         message=r.message,
         occurred_at=(r.created_at or datetime.utcnow()).isoformat(),
         related_machine_id=r.related_machine_id,
+        ref_id=r.id,
     )
 
 

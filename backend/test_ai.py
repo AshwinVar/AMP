@@ -142,6 +142,9 @@ def test_insights_feed_is_unified_and_tenant_scoped():
     assert len(feed) == 2                                                # routine + other-tenant excluded
     assert not any("GMATS" in i["title"] for i in feed)                 # no cross-tenant leak
     assert not any(i["kind"] == "ProductionCompleted" for i in feed)    # routine events omitted
+    rec = next(i for i in feed if i["source"] == "recommendation")
+    evt = next(i for i in feed if i["source"] == "event")
+    assert rec["ref_id"] is not None and evt["ref_id"] is None           # recs carry an id to action; events don't
 
 
 def test_register_wires_ai_subscriber_to_the_bus():

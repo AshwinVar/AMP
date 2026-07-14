@@ -33,7 +33,6 @@ from analytics_engine import (
     build_smart_alerts,
 )
 from report_generator import build_daily_summary_text
-from predictive_engine import calculate_predictive_risk
 
 import models
 import schemas
@@ -47,9 +46,13 @@ import industrial_adapters
 from bom import PART_BOM
 from events import event_bus, ProductionCompleted
 import subscribers
+import ai
+import ai.subscribers
 
 # Wire domain-event subscribers to the in-process event bus (ADR-0001).
 subscribers.register(event_bus)
+# The AI platform subscribes to the same event stream (ADR-0003).
+ai.subscribers.register(event_bus)
 
 
 Base.metadata.create_all(bind=engine)
@@ -808,12 +811,10 @@ def get_smart_alerts(db: Session = Depends(get_db), current_user: dict = Depends
 
 @app.get("/analytics/predictive-maintenance")
 def get_predictive_maintenance(db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
-    machines = db.query(models.Machine).all()
-    downtime_logs = db.query(models.DowntimeLog).all()
-    production_records = db.query(models.ProductionRecord).all()
-    machine_events = db.query(models.MachineEvent).all()
-    work_orders = db.query(models.WorkOrder).all()
-    return calculate_predictive_risk(machines, downtime_logs, production_records, machine_events, work_orders)
+    # Predictive maintenance now runs through the AI platform (ADR-0003) rather
+    # than the engine directly - same rule-based result today, swappable for
+    # ML/LLM behind ai.prediction without touching this endpoint.
+    return ai.prediction.assess_from_db(db)
 
 
 @app.get("/work-orders", response_model=List[schemas.WorkOrderResponse])

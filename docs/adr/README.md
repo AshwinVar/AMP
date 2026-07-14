@@ -8,6 +8,7 @@ Guiding principles: incremental (strangler) evolution, never a rewrite; backward
 |-----|-------|--------|
 | [0001](0001-domain-event-bus.md) | Introduce a domain event bus | Accepted |
 | [0002](0002-tenant-scope-core-domain.md) | Tenant-scope the core domain | Accepted |
+| [0003](0003-ai-as-event-consuming-platform.md) | AI as an event-consuming platform | Accepted |
 
 **Recommended order:** 0001 first (smaller, proves the pattern; events carry `tenant_code`), then 0002.
 

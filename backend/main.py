@@ -3079,6 +3079,52 @@ def update_ai_recommendation(recommendation_id: int, payload: schemas.AIRecommen
     return row
 
 
+def _agent_action_dict(a):
+    return {
+        "id": a.id, "agent": a.agent, "action_type": a.action_type, "summary": a.summary,
+        "ref_kind": a.ref_kind, "ref_id": a.ref_id, "severity": a.severity, "status": a.status,
+        "related_machine_id": a.related_machine_id,
+        "created_at": a.created_at.isoformat() if a.created_at else None,
+        "decided_by": a.decided_by, "decided_at": a.decided_at.isoformat() if a.decided_at else None,
+    }
+
+
+def _decide_agent_action(action_id, decision, db, current_user):
+    tenant = current_user.get("tenant", "DEFAULT")
+    action = db.query(models.AgentAction).filter(
+        models.AgentAction.id == action_id, models.AgentAction.tenant_code == tenant).first()
+    if not action:
+        raise HTTPException(status_code=404, detail="Agent action not found")
+    if action.status != "Proposed":
+        raise HTTPException(status_code=400, detail=f"Already {action.status.lower()}")
+    ai.agents.apply_decision(db, action, decision,
+                             decided_by=current_user.get("sub") or current_user.get("username"))
+    db.commit()
+    db.refresh(action)
+    return _agent_action_dict(action)
+
+
+@app.get("/agent-actions")
+def list_agent_actions(status: str = None, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
+    # Agent activity log + approval queue (ADR-0005), tenant-scoped.
+    tenant = current_user.get("tenant", "DEFAULT")
+    q = db.query(models.AgentAction).filter(models.AgentAction.tenant_code == tenant)
+    if status:
+        q = q.filter(models.AgentAction.status == status)
+    rows = q.order_by(models.AgentAction.created_at.desc()).limit(300).all()
+    return [_agent_action_dict(a) for a in rows]
+
+
+@app.post("/agent-actions/{action_id}/approve")
+def approve_agent_action(action_id: int, db: Session = Depends(get_db), current_user: dict = Depends(require_roles(["Admin", "Supervisor"]))):
+    return _decide_agent_action(action_id, "approve", db, current_user)
+
+
+@app.post("/agent-actions/{action_id}/reject")
+def reject_agent_action(action_id: int, db: Session = Depends(get_db), current_user: dict = Depends(require_roles(["Admin", "Supervisor"]))):
+    return _decide_agent_action(action_id, "reject", db, current_user)
+
+
 @app.post("/ai/generate-recommendations")
 def generate_ai_recommendations(db: Session = Depends(get_db), current_user: dict = Depends(require_roles(["Admin", "Supervisor"]))):
     machines = db.query(models.Machine).all()

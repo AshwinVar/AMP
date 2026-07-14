@@ -1,11 +1,11 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { apiGet, apiPatch } from "../lib/api";
+import { apiGet, apiPatch, apiPost } from "../lib/api";
 
 // Mirrors the backend Insight shape (ai/insights.py build_feed).
 type Insight = {
-  source: string;            // "recommendation" | "event"
+  source: string;            // "recommendation" | "event" | "action"
   kind: string;              // recommendation_type or event_type
   severity: string;          // Critical | High | Medium | Low | Info
   title: string;
@@ -69,6 +69,15 @@ export default function MissionControlSection() {
     }
   }, [load]);
 
+  const decideAction = useCallback(async (id: number, decision: string) => {
+    try {
+      await apiPost(`/agent-actions/${id}/${decision}`, {});
+      await load();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to update the agent action");
+    }
+  }, [load]);
+
   useEffect(() => {
     load();
     const id = setInterval(load, 30000); // keep the command feed fresh
@@ -88,7 +97,7 @@ export default function MissionControlSection() {
         <div>
           <h2 className="text-3xl font-bold">Mission Control</h2>
           <p className="text-slate-400 mt-2">
-            What the factory needs to know now — AI recommendations and notable events, unified and live.
+            What the factory needs to know now — AI recommendations, notable events, and agent actions, unified and live.
           </p>
         </div>
         <button onClick={load} className="rounded-xl bg-white text-slate-950 font-semibold px-4 py-3">
@@ -143,6 +152,18 @@ export default function MissionControlSection() {
                     <button onClick={() => act(i.ref_id as number, "Closed")}
                       className="rounded-lg bg-white text-slate-950 font-semibold px-3 py-1.5 text-sm">
                       Resolve
+                    </button>
+                  </div>
+                )}
+                {i.source === "action" && i.ref_id != null && (
+                  <div className="mt-4 flex gap-2">
+                    <button onClick={() => decideAction(i.ref_id as number, "approve")}
+                      className="rounded-lg bg-emerald-500/90 text-slate-950 font-semibold px-3 py-1.5 text-sm hover:bg-emerald-400">
+                      Approve
+                    </button>
+                    <button onClick={() => decideAction(i.ref_id as number, "reject")}
+                      className="rounded-lg border border-slate-700 px-3 py-1.5 text-sm text-slate-300 hover:bg-slate-800">
+                      Reject
                     </button>
                   </div>
                 )}

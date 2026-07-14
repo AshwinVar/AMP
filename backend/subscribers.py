@@ -6,7 +6,7 @@ the event and the caller's DB session and operates within its transaction.
 """
 import models
 from bom import PART_BOM
-from events import ProductionCompleted, event_bus
+from events import ProductionCompleted, InventoryLow, event_bus
 
 
 def move_bom_on_production_completed(event: ProductionCompleted, db) -> None:
@@ -26,6 +26,7 @@ def move_bom_on_production_completed(event: ProductionCompleted, db) -> None:
             models.InventoryItem.item_code == bom["raw"]
         ).first()
         if raw_item:
+            was_above = raw_item.current_stock > raw_item.reorder_level
             consume = min(qty * bom["consume_per_unit"], raw_item.current_stock)
             raw_item.current_stock -= consume
             db.add(models.InventoryTransaction(
@@ -35,6 +36,17 @@ def move_bom_on_production_completed(event: ProductionCompleted, db) -> None:
                 reference=event.work_order_no,
                 notes=f"Auto-issued for WO {event.work_order_no} — {event.part_number}",
             ))
+            # Production consumption can trip a reorder — emit InventoryLow so the
+            # Reorder agent reacts (ADR-0005).
+            if was_above and raw_item.current_stock <= raw_item.reorder_level:
+                event_bus.publish(InventoryLow(
+                    tenant_code=event.tenant_code,
+                    item_id=raw_item.id,
+                    item_code=raw_item.item_code,
+                    item_name=raw_item.item_name,
+                    current_stock=raw_item.current_stock,
+                    reorder_level=raw_item.reorder_level,
+                ), db)
 
     # Add finished goods
     if bom["fg"]:

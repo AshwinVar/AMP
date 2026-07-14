@@ -59,6 +59,21 @@ class InventoryLow:
     event_version: int = 1
 
 
+@dataclass(frozen=True)
+class QualityInspectionFailed:
+    """A quality inspection recorded failed units."""
+    tenant_code: str
+    inspection_no: str
+    failed_quantity: int
+    inspected_quantity: int
+    machine_id: Optional[int] = None
+    work_order_id: Optional[int] = None
+    defect_category: Optional[str] = None
+    occurred_at: datetime = field(default_factory=datetime.utcnow)
+    event_type: str = "QualityInspectionFailed"
+    event_version: int = 1
+
+
 class EventBus:
     """Minimal synchronous, in-process event bus."""
 

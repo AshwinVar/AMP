@@ -252,7 +252,7 @@ export default function DashboardPage() {
   const [machines, setMachines] = useState<Machine[]>([]);
   const [downtimeLogs, setDowntimeLogs] = useState<DowntimeLog[]>([]);
   const [shifts, setShifts] = useState<Shift[]>([]);
-  const [activeView, setActiveView] = useState("overview");
+  const [activeView, setActiveView] = useState("mission");
   const [searchQuery, setSearchQuery] = useState("");
   const [searchResults, setSearchResults] = useState<typeof NAV_ITEMS>([]);
 

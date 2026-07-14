@@ -12,7 +12,7 @@ from sqlalchemy.orm import sessionmaker
 
 import models
 from database import Base
-from events import EventBus, ProductionCompleted, DowntimeStarted, InventoryLow
+from events import EventBus, ProductionCompleted, DowntimeStarted, InventoryLow, QualityInspectionFailed
 import ai.agents as agents
 
 
@@ -71,12 +71,13 @@ def test_reorder_agent_drafts_po_on_low_stock_idempotently():
     db.commit()
     pos = db.query(models.PurchaseOrder).all()
     assert len(pos) == 1
-    assert pos[0].item_id == 5 and pos[0].status == "Draft" and pos[0].supplier_id is None
+    # reorder is trusted -> auto-approved by policy (PO advanced, action decided)
+    assert pos[0].item_id == 5 and pos[0].status == "Approved" and pos[0].supplier_id is None
     assert pos[0].order_quantity == 17 and pos[0].unit == "pcs"   # 2*10 - 3 = 17; unit from the item
     assert pos[0].po_no.startswith("AUTO-PO")
-    # and it logged a proposed AgentAction
     actions = db.query(models.AgentAction).filter_by(ref_kind="purchase_order").all()
-    assert len(actions) == 1 and actions[0].agent == "reorder" and actions[0].ref_id == pos[0].id
+    assert len(actions) == 1 and actions[0].agent == "reorder"
+    assert actions[0].status == "Approved" and actions[0].decided_by == "auto-policy"
 
     # idempotent: a second low-stock event doesn't draft a duplicate
     agents.draft_reorder_on_inventory_low(low, db)
@@ -111,17 +112,41 @@ def test_approve_and_reject_agent_actions():
     assert db.query(models.PurchaseOrder).filter_by(id=1).first().status == "Cancelled"  # PO cancelled
 
 
+def test_quality_agent_proposes_inspection_on_high_fail_rate():
+    db = _fresh_session()
+    db.add(models.Machine(id=4, name="CNC-04", status="Running", utilization=70))
+    db.commit()
+    high = QualityInspectionFailed(tenant_code="DEFAULT", inspection_no="QC-9",
+                                   failed_quantity=12, inspected_quantity=80,   # 15% >= 10%
+                                   machine_id=4, defect_category="surface")
+    agents.inspect_on_quality_failed(high, db)
+    db.commit()
+    tasks = db.query(models.MaintenanceTask).filter_by(task_type="Quality (auto)").all()
+    assert len(tasks) == 1 and tasks[0].machine_id == 4 and tasks[0].status == "Proposed"
+    actions = db.query(models.AgentAction).filter_by(agent="quality").all()
+    assert len(actions) == 1 and actions[0].status == "Proposed"   # quality is NOT auto-approved
+
+    # below the threshold -> no action
+    low = QualityInspectionFailed(tenant_code="DEFAULT", inspection_no="QC-10",
+                                  failed_quantity=1, inspected_quantity=100, machine_id=4)
+    agents.inspect_on_quality_failed(low, db)
+    db.commit()
+    assert db.query(models.MaintenanceTask).filter_by(task_type="Quality (auto)").count() == 1
+
+
 def test_register_wires_agents_to_the_stream():
     bus = EventBus()
     agents.register(bus)
     assert agents.act_on_machine_event in bus._subscribers[ProductionCompleted]
     assert agents.act_on_machine_event in bus._subscribers[DowntimeStarted]
+    assert agents.inspect_on_quality_failed in bus._subscribers[QualityInspectionFailed]
     assert agents.draft_reorder_on_inventory_low in bus._subscribers[InventoryLow]
 
 
 if __name__ == "__main__":
     test_agent_opens_task_only_on_critical_risk_idempotently()
     test_reorder_agent_drafts_po_on_low_stock_idempotently()
+    test_quality_agent_proposes_inspection_on_high_fail_rate()
     test_approve_and_reject_agent_actions()
     test_register_wires_agents_to_the_stream()
-    print("AGENT OK: agents propose (task/PO pending) + log AgentActions; approve advances, reject cancels; idempotent; wired")
+    print("AGENT OK: 3 agents propose; reorder auto-approves (policy), maintenance/quality wait; approve/reject; idempotent; wired")

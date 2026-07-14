@@ -31,6 +31,7 @@ export const NAV_ITEMS: NavItem[] = [
   { key: "connectivity",   label: "Connectivity",       icon: "⇄", module: "intelligence" },
   { key: "ai",             label: "AI Insights",        icon: "✦", module: "intelligence" },
   { key: "copilot",        label: "AI Copilot",         icon: "✸", module: "intelligence" },
+  { key: "agentactivity",  label: "Agent Activity",     icon: "⊙", module: "intelligence" },
   { key: "executive",      label: "Executive OEE",      icon: "▰", module: "intelligence" },
   { key: "escalations",    label: "Escalations",        icon: "!", module: "intelligence" },
   { key: "notifications",  label: "Notifications",      icon: "●", module: "intelligence" },

@@ -47,11 +47,14 @@ from events import event_bus, ProductionCompleted, DowntimeStarted, InventoryLow
 import subscribers
 import ai
 import ai.subscribers
+import ai.agents
 
 # Wire domain-event subscribers to the in-process event bus (ADR-0001).
 subscribers.register(event_bus)
 # The AI platform subscribes to the same event stream (ADR-0003).
 ai.subscribers.register(event_bus)
+# AI agents act on the stream - autonomy, not just advice (ADR-0004).
+ai.agents.register(event_bus)
 
 
 Base.metadata.create_all(bind=engine)

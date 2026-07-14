@@ -371,6 +371,27 @@ class AIRecommendation(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
 
 
+class AgentAction(Base):
+    """The record of an autonomous agent action (ADR-0005): the audit log and the
+    approval queue in one. Agents propose (status Proposed); a human approves or
+    rejects, advancing or cancelling the underlying item (a task or a PO)."""
+    __tablename__ = "agent_actions"
+
+    id = Column(Integer, primary_key=True, index=True)
+    tenant_code = Column(String, index=True, nullable=False, default="DEFAULT")
+    agent = Column(String, nullable=False)             # "maintenance" | "reorder"
+    action_type = Column(String, nullable=False)       # "open_task" | "draft_po"
+    summary = Column(String, nullable=False)
+    ref_kind = Column(String, nullable=False)          # "maintenance_task" | "purchase_order"
+    ref_id = Column(Integer, nullable=True)
+    severity = Column(String, default="Medium")
+    status = Column(String, default="Proposed")        # Proposed | Approved | Rejected
+    related_machine_id = Column(Integer, nullable=True)
+    decided_by = Column(String, nullable=True)
+    decided_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, index=True)
+
+
 
 class TenantConfig(Base):
     """Per-tenant licensing, feature flags and white-label branding.

@@ -1,13 +1,13 @@
-"""Insights — the Mission Control read-model (ADR-0003, step 3).
+"""Insights — the Mission Control read-model (ADR-0003, step 3; ADR-0005).
 
-A per-tenant projection that unifies the AI platform's open recommendations with
-recent notable domain events into one stream — "what the factory needs to know
-now." A read-model over existing tables (ai_recommendations, event_log); it adds
+A per-tenant projection that unifies the AI platform's open recommendations,
+recent notable domain events, and the agents' proposed actions into one stream —
+"what the factory needs to know now." A read-model over existing tables; it adds
 no storage.
 
-Scoping is applied **explicitly** by tenant: ai_recommendations is auto-scoped
-(ADR-0002) but event_log is only tenant-*stamped*, so the feed must filter it
-here to stay leak-proof.
+Scoping is applied explicitly by tenant: ai_recommendations is auto-scoped
+(ADR-0002), while event_log and agent_actions are only tenant-stamped, so the
+feed filters them here to stay leak-proof.
 """
 import json
 from dataclasses import dataclass, asdict
@@ -15,7 +15,6 @@ from datetime import datetime
 from typing import Optional
 
 import models
-from ai.agents import AUTO_TASK_TYPE, AUTO_PO_PREFIX
 
 name = "insights"
 
@@ -30,14 +29,14 @@ _EVENT_SEVERITY = {
 
 @dataclass(frozen=True)
 class Insight:
-    source: str                     # "recommendation" | "event"
-    kind: str                       # recommendation_type or event_type
+    source: str                     # "recommendation" | "event" | "action"
+    kind: str                       # recommendation_type / event_type / action_type
     severity: str                   # Critical | High | Medium | Low | Info
     title: str
     message: str
     occurred_at: str                # ISO-8601
     related_machine_id: Optional[int] = None
-    ref_id: Optional[int] = None    # source row id (recommendation) for actioning; None for events
+    ref_id: Optional[int] = None    # row id to act on (recommendation / agent action); None for events
 
 
 def _describe_event(event_type: str, p: dict):
@@ -86,36 +85,25 @@ def _rec_to_insight(r) -> Insight:
     )
 
 
-def _task_to_insight(t) -> Insight:
-    """An agent-opened maintenance task — what the platform *did*, not just advised."""
+def _action_to_insight(a) -> Insight:
+    """A proposed agent action — what the platform wants to do, awaiting approval."""
     return Insight(
         source="action",
-        kind="maintenance_task",
-        severity=t.priority or "Medium",
-        title=f"Maintenance task opened - machine #{t.machine_id}",
-        message=t.notes or f"{t.task_type} {t.task_no} for machine {t.machine_id}.",
-        occurred_at=(t.created_at or datetime.utcnow()).isoformat(),
-        related_machine_id=t.machine_id,
-    )
-
-
-def _po_to_insight(p) -> Insight:
-    """An agent-drafted purchase order — the reorder agent acting on low stock."""
-    return Insight(
-        source="action",
-        kind="purchase_order",
-        severity="Medium",
-        title=f"Purchase order drafted - {p.item_name}",
-        message=p.notes or f"Draft PO {p.po_no}: {p.order_quantity} {p.unit} of {p.item_name}.",
-        occurred_at=(p.created_at or datetime.utcnow()).isoformat(),
+        kind=a.action_type,
+        severity=a.severity or "Medium",
+        title=a.summary,
+        message=f"{a.agent.title()} agent · proposed, awaiting approval.",
+        occurred_at=(a.created_at or datetime.utcnow()).isoformat(),
+        related_machine_id=a.related_machine_id,
+        ref_id=a.id,
     )
 
 
 def build_feed(db, tenant: str, limit: int = 50):
     """Most-recent-first insight feed for one tenant: open AI recommendations,
-    recent notable domain events, and the agents' open auto-tasks and drafted
-    purchase orders, unified. ``tenant`` is applied explicitly so the feed is
-    leak-proof regardless of the global scoping state."""
+    recent notable domain events, and the agents' proposed actions, unified.
+    ``tenant`` is applied explicitly so the feed is leak-proof regardless of the
+    global scoping state."""
     recs = (
         db.query(models.AIRecommendation)
         .filter(models.AIRecommendation.tenant_code == tenant,
@@ -130,25 +118,15 @@ def build_feed(db, tenant: str, limit: int = 50):
         .order_by(models.EventLog.occurred_at.desc())
         .limit(limit).all()
     )
-    tasks = (
-        db.query(models.MaintenanceTask)
-        .filter(models.MaintenanceTask.tenant_code == tenant,
-                models.MaintenanceTask.task_type == AUTO_TASK_TYPE,
-                models.MaintenanceTask.status == "Open")
-        .order_by(models.MaintenanceTask.created_at.desc())
-        .limit(limit).all()
-    )
-    pos = (
-        db.query(models.PurchaseOrder)
-        .filter(models.PurchaseOrder.tenant_code == tenant,
-                models.PurchaseOrder.po_no.like(f"{AUTO_PO_PREFIX}-%"),
-                models.PurchaseOrder.status == "Draft")
-        .order_by(models.PurchaseOrder.created_at.desc())
+    actions = (
+        db.query(models.AgentAction)
+        .filter(models.AgentAction.tenant_code == tenant,
+                models.AgentAction.status == "Proposed")
+        .order_by(models.AgentAction.created_at.desc())
         .limit(limit).all()
     )
     insights = ([_rec_to_insight(r) for r in recs]
                 + [_event_to_insight(e) for e in events]
-                + [_task_to_insight(t) for t in tasks]
-                + [_po_to_insight(p) for p in pos])
+                + [_action_to_insight(a) for a in actions])
     insights.sort(key=lambda i: i.occurred_at, reverse=True)
     return [asdict(i) for i in insights[:limit]]

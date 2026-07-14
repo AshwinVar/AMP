@@ -130,16 +130,15 @@ def test_insights_feed_is_unified_and_tenant_scoped():
                                    title="Reorder Steel", message="...", status="Open", severity="Medium"))
     db.add(models.EventLog(tenant_code="DEFAULT", event_type="DowntimeStarted", event_version=1,
                            payload=json.dumps({"machine_id": 1, "reason": "Breakdown", "duration": "90 min"})))
-    db.add(models.MaintenanceTask(tenant_code="DEFAULT", task_no="AUTO-7", machine_id=7,
-                                  task_type="Predictive (auto)", priority="Critical",
-                                  assigned_to="Maintenance team", planned_date=date.today(), status="Open"))
+    db.add(models.AgentAction(tenant_code="DEFAULT", agent="maintenance", action_type="open_task",
+                              summary="Open a Critical maintenance task for PRESS-01",
+                              ref_kind="maintenance_task", ref_id=7, severity="Critical", status="Proposed"))
     db.add(models.EventLog(tenant_code="DEFAULT", event_type="ProductionCompleted", event_version=1, payload="{}"))
-    # another tenant's data must NOT leak (event_log + maintenance_tasks scoped by tenant)
+    # another tenant's data must NOT leak (event_log + agent_actions scoped by tenant)
     db.add(models.AIRecommendation(tenant_code="GMATS", recommendation_type="reorder_stock",
                                    title="GMATS secret rec", message="...", status="Open"))
-    db.add(models.MaintenanceTask(tenant_code="GMATS", task_no="AUTO-G", machine_id=1,
-                                  task_type="Predictive (auto)", priority="Critical",
-                                  assigned_to="x", planned_date=date.today(), status="Open"))
+    db.add(models.AgentAction(tenant_code="GMATS", agent="maintenance", action_type="open_task",
+                              summary="GMATS secret action", ref_kind="maintenance_task", ref_id=1, status="Proposed"))
     db.commit()
 
     feed = insights.build_feed(db, "DEFAULT")
@@ -150,26 +149,22 @@ def test_insights_feed_is_unified_and_tenant_scoped():
     rec = next(i for i in feed if i["source"] == "recommendation")
     evt = next(i for i in feed if i["source"] == "event")
     act = next(i for i in feed if i["source"] == "action")
-    assert rec["ref_id"] is not None and evt["ref_id"] is None                     # recs action-able; events not
-    assert act["kind"] == "maintenance_task" and act["severity"] == "Critical"     # the agent's action, surfaced
+    assert rec["ref_id"] is not None and evt["ref_id"] is None                     # recs/actions action-able; events not
+    assert act["kind"] == "open_task" and act["severity"] == "Critical" and act["ref_id"] is not None
 
 
-def test_insights_surfaces_agent_drafted_po_not_human_po():
+def test_insights_surfaces_only_proposed_actions():
     from ai import insights
     db = _fresh_session()
-    # agent draft (AUTO-PO prefix, status Draft) -> surfaces as an action
-    db.add(models.PurchaseOrder(tenant_code="DEFAULT", po_no="AUTO-PO-5-1", item_id=5,
-                                item_name="Steel Rod", order_quantity=17, unit="pcs",
-                                expected_delivery_date=date.today(), status="Draft",
-                                notes="Auto-drafted by the Reorder agent."))
-    # a human PO (no prefix, status Open) must NOT be surfaced as an agent action
-    db.add(models.PurchaseOrder(tenant_code="DEFAULT", po_no="PO-1001", item_id=6,
-                                item_name="Bolts", order_quantity=100, unit="pcs",
-                                expected_delivery_date=date.today(), status="Open"))
+    db.add(models.AgentAction(tenant_code="DEFAULT", agent="reorder", action_type="draft_po",
+                              summary="Draft a PO for Steel Rod", ref_kind="purchase_order", ref_id=1, status="Proposed"))
+    # an already-decided action must NOT clutter the live feed
+    db.add(models.AgentAction(tenant_code="DEFAULT", agent="reorder", action_type="draft_po",
+                              summary="Old approved action", ref_kind="purchase_order", ref_id=2, status="Approved"))
     db.commit()
     actions = [i for i in insights.build_feed(db, "DEFAULT") if i["source"] == "action"]
-    assert len(actions) == 1
-    assert actions[0]["kind"] == "purchase_order" and "Steel Rod" in actions[0]["title"]
+    assert len(actions) == 1 and actions[0]["kind"] == "draft_po"
+    assert "Steel Rod" in actions[0]["title"]   # only the Proposed one surfaces
 
 
 def test_register_wires_ai_subscriber_to_the_bus():
@@ -190,6 +185,6 @@ if __name__ == "__main__":
     test_bus_publish_records_event_and_triggers_ai()
     test_copilot_service_exposes_platform_surface()
     test_insights_feed_is_unified_and_tenant_scoped()
-    test_insights_surfaces_agent_drafted_po_not_human_po()
+    test_insights_surfaces_only_proposed_actions()
     test_register_wires_ai_subscriber_to_the_bus()
     print("AI OK: prediction + copilot wrapped; production/downtime -> maintenance, inventory-low -> reorder, quality-failed -> defect; insights feed unified + tenant-scoped; wired")

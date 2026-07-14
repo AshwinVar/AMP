@@ -15,6 +15,7 @@ from datetime import datetime
 from typing import Optional
 
 import models
+from ai.agents import AUTO_TASK_TYPE
 
 name = "insights"
 
@@ -85,10 +86,24 @@ def _rec_to_insight(r) -> Insight:
     )
 
 
+def _task_to_insight(t) -> Insight:
+    """An agent-opened maintenance task — what the platform *did*, not just advised."""
+    return Insight(
+        source="action",
+        kind="maintenance_task",
+        severity=t.priority or "Medium",
+        title=f"Maintenance task opened - machine #{t.machine_id}",
+        message=t.notes or f"{t.task_type} {t.task_no} for machine {t.machine_id}.",
+        occurred_at=(t.created_at or datetime.utcnow()).isoformat(),
+        related_machine_id=t.machine_id,
+    )
+
+
 def build_feed(db, tenant: str, limit: int = 50):
-    """Most-recent-first insight feed for one tenant: open AI recommendations +
-    recent notable domain events, unified. ``tenant`` is applied explicitly so
-    the feed is leak-proof regardless of the global scoping state."""
+    """Most-recent-first insight feed for one tenant: open AI recommendations,
+    recent notable domain events, and the agent's open auto-tasks, unified.
+    ``tenant`` is applied explicitly so the feed is leak-proof regardless of the
+    global scoping state."""
     recs = (
         db.query(models.AIRecommendation)
         .filter(models.AIRecommendation.tenant_code == tenant,
@@ -103,6 +118,16 @@ def build_feed(db, tenant: str, limit: int = 50):
         .order_by(models.EventLog.occurred_at.desc())
         .limit(limit).all()
     )
-    insights = [_rec_to_insight(r) for r in recs] + [_event_to_insight(e) for e in events]
+    tasks = (
+        db.query(models.MaintenanceTask)
+        .filter(models.MaintenanceTask.tenant_code == tenant,
+                models.MaintenanceTask.task_type == AUTO_TASK_TYPE,
+                models.MaintenanceTask.status == "Open")
+        .order_by(models.MaintenanceTask.created_at.desc())
+        .limit(limit).all()
+    )
+    insights = ([_rec_to_insight(r) for r in recs]
+                + [_event_to_insight(e) for e in events]
+                + [_task_to_insight(t) for t in tasks])
     insights.sort(key=lambda i: i.occurred_at, reverse=True)
     return [asdict(i) for i in insights[:limit]]

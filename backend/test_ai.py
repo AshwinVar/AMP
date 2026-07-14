@@ -9,6 +9,8 @@ Proves the platform skeleton:
 Run:  python backend/test_ai.py     (exit 0 = pass)
 Also collectable by pytest.
 """
+import json
+
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
@@ -119,6 +121,29 @@ def test_copilot_service_exposes_platform_surface():
     assert callable(copilot.register)
 
 
+def test_insights_feed_is_unified_and_tenant_scoped():
+    from ai import insights
+    db = _fresh_session()
+    # DEFAULT: an open recommendation, a notable event, and a routine event
+    db.add(models.AIRecommendation(tenant_code="DEFAULT", recommendation_type="reorder_stock",
+                                   title="Reorder Steel", message="...", status="Open", severity="Medium"))
+    db.add(models.EventLog(tenant_code="DEFAULT", event_type="DowntimeStarted", event_version=1,
+                           payload=json.dumps({"machine_id": 1, "reason": "Breakdown", "duration": "90 min"})))
+    db.add(models.EventLog(tenant_code="DEFAULT", event_type="ProductionCompleted", event_version=1, payload="{}"))
+    # another tenant's data must NOT leak (event_log is not auto-scoped)
+    db.add(models.AIRecommendation(tenant_code="GMATS", recommendation_type="reorder_stock",
+                                   title="GMATS secret rec", message="...", status="Open"))
+    db.add(models.EventLog(tenant_code="GMATS", event_type="QualityInspectionFailed", event_version=1,
+                           payload=json.dumps({"inspection_no": "G-9"})))
+    db.commit()
+
+    feed = insights.build_feed(db, "DEFAULT")
+    assert {i["source"] for i in feed} == {"recommendation", "event"}   # unified
+    assert len(feed) == 2                                                # routine + other-tenant excluded
+    assert not any("GMATS" in i["title"] for i in feed)                 # no cross-tenant leak
+    assert not any(i["kind"] == "ProductionCompleted" for i in feed)    # routine events omitted
+
+
 def test_register_wires_ai_subscriber_to_the_bus():
     bus = EventBus()
     ai_subscribers.register(bus)
@@ -136,5 +161,6 @@ if __name__ == "__main__":
     test_quality_failed_event_recommends_investigation()
     test_bus_publish_records_event_and_triggers_ai()
     test_copilot_service_exposes_platform_surface()
+    test_insights_feed_is_unified_and_tenant_scoped()
     test_register_wires_ai_subscriber_to_the_bus()
-    print("AI OK: prediction + copilot wrapped; production/downtime -> maintenance, inventory-low -> reorder, quality-failed -> defect; events recorded + reacted; wired")
+    print("AI OK: prediction + copilot wrapped; production/downtime -> maintenance, inventory-low -> reorder, quality-failed -> defect; insights feed unified + tenant-scoped; wired")

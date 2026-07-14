@@ -15,7 +15,7 @@ from sqlalchemy.orm import sessionmaker
 import models
 from database import Base
 from predictive_engine import calculate_predictive_risk
-from events import EventBus, ProductionCompleted
+from events import EventBus, ProductionCompleted, DowntimeStarted, InventoryLow
 from ai import prediction, recommendations
 import ai.subscribers as ai_subscribers
 
@@ -63,14 +63,56 @@ def test_subscriber_recommends_only_when_risk_is_elevated():
     assert db.query(models.AIRecommendation).count() == 1
 
 
+def test_downtime_event_recommends_maintenance_when_risky():
+    db = _fresh_session()
+    db.add(models.Machine(id=1, name="PRESS-01", status="Breakdown", utilization=30))
+    db.commit()
+    ai_subscribers.recommend_on_downtime_started(
+        DowntimeStarted(tenant_code="DEFAULT", machine_id=1, reason="Breakdown", duration="90 min"), db)
+    db.commit()
+    recs = db.query(models.AIRecommendation).filter_by(recommendation_type="predictive_maintenance").all()
+    assert len(recs) == 1 and recs[0].related_machine_id == 1
+
+
+def test_inventory_low_event_recommends_reorder_idempotently():
+    db = _fresh_session()
+    low = InventoryLow(tenant_code="DEFAULT", item_id=5, item_code="RM-STEEL-001",
+                       item_name="Steel Rod", current_stock=3, reorder_level=10)
+    ai_subscribers.recommend_reorder_on_inventory_low(low, db)
+    db.commit()
+    recs = db.query(models.AIRecommendation).filter_by(recommendation_type="reorder_stock").all()
+    assert len(recs) == 1 and "RM-STEEL-001" in recs[0].title
+    # a second identical event does not duplicate the open suggestion
+    ai_subscribers.recommend_reorder_on_inventory_low(low, db)
+    db.commit()
+    assert db.query(models.AIRecommendation).filter_by(recommendation_type="reorder_stock").count() == 1
+
+
+def test_bus_publish_records_event_and_triggers_ai():
+    db = _fresh_session()
+    db.add(models.Machine(id=1, name="PRESS-01", status="Breakdown", utilization=30))
+    db.commit()
+    bus = EventBus()
+    ai_subscribers.register(bus)
+    bus.publish(DowntimeStarted(tenant_code="DEFAULT", machine_id=1, reason="Breakdown", duration="90 min"), db)
+    db.commit()
+    assert db.query(models.EventLog).filter_by(event_type="DowntimeStarted").count() == 1  # recorded
+    assert db.query(models.AIRecommendation).count() == 1                                   # and reacted to
+
+
 def test_register_wires_ai_subscriber_to_the_bus():
     bus = EventBus()
     ai_subscribers.register(bus)
     assert ai_subscribers.recommend_on_production_completed in bus._subscribers[ProductionCompleted]
+    assert ai_subscribers.recommend_on_downtime_started in bus._subscribers[DowntimeStarted]
+    assert ai_subscribers.recommend_reorder_on_inventory_low in bus._subscribers[InventoryLow]
 
 
 if __name__ == "__main__":
     test_prediction_wraps_engine_without_changing_result()
     test_subscriber_recommends_only_when_risk_is_elevated()
+    test_downtime_event_recommends_maintenance_when_risky()
+    test_inventory_low_event_recommends_reorder_idempotently()
+    test_bus_publish_records_event_and_triggers_ai()
     test_register_wires_ai_subscriber_to_the_bus()
-    print("AI OK: prediction wraps the engine; ProductionCompleted -> stored recommendation when risk is elevated; subscriber wired")
+    print("AI OK: prediction wraps the engine; production/downtime -> maintenance, inventory-low -> reorder; events recorded + reacted; subscribers wired")

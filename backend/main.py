@@ -44,7 +44,7 @@ from platform_routes import log_audit
 import ai_copilot
 import industrial_adapters
 from bom import PART_BOM
-from events import event_bus, ProductionCompleted
+from events import event_bus, ProductionCompleted, DowntimeStarted, InventoryLow
 import subscribers
 import ai
 import ai.subscribers
@@ -601,6 +601,16 @@ def create_downtime_log(
         raise HTTPException(status_code=404, detail="Machine not found")
     new_log = models.DowntimeLog(**downtime.model_dump())
     db.add(new_log)
+
+    # Widen the event stream: a machine entered downtime (ADR-0003). Published
+    # before commit so the event and any AI reaction commit atomically.
+    event_bus.publish(DowntimeStarted(
+        tenant_code=current_user.get("tenant", "DEFAULT"),
+        machine_id=downtime.machine_id,
+        reason=downtime.reason,
+        duration=downtime.duration,
+    ), db)
+
     db.commit()
     db.refresh(new_log)
     return new_log
@@ -1393,6 +1403,10 @@ def create_inventory_transaction(
     if not item:
         raise HTTPException(status_code=404, detail="Inventory item not found")
 
+    # Whether the item was healthy *before* this transaction, so InventoryLow is
+    # raised only on the crossing into low stock (ADR-0003), not on every issue.
+    was_above_reorder = item.current_stock > item.reorder_level
+
     quantity = abs(transaction.quantity)
 
     if transaction.transaction_type == "Issue":
@@ -1421,6 +1435,19 @@ def create_inventory_transaction(
     )
 
     db.add(new_transaction)
+
+    # Widen the event stream: signal when stock crosses its reorder level so the
+    # AI platform can react with a reorder recommendation (ADR-0003).
+    if was_above_reorder and item.current_stock <= item.reorder_level:
+        event_bus.publish(InventoryLow(
+            tenant_code=current_user.get("tenant", "DEFAULT"),
+            item_id=item.id,
+            item_code=item.item_code,
+            item_name=item.item_name,
+            current_stock=item.current_stock,
+            reorder_level=item.reorder_level,
+        ), db)
+
     db.commit()
     db.refresh(new_transaction)
 

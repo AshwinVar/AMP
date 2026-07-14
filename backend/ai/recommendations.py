@@ -22,17 +22,33 @@ def from_risk(risk_row) -> Recommendation:
     )
 
 
+def from_low_stock(event) -> Recommendation:
+    """Build a reorder recommendation from an InventoryLow event."""
+    return Recommendation(
+        recommendation_type="reorder_stock",
+        title=f"Reorder {event.item_name} ({event.item_code})",
+        message=(
+            f"Stock has fallen to {event.current_stock}, at or below the reorder "
+            f"level of {event.reorder_level}. Raise a purchase order to replenish."
+        ),
+        severity="High" if event.current_stock <= 0 else "Medium",
+        confidence=90,
+    )
+
+
 def persist(db, rec: Recommendation) -> bool:
     """Store a recommendation unless an identical *open* one already exists.
 
-    Returns ``True`` if a new row was written. ``tenant_code`` is auto-stamped by
-    the tenant-scoping layer, so this stays generic across tenants.
+    Dedupe is keyed on (type, title): the title already identifies the subject —
+    a machine for maintenance, an item for reorder — so this is generic across
+    recommendation kinds. ``tenant_code`` is auto-stamped by the scoping layer.
+    Returns ``True`` if a new row was written.
     """
     exists = (
         db.query(models.AIRecommendation)
         .filter(
             models.AIRecommendation.recommendation_type == rec.recommendation_type,
-            models.AIRecommendation.related_machine_id == rec.related_machine_id,
+            models.AIRecommendation.title == rec.title,
             models.AIRecommendation.status == "Open",
         )
         .first()

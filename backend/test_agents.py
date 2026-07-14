@@ -134,6 +134,27 @@ def test_quality_agent_proposes_inspection_on_high_fail_rate():
     assert db.query(models.MaintenanceTask).filter_by(task_type="Quality (auto)").count() == 1
 
 
+def test_proposal_notifies_but_auto_approved_does_not():
+    db = _fresh_session()
+    db.add(models.Machine(id=1, name="PRESS-01", status="Breakdown", utilization=30))
+    db.add(models.DowntimeLog(machine_id=1, reason="Wear", duration="120 min"))
+    db.add(models.InventoryItem(id=5, item_code="RM-1", item_name="Steel", category="Raw",
+                                unit="pcs", current_stock=3, reorder_level=10))
+    db.commit()
+
+    # maintenance agent proposes (Critical, pending approval) -> a notification
+    agents.act_on_machine_event(_completed(1), db)
+    db.commit()
+    assert db.query(models.Notification).filter_by(notification_type="agent_proposal").count() == 1
+
+    # reorder agent auto-approves -> no new notification (trusted, no human needed)
+    agents.draft_reorder_on_inventory_low(
+        InventoryLow(tenant_code="DEFAULT", item_id=5, item_code="RM-1", item_name="Steel",
+                     current_stock=3, reorder_level=10), db)
+    db.commit()
+    assert db.query(models.Notification).filter_by(notification_type="agent_proposal").count() == 1
+
+
 def test_register_wires_agents_to_the_stream():
     bus = EventBus()
     agents.register(bus)
@@ -148,5 +169,6 @@ if __name__ == "__main__":
     test_reorder_agent_drafts_po_on_low_stock_idempotently()
     test_quality_agent_proposes_inspection_on_high_fail_rate()
     test_approve_and_reject_agent_actions()
+    test_proposal_notifies_but_auto_approved_does_not()
     test_register_wires_agents_to_the_stream()
-    print("AGENT OK: 3 agents propose; reorder auto-approves (policy), maintenance/quality wait; approve/reject; idempotent; wired")
+    print("AGENT OK: 3 agents propose; reorder auto-approves, maintenance/quality wait + notify; approve/reject; idempotent; wired")

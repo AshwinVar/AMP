@@ -52,7 +52,8 @@ def apply_decision(db, action, decision, decided_by=None) -> None:
 
 def _propose(db, tenant, agent, action_type, summary, ref_kind, ref_id,
              severity="Medium", machine_id=None) -> None:
-    """Record a proposed action, then auto-approve it if policy allows."""
+    """Record a proposed action; auto-approve it if policy allows, otherwise
+    notify a human that it awaits approval."""
     action = models.AgentAction(
         tenant_code=tenant, agent=agent, action_type=action_type, summary=summary,
         ref_kind=ref_kind, ref_id=ref_id, severity=severity,
@@ -62,6 +63,16 @@ def _propose(db, tenant, agent, action_type, summary, ref_kind, ref_id,
     db.flush()
     if should_auto_approve(action):
         apply_decision(db, action, "approve", decided_by="auto-policy")
+    else:
+        # A human needs to decide — surface it in the notifications feed.
+        db.add(models.Notification(
+            tenant_code=tenant,
+            notification_type="agent_proposal",
+            severity=severity,
+            title=f"Approval needed: {summary}",
+            message=f"The {agent} agent proposed an action awaiting approval in Agent Activity.",
+            status="Unread",
+        ))
 
 
 # ── Maintenance & Quality agents (both propose a task) ─────────────

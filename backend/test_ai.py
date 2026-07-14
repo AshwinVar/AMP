@@ -154,6 +154,24 @@ def test_insights_feed_is_unified_and_tenant_scoped():
     assert act["kind"] == "maintenance_task" and act["severity"] == "Critical"     # the agent's action, surfaced
 
 
+def test_insights_surfaces_agent_drafted_po_not_human_po():
+    from ai import insights
+    db = _fresh_session()
+    # agent draft (AUTO-PO prefix, status Draft) -> surfaces as an action
+    db.add(models.PurchaseOrder(tenant_code="DEFAULT", po_no="AUTO-PO-5-1", item_id=5,
+                                item_name="Steel Rod", order_quantity=17, unit="pcs",
+                                expected_delivery_date=date.today(), status="Draft",
+                                notes="Auto-drafted by the Reorder agent."))
+    # a human PO (no prefix, status Open) must NOT be surfaced as an agent action
+    db.add(models.PurchaseOrder(tenant_code="DEFAULT", po_no="PO-1001", item_id=6,
+                                item_name="Bolts", order_quantity=100, unit="pcs",
+                                expected_delivery_date=date.today(), status="Open"))
+    db.commit()
+    actions = [i for i in insights.build_feed(db, "DEFAULT") if i["source"] == "action"]
+    assert len(actions) == 1
+    assert actions[0]["kind"] == "purchase_order" and "Steel Rod" in actions[0]["title"]
+
+
 def test_register_wires_ai_subscriber_to_the_bus():
     bus = EventBus()
     ai_subscribers.register(bus)
@@ -172,5 +190,6 @@ if __name__ == "__main__":
     test_bus_publish_records_event_and_triggers_ai()
     test_copilot_service_exposes_platform_surface()
     test_insights_feed_is_unified_and_tenant_scoped()
+    test_insights_surfaces_agent_drafted_po_not_human_po()
     test_register_wires_ai_subscriber_to_the_bus()
     print("AI OK: prediction + copilot wrapped; production/downtime -> maintenance, inventory-low -> reorder, quality-failed -> defect; insights feed unified + tenant-scoped; wired")

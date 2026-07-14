@@ -15,7 +15,7 @@ from datetime import datetime
 from typing import Optional
 
 import models
-from ai.agents import AUTO_TASK_TYPE
+from ai.agents import AUTO_TASK_TYPE, AUTO_PO_PREFIX
 
 name = "insights"
 
@@ -99,11 +99,23 @@ def _task_to_insight(t) -> Insight:
     )
 
 
+def _po_to_insight(p) -> Insight:
+    """An agent-drafted purchase order — the reorder agent acting on low stock."""
+    return Insight(
+        source="action",
+        kind="purchase_order",
+        severity="Medium",
+        title=f"Purchase order drafted - {p.item_name}",
+        message=p.notes or f"Draft PO {p.po_no}: {p.order_quantity} {p.unit} of {p.item_name}.",
+        occurred_at=(p.created_at or datetime.utcnow()).isoformat(),
+    )
+
+
 def build_feed(db, tenant: str, limit: int = 50):
     """Most-recent-first insight feed for one tenant: open AI recommendations,
-    recent notable domain events, and the agent's open auto-tasks, unified.
-    ``tenant`` is applied explicitly so the feed is leak-proof regardless of the
-    global scoping state."""
+    recent notable domain events, and the agents' open auto-tasks and drafted
+    purchase orders, unified. ``tenant`` is applied explicitly so the feed is
+    leak-proof regardless of the global scoping state."""
     recs = (
         db.query(models.AIRecommendation)
         .filter(models.AIRecommendation.tenant_code == tenant,
@@ -126,8 +138,17 @@ def build_feed(db, tenant: str, limit: int = 50):
         .order_by(models.MaintenanceTask.created_at.desc())
         .limit(limit).all()
     )
+    pos = (
+        db.query(models.PurchaseOrder)
+        .filter(models.PurchaseOrder.tenant_code == tenant,
+                models.PurchaseOrder.po_no.like(f"{AUTO_PO_PREFIX}-%"),
+                models.PurchaseOrder.status == "Draft")
+        .order_by(models.PurchaseOrder.created_at.desc())
+        .limit(limit).all()
+    )
     insights = ([_rec_to_insight(r) for r in recs]
                 + [_event_to_insight(e) for e in events]
-                + [_task_to_insight(t) for t in tasks])
+                + [_task_to_insight(t) for t in tasks]
+                + [_po_to_insight(p) for p in pos])
     insights.sort(key=lambda i: i.occurred_at, reverse=True)
     return [asdict(i) for i in insights[:limit]]

@@ -155,6 +155,22 @@ def test_proposal_notifies_but_auto_approved_does_not():
     assert db.query(models.Notification).filter_by(notification_type="agent_proposal").count() == 1
 
 
+def test_auto_approve_policy_is_env_configurable():
+    import os as _os
+
+    class _A:
+        pass
+
+    a = _A()
+    _os.environ.pop("AUTO_APPROVE_AGENTS", None)
+    a.agent = "reorder"; assert agents.should_auto_approve(a) is True      # default trusts reorder
+    a.agent = "quality"; assert agents.should_auto_approve(a) is False     # default gates quality
+    _os.environ["AUTO_APPROVE_AGENTS"] = "reorder,quality"
+    a.agent = "quality"; assert agents.should_auto_approve(a) is True      # now trusted via config
+    a.agent = "maintenance"; assert agents.should_auto_approve(a) is False
+    _os.environ.pop("AUTO_APPROVE_AGENTS", None)                           # cleanup
+
+
 def test_register_wires_agents_to_the_stream():
     bus = EventBus()
     agents.register(bus)
@@ -170,5 +186,6 @@ if __name__ == "__main__":
     test_quality_agent_proposes_inspection_on_high_fail_rate()
     test_approve_and_reject_agent_actions()
     test_proposal_notifies_but_auto_approved_does_not()
+    test_auto_approve_policy_is_env_configurable()
     test_register_wires_agents_to_the_stream()
     print("AGENT OK: 3 agents propose; reorder auto-approves, maintenance/quality wait + notify; approve/reject; idempotent; wired")

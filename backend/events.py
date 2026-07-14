@@ -33,6 +33,32 @@ class ProductionCompleted:
     event_version: int = 1
 
 
+@dataclass(frozen=True)
+class DowntimeStarted:
+    """A machine entered downtime (a downtime log was recorded)."""
+    tenant_code: str
+    machine_id: Optional[int]
+    reason: str
+    duration: str = ""
+    occurred_at: datetime = field(default_factory=datetime.utcnow)
+    event_type: str = "DowntimeStarted"
+    event_version: int = 1
+
+
+@dataclass(frozen=True)
+class InventoryLow:
+    """An inventory item fell to or below its reorder level."""
+    tenant_code: str
+    item_id: int
+    item_code: str
+    item_name: str
+    current_stock: int
+    reorder_level: int
+    occurred_at: datetime = field(default_factory=datetime.utcnow)
+    event_type: str = "InventoryLow"
+    event_version: int = 1
+
+
 class EventBus:
     """Minimal synchronous, in-process event bus."""
 

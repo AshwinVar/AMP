@@ -156,15 +156,15 @@ def test_insights_feed_is_unified_and_tenant_scoped():
 def test_insights_surfaces_only_proposed_actions():
     from ai import insights
     db = _fresh_session()
+    db.add(models.AgentAction(tenant_code="DEFAULT", agent="quality", action_type="open_task",
+                              summary="Inspect machine #4 for defects", ref_kind="maintenance_task", ref_id=1, status="Proposed"))
+    # an already-decided action (e.g. an auto-approved reorder) must NOT clutter the live feed
     db.add(models.AgentAction(tenant_code="DEFAULT", agent="reorder", action_type="draft_po",
-                              summary="Draft a PO for Steel Rod", ref_kind="purchase_order", ref_id=1, status="Proposed"))
-    # an already-decided action must NOT clutter the live feed
-    db.add(models.AgentAction(tenant_code="DEFAULT", agent="reorder", action_type="draft_po",
-                              summary="Old approved action", ref_kind="purchase_order", ref_id=2, status="Approved"))
+                              summary="Auto-approved reorder", ref_kind="purchase_order", ref_id=2, status="Approved"))
     db.commit()
     actions = [i for i in insights.build_feed(db, "DEFAULT") if i["source"] == "action"]
-    assert len(actions) == 1 and actions[0]["kind"] == "draft_po"
-    assert "Steel Rod" in actions[0]["title"]   # only the Proposed one surfaces
+    assert len(actions) == 1 and actions[0]["kind"] == "open_task"
+    assert "machine #4" in actions[0]["title"]   # only the Proposed one surfaces
 
 
 def test_register_wires_ai_subscriber_to_the_bus():

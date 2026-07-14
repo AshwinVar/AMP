@@ -9,6 +9,7 @@ export type NavItem = {
 };
 
 export const NAV_ITEMS: NavItem[] = [
+  { key: "mission",        label: "Mission Control",    icon: "❖", module: "core" },
   { key: "overview",       label: "Overview",          icon: "⌂", module: "core" },
   { key: "machines",       label: "Machines",           icon: "▦", module: "core" },
   { key: "downtime",       label: "Downtime",           icon: "◷", module: "core" },
@@ -115,7 +116,7 @@ export function getViewModule(viewKey: string): ModuleKey {
 
 // The shop-floor screens an Operator is allowed to open.
 export const OPERATOR_VIEWS = new Set<string>([
-  "overview", "machines", "downtime", "workorders",
+  "mission", "overview", "machines", "downtime", "workorders",
   "operator", "quality", "cmms", "inventory", "notifications",
 ]);
 

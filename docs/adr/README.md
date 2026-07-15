@@ -12,6 +12,7 @@ Guiding principles: incremental (strangler) evolution, never a rewrite; backward
 | [0004](0004-ai-agents-act-on-the-stream.md) | AI agents — act on the stream | Accepted |
 | [0005](0005-agent-oversight.md) | Agent oversight: propose, log, approve | Accepted |
 | [0006](0006-machine-health-twin.md) | Machine Health twin (per-machine read-model) | Accepted |
+| [0007](0007-read-models-projections.md) | Read-models: projections that answer one question | Accepted |
 
 **Recommended order:** 0001 first (smaller, proves the pattern; events carry `tenant_code`), then 0002.
 

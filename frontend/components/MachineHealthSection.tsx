@@ -48,6 +48,7 @@ export default function MachineHealthSection() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [selected, setSelected] = useState<number | null>(null);
+  const [bandFilter, setBandFilter] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -70,6 +71,9 @@ export default function MachineHealthSection() {
   const avg = twins.length ? Math.round(twins.reduce((s, t) => s + t.health_score, 0) / twins.length) : 0;
   const attention = twins.filter((t) => t.health_band === "Critical" || t.health_band === "At risk").length;
   const pending = twins.reduce((s, t) => s + t.pending_agent_actions, 0);
+  const BANDS = ["Critical", "At risk", "Watch", "Healthy"]; // worst-first, for triage
+  const bandCounts = Object.fromEntries(BANDS.map((b) => [b, twins.filter((t) => t.health_band === b).length]));
+  const shown = bandFilter ? twins.filter((t) => t.health_band === bandFilter) : twins;
 
   return (
     <section className="mt-8 space-y-6">
@@ -90,6 +94,32 @@ export default function MachineHealthSection() {
         <Kpi title="Pending actions" value={pending} />
       </div>
 
+      {twins.length > 0 && (
+        <div className="flex gap-2 flex-wrap items-center">
+          <span className="text-xs text-slate-500 mr-1">Filter:</span>
+          <button
+            onClick={() => setBandFilter(null)}
+            className={`rounded-lg px-3 py-1.5 text-sm border ${
+              !bandFilter ? "bg-white text-slate-950 border-white font-semibold" : "border-slate-700 text-slate-300 hover:bg-slate-800"
+            }`}
+          >
+            All {twins.length}
+          </button>
+          {BANDS.map((b) => (
+            <button
+              key={b}
+              onClick={() => setBandFilter(bandFilter === b ? null : b)}
+              disabled={bandCounts[b] === 0}
+              className={`rounded-lg px-3 py-1.5 text-sm border transition disabled:opacity-40 disabled:cursor-not-allowed ${
+                bandFilter === b ? bandStyle(b) : "border-slate-700 text-slate-300 hover:bg-slate-800"
+              }`}
+            >
+              {b} · {bandCounts[b]}
+            </button>
+          ))}
+        </div>
+      )}
+
       {error && (
         <div className="rounded-xl border border-red-500/40 bg-red-500/10 text-red-300 p-4">{error}</div>
       )}
@@ -102,9 +132,11 @@ export default function MachineHealthSection() {
           <h3 className="text-lg font-semibold">No machines yet</h3>
           <p className="text-slate-400 mt-1 text-sm">Machine twins appear here as soon as machines are registered.</p>
         </div>
+      ) : shown.length === 0 ? (
+        <p className="text-slate-400 text-sm">No machines in the “{bandFilter}” band.</p>
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-          {twins.map((t) => (
+          {shown.map((t) => (
             <button
               key={t.machine_id}
               type="button"

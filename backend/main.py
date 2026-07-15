@@ -3165,6 +3165,13 @@ def agent_action_impact(db: Session = Depends(get_db), current_user: dict = Depe
     return ai.impact.build_impact(db, current_user.get("tenant", "DEFAULT"))
 
 
+@app.get("/agent-roster")
+def agent_roster(db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
+    # Agent Roster (ADR-0004/0005): the AI workforce — each agent's role, autonomy,
+    # and live activity, tenant-scoped.
+    return ai.roster.build_roster(db, current_user.get("tenant", "DEFAULT"))
+
+
 @app.post("/agent-actions/{action_id}/approve")
 def approve_agent_action(action_id: int, db: Session = Depends(get_db), current_user: dict = Depends(require_roles(["Admin", "Supervisor"]))):
     return _decide_agent_action(action_id, "approve", db, current_user)

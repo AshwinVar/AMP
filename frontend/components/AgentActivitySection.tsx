@@ -19,9 +19,18 @@ type AgentAction = {
   decided_at: string | null;
 };
 
-type Stats = {
-  total: number; proposed: number; approved: number; rejected: number;
-  auto_approved: number; by_agent: Record<string, number>;
+// Mirrors the backend impact rollup (ai/impact.py build_impact).
+type Impact = {
+  agents_active: string[];
+  total_actions: number;
+  approved: number;
+  rejected: number;
+  auto_approved: number;
+  auto_rate: number;
+  pending_backlog: number;
+  outputs: { maintenance_tasks: number; purchase_orders: number; escalations: number };
+  last_7_days: { total: number; proposed: number; approved: number; rejected: number };
+  headline: string;
 };
 
 const FILTERS = ["All", "Proposed", "Approved", "Rejected"];
@@ -48,7 +57,7 @@ function fmt(iso: string | null) {
 
 export default function AgentActivitySection() {
   const [rows, setRows] = useState<AgentAction[]>([]);
-  const [stats, setStats] = useState<Stats | null>(null);
+  const [impact, setImpact] = useState<Impact | null>(null);
   const [filter, setFilter] = useState("All");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -58,12 +67,12 @@ export default function AgentActivitySection() {
     setError(null);
     try {
       const q = filter === "All" ? "" : `?status=${filter}`;
-      const [list, s] = await Promise.all([
+      const [list, imp] = await Promise.all([
         apiGet<AgentAction[]>(`/agent-actions${q}`),
-        apiGet<Stats>("/agent-actions/stats"),
+        apiGet<Impact>("/agent-actions/impact"),
       ]);
       setRows(list);
-      setStats(s);
+      setImpact(imp);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to load agent activity");
     } finally {
@@ -93,13 +102,24 @@ export default function AgentActivitySection() {
         </p>
       </div>
 
-      {stats && (
-        <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
-          <Stat title="Total actions" value={stats.total} />
-          <Stat title="Pending" value={stats.proposed} />
-          <Stat title="Approved" value={stats.approved} />
-          <Stat title="Rejected" value={stats.rejected} />
-          <Stat title="Auto-approved" value={stats.auto_approved} />
+      {impact && (
+        <div className="rounded-2xl border border-indigo-500/30 bg-gradient-to-br from-indigo-500/10 to-slate-900 p-6">
+          <div className="flex items-start justify-between flex-wrap gap-2">
+            <div>
+              <h3 className="text-xs font-semibold uppercase tracking-wide text-indigo-300">Agent impact</h3>
+              <p className="text-lg font-semibold mt-1">{impact.headline}</p>
+            </div>
+            <span className="text-xs text-slate-400">
+              last 7 days · {impact.last_7_days.total} action{impact.last_7_days.total !== 1 ? "s" : ""}
+            </span>
+          </div>
+          <div className="mt-5 grid grid-cols-2 md:grid-cols-5 gap-4">
+            <Metric label="Tasks opened" value={impact.outputs.maintenance_tasks} />
+            <Metric label="POs drafted" value={impact.outputs.purchase_orders} />
+            <Metric label="Escalations" value={impact.outputs.escalations} />
+            <Metric label="Autonomy" value={`${impact.auto_rate}%`} sub="of decisions" />
+            <Metric label="Awaiting you" value={impact.pending_backlog} highlight={impact.pending_backlog > 0} />
+          </div>
         </div>
       )}
 
@@ -165,11 +185,22 @@ export default function AgentActivitySection() {
   );
 }
 
-function Stat({ title, value }: { title: string; value: number }) {
+function Metric({
+  label,
+  value,
+  sub,
+  highlight,
+}: {
+  label: string;
+  value: string | number;
+  sub?: string;
+  highlight?: boolean;
+}) {
   return (
-    <div className="rounded-2xl bg-slate-900 border border-slate-800 p-5">
-      <p className="text-slate-400 text-sm">{title}</p>
-      <h3 className="text-2xl font-bold mt-2">{value}</h3>
+    <div className={`rounded-xl border p-4 ${highlight ? "border-amber-500/40 bg-amber-500/10" : "border-slate-800 bg-slate-900/60"}`}>
+      <p className="text-slate-400 text-xs">{label}</p>
+      <p className={`text-2xl font-bold mt-1 ${highlight ? "text-amber-300" : ""}`}>{value}</p>
+      {sub && <p className="text-[11px] text-slate-500 mt-0.5">{sub}</p>}
     </div>
   );
 }

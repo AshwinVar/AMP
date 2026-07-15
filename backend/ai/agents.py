@@ -4,10 +4,11 @@
 Agents observe the event stream and PROPOSE bounded actions: they create the item
 in a pending state and record an AgentAction (audit log + approval queue). Trusted
 low-risk actions are auto-approved by policy; higher-stakes ones wait for a human.
-Approve advances the item, reject cancels it. Three agents today:
+Approve advances the item, reject cancels it. Four agents today:
   * Maintenance — on Critical machine risk, proposes a maintenance task.
   * Quality     — on a high-fail inspection, proposes a machine inspection task.
   * Reorder     — on low stock, drafts a purchase order (auto-approved by policy).
+  * Escalation  — on repeated downtime, proposes an escalation.
 """
 import os
 from datetime import datetime, timedelta
@@ -24,6 +25,8 @@ AUTO_TASK_TYPE = "Predictive (auto)"
 QUALITY_TASK_TYPE = "Quality (auto)"
 # The reorder agent tags its drafted POs with this prefix (humans never use it).
 AUTO_PO_PREFIX = "AUTO-PO"
+# Downtime events on a machine before the Escalation agent raises an escalation.
+ESCALATION_THRESHOLD = 3
 
 
 # ── Oversight: propose, policy, decide ─────────────────────────────
@@ -51,6 +54,10 @@ def apply_decision(db, action, decision, decided_by=None) -> None:
         item = db.query(models.PurchaseOrder).filter(models.PurchaseOrder.id == action.ref_id).first()
         if item and item.status == "Draft":
             item.status = "Approved" if approve else "Cancelled"
+    elif action.ref_kind == "escalation":
+        item = db.query(models.Escalation).filter(models.Escalation.id == action.ref_id).first()
+        if item and item.status == "Proposed":
+            item.status = "Open" if approve else "Cancelled"
 
 
 def _propose(db, tenant, agent, action_type, summary, ref_kind, ref_id,
@@ -187,9 +194,47 @@ def draft_reorder_on_inventory_low(event: InventoryLow, db) -> None:
              ref_kind="purchase_order", ref_id=po.id, severity="Medium")
 
 
+# ── Escalation agent ───────────────────────────────────────────────
+def _open_agent_escalation_exists(db, machine_id) -> bool:
+    return (
+        db.query(models.Escalation)
+        .filter(models.Escalation.machine_id == machine_id,
+                models.Escalation.source == "Escalation agent",
+                models.Escalation.status.in_(("Proposed", "Open")))
+        .first()
+        is not None
+    )
+
+
+def escalate_on_repeated_downtime(event: DowntimeStarted, db) -> None:
+    """Escalation agent: after repeated downtime on a machine, propose an escalation."""
+    if event.machine_id is None:
+        return
+    count = db.query(models.DowntimeLog).filter(models.DowntimeLog.machine_id == event.machine_id).count()
+    if count < ESCALATION_THRESHOLD or _open_agent_escalation_exists(db, event.machine_id):
+        return
+    esc = models.Escalation(
+        tenant_code=event.tenant_code,
+        machine_id=event.machine_id,
+        title=f"Repeated downtime on machine #{event.machine_id} ({count} events)",
+        severity="High",
+        owner="Maintenance Lead",
+        department="Maintenance",
+        status="Proposed",
+        source="Escalation agent",
+        notes=f"Proposed by the Escalation agent after {count} downtime events. Latest: {event.reason}.",
+    )
+    db.add(esc)
+    db.flush()
+    _propose(db, event.tenant_code, "escalation", "raise_escalation",
+             summary=f"Escalate repeated downtime on machine #{event.machine_id}",
+             ref_kind="escalation", ref_id=esc.id, severity="High", machine_id=event.machine_id)
+
+
 def register(bus=event_bus) -> None:
     """Wire the agents to their events."""
     bus.subscribe(ProductionCompleted, act_on_machine_event)            # Maintenance agent
     bus.subscribe(DowntimeStarted, act_on_machine_event)                # Maintenance agent
+    bus.subscribe(DowntimeStarted, escalate_on_repeated_downtime)       # Escalation agent
     bus.subscribe(QualityInspectionFailed, inspect_on_quality_failed)   # Quality agent
     bus.subscribe(InventoryLow, draft_reorder_on_inventory_low)         # Reorder agent

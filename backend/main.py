@@ -843,6 +843,13 @@ def get_machine_health(db: Session = Depends(get_db), current_user: dict = Depen
     return ai.twin.build_twins(db, current_user.get("tenant", "DEFAULT"))
 
 
+@app.get("/mission-control/pulse")
+def get_mission_control_pulse(db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
+    # Factory Pulse (ADR-0006): the owner's one-glance command header — fleet
+    # health from the twins + agent workload from the impact rollup, composed.
+    return ai.pulse.build_pulse(db, current_user.get("tenant", "DEFAULT"))
+
+
 @app.get("/machine-health/{machine_id}")
 def get_machine_detail(machine_id: int, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
     # Machine Health detail (ADR-0006): the single-machine cockpit — the twin

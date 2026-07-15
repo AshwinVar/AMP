@@ -51,6 +51,35 @@ def test_twin_composes_health_and_is_tenant_scoped():
     assert twins[1]["machine_id"] == 2 and twins[1]["health_band"] == "Healthy"
 
 
+def test_machine_detail_composes_cockpit_and_scopes_actions():
+    db = _fresh_session()
+    db.add(models.Machine(id=1, name="PRESS-01", status="Breakdown", utilization=30))
+    db.add(models.DowntimeLog(machine_id=1, reason="Wear", duration="120 min"))
+    db.add(models.MaintenanceTask(tenant_code="DEFAULT", task_no="AUTO-1", machine_id=1,
+                                  task_type="Predictive (auto)", priority="Critical",
+                                  assigned_to="x", planned_date=date.today(), status="Proposed"))
+    db.add(models.AgentAction(tenant_code="DEFAULT", agent="maintenance", action_type="open_task",
+                              summary="Open a Critical task", ref_kind="maintenance_task", ref_id=1,
+                              related_machine_id=1, status="Proposed"))
+    # another tenant's action on the same machine must not leak into the cockpit
+    db.add(models.AgentAction(tenant_code="GMATS", agent="maintenance", action_type="open_task",
+                              summary="leak", ref_kind="maintenance_task", ref_id=1,
+                              related_machine_id=1, status="Proposed"))
+    db.commit()
+
+    detail = twin.build_machine_detail(db, "DEFAULT", 1)
+    assert detail["machine_id"] == 1 and detail["health_band"] == "Critical"
+    assert detail["risk_factors"]                                     # non-empty risk breakdown
+    kinds = {e["kind"] for e in detail["timeline"]}
+    assert kinds == {"downtime", "task", "action"}                   # all three merged
+    assert all(e["detail"] != "leak" for e in detail["timeline"])    # GMATS action excluded
+    assert len(detail["open_actions"]) == 1                          # only DEFAULT's proposed action
+    assert detail["open_actions"][0]["summary"] == "Open a Critical task"
+
+    assert twin.build_machine_detail(db, "DEFAULT", 999) is None      # unknown machine -> caller 404s
+
+
 if __name__ == "__main__":
     test_twin_composes_health_and_is_tenant_scoped()
-    print("TWIN OK: per-machine health twin composes state + risk + tasks + actions; worst first; tenant-scoped")
+    test_machine_detail_composes_cockpit_and_scopes_actions()
+    print("TWIN OK: health twin + single-machine cockpit (risk factors, timeline, open actions); worst first; tenant-scoped")

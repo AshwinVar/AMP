@@ -47,6 +47,14 @@ type AgentInfo = {
   last_action_at: string | null;
 };
 
+// Mirrors the backend trend (ai/trends.py build_agent_trend).
+type Trend = {
+  days: number;
+  total: number;
+  peak: number;
+  daily: { date: string; count: number }[];
+};
+
 const FILTERS = ["All", "Proposed", "Approved", "Rejected"];
 
 function statusStyle(s: string) {
@@ -69,10 +77,16 @@ function fmt(iso: string | null) {
   return Number.isNaN(d.getTime()) ? "—" : d.toLocaleString();
 }
 
+function weekday(iso: string) {
+  const d = new Date(iso);
+  return Number.isNaN(d.getTime()) ? "" : d.toLocaleDateString(undefined, { weekday: "short" });
+}
+
 export default function AgentActivitySection() {
   const [rows, setRows] = useState<AgentAction[]>([]);
   const [impact, setImpact] = useState<Impact | null>(null);
   const [roster, setRoster] = useState<AgentInfo[]>([]);
+  const [trend, setTrend] = useState<Trend | null>(null);
   const [filter, setFilter] = useState("All");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -82,14 +96,16 @@ export default function AgentActivitySection() {
     setError(null);
     try {
       const q = filter === "All" ? "" : `?status=${filter}`;
-      const [list, imp, rost] = await Promise.all([
+      const [list, imp, rost, tr] = await Promise.all([
         apiGet<AgentAction[]>(`/agent-actions${q}`),
         apiGet<Impact>("/agent-actions/impact"),
         apiGet<AgentInfo[]>("/agent-roster"),
+        apiGet<Trend>("/agent-actions/trend"),
       ]);
       setRows(list);
       setImpact(imp);
       setRoster(rost);
+      setTrend(tr);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to load agent activity");
     } finally {
@@ -136,6 +152,31 @@ export default function AgentActivitySection() {
             <Metric label="Escalations" value={impact.outputs.escalations} />
             <Metric label="Autonomy" value={`${impact.auto_rate}%`} sub="of decisions" />
             <Metric label="Awaiting you" value={impact.pending_backlog} highlight={impact.pending_backlog > 0} />
+          </div>
+        </div>
+      )}
+
+      {trend && trend.total > 0 && (
+        <div className="rounded-2xl border border-slate-800 bg-slate-900/60 p-5">
+          <div className="flex items-center justify-between">
+            <h3 className="text-xs font-semibold uppercase tracking-wide text-slate-300">7-day activity</h3>
+            <span className="text-xs text-slate-500">{trend.total} action{trend.total !== 1 ? "s" : ""}</span>
+          </div>
+          <div className="mt-4 flex items-end gap-2 h-24">
+            {trend.daily.map((d) => {
+              const h = trend.peak ? Math.max(4, Math.round((d.count / trend.peak) * 96)) : 4;
+              return (
+                <div
+                  key={d.date}
+                  className="flex-1 flex flex-col items-center justify-end gap-1"
+                  title={`${d.count} on ${d.date}`}
+                >
+                  <span className="text-[10px] text-slate-400">{d.count || ""}</span>
+                  <div className="w-full bg-indigo-500/70 rounded-t" style={{ height: `${h}px` }} />
+                  <span className="text-[10px] text-slate-500">{weekday(d.date)}</span>
+                </div>
+              );
+            })}
           </div>
         </div>
       )}

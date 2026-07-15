@@ -3172,6 +3172,13 @@ def agent_roster(db: Session = Depends(get_db), current_user: dict = Depends(get
     return ai.roster.build_roster(db, current_user.get("tenant", "DEFAULT"))
 
 
+@app.get("/agent-actions/trend")
+def agent_action_trend(db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
+    # Agent activity trend (ADR-0005/0007): last-7-days daily action counts for a
+    # sparkline of how busy the fleet has been, tenant-scoped.
+    return ai.trends.build_agent_trend(db, current_user.get("tenant", "DEFAULT"))
+
+
 @app.post("/agent-actions/{action_id}/approve")
 def approve_agent_action(action_id: int, db: Session = Depends(get_db), current_user: dict = Depends(require_roles(["Admin", "Supervisor"]))):
     return _decide_agent_action(action_id, "approve", db, current_user)

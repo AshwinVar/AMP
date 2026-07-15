@@ -33,6 +33,20 @@ type Impact = {
   headline: string;
 };
 
+// Mirrors the backend roster (ai/roster.py build_roster).
+type AgentInfo = {
+  key: string;
+  name: string;
+  watches: string;
+  acts: string;
+  auto_approves: boolean;
+  total_actions: number;
+  pending: number;
+  approved: number;
+  rejected: number;
+  last_action_at: string | null;
+};
+
 const FILTERS = ["All", "Proposed", "Approved", "Rejected"];
 
 function statusStyle(s: string) {
@@ -58,6 +72,7 @@ function fmt(iso: string | null) {
 export default function AgentActivitySection() {
   const [rows, setRows] = useState<AgentAction[]>([]);
   const [impact, setImpact] = useState<Impact | null>(null);
+  const [roster, setRoster] = useState<AgentInfo[]>([]);
   const [filter, setFilter] = useState("All");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -67,12 +82,14 @@ export default function AgentActivitySection() {
     setError(null);
     try {
       const q = filter === "All" ? "" : `?status=${filter}`;
-      const [list, imp] = await Promise.all([
+      const [list, imp, rost] = await Promise.all([
         apiGet<AgentAction[]>(`/agent-actions${q}`),
         apiGet<Impact>("/agent-actions/impact"),
+        apiGet<AgentInfo[]>("/agent-roster"),
       ]);
       setRows(list);
       setImpact(imp);
+      setRoster(rost);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to load agent activity");
     } finally {
@@ -119,6 +136,35 @@ export default function AgentActivitySection() {
             <Metric label="Escalations" value={impact.outputs.escalations} />
             <Metric label="Autonomy" value={`${impact.auto_rate}%`} sub="of decisions" />
             <Metric label="Awaiting you" value={impact.pending_backlog} highlight={impact.pending_backlog > 0} />
+          </div>
+        </div>
+      )}
+
+      {roster.length > 0 && (
+        <div>
+          <h3 className="text-xs font-semibold uppercase tracking-wide text-slate-300">Your AI workforce</h3>
+          <div className="mt-3 grid grid-cols-1 md:grid-cols-2 gap-4">
+            {roster.map((a) => (
+              <div key={a.key} className="rounded-2xl border border-slate-800 bg-slate-900 p-5">
+                <div className="flex items-start justify-between gap-2">
+                  <span className={`rounded-full px-3 py-1 text-xs border ${agentStyle(a.key)}`}>{a.name}</span>
+                  <span className={`rounded-full px-2.5 py-1 text-[11px] border ${
+                    a.auto_approves
+                      ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-300"
+                      : "border-slate-600/40 bg-slate-500/10 text-slate-300"
+                  }`}>
+                    {a.auto_approves ? "autonomous" : "needs approval"}
+                  </span>
+                </div>
+                <p className="text-sm text-slate-300 mt-3"><span className="text-slate-500">Watches</span> — {a.watches}</p>
+                <p className="text-sm text-slate-300 mt-1"><span className="text-slate-500">Acts</span> — {a.acts}</p>
+                <div className="mt-3 flex items-center gap-4 text-xs text-slate-400 flex-wrap">
+                  <span>{a.total_actions} action{a.total_actions !== 1 ? "s" : ""}</span>
+                  {a.pending > 0 && <span className="text-amber-300">{a.pending} pending</span>}
+                  <span>last {fmt(a.last_action_at)}</span>
+                </div>
+              </div>
+            ))}
           </div>
         </div>
       )}

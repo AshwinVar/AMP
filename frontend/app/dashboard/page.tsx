@@ -38,6 +38,7 @@ import IoTCommandSection from "../../components/IoTCommandSection";
 import AIInsightsSection from "../../components/AIInsightsSection";
 import MissionControlSection from "../../components/MissionControlSection";
 import AgentActivitySection from "../../components/AgentActivitySection";
+import MachineHealthSection from "../../components/MachineHealthSection";
 import SaaSAdminSection from "../../components/SaaSAdminSection";
 import CostingSection from "../../components/CostingSection";
 import OperatorTerminalSection from "../../components/OperatorTerminalSection";
@@ -2286,6 +2287,10 @@ export default function DashboardPage() {
 
       {renderSection("agentactivity", (
         <AgentActivitySection />
+      ))}
+
+      {renderSection("machinehealth", (
+        <MachineHealthSection />
       ))}
 
       {renderSection("workorders", (

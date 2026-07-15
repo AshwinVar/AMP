@@ -27,6 +27,7 @@ export const NAV_ITEMS: NavItem[] = [
   { key: "inventory",      label: "Inventory",          icon: "▥", module: "factory" },
   { key: "purchasing",     label: "Purchasing",         icon: "◈", module: "factory" },
   { key: "digitaltwin",    label: "Digital Twin",       icon: "◎", module: "factory" },
+  { key: "machinehealth",  label: "Machine Health",     icon: "♥", module: "factory" },
   { key: "iot",            label: "IoT Command",        icon: "◉", module: "intelligence" },
   { key: "connectivity",   label: "Connectivity",       icon: "⇄", module: "intelligence" },
   { key: "ai",             label: "AI Insights",        icon: "✦", module: "intelligence" },
@@ -117,7 +118,7 @@ export function getViewModule(viewKey: string): ModuleKey {
 
 // The shop-floor screens an Operator is allowed to open.
 export const OPERATOR_VIEWS = new Set<string>([
-  "mission", "overview", "machines", "downtime", "workorders",
+  "mission", "overview", "machines", "machinehealth", "downtime", "workorders",
   "operator", "quality", "cmms", "inventory", "notifications",
 ]);
 

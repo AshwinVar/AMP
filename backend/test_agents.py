@@ -171,11 +171,45 @@ def test_auto_approve_policy_is_env_configurable():
     _os.environ.pop("AUTO_APPROVE_AGENTS", None)                           # cleanup
 
 
+def test_escalation_agent_proposes_after_repeated_downtime():
+    db = _fresh_session()
+    db.add(models.Machine(id=1, name="PRESS-01", status="Running", utilization=60))
+    db.commit()
+
+    def down():
+        return DowntimeStarted(tenant_code="DEFAULT", machine_id=1, reason="Breakdown", duration="30 min")
+
+    # below the threshold (3) -> no escalation
+    for _ in range(2):
+        db.add(models.DowntimeLog(machine_id=1, reason="Breakdown", duration="30 min"))
+        db.commit()
+        agents.escalate_on_repeated_downtime(down(), db)
+        db.commit()
+    assert db.query(models.Escalation).filter_by(source="Escalation agent").count() == 0
+
+    # third downtime crosses the threshold -> proposes an escalation
+    db.add(models.DowntimeLog(machine_id=1, reason="Breakdown", duration="30 min"))
+    db.commit()
+    agents.escalate_on_repeated_downtime(down(), db)
+    db.commit()
+    escs = db.query(models.Escalation).filter_by(source="Escalation agent").all()
+    assert len(escs) == 1 and escs[0].status == "Proposed" and escs[0].machine_id == 1
+    assert db.query(models.AgentAction).filter_by(agent="escalation").count() == 1
+
+    # idempotent: a further downtime doesn't propose a duplicate (open escalation exists)
+    db.add(models.DowntimeLog(machine_id=1, reason="Breakdown", duration="30 min"))
+    db.commit()
+    agents.escalate_on_repeated_downtime(down(), db)
+    db.commit()
+    assert db.query(models.Escalation).filter_by(source="Escalation agent").count() == 1
+
+
 def test_register_wires_agents_to_the_stream():
     bus = EventBus()
     agents.register(bus)
     assert agents.act_on_machine_event in bus._subscribers[ProductionCompleted]
     assert agents.act_on_machine_event in bus._subscribers[DowntimeStarted]
+    assert agents.escalate_on_repeated_downtime in bus._subscribers[DowntimeStarted]
     assert agents.inspect_on_quality_failed in bus._subscribers[QualityInspectionFailed]
     assert agents.draft_reorder_on_inventory_low in bus._subscribers[InventoryLow]
 
@@ -184,8 +218,9 @@ if __name__ == "__main__":
     test_agent_opens_task_only_on_critical_risk_idempotently()
     test_reorder_agent_drafts_po_on_low_stock_idempotently()
     test_quality_agent_proposes_inspection_on_high_fail_rate()
+    test_escalation_agent_proposes_after_repeated_downtime()
     test_approve_and_reject_agent_actions()
     test_proposal_notifies_but_auto_approved_does_not()
     test_auto_approve_policy_is_env_configurable()
     test_register_wires_agents_to_the_stream()
-    print("AGENT OK: 3 agents propose; reorder auto-approves, maintenance/quality wait + notify; approve/reject; idempotent; wired")
+    print("AGENT OK: 4 agents propose; reorder auto-approves, others wait + notify; approve/reject; idempotent; wired")

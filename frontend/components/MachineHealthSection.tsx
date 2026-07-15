@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { apiGet } from "../lib/api";
+import MachineDetailDrawer from "./MachineDetailDrawer";
 
 // Mirrors the backend twin (ai/twin.py build_twins).
 type Twin = {
@@ -46,6 +47,7 @@ export default function MachineHealthSection() {
   const [twins, setTwins] = useState<Twin[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [selected, setSelected] = useState<number | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -103,7 +105,12 @@ export default function MachineHealthSection() {
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
           {twins.map((t) => (
-            <div key={t.machine_id} className="rounded-2xl bg-slate-900 border border-slate-800 p-5">
+            <button
+              key={t.machine_id}
+              type="button"
+              onClick={() => setSelected(t.machine_id)}
+              className="text-left rounded-2xl bg-slate-900 border border-slate-800 p-5 hover:border-slate-600 hover:bg-slate-900/80 transition focus:outline-none focus:ring-2 focus:ring-slate-500"
+            >
               <div className="flex items-start justify-between gap-3">
                 <div className="flex items-center gap-2">
                   <span className={`h-2.5 w-2.5 rounded-full ${statusDot(t.status)}`} />
@@ -137,9 +144,16 @@ export default function MachineHealthSection() {
                   <span className="text-slate-500">no open work</span>
                 )}
               </div>
-            </div>
+            </button>
           ))}
         </div>
+      )}
+      {selected != null && (
+        <MachineDetailDrawer
+          machineId={selected}
+          onClose={() => setSelected(null)}
+          onChanged={load}
+        />
       )}
     </section>
   );

@@ -843,6 +843,17 @@ def get_machine_health(db: Session = Depends(get_db), current_user: dict = Depen
     return ai.twin.build_twins(db, current_user.get("tenant", "DEFAULT"))
 
 
+@app.get("/machine-health/{machine_id}")
+def get_machine_detail(machine_id: int, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
+    # Machine Health detail (ADR-0006): the single-machine cockpit — the twin
+    # snapshot plus a risk-factor breakdown, a unified event timeline, and the
+    # agent actions awaiting approval for this machine.
+    detail = ai.twin.build_machine_detail(db, current_user.get("tenant", "DEFAULT"), machine_id)
+    if detail is None:
+        raise HTTPException(status_code=404, detail="Machine not found")
+    return detail
+
+
 @app.get("/work-orders", response_model=List[schemas.WorkOrderResponse])
 def get_work_orders(db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
     return db.query(models.WorkOrder).order_by(models.WorkOrder.id.desc()).limit(200).all()
@@ -3136,7 +3147,7 @@ def agent_action_stats(db: Session = Depends(get_db), current_user: dict = Depen
         "approved": by_status.get("Approved", 0),
         "rejected": by_status.get("Rejected", 0),
         "auto_approved": sum(1 for r in rows if r.decided_by == "auto-policy"),
-        "by_agent": {a: by_agent.get(a, 0) for a in ("maintenance", "quality", "reorder")},
+        "by_agent": dict(by_agent),   # every agent that has acted (maintenance/quality/reorder/escalation/…)
     }
 
 

@@ -836,6 +836,13 @@ def get_insights(db: Session = Depends(get_db), current_user: dict = Depends(get
     return ai.insights.build_feed(db, current_user.get("tenant", "DEFAULT"))
 
 
+@app.get("/machine-health")
+def get_machine_health(db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
+    # Machine Health twin (ADR-0006): a live per-machine snapshot composing state,
+    # a health score from predictive risk, downtime, and open tasks/agent actions.
+    return ai.twin.build_twins(db, current_user.get("tenant", "DEFAULT"))
+
+
 @app.get("/work-orders", response_model=List[schemas.WorkOrderResponse])
 def get_work_orders(db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
     return db.query(models.WorkOrder).order_by(models.WorkOrder.id.desc()).limit(200).all()

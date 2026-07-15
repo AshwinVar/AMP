@@ -32,6 +32,7 @@ type Detail = {
   risk_score: number;
   risk_level: string;
   risk_factors: string[];
+  downtime_7d: { date: string; count: number }[];
   open_actions: OpenAction[];
   timeline: TimelineEvent[];
 };
@@ -68,6 +69,41 @@ function fmt(iso: string | null) {
   if (!iso) return "—";
   const d = new Date(iso);
   return Number.isNaN(d.getTime()) ? "—" : d.toLocaleString();
+}
+
+function wk(iso: string) {
+  const d = new Date(iso);
+  return Number.isNaN(d.getTime()) ? "" : d.toLocaleDateString(undefined, { weekday: "short" });
+}
+
+function DowntimeSparkline({ series }: { series: { date: string; count: number }[] }) {
+  const peak = series.reduce((m, d) => Math.max(m, d.count), 0);
+  const total = series.reduce((s, d) => s + d.count, 0);
+  return (
+    <div>
+      <h3 className="text-sm font-semibold text-slate-300 uppercase tracking-wide">Downtime · last 7 days</h3>
+      {total === 0 ? (
+        <p className="text-slate-500 text-sm mt-2">No downtime in the last 7 days.</p>
+      ) : (
+        <div className="mt-3 flex items-end gap-2 h-20">
+          {series.map((d) => {
+            const h = peak ? Math.max(4, Math.round((d.count / peak) * 72)) : 4;
+            return (
+              <div
+                key={d.date}
+                className="flex-1 flex flex-col items-center justify-end gap-1"
+                title={`${d.count} on ${d.date}`}
+              >
+                <span className="text-[10px] text-slate-400">{d.count || ""}</span>
+                <div className="w-full bg-red-500/60 rounded-t" style={{ height: `${h}px` }} />
+                <span className="text-[10px] text-slate-500">{wk(d.date)}</span>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
 }
 
 export default function MachineDetailDrawer({
@@ -184,6 +220,9 @@ export default function MachineDetailDrawer({
                 </ul>
               )}
             </div>
+
+            {/* 7-day downtime sparkline */}
+            <DowntimeSparkline series={detail.downtime_7d} />
 
             {/* Pending agent actions — approve/reject inline */}
             {detail.open_actions.length > 0 && (

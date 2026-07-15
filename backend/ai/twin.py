@@ -7,6 +7,9 @@ over existing tables (adds no storage). Tenant-scoped explicitly for the tables
 that are only stamped (agent_actions), and via the auto-scoping layer for the
 rest (ADR-0002).
 """
+from collections import Counter
+from datetime import datetime, timedelta
+
 import models
 from ai import prediction
 
@@ -113,16 +116,32 @@ def _open_actions(db, machine_id, tenant):
              "severity": a.severity, "created_at": _iso(a.created_at)} for a in rows]
 
 
+def _downtime_trend(db, machine_id, days: int = 7):
+    """A calendar day-by-day count of this machine's downtime over the last week
+    (oldest -> newest), so the cockpit can draw a downtime sparkline."""
+    today = datetime.utcnow().date()
+    window = [today - timedelta(days=i) for i in range(days - 1, -1, -1)]
+    window_set = set(window)
+    counts = Counter(
+        d.created_at.date()
+        for d in db.query(models.DowntimeLog).filter(models.DowntimeLog.machine_id == machine_id).all()
+        if d.created_at and d.created_at.date() in window_set
+    )
+    return [{"date": dd.isoformat(), "count": counts.get(dd, 0)} for dd in window]
+
+
 def build_machine_detail(db, tenant: str, machine_id: int):
     """A single-machine cockpit: the twin snapshot plus the full risk-factor
-    breakdown, a unified event timeline, and the agent actions awaiting approval.
-    Returns None when the machine isn't the tenant's (the caller then 404s)."""
+    breakdown, a 7-day downtime trend, a unified event timeline, and the agent
+    actions awaiting approval. Returns None when the machine isn't the tenant's
+    (the caller then 404s)."""
     machine = db.query(models.Machine).filter(models.Machine.id == machine_id).first()
     if not machine:
         return None
     risk = prediction.risk_for_machine(db, machine_id)
     detail = _machine_twin(db, machine, risk, tenant)
     detail["risk_factors"] = list(risk["reasons"]) if risk and risk.get("reasons") else []
+    detail["downtime_7d"] = _downtime_trend(db, machine_id)
     detail["timeline"] = _timeline(db, machine_id, tenant)
     detail["open_actions"] = _open_actions(db, machine_id, tenant)
     return detail

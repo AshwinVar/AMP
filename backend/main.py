@@ -3151,6 +3151,13 @@ def agent_action_stats(db: Session = Depends(get_db), current_user: dict = Depen
     }
 
 
+@app.get("/agent-actions/impact")
+def agent_action_impact(db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
+    # Agent Impact (ADR-0005): executive rollup of what the agent fleet has produced,
+    # how much ran autonomously, and what's still awaiting a human — tenant-scoped.
+    return ai.impact.build_impact(db, current_user.get("tenant", "DEFAULT"))
+
+
 @app.post("/agent-actions/{action_id}/approve")
 def approve_agent_action(action_id: int, db: Session = Depends(get_db), current_user: dict = Depends(require_roles(["Admin", "Supervisor"]))):
     return _decide_agent_action(action_id, "approve", db, current_user)

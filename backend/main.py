@@ -3202,6 +3202,17 @@ def agent_roster(db: Session = Depends(get_db), current_user: dict = Depends(get
     return ai.roster.build_roster(db, current_user.get("tenant", "DEFAULT"))
 
 
+@app.get("/agent-roster/{agent_key}")
+def agent_detail(agent_key: str, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
+    # Agent detail (ADR-0004\0005): the single-agent cockpit — role, autonomy,
+    # decision tally with an approval rate, produced outputs, a 7-day activity
+    # series, and recent actions. 404 for an unknown agent.
+    detail = ai.roster.build_agent_detail(db, current_user.get("tenant", "DEFAULT"), agent_key)
+    if detail is None:
+        raise HTTPException(status_code=404, detail="Unknown agent")
+    return detail
+
+
 @app.get("/agent-actions/trend")
 def agent_action_trend(db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
     # Agent activity trend (ADR-0005/0007): last-7-days daily action counts for a

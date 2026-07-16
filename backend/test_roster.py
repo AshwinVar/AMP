@@ -63,6 +63,37 @@ def test_roster_lists_agents_with_autonomy_and_activity():
     os.environ.pop("AUTO_APPROVE_AGENTS", None)   # cleanup
 
 
+def test_agent_detail_composes_single_agent_cockpit():
+    os.environ.pop("AUTO_APPROVE_AGENTS", None)   # default: maintenance needs approval
+    db = _fresh_session()
+    db.add_all([
+        _action("maintenance", "Approved"),
+        _action("maintenance", "Rejected"),
+        _action("maintenance", "Proposed"),
+        _action("reorder", "Approved"),                     # other agent, excluded
+        _action("maintenance", "Approved", tenant="GMATS"), # other tenant, excluded
+    ])
+    db.commit()
+
+    d = roster.build_agent_detail(db, "DEFAULT", "maintenance")
+    assert d["key"] == "maintenance" and d["name"] and d["watches"] and d["acts"]
+    assert d["auto_approves"] is False
+    assert d["total_actions"] == 3 and d["pending"] == 1          # agent + tenant scoped
+    assert d["approved"] == 1 and d["rejected"] == 1
+    assert d["approval_rate"] == 50                               # 1 of 2 decided
+    assert d["outputs"] == {"maintenance_task": 3}                # produced kinds
+    assert len(d["daily"]) == 7 and d["daily"][-1]["count"] == 3  # all logged today
+    assert len(d["recent"]) == 3 and d["recent"][0]["id"] > d["recent"][-1]["id"]  # newest first
+
+    # an agent that has never acted still gets its card, with an empty tally
+    idle = roster.build_agent_detail(db, "DEFAULT", "escalation")
+    assert idle["total_actions"] == 0 and idle["approval_rate"] is None and idle["recent"] == []
+
+    assert roster.build_agent_detail(db, "DEFAULT", "nope") is None  # unknown -> caller 404s
+
+
 if __name__ == "__main__":
     test_roster_lists_agents_with_autonomy_and_activity()
-    print("ROSTER OK: full fleet listed; autonomy from policy (live); activity counts tenant-scoped")
+    test_agent_detail_composes_single_agent_cockpit()
+    print("ROSTER OK: full fleet listed; autonomy from policy (live); activity counts tenant-scoped; "
+          "single-agent cockpit (tally, approval rate, outputs, 7-day series) agent+tenant-scoped")

@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { apiGet, apiPost } from "../lib/api";
+import AgentDetailDrawer from "./AgentDetailDrawer";
 
 // Mirrors the backend AgentAction (main.py _agent_action_dict).
 type AgentAction = {
@@ -90,6 +91,7 @@ export default function AgentActivitySection() {
   const [roster, setRoster] = useState<AgentInfo[]>([]);
   const [trend, setTrend] = useState<Trend | null>(null);
   const [filter, setFilter] = useState("All");
+  const [selectedAgent, setSelectedAgent] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -188,7 +190,12 @@ export default function AgentActivitySection() {
           <h3 className="text-xs font-semibold uppercase tracking-wide text-slate-300">Your AI workforce</h3>
           <div className="mt-3 grid grid-cols-1 md:grid-cols-2 gap-4">
             {roster.map((a) => (
-              <div key={a.key} className="rounded-2xl border border-slate-800 bg-slate-900 p-5">
+              <button
+                key={a.key}
+                type="button"
+                onClick={() => setSelectedAgent(a.key)}
+                className="text-left rounded-2xl border border-slate-800 bg-slate-900 p-5 hover:border-slate-600 hover:bg-slate-900/80 transition focus:outline-none focus:ring-2 focus:ring-slate-500"
+              >
                 <div className="flex items-start justify-between gap-2">
                   <span className={`rounded-full px-3 py-1 text-xs border ${agentStyle(a.key)}`}>{a.name}</span>
                   <span className={`rounded-full px-2.5 py-1 text-[11px] border ${
@@ -206,7 +213,7 @@ export default function AgentActivitySection() {
                   {a.pending > 0 && <span className="text-amber-300">{a.pending} pending</span>}
                   <span>last {fmt(a.last_action_at)}</span>
                 </div>
-              </div>
+              </button>
             ))}
           </div>
         </div>
@@ -269,6 +276,13 @@ export default function AgentActivitySection() {
             </div>
           ))}
         </div>
+      )}
+      {selectedAgent && (
+        <AgentDetailDrawer
+          agentKey={selectedAgent}
+          onClose={() => setSelectedAgent(null)}
+          onChanged={load}
+        />
       )}
     </section>
   );

@@ -52,6 +52,35 @@ def test_agent_trend_daily_window_is_scoped_and_bounded():
     assert empty["total"] == 0 and empty["peak"] == 0 and len(empty["daily"]) == 7
 
 
+def test_ops_trends_four_pillar_daily_series():
+    db = _fresh_session()
+    now = datetime.utcnow()
+    db.add(models.Machine(id=1, name="M1", status="Running", utilization=60))
+    db.add(models.ProductionRecord(machine_id=1, planned_minutes=480, runtime_minutes=440,
+                                   ideal_cycle_time_seconds=30, total_count=100, good_count=90,
+                                   rejected_count=10, created_at=now))
+    db.add(models.DowntimeLog(machine_id=1, reason="Wear", duration="30 min", created_at=now))
+    db.add(models.QualityInspection(inspection_no="QC-1", machine_id=1, inspector="qa",
+                                    inspected_quantity=50, passed_quantity=45, failed_quantity=5, created_at=now))
+    db.add(_action("maintenance", now))
+    # a 9-days-ago production run must be excluded from the window
+    db.add(models.ProductionRecord(machine_id=1, planned_minutes=480, runtime_minutes=440,
+                                   ideal_cycle_time_seconds=30, total_count=100, good_count=100,
+                                   rejected_count=0, created_at=now - timedelta(days=9)))
+    db.commit()
+
+    t = trends.build_ops_trends(db, "DEFAULT")
+    assert t["days"] == 7
+    for key in ("production", "downtime", "quality_failed", "agent_actions"):
+        assert len(t[key]) == 7                       # all four pillars, 7 entries each
+    assert t["production"][-1]["count"] == 90         # today's good units
+    assert t["downtime"][-1]["count"] == 1
+    assert t["quality_failed"][-1]["count"] == 5
+    assert t["agent_actions"][-1]["count"] == 1
+    assert sum(e["count"] for e in t["production"]) == 90   # 9-days-ago run excluded
+
+
 if __name__ == "__main__":
     test_agent_trend_daily_window_is_scoped_and_bounded()
-    print("TRENDS OK: 7-day daily agent-action series; calendar-windowed; tenant-scoped; empty-safe")
+    test_ops_trends_four_pillar_daily_series()
+    print("TRENDS OK: agent-action series + four-pillar ops trends; calendar-windowed; tenant-scoped; empty-safe")

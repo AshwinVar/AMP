@@ -15,6 +15,7 @@ export const NAV_ITEMS: NavItem[] = [
   { key: "downtime",       label: "Downtime",           icon: "◷", module: "core" },
   { key: "shifts",         label: "Shifts",             icon: "◴", module: "core" },
   { key: "analytics",      label: "Analytics",          icon: "▧", module: "core" },
+  { key: "trends",         label: "Trends",             icon: "▨", module: "core" },
   { key: "timeline",       label: "Timeline",           icon: "↔", module: "core" },
   { key: "workorders",     label: "Work Orders",        icon: "▣", module: "operations" },
   { key: "planning",       label: "Production Plan",    icon: "▤", module: "operations" },

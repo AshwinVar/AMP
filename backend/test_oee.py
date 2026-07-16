@@ -30,6 +30,7 @@ def test_empty_plant_reports_no_data():
     assert s["machine_count"] == 1 and s["machines_with_data"] == 0
     assert s["machines"] == [] and s["biggest_drag"] is None
     assert s["worst"] is None and s["best"] is None
+    assert len(s["daily"]) == 7 and all(d["oee"] == 0 for d in s["daily"])   # flat-zero trend
 
 
 def test_plant_oee_pools_machines_and_ranks_worst_first():
@@ -57,6 +58,11 @@ def test_plant_oee_pools_machines_and_ranks_worst_first():
     assert s["worst"]["oee"] <= s["best"]["oee"]                    # worst-first
     assert s["machines"][0]["machine_id"] == s["worst"]["machine_id"]
     assert s["machines"][-1]["machine_id"] == s["best"]["machine_id"]
+    # 7-day trend: production is all today, so the last day equals the plant OEE
+    # and the earlier (empty) days read 0.
+    assert len(s["daily"]) == 7
+    assert s["daily"][-1]["oee"] == s["plant"]["oee"]
+    assert s["daily"][0]["oee"] == 0
 
 
 if __name__ == "__main__":

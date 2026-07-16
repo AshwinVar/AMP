@@ -39,7 +39,7 @@ def test_roster_lists_agents_with_autonomy_and_activity():
     db.commit()
 
     r = roster.build_roster(db, "DEFAULT")
-    assert [a["key"] for a in r] == ["maintenance", "quality", "reorder", "escalation"]  # full fixed roster
+    assert [a["key"] for a in r] == ["maintenance", "quality", "reorder", "escalation", "yield"]  # full fixed roster
     by_key = {a["key"]: a for a in r}
 
     # autonomy reflects the policy: only reorder auto-approves by default

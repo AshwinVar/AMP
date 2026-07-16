@@ -26,6 +26,9 @@ AGENTS = [
     {"key": "escalation", "name": "Escalation agent",
      "watches": "Repeated downtime on a machine",
      "acts": "Raises an escalation to the maintenance lead"},
+    {"key": "yield", "name": "Yield agent",
+     "watches": "A machine's good-rate across recent runs",
+     "acts": "Proposes an investigation when yield drops"},
 ]
 
 

@@ -4,11 +4,12 @@
 Agents observe the event stream and PROPOSE bounded actions: they create the item
 in a pending state and record an AgentAction (audit log + approval queue). Trusted
 low-risk actions are auto-approved by policy; higher-stakes ones wait for a human.
-Approve advances the item, reject cancels it. Four agents today:
+Approve advances the item, reject cancels it. Five agents today:
   * Maintenance — on Critical machine risk, proposes a maintenance task.
   * Quality     — on a high-fail inspection, proposes a machine inspection task.
   * Reorder     — on low stock, drafts a purchase order (auto-approved by policy).
   * Escalation  — on repeated downtime, proposes an escalation.
+  * Yield       — on a machine's good-rate dropping, proposes an investigation task.
 """
 import os
 from datetime import datetime, timedelta
@@ -27,6 +28,11 @@ QUALITY_TASK_TYPE = "Quality (auto)"
 AUTO_PO_PREFIX = "AUTO-PO"
 # Downtime events on a machine before the Escalation agent raises an escalation.
 ESCALATION_THRESHOLD = 3
+# Yield agent: propose an investigation when a machine's recent good-rate falls
+# below YIELD_MIN_RATE (%) across at least YIELD_MIN_UNITS produced.
+YIELD_TASK_TYPE = "Yield (auto)"
+YIELD_MIN_RATE = 85
+YIELD_MIN_UNITS = 50
 
 
 # ── Oversight: propose, policy, decide ─────────────────────────────
@@ -231,9 +237,47 @@ def escalate_on_repeated_downtime(event: DowntimeStarted, db) -> None:
              ref_kind="escalation", ref_id=esc.id, severity="High", machine_id=event.machine_id)
 
 
+# ── Yield agent ────────────────────────────────────────────────────
+def _recent_yield(db, machine_id, limit=10):
+    """Good/total across a machine's most recent production runs."""
+    recs = (db.query(models.ProductionRecord)
+            .filter(models.ProductionRecord.machine_id == machine_id)
+            .order_by(models.ProductionRecord.id.desc()).limit(limit).all())
+    total = sum(r.total_count or 0 for r in recs)
+    good = sum(r.good_count or 0 for r in recs)
+    return total, good
+
+
+def assess_yield_on_production(event: ProductionCompleted, db) -> None:
+    """Yield agent: when a machine's recent good-rate drops below the threshold
+    (with enough volume), propose an investigation task."""
+    machine_id = getattr(event, "machine_id", None)
+    if machine_id is None:
+        return
+    total, good = _recent_yield(db, machine_id)
+    if total < YIELD_MIN_UNITS:
+        return
+    rate = round(good / total * 100)
+    if rate >= YIELD_MIN_RATE:
+        return
+    if _open_auto_task_exists(db, machine_id, YIELD_TASK_TYPE):
+        return
+    _propose_task(
+        db, event.tenant_code, "yield",
+        task_no=f"AUTO-YIELD-{machine_id}-{int(datetime.utcnow().timestamp())}",
+        machine_id=machine_id, task_type=YIELD_TASK_TYPE, priority="High",
+        summary=f"Investigate low yield on machine #{machine_id} ({rate}% good)",
+        notes=(f"Proposed by the Yield agent: recent good-rate {rate}% over {total} units "
+               f"(below {YIELD_MIN_RATE}%). Latest run {event.work_order_no}: "
+               f"{event.quantity} of {event.part_number}."),
+        severity="High",
+    )
+
+
 def register(bus=event_bus) -> None:
     """Wire the agents to their events."""
     bus.subscribe(ProductionCompleted, act_on_machine_event)            # Maintenance agent
+    bus.subscribe(ProductionCompleted, assess_yield_on_production)      # Yield agent
     bus.subscribe(DowntimeStarted, act_on_machine_event)                # Maintenance agent
     bus.subscribe(DowntimeStarted, escalate_on_repeated_downtime)       # Escalation agent
     bus.subscribe(QualityInspectionFailed, inspect_on_quality_failed)   # Quality agent

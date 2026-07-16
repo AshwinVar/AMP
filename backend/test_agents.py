@@ -204,10 +204,46 @@ def test_escalation_agent_proposes_after_repeated_downtime():
     assert db.query(models.Escalation).filter_by(source="Escalation agent").count() == 1
 
 
+def test_yield_agent_proposes_on_low_yield():
+    db = _fresh_session()
+    db.add(models.Machine(id=3, name="MILL-03", status="Running", utilization=70))
+    db.commit()
+
+    def completed():
+        return ProductionCompleted(tenant_code="DEFAULT", work_order_id=1, work_order_no="WO-9",
+                                   part_number="P-9", quantity=20, machine_id=3)
+
+    def _rec(total, good):
+        db.add(models.ProductionRecord(machine_id=3, planned_minutes=480, runtime_minutes=440,
+                                       ideal_cycle_time_seconds=30, total_count=total,
+                                       good_count=good, rejected_count=total - good))
+        db.commit()
+
+    # healthy yield (98/100) -> no proposal
+    _rec(100, 98)
+    agents.assess_yield_on_production(completed(), db)
+    db.commit()
+    assert db.query(models.MaintenanceTask).filter_by(task_type="Yield (auto)").count() == 0
+
+    # a bad run drags recent good-rate to 79% (158/200, >= 50 units) -> proposes an investigation
+    _rec(100, 60)
+    agents.assess_yield_on_production(completed(), db)
+    db.commit()
+    tasks = db.query(models.MaintenanceTask).filter_by(task_type="Yield (auto)").all()
+    assert len(tasks) == 1 and tasks[0].machine_id == 3 and tasks[0].status == "Proposed"
+    assert db.query(models.AgentAction).filter_by(agent="yield").count() == 1
+
+    # idempotent: another production event doesn't propose a duplicate
+    agents.assess_yield_on_production(completed(), db)
+    db.commit()
+    assert db.query(models.MaintenanceTask).filter_by(task_type="Yield (auto)").count() == 1
+
+
 def test_register_wires_agents_to_the_stream():
     bus = EventBus()
     agents.register(bus)
     assert agents.act_on_machine_event in bus._subscribers[ProductionCompleted]
+    assert agents.assess_yield_on_production in bus._subscribers[ProductionCompleted]
     assert agents.act_on_machine_event in bus._subscribers[DowntimeStarted]
     assert agents.escalate_on_repeated_downtime in bus._subscribers[DowntimeStarted]
     assert agents.inspect_on_quality_failed in bus._subscribers[QualityInspectionFailed]
@@ -219,8 +255,9 @@ if __name__ == "__main__":
     test_reorder_agent_drafts_po_on_low_stock_idempotently()
     test_quality_agent_proposes_inspection_on_high_fail_rate()
     test_escalation_agent_proposes_after_repeated_downtime()
+    test_yield_agent_proposes_on_low_yield()
     test_approve_and_reject_agent_actions()
     test_proposal_notifies_but_auto_approved_does_not()
     test_auto_approve_policy_is_env_configurable()
     test_register_wires_agents_to_the_stream()
-    print("AGENT OK: 4 agents propose; reorder auto-approves, others wait + notify; approve/reject; idempotent; wired")
+    print("AGENT OK: 5 agents propose; reorder auto-approves, others wait + notify; approve/reject; idempotent; wired")

@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { apiGet, apiPatch, apiPost } from "../lib/api";
+import FactoryPulse from "./FactoryPulse";
 
 // Mirrors the backend Insight shape (ai/insights.py build_feed).
 type Insight = {
@@ -14,25 +15,6 @@ type Insight = {
   related_machine_id: number | null;
   ref_id: number | null;     // recommendation id (for actioning); null for events
 };
-
-// Mirrors the backend pulse (ai/pulse.py build_pulse).
-type Pulse = {
-  fleet: {
-    machines: number;
-    avg_health: number;
-    needs_attention: number;
-    worst: { machine_id: number; name: string; health_score: number; health_band: string } | null;
-  };
-  agents: { agents_active: number; actions_7d: number; auto_rate: number; awaiting_you: number };
-  headline: string;
-};
-
-function healthColor(score: number) {
-  if (score >= 80) return "text-emerald-400";
-  if (score >= 55) return "text-yellow-400";
-  if (score >= 35) return "text-orange-400";
-  return "text-red-400";
-}
 
 function severityStyle(sev: string) {
   if (sev === "Critical") return "border-red-500/40 bg-red-500/10 text-red-300";
@@ -64,7 +46,6 @@ function timeAgo(iso: string) {
 
 export default function MissionControlSection() {
   const [insights, setInsights] = useState<Insight[]>([]);
-  const [pulse, setPulse] = useState<Pulse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -72,12 +53,7 @@ export default function MissionControlSection() {
     setLoading(true);
     setError(null);
     try {
-      const [feed, p] = await Promise.all([
-        apiGet<Insight[]>("/insights"),
-        apiGet<Pulse>("/mission-control/pulse"),
-      ]);
-      setInsights(feed);
-      setPulse(p);
+      setInsights(await apiGet<Insight[]>("/insights"));
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to load insights");
     } finally {
@@ -130,27 +106,7 @@ export default function MissionControlSection() {
         </button>
       </div>
 
-      {pulse && (
-        <div className="rounded-2xl border border-indigo-500/30 bg-gradient-to-br from-indigo-500/10 to-slate-900 p-6">
-          <div className="flex items-start justify-between flex-wrap gap-2">
-            <div>
-              <h3 className="text-xs font-semibold uppercase tracking-wide text-indigo-300">Factory pulse</h3>
-              <p className="text-lg font-semibold mt-1">{pulse.headline}</p>
-            </div>
-            {pulse.fleet.worst && pulse.fleet.needs_attention > 0 && (
-              <span className="rounded-full px-3 py-1 text-xs border border-red-500/40 bg-red-500/10 text-red-300">
-                worst: {pulse.fleet.worst.name} ({pulse.fleet.worst.health_score})
-              </span>
-            )}
-          </div>
-          <div className="mt-5 grid grid-cols-2 md:grid-cols-4 gap-4">
-            <PulseTile label="Fleet health" value={pulse.fleet.avg_health} color={healthColor(pulse.fleet.avg_health)} />
-            <PulseTile label="Need attention" value={pulse.fleet.needs_attention} />
-            <PulseTile label="Awaiting you" value={pulse.agents.awaiting_you} highlight={pulse.agents.awaiting_you > 0} />
-            <PulseTile label="Autonomy" value={`${pulse.agents.auto_rate}%`} sub={`${pulse.agents.actions_7d} actions / 7d`} />
-          </div>
-        </div>
-      )}
+      <FactoryPulse />
 
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
         <Kpi title="Active insights" value={counts.total} />
@@ -228,28 +184,6 @@ function Kpi({ title, value }: { title: string; value: string | number }) {
     <div className="rounded-2xl bg-slate-900 border border-slate-800 p-5">
       <p className="text-slate-400 text-sm">{title}</p>
       <h3 className="text-2xl font-bold mt-2">{value}</h3>
-    </div>
-  );
-}
-
-function PulseTile({
-  label,
-  value,
-  sub,
-  color,
-  highlight,
-}: {
-  label: string;
-  value: string | number;
-  sub?: string;
-  color?: string;
-  highlight?: boolean;
-}) {
-  return (
-    <div className={`rounded-xl border p-4 ${highlight ? "border-amber-500/40 bg-amber-500/10" : "border-slate-800 bg-slate-900/60"}`}>
-      <p className="text-slate-400 text-xs">{label}</p>
-      <p className={`text-2xl font-bold mt-1 ${highlight ? "text-amber-300" : color ?? ""}`}>{value}</p>
-      {sub && <p className="text-[11px] text-slate-500 mt-0.5">{sub}</p>}
     </div>
   );
 }

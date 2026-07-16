@@ -3201,6 +3201,13 @@ def agent_action_trend(db: Session = Depends(get_db), current_user: dict = Depen
     return ai.trends.build_agent_trend(db, current_user.get("tenant", "DEFAULT"))
 
 
+@app.get("/ops-trends")
+def get_ops_trends(db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
+    # Ops trends (ADR-0007): last-7-days daily series across the four pillars —
+    # production, downtime, quality, and agent activity — tenant-scoped.
+    return ai.trends.build_ops_trends(db, current_user.get("tenant", "DEFAULT"))
+
+
 @app.post("/agent-actions/{action_id}/approve")
 def approve_agent_action(action_id: int, db: Session = Depends(get_db), current_user: dict = Depends(require_roles(["Admin", "Supervisor"]))):
     return _decide_agent_action(action_id, "approve", db, current_user)

@@ -48,6 +48,7 @@ import CostingSection from "../../components/CostingSection";
 import OperatorTerminalSection from "../../components/OperatorTerminalSection";
 import NotificationsSection from "../../components/NotificationsSection";
 import ApprovalsInbox from "../../components/ApprovalsInbox";
+import TrendsSection from "../../components/TrendsSection";
 import EnterprisePolishSection from "../../components/EnterprisePolishSection";
 
 import type {
@@ -2519,6 +2520,10 @@ export default function DashboardPage() {
 
       {renderSection("inbox", (
         <ApprovalsInbox />
+      ))}
+
+      {renderSection("trends", (
+        <TrendsSection />
       ))}
 
       {renderSection("notifications", (

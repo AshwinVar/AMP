@@ -130,11 +130,53 @@ def _downtime_trend(db, machine_id, days: int = 7):
     return [{"date": dd.isoformat(), "count": counts.get(dd, 0)} for dd in window]
 
 
+def _machine_production(db, machine_id, days: int = 7):
+    """This machine's throughput over the last week: good/total, good rate, and a
+    daily good-count series (oldest -> newest)."""
+    today = datetime.utcnow().date()
+    window = [today - timedelta(days=i) for i in range(days - 1, -1, -1)]
+    window_set = set(window)
+    recs = [
+        r for r in db.query(models.ProductionRecord).filter(models.ProductionRecord.machine_id == machine_id).all()
+        if r.created_at and r.created_at.date() in window_set
+    ]
+    good = sum(r.good_count or 0 for r in recs)
+    total = sum(r.total_count or 0 for r in recs)
+    per_day: dict = {}
+    for r in recs:
+        per_day[r.created_at.date()] = per_day.get(r.created_at.date(), 0) + (r.good_count or 0)
+    return {
+        "good": good,
+        "total": total,
+        "good_rate": round(good / total * 100) if total else 0,
+        "daily": [{"date": d.isoformat(), "count": per_day.get(d, 0)} for d in window],
+    }
+
+
+def _machine_quality(db, machine_id):
+    """This machine's quality across its inspections: yield, fail rate, defects."""
+    insp = db.query(models.QualityInspection).filter(models.QualityInspection.machine_id == machine_id).all()
+    inspected = sum(i.inspected_quantity or 0 for i in insp)
+    failed = sum(i.failed_quantity or 0 for i in insp)
+    defects: Counter = Counter()
+    for i in insp:
+        if i.failed_quantity:
+            defects[(i.defect_category or "Unspecified").strip() or "Unspecified"] += i.failed_quantity
+    return {
+        "inspections": len(insp),
+        "inspected": inspected,
+        "passed": sum(i.passed_quantity or 0 for i in insp),
+        "failed": failed,
+        "fail_rate": round(failed / inspected * 100) if inspected else 0,
+        "top_defects": [{"category": c, "count": n} for c, n in defects.most_common(3)],
+    }
+
+
 def build_machine_detail(db, tenant: str, machine_id: int):
     """A single-machine cockpit: the twin snapshot plus the full risk-factor
-    breakdown, a 7-day downtime trend, a unified event timeline, and the agent
-    actions awaiting approval. Returns None when the machine isn't the tenant's
-    (the caller then 404s)."""
+    breakdown, 7-day downtime and production trends, this machine's quality, a
+    unified event timeline, and the agent actions awaiting approval. Returns None
+    when the machine isn't the tenant's (the caller then 404s)."""
     machine = db.query(models.Machine).filter(models.Machine.id == machine_id).first()
     if not machine:
         return None
@@ -142,6 +184,8 @@ def build_machine_detail(db, tenant: str, machine_id: int):
     detail = _machine_twin(db, machine, risk, tenant)
     detail["risk_factors"] = list(risk["reasons"]) if risk and risk.get("reasons") else []
     detail["downtime_7d"] = _downtime_trend(db, machine_id)
+    detail["production_7d"] = _machine_production(db, machine_id)
+    detail["quality"] = _machine_quality(db, machine_id)
     detail["timeline"] = _timeline(db, machine_id, tenant)
     detail["open_actions"] = _open_actions(db, machine_id, tenant)
     return detail

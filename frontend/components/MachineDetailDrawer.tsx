@@ -31,6 +31,7 @@ type Detail = {
   health_band: string;
   risk_score: number;
   risk_level: string;
+  oee: { oee: number; availability: number; performance: number; quality: number; has_data: boolean };
   risk_factors: string[];
   downtime_7d: { date: string; count: number }[];
   production_7d: { good: number; total: number; good_rate: number; daily: { date: string; count: number }[] };
@@ -44,6 +45,25 @@ function healthColor(score: number) {
   if (score >= 55) return "text-yellow-400";
   if (score >= 35) return "text-orange-400";
   return "text-red-400";
+}
+
+function oeeColor(v: number) {
+  if (v >= 85) return "text-emerald-400"; // world-class
+  if (v >= 60) return "text-yellow-400";
+  if (v >= 40) return "text-orange-400";
+  return "text-red-400";
+}
+
+function OeeBar({ label, value }: { label: string; value: number }) {
+  return (
+    <div className="flex items-center gap-3">
+      <span className="w-24 shrink-0 text-xs text-slate-400">{label}</span>
+      <div className="flex-1 h-2 rounded bg-slate-800 overflow-hidden">
+        <div className="h-full bg-indigo-500/70" style={{ width: `${Math.min(100, Math.max(0, value))}%` }} />
+      </div>
+      <span className="w-10 text-right text-xs text-slate-300">{value}%</span>
+    </div>
+  );
 }
 
 function bandStyle(band: string) {
@@ -205,6 +225,22 @@ export default function MachineDetailDrawer({
                 </span>
               </div>
             </div>
+
+            {/* OEE */}
+            {detail.oee.has_data && (
+              <div>
+                <h3 className="text-sm font-semibold text-slate-300 uppercase tracking-wide">OEE · last 7 days</h3>
+                <div className="mt-2 flex items-end gap-4">
+                  <p className={`text-3xl font-bold ${oeeColor(detail.oee.oee)}`}>{detail.oee.oee}%</p>
+                  <p className="text-xs text-slate-500 pb-1">availability × performance × quality</p>
+                </div>
+                <div className="mt-3 space-y-2">
+                  <OeeBar label="Availability" value={detail.oee.availability} />
+                  <OeeBar label="Performance" value={detail.oee.performance} />
+                  <OeeBar label="Quality" value={detail.oee.quality} />
+                </div>
+              </div>
+            )}
 
             {/* Risk factors */}
             <div>

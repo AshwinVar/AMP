@@ -26,7 +26,47 @@ def _band(health: int) -> str:
     return "Critical"
 
 
-def _machine_twin(db, machine, risk, tenant) -> dict:
+def _oee_from_records(records) -> dict:
+    """OEE = Availability x Performance x Quality over a machine's production
+    records. Each component is clamped to [0, 1] then returned as a percentage."""
+    planned = sum(r.planned_minutes or 0 for r in records)
+    runtime = sum(r.runtime_minutes or 0 for r in records)
+    total = sum(r.total_count or 0 for r in records)
+    good = sum(r.good_count or 0 for r in records)
+    ideal_s = sum((r.ideal_cycle_time_seconds or 0) * (r.total_count or 0) for r in records)
+    a = min(runtime / planned, 1.0) if planned else 0.0
+    p = min(ideal_s / (runtime * 60), 1.0) if runtime else 0.0
+    q = min(good / total, 1.0) if total else 0.0
+    return {
+        "oee": round(a * p * q * 100),
+        "availability": round(a * 100),
+        "performance": round(p * 100),
+        "quality": round(q * 100),
+        "has_data": len(records) > 0,
+    }
+
+
+def _recent_production(db, machine_id=None, days: int = 7):
+    cutoff = datetime.utcnow().date() - timedelta(days=days - 1)
+    q = db.query(models.ProductionRecord)
+    if machine_id is not None:
+        q = q.filter(models.ProductionRecord.machine_id == machine_id)
+    return [r for r in q.all() if r.created_at and r.created_at.date() >= cutoff]
+
+
+def _oee_by_machine(db, days: int = 7) -> dict:
+    """OEE per machine over the last week, from one pass over production_records."""
+    grouped: dict = {}
+    for r in _recent_production(db, days=days):
+        if r.machine_id is not None:
+            grouped.setdefault(r.machine_id, []).append(r)
+    return {mid: _oee_from_records(recs) for mid, recs in grouped.items()}
+
+
+_EMPTY_OEE = {"oee": 0, "availability": 0, "performance": 0, "quality": 0, "has_data": False}
+
+
+def _machine_twin(db, machine, risk, tenant, oee=None) -> dict:
     score = int(risk["risk_score"]) if risk else 0
     health = max(0, 100 - score)
     recent_downtime = (
@@ -62,6 +102,7 @@ def _machine_twin(db, machine, risk, tenant) -> dict:
         "open_maintenance_tasks": open_tasks,
         "pending_agent_actions": pending_actions,
         "recent_downtime": [{"reason": d.reason, "duration": d.duration} for d in recent_downtime],
+        "oee": oee or _EMPTY_OEE,
     }
 
 
@@ -69,7 +110,8 @@ def build_twins(db, tenant: str):
     """Live health twin for every machine of the tenant, worst health first."""
     machines = db.query(models.Machine).order_by(models.Machine.id).all()
     risks = {r["machine_id"]: r for r in prediction.assess_from_db(db)}
-    twins = [_machine_twin(db, m, risks.get(m.id), tenant) for m in machines]
+    oee = _oee_by_machine(db)
+    twins = [_machine_twin(db, m, risks.get(m.id), tenant, oee.get(m.id)) for m in machines]
     twins.sort(key=lambda t: t["health_score"])
     return twins
 
@@ -181,7 +223,7 @@ def build_machine_detail(db, tenant: str, machine_id: int):
     if not machine:
         return None
     risk = prediction.risk_for_machine(db, machine_id)
-    detail = _machine_twin(db, machine, risk, tenant)
+    detail = _machine_twin(db, machine, risk, tenant, _oee_from_records(_recent_production(db, machine_id)))
     detail["risk_factors"] = list(risk["reasons"]) if risk and risk.get("reasons") else []
     detail["downtime_7d"] = _downtime_trend(db, machine_id)
     detail["production_7d"] = _machine_production(db, machine_id)

@@ -872,6 +872,13 @@ def get_quality_summary(db: Session = Depends(get_db), current_user: dict = Depe
     return ai.quality.build_quality_summary(db, current_user.get("tenant", "DEFAULT"))
 
 
+@app.get("/quality-defect")
+def get_quality_defect(category: str, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
+    # Defect drill-down (ADR-0007): for one defect category — units failed
+    # (rework/scrap split), the machines producing it, and recent inspections.
+    return ai.quality.build_defect_detail(db, current_user.get("tenant", "DEFAULT"), category)
+
+
 @app.get("/production-summary")
 def get_production_summary(db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
     # Production summary (ADR-0007): throughput and output quality over the last

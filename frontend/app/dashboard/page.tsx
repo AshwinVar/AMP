@@ -32,6 +32,7 @@ import FactoryPulse from "../../components/FactoryPulse";
 import QualitySnapshot from "../../components/QualitySnapshot";
 import DowntimeSnapshot from "../../components/DowntimeSnapshot";
 import ProductionSnapshot from "../../components/ProductionSnapshot";
+import OeeSnapshot from "../../components/OeeSnapshot";
 import DigitalTwinSection from "../../components/DigitalTwinSection";
 import OrdersDispatchSection from "../../components/OrdersDispatchSection";
 import PurchasingSection from "../../components/PurchasingSection";
@@ -1905,6 +1906,10 @@ export default function DashboardPage() {
 
       <div className="mb-8">
         <FactoryPulse />
+      </div>
+
+      <div className="mb-8">
+        <OeeSnapshot />
       </div>
 
       <div className="mb-8">

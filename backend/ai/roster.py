@@ -33,17 +33,11 @@ AGENTS = [
 ]
 
 
-class _AgentRef:
-    """Minimal stand-in so the auto-approve policy can be read by agent key."""
-
-    def __init__(self, agent):
-        self.agent = agent
-
-
 def build_roster(db, tenant: str):
     """One card per agent: role + autonomy + live activity, tenant-scoped."""
-    from ai.agents import should_auto_approve  # lazy: avoids an import cycle at package load
+    from ai.agents import trusted_agents  # lazy: avoids an import cycle at package load
 
+    trusted = trusted_agents(db, tenant)
     rows = db.query(models.AgentAction).filter(models.AgentAction.tenant_code == tenant).all()
     by_agent: dict[str, list] = {}
     for r in rows:
@@ -56,7 +50,7 @@ def build_roster(db, tenant: str):
         last = max((a.created_at for a in mine if a.created_at), default=None)
         roster.append({
             **meta,
-            "auto_approves": should_auto_approve(_AgentRef(meta["key"])),
+            "auto_approves": meta["key"] in trusted,
             "total_actions": len(mine),
             "pending": status.get("Proposed", 0),
             "approved": status.get("Approved", 0),
@@ -79,7 +73,7 @@ def build_agent_detail(db, tenant: str, agent_key: str):
     meta = _meta(agent_key)
     if meta is None:
         return None
-    from ai.agents import should_auto_approve  # lazy: avoids an import cycle at package load
+    from ai.agents import trusted_agents  # lazy: avoids an import cycle at package load
 
     rows = (db.query(models.AgentAction)
             .filter(models.AgentAction.tenant_code == tenant,
@@ -103,7 +97,7 @@ def build_agent_detail(db, tenant: str, agent_key: str):
 
     return {
         **meta,
-        "auto_approves": should_auto_approve(_AgentRef(agent_key)),
+        "auto_approves": agent_key in trusted_agents(db, tenant),
         "total_actions": len(rows),
         "pending": status.get("Proposed", 0),
         "approved": approved,
@@ -120,4 +114,20 @@ def build_agent_detail(db, tenant: str, agent_key: str):
             "decided_by": a.decided_by,
             "decided_at": a.decided_at.isoformat() if a.decided_at else None,
         } for a in rows[:15]],
+    }
+
+
+def build_agent_policy(db, tenant: str) -> dict:
+    """The tenant's agent-autonomy policy: for each agent whether it may act
+    without approval, and whether that comes from a saved per-tenant policy or
+    the platform default (so the UI can say which)."""
+    from ai.agents import trusted_agents, tenant_has_policy  # lazy: avoids an import cycle at package load
+
+    trusted = trusted_agents(db, tenant)
+    return {
+        "source": "tenant" if tenant_has_policy(db, tenant) else "default",
+        "agents": [{
+            "key": m["key"], "name": m["name"], "watches": m["watches"], "acts": m["acts"],
+            "auto_approves": m["key"] in trusted,
+        } for m in AGENTS],
     }

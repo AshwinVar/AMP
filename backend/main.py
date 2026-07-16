@@ -179,6 +179,17 @@ async def startup_event():
     asyncio.create_task(_simulation_loop())
     try:
         db = SessionLocal()
+        # One-time factory rebuild: set RESEED_FACTORY=1 in the Railway env to
+        # rebuild the DEFAULT tenant as the SMT->IC plant on this boot (runs here,
+        # so it hits the prod DB), then remove the flag. Idempotent + DEFAULT-only.
+        if os.environ.get("RESEED_FACTORY") == "1":
+            try:
+                from reset_factory import rebuild_factory
+                rebuild_factory(db)
+                print("[RESEED] DEFAULT rebuilt to the SMT->IC factory (RESEED_FACTORY=1)")
+            except Exception as e:
+                db.rollback()
+                print(f"[RESEED] factory reset failed: {e}")
         gmats_inventory_routes.seed_gmats(db)
         # Core MES: ensure OEE + timeline have data (production records & machine events).
         from factory_simulator import _production_records, _machine_events

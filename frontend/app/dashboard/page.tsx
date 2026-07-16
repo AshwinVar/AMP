@@ -31,6 +31,7 @@ import ExecutiveOeeSection from "../../components/ExecutiveOeeSection";
 import FactoryPulse from "../../components/FactoryPulse";
 import QualitySnapshot from "../../components/QualitySnapshot";
 import DowntimeSnapshot from "../../components/DowntimeSnapshot";
+import ProductionSnapshot from "../../components/ProductionSnapshot";
 import DigitalTwinSection from "../../components/DigitalTwinSection";
 import OrdersDispatchSection from "../../components/OrdersDispatchSection";
 import PurchasingSection from "../../components/PurchasingSection";
@@ -1910,6 +1911,10 @@ export default function DashboardPage() {
 
       <div className="mb-8">
         <DowntimeSnapshot />
+      </div>
+
+      <div className="mb-8">
+        <ProductionSnapshot />
       </div>
 
       <section className="mb-6 rounded-2xl bg-slate-900 border border-slate-800 p-4 flex flex-col md:flex-row md:items-center md:justify-between gap-3">

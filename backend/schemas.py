@@ -929,3 +929,8 @@ class PlcSignalMappingResponse(BaseModel):
 
     class Config:
         from_attributes = True
+
+
+class AgentPolicyUpdate(BaseModel):
+    # The agent keys allowed to act without human approval for this tenant.
+    auto_approve: list[str]

@@ -3224,6 +3224,21 @@ def agent_roster(db: Session = Depends(get_db), current_user: dict = Depends(get
     return ai.roster.build_roster(db, current_user.get("tenant", "DEFAULT"))
 
 
+@app.get("/agent-policy")
+def get_agent_policy(db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
+    # Agent autonomy policy (ADR-0004\0005): which agents may act without a human,
+    # per-tenant, with the platform default as fallback.
+    return ai.roster.build_agent_policy(db, current_user.get("tenant", "DEFAULT"))
+
+
+@app.put("/agent-policy")
+def update_agent_policy(payload: schemas.AgentPolicyUpdate, db: Session = Depends(get_db),
+                        current_user: dict = Depends(require_roles(["Admin"]))):
+    # Changing which agents act autonomously is a trust decision — Admin only.
+    ai.agents.set_agent_policy(db, current_user.get("tenant", "DEFAULT"), payload.auto_approve)
+    return ai.roster.build_agent_policy(db, current_user.get("tenant", "DEFAULT"))
+
+
 @app.get("/agent-roster/{agent_key}")
 def agent_detail(agent_key: str, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
     # Agent detail (ADR-0004\0005): the single-agent cockpit — role, autonomy,

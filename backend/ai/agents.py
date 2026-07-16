@@ -36,13 +36,59 @@ YIELD_MIN_UNITS = 50
 
 
 # ── Oversight: propose, policy, decide ─────────────────────────────
-def should_auto_approve(action) -> bool:
-    """Trusted low-risk actions skip the gate. Which agents auto-approve is
-    configurable via the AUTO_APPROVE_AGENTS env var (comma-separated agent
-    names); it defaults to 'reorder' (reversible drafts). Maintenance and quality
-    stay gated unless explicitly trusted."""
-    trusted = {a.strip() for a in os.environ.get("AUTO_APPROVE_AGENTS", "reorder").split(",") if a.strip()}
-    return action.agent in trusted
+def _env_trusted() -> set:
+    """The platform default trust set, from the AUTO_APPROVE_AGENTS env var
+    (comma-separated agent keys); itself defaulting to 'reorder' (reversible
+    drafts)."""
+    return {a.strip() for a in os.environ.get("AUTO_APPROVE_AGENTS", "reorder").split(",") if a.strip()}
+
+
+def _tenant_trusted(db, tenant):
+    """The tenant's stored auto-approve set, or None when no policy row exists
+    (the caller then falls back to the env default). An empty stored policy is a
+    real choice — 'no agent auto-approves' — and returns an empty set, not None."""
+    if db is None or not tenant:
+        return None
+    row = db.query(models.AgentPolicy).filter(models.AgentPolicy.tenant_code == tenant).first()
+    if row is None:
+        return None
+    return {a.strip() for a in (row.auto_approve_agents or "").split(",") if a.strip()}
+
+
+def tenant_has_policy(db, tenant) -> bool:
+    """Whether this tenant has an explicit saved policy (vs. the default)."""
+    return _tenant_trusted(db, tenant) is not None
+
+
+def trusted_agents(db=None, tenant=None) -> set:
+    """Agent keys that auto-approve for this tenant: a stored per-tenant policy
+    wins; otherwise the AUTO_APPROVE_AGENTS env default ('reorder')."""
+    stored = _tenant_trusted(db, tenant)
+    return stored if stored is not None else _env_trusted()
+
+
+def should_auto_approve(action, db=None) -> bool:
+    """Trusted low-risk actions skip the human gate. Trust is per-tenant (a saved
+    policy, set by an Admin in the UI) and falls back to the AUTO_APPROVE_AGENTS
+    env default ('reorder' — reversible drafts). Maintenance and quality stay
+    gated unless explicitly trusted."""
+    return action.agent in trusted_agents(db, getattr(action, "tenant_code", None))
+
+
+def set_agent_policy(db, tenant, agent_keys) -> list:
+    """Persist the tenant's auto-approve set, keeping only valid agent keys.
+    Returns the stored, sorted list."""
+    from ai.roster import AGENTS  # lazy: avoids an import cycle at package load
+
+    valid = {m["key"] for m in AGENTS}
+    keys = sorted({k for k in agent_keys if k in valid})
+    row = db.query(models.AgentPolicy).filter(models.AgentPolicy.tenant_code == tenant).first()
+    if row is None:
+        db.add(models.AgentPolicy(tenant_code=tenant, auto_approve_agents=",".join(keys)))
+    else:
+        row.auto_approve_agents = ",".join(keys)
+    db.commit()
+    return keys
 
 
 def apply_decision(db, action, decision, decided_by=None) -> None:
@@ -77,7 +123,7 @@ def _propose(db, tenant, agent, action_type, summary, ref_kind, ref_id,
     )
     db.add(action)
     db.flush()
-    if should_auto_approve(action):
+    if should_auto_approve(action, db):
         apply_decision(db, action, "approve", decided_by="auto-policy")
     else:
         # A human needs to decide — surface it in the notifications feed.

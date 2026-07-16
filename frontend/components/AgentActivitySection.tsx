@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { apiGet, apiPost } from "../lib/api";
 import AgentDetailDrawer from "./AgentDetailDrawer";
+import AgentPolicyPanel from "./AgentPolicyPanel";
 
 // Mirrors the backend AgentAction (main.py _agent_action_dict).
 type AgentAction = {
@@ -184,6 +185,8 @@ export default function AgentActivitySection() {
           </div>
         </div>
       )}
+
+      <AgentPolicyPanel />
 
       {roster.length > 0 && (
         <div>

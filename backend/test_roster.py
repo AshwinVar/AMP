@@ -92,8 +92,32 @@ def test_agent_detail_composes_single_agent_cockpit():
     assert roster.build_agent_detail(db, "DEFAULT", "nope") is None  # unknown -> caller 404s
 
 
+def test_agent_policy_reflects_saved_and_default_source():
+    from ai import agents
+    os.environ.pop("AUTO_APPROVE_AGENTS", None)   # default trust: only reorder
+    db = _fresh_session()
+
+    # no saved policy -> source is the platform default
+    p = roster.build_agent_policy(db, "DEFAULT")
+    assert p["source"] == "default"
+    assert [a["key"] for a in p["agents"]] == ["maintenance", "quality", "reorder", "escalation", "yield"]
+    by_key = {a["key"]: a for a in p["agents"]}
+    assert by_key["reorder"]["auto_approves"] is True
+    assert by_key["maintenance"]["auto_approves"] is False
+    assert all(a["name"] and a["watches"] and a["acts"] for a in p["agents"])   # role metadata for the UI
+
+    # saving a policy flips the source to 'tenant' and reflects the exact choice
+    agents.set_agent_policy(db, "DEFAULT", ["maintenance"])
+    p2 = roster.build_agent_policy(db, "DEFAULT")
+    assert p2["source"] == "tenant"
+    by_key2 = {a["key"]: a for a in p2["agents"]}
+    assert by_key2["maintenance"]["auto_approves"] is True
+    assert by_key2["reorder"]["auto_approves"] is False        # no longer in the trusted set
+
+
 if __name__ == "__main__":
     test_roster_lists_agents_with_autonomy_and_activity()
     test_agent_detail_composes_single_agent_cockpit()
+    test_agent_policy_reflects_saved_and_default_source()
     print("ROSTER OK: full fleet listed; autonomy from policy (live); activity counts tenant-scoped; "
           "single-agent cockpit (tally, approval rate, outputs, 7-day series) agent+tenant-scoped")

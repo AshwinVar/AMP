@@ -250,6 +250,37 @@ def test_register_wires_agents_to_the_stream():
     assert agents.draft_reorder_on_inventory_low in bus._subscribers[InventoryLow]
 
 
+def test_agent_policy_is_per_tenant_with_env_fallback():
+    import os
+    os.environ.pop("AUTO_APPROVE_AGENTS", None)   # default trust: only reorder
+    db = _fresh_session()
+
+    class _A:
+        def __init__(self, agent, tenant="DEFAULT"):
+            self.agent, self.tenant_code = agent, tenant
+
+    # no saved policy -> the env default applies
+    assert agents.tenant_has_policy(db, "DEFAULT") is False
+    assert agents.should_auto_approve(_A("reorder"), db) is True
+    assert agents.should_auto_approve(_A("maintenance"), db) is False
+
+    # save a per-tenant policy trusting maintenance + reorder (invalid keys dropped)
+    stored = agents.set_agent_policy(db, "DEFAULT", ["maintenance", "reorder", "bogus"])
+    assert stored == ["maintenance", "reorder"]
+    assert agents.tenant_has_policy(db, "DEFAULT") is True
+    assert agents.should_auto_approve(_A("maintenance"), db) is True
+    assert agents.should_auto_approve(_A("quality"), db) is False
+    # another tenant is unaffected -> still the env default
+    assert agents.should_auto_approve(_A("maintenance", "GMATS"), db) is False
+    assert agents.should_auto_approve(_A("reorder", "GMATS"), db) is True
+
+    # an explicit empty policy means NO agent auto-approves (a real choice, not a fallback)
+    agents.set_agent_policy(db, "DEFAULT", [])
+    assert agents.tenant_has_policy(db, "DEFAULT") is True
+    assert agents.trusted_agents(db, "DEFAULT") == set()
+    assert agents.should_auto_approve(_A("reorder"), db) is False
+
+
 if __name__ == "__main__":
     test_agent_opens_task_only_on_critical_risk_idempotently()
     test_reorder_agent_drafts_po_on_low_stock_idempotently()
@@ -259,5 +290,7 @@ if __name__ == "__main__":
     test_approve_and_reject_agent_actions()
     test_proposal_notifies_but_auto_approved_does_not()
     test_auto_approve_policy_is_env_configurable()
+    test_agent_policy_is_per_tenant_with_env_fallback()
     test_register_wires_agents_to_the_stream()
-    print("AGENT OK: 5 agents propose; reorder auto-approves, others wait + notify; approve/reject; idempotent; wired")
+    print("AGENT OK: 5 agents propose; reorder auto-approves, others wait + notify; approve/reject; idempotent; "
+          "per-tenant autonomy policy (saved wins, env fallback); wired")

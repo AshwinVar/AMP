@@ -412,6 +412,20 @@ class TenantConfig(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
 
 
+class AgentPolicy(Base):
+    """Per-tenant agent-autonomy policy (ADR-0004/0005): which agents may act
+    without human approval. No row for a tenant -> fall back to the
+    AUTO_APPROVE_AGENTS env default. Stored as a CSV of agent keys; "" is a real
+    choice ("no agent auto-approves"), distinct from having no row. A new table,
+    so create_all provisions it everywhere (no ALTER needed)."""
+    __tablename__ = "agent_policies"
+
+    id = Column(Integer, primary_key=True, index=True)
+    tenant_code = Column(String, unique=True, index=True, nullable=False)
+    auto_approve_agents = Column(String, default="")            # CSV of agent keys
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
 class CompanyTenant(Base):
     __tablename__ = "company_tenants"
 

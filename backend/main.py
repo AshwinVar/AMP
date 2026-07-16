@@ -894,6 +894,14 @@ def get_oee_summary(db: Session = Depends(get_db), current_user: dict = Depends(
     return ai.oee.build_oee_summary(db, current_user.get("tenant", "DEFAULT"))
 
 
+@app.get("/inventory-summary")
+def get_inventory_summary(db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
+    # Inventory summary (ADR-0007): supply risk — items at/below reorder level
+    # (worst coverage first), the out-of-stock count, and the Reorder agent's
+    # drafted POs still awaiting approval.
+    return ai.inventory.build_inventory_summary(db, current_user.get("tenant", "DEFAULT"))
+
+
 @app.get("/machine-health/{machine_id}")
 def get_machine_detail(machine_id: int, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
     # Machine Health detail (ADR-0006): the single-machine cockpit — the twin

@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { apiGet } from "../lib/api";
+import MachineDetailDrawer from "./MachineDetailDrawer";
 
 // Mirrors the backend production summary (ai/production.py build_production_summary).
 type ProductionSummary = {
@@ -32,6 +33,7 @@ function wk(iso: string) {
 // onto any screen without prop-drilling. Renders nothing until there's data.
 export default function ProductionSnapshot() {
   const [p, setP] = useState<ProductionSummary | null>(null);
+  const [machine, setMachine] = useState<number | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -88,13 +90,22 @@ export default function ProductionSnapshot() {
           <p className="text-xs text-slate-500 mb-2">Top producers</p>
           <div className="flex flex-wrap gap-2">
             {p.by_machine.map((m) => (
-              <span key={m.machine_id} className="rounded-lg border border-slate-700 px-3 py-1.5 text-sm text-slate-300">
+              <button
+                key={m.machine_id}
+                type="button"
+                onClick={() => setMachine(m.machine_id)}
+                className="rounded-lg border border-slate-700 px-3 py-1.5 text-sm text-slate-300 hover:border-slate-500 hover:bg-slate-800 transition focus:outline-none focus:ring-2 focus:ring-slate-600"
+                title={`${m.name} — open machine cockpit`}
+              >
                 {m.name} <span className="text-slate-500">· {m.good.toLocaleString()}</span>
-              </span>
+              </button>
             ))}
           </div>
         </div>
       </div>
+      {machine != null && (
+        <MachineDetailDrawer machineId={machine} onClose={() => setMachine(null)} onChanged={load} />
+      )}
     </div>
   );
 }

@@ -14,6 +14,7 @@ class Machine(Base):
     status = Column(String, nullable=False)
     utilization = Column(Integer, default=0)
     downtime = Column(String, default="0 min")
+    line = Column(String, default="")                          # production line, e.g. "SMT" | "IC"
 
     downtime_logs = relationship("DowntimeLog", back_populates="machine")
     production_records = relationship("ProductionRecord", back_populates="machine")
@@ -108,6 +109,7 @@ class WorkOrder(Base):
     target_quantity = Column(Integer, nullable=False)
     actual_quantity = Column(Integer, default=0)
     status = Column(String, default="Planned")
+    material_state = Column(String, default="RAW")             # RAW -> SEMI (post-SMT) -> FIN (post-IC)
     planned_start = Column(DateTime, nullable=True)
     planned_end = Column(DateTime, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)

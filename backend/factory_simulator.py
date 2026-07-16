@@ -21,28 +21,26 @@ Base.metadata.create_all(bind=engine)
 
 # ── Factory identity ─────────────────────────────────────────────
 
-MACHINES = ["CNC-01", "CNC-02", "Laser-Cutter-01", "Packaging-01", "Assembly-Robot-01"]
+# Two lines: SMT (RAW -> SEMI) then IC / instrument cluster (SEMI -> FIN).
+MACHINES = ["SMT-Printer-01", "SMT-PickPlace-01", "SMT-Reflow-01", "SMT-AOI-01",
+            "IC-Assembly-01", "IC-Programming-01", "IC-Test-01", "IC-FinalQC-01"]
+_LINE_OF = {m: ("SMT" if m.startswith("SMT-") else "IC") for m in MACHINES}
 SHIFTS   = ["Shift A", "Shift B", "Shift C"]
 
 OPERATORS  = ["Rajan Kumar", "Suresh Patel", "Meena Iyer", "Arjun Verma", "Priya Nair"]
 INSPECTORS = ["Kamal Sharma", "Divya Singh", "Quality Inspector"]
 
 PARTS = [
-    {"code": "SHAFT-001", "name": "CNC Machined Shaft",      "machine": "CNC-01"},
-    {"code": "PLATE-002", "name": "Laser Cut Plate",          "machine": "Laser-Cutter-01"},
-    {"code": "BEAR-003",  "name": "Bearing Housing",          "machine": "CNC-02"},
-    {"code": "GEAR-004",  "name": "Gear Component",           "machine": "CNC-01"},
-    {"code": "ASSY-005",  "name": "Final Assembly Kit",       "machine": "Assembly-Robot-01"},
-    {"code": "PKG-006",   "name": "Packaged Finished Goods",  "machine": "Packaging-01"},
+    {"code": "CLB-PCB",      "name": "Cluster Main PCB",         "machine": "SMT-PickPlace-01"},
+    {"code": "CLB-DISPLAY",  "name": "TFT Display Driver Board", "machine": "SMT-PickPlace-01"},
+    {"code": "CLB-GAUGE",    "name": "Stepper Gauge Board",      "machine": "IC-Assembly-01"},
+    {"code": "CLB-BACKLIT",  "name": "LED Backlight Board",      "machine": "IC-Assembly-01"},
+    {"code": "CLB-TELLTALE", "name": "Warning Telltale Board",   "machine": "IC-FinalQC-01"},
 ]
 
 CUSTOMERS = [
-    "Bharat Forge Ltd",
-    "Tata AutoComp Systems",
-    "Mahindra Gears",
-    "Precision Tools Corp",
-    "Industrial Dynamics Ltd",
-    "SteelCraft Industries",
+    "Bugatti",
+    "Mercedes",
 ]
 
 SUPPLIERS_SEED = [
@@ -117,7 +115,8 @@ def _machines(db):
         return
     for i, name in enumerate(MACHINES):
         s = _MACHINE_SEED_STATUS[i % len(_MACHINE_SEED_STATUS)]
-        db.add(models.Machine(name=name, status=s["status"], utilization=s["utilization"], downtime=s["downtime"]))
+        db.add(models.Machine(name=name, status=s["status"], utilization=s["utilization"],
+                              downtime=s["downtime"], line=_LINE_OF.get(name, "")))
     db.commit()
     print("[SEED] Machines")
 

@@ -75,7 +75,23 @@ def _ensure_user_tenant_column():
         print(f"[MIGRATE] tenant_code skipped: {e}")
 
 
+def _ensure_column(table: str, column: str, ddl: str):
+    """Idempotent migration: add a column to an existing table (create_all only
+    creates missing tables, never alters existing ones)."""
+    from sqlalchemy import inspect, text
+    try:
+        cols = [c["name"] for c in inspect(engine).get_columns(table)]
+        if column not in cols:
+            with engine.begin() as conn:
+                conn.execute(text(ddl))
+            print(f"[MIGRATE] {table}.{column} added")
+    except Exception as e:
+        print(f"[MIGRATE] {table}.{column} skipped: {e}")
+
+
 _ensure_user_tenant_column()
+_ensure_column("machines", "line", "ALTER TABLE machines ADD COLUMN line VARCHAR DEFAULT ''")
+_ensure_column("work_orders", "material_state", "ALTER TABLE work_orders ADD COLUMN material_state VARCHAR DEFAULT 'RAW'")
 tenancy.ensure_tenant_columns(engine)  # ADR-0002: tenant_code on core tables
 tenancy.install_scoping()              # ADR-0002: auto-enforce tenant scoping
 

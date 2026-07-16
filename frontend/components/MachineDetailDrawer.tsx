@@ -33,6 +33,8 @@ type Detail = {
   risk_level: string;
   risk_factors: string[];
   downtime_7d: { date: string; count: number }[];
+  production_7d: { good: number; total: number; good_rate: number; daily: { date: string; count: number }[] };
+  quality: { inspections: number; inspected: number; passed: number; failed: number; fail_rate: number; top_defects: { category: string; count: number }[] };
   open_actions: OpenAction[];
   timeline: TimelineEvent[];
 };
@@ -223,6 +225,65 @@ export default function MachineDetailDrawer({
 
             {/* 7-day downtime sparkline */}
             <DowntimeSparkline series={detail.downtime_7d} />
+
+            {/* Production (last 7 days) */}
+            <div>
+              <h3 className="text-sm font-semibold text-slate-300 uppercase tracking-wide">Production · last 7 days</h3>
+              {detail.production_7d.total === 0 ? (
+                <p className="text-slate-500 text-sm mt-2">No production recorded this week.</p>
+              ) : (
+                <>
+                  <div className="flex items-end gap-3 mt-2">
+                    <p className={`text-2xl font-bold ${detail.production_7d.good_rate >= 95 ? "text-emerald-400" : detail.production_7d.good_rate >= 90 ? "text-yellow-400" : "text-orange-400"}`}>
+                      {detail.production_7d.good_rate}%
+                    </p>
+                    <p className="text-xs text-slate-500 pb-1">
+                      good rate · {detail.production_7d.good.toLocaleString()} / {detail.production_7d.total.toLocaleString()} units
+                    </p>
+                  </div>
+                  <div className="mt-3 flex items-end gap-2 h-16">
+                    {detail.production_7d.daily.map((d) => {
+                      const peak = Math.max(1, ...detail.production_7d.daily.map((x) => x.count));
+                      const h = Math.max(4, Math.round((d.count / peak) * 56));
+                      return (
+                        <div key={d.date} className="flex-1 flex flex-col items-center justify-end gap-1" title={`${d.count} on ${d.date}`}>
+                          <div className="w-full bg-emerald-500/60 rounded-t" style={{ height: `${h}px` }} />
+                          <span className="text-[10px] text-slate-500">{wk(d.date)}</span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </>
+              )}
+            </div>
+
+            {/* Quality */}
+            <div>
+              <h3 className="text-sm font-semibold text-slate-300 uppercase tracking-wide">Quality</h3>
+              {detail.quality.inspections === 0 ? (
+                <p className="text-slate-500 text-sm mt-2">No inspections for this machine.</p>
+              ) : (
+                <div className="mt-2">
+                  <div className="flex items-end gap-3">
+                    <p className={`text-2xl font-bold ${detail.quality.fail_rate <= 2 ? "text-emerald-400" : detail.quality.fail_rate <= 5 ? "text-yellow-400" : "text-orange-400"}`}>
+                      {detail.quality.fail_rate}%
+                    </p>
+                    <p className="text-xs text-slate-500 pb-1">
+                      fail rate · {detail.quality.inspections} inspection{detail.quality.inspections !== 1 ? "s" : ""} · {detail.quality.inspected} units
+                    </p>
+                  </div>
+                  {detail.quality.top_defects.length > 0 && (
+                    <div className="mt-2 flex flex-wrap gap-2">
+                      {detail.quality.top_defects.map((d) => (
+                        <span key={d.category} className="rounded-lg border border-slate-700 px-2.5 py-1 text-xs text-slate-300">
+                          {d.category} <span className="text-slate-500">· {d.count}</span>
+                        </span>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
 
             {/* Pending agent actions — approve/reject inline */}
             {detail.open_actions.length > 0 && (

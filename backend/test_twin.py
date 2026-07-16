@@ -65,12 +65,20 @@ def test_machine_detail_composes_cockpit_and_scopes_actions():
     db.add(models.AgentAction(tenant_code="GMATS", agent="maintenance", action_type="open_task",
                               summary="leak", ref_kind="maintenance_task", ref_id=1,
                               related_machine_id=1, status="Proposed"))
+    db.add(models.ProductionRecord(machine_id=1, planned_minutes=480, runtime_minutes=440,
+                                   ideal_cycle_time_seconds=30, total_count=100, good_count=90, rejected_count=10))
+    db.add(models.QualityInspection(inspection_no="QC-1", machine_id=1, inspector="qa",
+                                    inspected_quantity=50, passed_quantity=45, failed_quantity=5, defect_category="surface"))
     db.commit()
 
     detail = twin.build_machine_detail(db, "DEFAULT", 1)
     assert detail["machine_id"] == 1 and detail["health_band"] == "Critical"
     assert detail["risk_factors"]                                     # non-empty risk breakdown
     assert len(detail["downtime_7d"]) == 7 and detail["downtime_7d"][-1]["count"] == 1  # today's downtime
+    assert len(detail["production_7d"]["daily"]) == 7                 # per-machine throughput series
+    assert detail["production_7d"]["good"] == 90 and detail["production_7d"]["good_rate"] == 90
+    assert detail["quality"]["inspections"] == 1 and detail["quality"]["fail_rate"] == 10
+    assert detail["quality"]["top_defects"][0]["category"] == "surface"
     kinds = {e["kind"] for e in detail["timeline"]}
     assert kinds == {"downtime", "task", "action"}                   # all three merged
     assert all(e["detail"] != "leak" for e in detail["timeline"])    # GMATS action excluded

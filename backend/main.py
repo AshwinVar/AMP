@@ -850,6 +850,13 @@ def get_mission_control_pulse(db: Session = Depends(get_db), current_user: dict 
     return ai.pulse.build_pulse(db, current_user.get("tenant", "DEFAULT"))
 
 
+@app.get("/downtime-summary")
+def get_downtime_summary(db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
+    # Downtime summary (ADR-0007): fleet-wide downtime over the last 7 days —
+    # total, top reasons (Pareto), worst machines, and a daily series.
+    return ai.downtime.build_downtime_summary(db, current_user.get("tenant", "DEFAULT"))
+
+
 @app.get("/machine-health/{machine_id}")
 def get_machine_detail(machine_id: int, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
     # Machine Health detail (ADR-0006): the single-machine cockpit — the twin

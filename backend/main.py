@@ -858,6 +858,13 @@ def get_downtime_summary(db: Session = Depends(get_db), current_user: dict = Dep
     return ai.downtime.build_downtime_summary(db, current_user.get("tenant", "DEFAULT"))
 
 
+@app.get("/downtime-reason")
+def get_downtime_reason(reason: str, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
+    # Downtime reason drill-down (ADR-0007): for one reason over the last 7 days —
+    # events, minutes lost, machines hit, a daily trend, and recent instances.
+    return ai.downtime.build_downtime_reason(db, current_user.get("tenant", "DEFAULT"), reason)
+
+
 @app.get("/quality-summary")
 def get_quality_summary(db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
     # Quality summary (ADR-0007): first-pass yield, fail rate, a defect Pareto,

@@ -20,6 +20,7 @@ type Twin = {
   open_maintenance_tasks: number;
   pending_agent_actions: number;
   recent_downtime: { reason: string; duration: string }[];
+  oee: { oee: number; availability: number; performance: number; quality: number; has_data: boolean };
 };
 
 function bandStyle(band: string) {
@@ -33,6 +34,13 @@ function healthColor(score: number) {
   if (score >= 80) return "text-emerald-400";
   if (score >= 55) return "text-yellow-400";
   if (score >= 35) return "text-orange-400";
+  return "text-red-400";
+}
+
+function oeeColor(v: number) {
+  if (v >= 85) return "text-emerald-400"; // world-class
+  if (v >= 60) return "text-yellow-400";
+  if (v >= 40) return "text-orange-400";
   return "text-red-400";
 }
 
@@ -72,6 +80,8 @@ export default function MachineHealthSection() {
   const avg = twins.length ? Math.round(twins.reduce((s, t) => s + t.health_score, 0) / twins.length) : 0;
   const attention = twins.filter((t) => t.health_band === "Critical" || t.health_band === "At risk").length;
   const pending = twins.reduce((s, t) => s + t.pending_agent_actions, 0);
+  const oeeMachines = twins.filter((t) => t.oee.has_data);
+  const avgOee = oeeMachines.length ? Math.round(oeeMachines.reduce((s, t) => s + t.oee.oee, 0) / oeeMachines.length) : 0;
   const BANDS = ["Critical", "At risk", "Watch", "Healthy"]; // worst-first, for triage
   const bandCounts = Object.fromEntries(BANDS.map((b) => [b, twins.filter((t) => t.health_band === b).length]));
   const shown = bandFilter ? twins.filter((t) => t.health_band === bandFilter) : twins;
@@ -88,9 +98,10 @@ export default function MachineHealthSection() {
         <button onClick={load} className="rounded-xl bg-white text-slate-950 font-semibold px-4 py-3">Refresh</button>
       </div>
 
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+      <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
         <Kpi title="Machines" value={twins.length} />
         <Kpi title="Avg health" value={avg} />
+        <Kpi title="Avg OEE" value={`${avgOee}%`} />
         <Kpi title="Need attention" value={attention} />
         <Kpi title="Pending actions" value={pending} />
       </div>
@@ -158,6 +169,12 @@ export default function MachineHealthSection() {
                   <p className={`text-4xl font-bold ${healthColor(t.health_score)}`}>{t.health_score}</p>
                   <p className="text-xs text-slate-500">health score</p>
                 </div>
+                {t.oee.has_data && (
+                  <div>
+                    <p className={`text-4xl font-bold ${oeeColor(t.oee.oee)}`}>{t.oee.oee}%</p>
+                    <p className="text-xs text-slate-500">OEE</p>
+                  </div>
+                )}
                 <div className="text-sm text-slate-400 space-y-0.5 pb-1">
                   <p>{t.status} · util {t.utilization}%</p>
                   <p>risk {t.risk_level} ({t.risk_score})</p>

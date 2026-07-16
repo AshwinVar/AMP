@@ -49,6 +49,7 @@ def test_twin_composes_health_and_is_tenant_scoped():
     assert twins[0]["pending_agent_actions"] == 1                   # GMATS action excluded
     assert len(twins[0]["recent_downtime"]) == 1
     assert twins[1]["machine_id"] == 2 and twins[1]["health_band"] == "Healthy"
+    assert "oee" in twins[0] and twins[0]["oee"]["has_data"] is False   # no production -> zeroed OEE
 
 
 def test_machine_detail_composes_cockpit_and_scopes_actions():
@@ -79,6 +80,9 @@ def test_machine_detail_composes_cockpit_and_scopes_actions():
     assert detail["production_7d"]["good"] == 90 and detail["production_7d"]["good_rate"] == 90
     assert detail["quality"]["inspections"] == 1 and detail["quality"]["fail_rate"] == 10
     assert detail["quality"]["top_defects"][0]["category"] == "surface"
+    # OEE = A x P x Q: availability 440/480 -> 92%, quality 90/100 -> 90%
+    assert detail["oee"]["has_data"] and detail["oee"]["availability"] == 92 and detail["oee"]["quality"] == 90
+    assert 0 <= detail["oee"]["oee"] <= 100
     kinds = {e["kind"] for e in detail["timeline"]}
     assert kinds == {"downtime", "task", "action"}                   # all three merged
     assert all(e["detail"] != "leak" for e in detail["timeline"])    # GMATS action excluded

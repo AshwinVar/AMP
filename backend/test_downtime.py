@@ -57,6 +57,40 @@ def test_downtime_summary_rolls_up_reasons_machines_and_days():
     assert empty["total_events"] == 0 and empty["top_reasons"] == [] and len(empty["daily"]) == 7
 
 
+def test_downtime_reason_drilldown_totals_minutes_machines_and_instances():
+    db = _fresh_session()
+    now = datetime.utcnow()
+    db.add(models.Machine(id=1, name="PRESS-01", status="Running", utilization=60))
+    db.add(models.Machine(id=2, name="CNC-02", status="Running", utilization=60))
+    db.add_all([
+        models.DowntimeLog(machine_id=1, reason="Breakdown", duration="120 min", created_at=now),
+        models.DowntimeLog(machine_id=1, reason="Breakdown", duration="30 min", created_at=now - timedelta(days=1)),
+        models.DowntimeLog(machine_id=2, reason="Breakdown", duration="45 min", created_at=now - timedelta(days=2)),
+        models.DowntimeLog(machine_id=1, reason="Tooling", duration="15 min", created_at=now),           # other reason
+        models.DowntimeLog(machine_id=1, reason="Breakdown", duration="99 min", created_at=now - timedelta(days=9)),  # out of window
+    ])
+    db.commit()
+
+    r = downtime.build_downtime_reason(db, "DEFAULT", "Breakdown")
+    assert r["reason"] == "Breakdown"
+    assert r["total_events"] == 3                                    # 9-days-ago excluded, Tooling excluded
+    assert r["total_minutes"] == 195                                 # 120 + 30 + 45, minutes parsed from strings
+    # PRESS-01 leads: 2 events / 150 min; CNC-02: 1 event / 45 min
+    assert r["by_machine"][0]["name"] == "PRESS-01" and r["by_machine"][0]["count"] == 2
+    assert r["by_machine"][0]["minutes"] == 150
+    assert r["by_machine"][1]["name"] == "CNC-02" and r["by_machine"][1]["minutes"] == 45
+    assert len(r["daily"]) == 7 and r["daily"][-1]["count"] == 1     # today: one Breakdown
+    assert len(r["instances"]) == 3                                  # most-recent first (by time)
+    assert r["instances"][0]["minutes"] == 120 and r["instances"][0]["machine"] == "PRESS-01"  # today's
+    assert r["instances"][-1]["minutes"] == 45                       # oldest in window (2 days ago)
+
+    # a reason with no events in the window -> zeroed, no crash
+    none = downtime.build_downtime_reason(db, "DEFAULT", "Nonexistent")
+    assert none["total_events"] == 0 and none["total_minutes"] == 0 and none["instances"] == []
+
+
 if __name__ == "__main__":
     test_downtime_summary_rolls_up_reasons_machines_and_days()
-    print("DOWNTIME OK: total + Pareto reasons + worst machines (named) + 7-day series; windowed; empty-safe")
+    test_downtime_reason_drilldown_totals_minutes_machines_and_instances()
+    print("DOWNTIME OK: total + Pareto reasons + worst machines (named) + 7-day series; windowed; empty-safe; "
+          "reason drill-down (minutes lost, machines, instances)")

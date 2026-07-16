@@ -47,6 +47,7 @@ import SaaSAdminSection from "../../components/SaaSAdminSection";
 import CostingSection from "../../components/CostingSection";
 import OperatorTerminalSection from "../../components/OperatorTerminalSection";
 import NotificationsSection from "../../components/NotificationsSection";
+import ApprovalsInbox from "../../components/ApprovalsInbox";
 import EnterprisePolishSection from "../../components/EnterprisePolishSection";
 
 import type {
@@ -2514,6 +2515,10 @@ export default function DashboardPage() {
 
       {renderSection("operator", (
         <OperatorTerminalSection machines={machines} workOrders={workOrders} productionPlans={productionPlans} executions={operatorExecutions} analytics={operatorAnalytics} form={operatorForm} setForm={setOperatorForm} createExecution={createOperatorExecution} updateExecution={updateOperatorExecution} deleteExecution={isAdmin ? deleteOperatorExecution : undefined} getMachineName={getMachineName} />
+      ))}
+
+      {renderSection("inbox", (
+        <ApprovalsInbox />
       ))}
 
       {renderSection("notifications", (

@@ -45,9 +45,13 @@ def test_rebuild_creates_two_line_smt_ic_factory():
     db.flush()
     db.add(models.IndustrialSignal(tenant_code="DEFAULT", device_id=dev.id, machine_id=old.id,
                                    signal_name="temp", signal_value="42"))
+    # a legacy AI recommendation whose tenant_code was never backfilled but still
+    # references a DEFAULT machine — this is exactly what broke the reset on prod.
+    db.add(models.AIRecommendation(tenant_code="LEGACY", recommendation_type="risk",
+                                   title="t", message="m", related_machine_id=old.id))
     db.commit()
 
-    reset_factory.rebuild_factory(db)   # with FK enforcement on, a missed table would raise here
+    reset_factory.rebuild_factory(db)   # with FK enforcement on, a missed reference would raise here
 
     # ── machines: 8, split 4 SMT / 4 IC; the old one is gone ──────────
     machines = db.query(models.Machine).filter(models.Machine.tenant_code == "DEFAULT").all()
@@ -91,6 +95,8 @@ def test_rebuild_creates_two_line_smt_ic_factory():
     assert dev2 is not None and dev2.linked_machine_id is None
     sig = db.query(models.IndustrialSignal).filter(models.IndustrialSignal.device_id == dev2.id).first()
     assert sig is not None and sig.machine_id is None
+    # the mismatched-tenant recommendation was cleared by reference, not by tenant_code
+    assert db.query(models.AIRecommendation).filter(models.AIRecommendation.tenant_code == "LEGACY").count() == 0
 
     # ── modules light up ──────────────────────────────────────────────
     assert db.query(models.ProductionRecord).filter(models.ProductionRecord.tenant_code == "DEFAULT").count() > 0

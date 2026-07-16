@@ -872,6 +872,14 @@ def get_production_summary(db: Session = Depends(get_db), current_user: dict = D
     return ai.production.build_production_summary(db, current_user.get("tenant", "DEFAULT"))
 
 
+@app.get("/oee-summary")
+def get_oee_summary(db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
+    # OEE summary (ADR-0007): the plant's headline metric — one plant-level OEE
+    # (Availability x Performance x Quality) over the last 7 days, the component
+    # dragging it down, and a worst-first per-machine breakdown.
+    return ai.oee.build_oee_summary(db, current_user.get("tenant", "DEFAULT"))
+
+
 @app.get("/machine-health/{machine_id}")
 def get_machine_detail(machine_id: int, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
     # Machine Health detail (ADR-0006): the single-machine cockpit — the twin

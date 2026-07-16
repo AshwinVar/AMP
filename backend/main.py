@@ -197,19 +197,20 @@ async def startup_event():
         print(f"[GMATS SEED ERROR] {e}")
 
 
-# Locked-down CORS. Production origins come from ALLOWED_ORIGINS (comma-separated);
-# the regex keeps Vercel preview deploys working. Add a custom domain by setting
-# ALLOWED_ORIGINS in the Railway env.
+# Locked-down CORS. Extra production origins can be added via ALLOWED_ORIGINS
+# (comma-separated) in the Railway env; the regex keeps Vercel preview deploys
+# and any marx8.com host working. The live domain (app.marx8.com) is baked into
+# the default so the app keeps working even if ALLOWED_ORIGINS is never set.
 ALLOWED_ORIGINS = [
     o.strip()
-    for o in os.environ.get("ALLOWED_ORIGINS", "https://flow-mes.vercel.app").split(",")
+    for o in os.environ.get("ALLOWED_ORIGINS", "https://app.marx8.com,https://flow-mes.vercel.app").split(",")
     if o.strip()
 ]
 
 app.add_middleware(
     CORSMiddleware,
     allow_origins=ALLOWED_ORIGINS,
-    allow_origin_regex=r"https://flow-[a-z0-9-]+-ashwinvars-projects\.vercel\.app|http://localhost:3000|http://127\.0\.0\.1:3000",
+    allow_origin_regex=r"https://flow-[a-z0-9-]+-ashwinvars-projects\.vercel\.app|https://([a-z0-9-]+\.)?marx8\.com|http://localhost:3000|http://127\.0\.0\.1:3000",
     allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],

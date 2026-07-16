@@ -21,6 +21,7 @@ type OeeSummary = {
   machine_count: number;
   machines_with_data: number;
   biggest_drag: "availability" | "performance" | "quality" | null;
+  daily: { date: string; oee: number }[];
   worst: MachineOee | null;
   best: MachineOee | null;
   machines: MachineOee[];
@@ -38,6 +39,11 @@ function barColor(v: number) {
   if (v >= 60) return "bg-yellow-500";
   if (v >= 40) return "bg-orange-500";
   return "bg-red-500";
+}
+
+function wk(iso: string) {
+  const d = new Date(iso);
+  return Number.isNaN(d.getTime()) ? "" : d.toLocaleDateString(undefined, { weekday: "short" });
 }
 
 function Component({ label, value, drag }: { label: string; value: number; drag: boolean }) {
@@ -122,6 +128,27 @@ export default function OeeSnapshot() {
           </div>
         </div>
       </div>
+      {s.daily.some((d) => d.oee > 0) && (
+        <div className="mt-6">
+          <p className="text-xs text-slate-500 mb-2">7-day OEE trend</p>
+          <div className="flex items-end gap-2 h-16">
+            {s.daily.map((d) => {
+              const h = Math.max(4, Math.round((d.oee / 100) * 56));
+              return (
+                <div
+                  key={d.date}
+                  className="flex-1 flex flex-col items-center justify-end gap-1"
+                  title={`${d.oee}% on ${d.date}`}
+                >
+                  <span className="text-[10px] text-slate-400">{d.oee || ""}</span>
+                  <div className={`w-full rounded-t ${barColor(d.oee)}`} style={{ height: `${h}px` }} />
+                  <span className="text-[10px] text-slate-500">{wk(d.date)}</span>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

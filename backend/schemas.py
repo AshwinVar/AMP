@@ -16,6 +16,7 @@ class MachineCreate(MachineBase):
 
 class MachineResponse(MachineBase):
     id: int
+    line: str = ""
 
     class Config:
         from_attributes = True
@@ -151,6 +152,7 @@ class WorkOrderResponse(BaseModel):
     target_quantity: int
     actual_quantity: int
     status: str
+    material_state: str = "RAW"
     planned_start: Optional[datetime] = None
     planned_end: Optional[datetime] = None
     created_at: Optional[datetime] = None

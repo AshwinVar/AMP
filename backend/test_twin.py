@@ -70,6 +70,7 @@ def test_machine_detail_composes_cockpit_and_scopes_actions():
     detail = twin.build_machine_detail(db, "DEFAULT", 1)
     assert detail["machine_id"] == 1 and detail["health_band"] == "Critical"
     assert detail["risk_factors"]                                     # non-empty risk breakdown
+    assert len(detail["downtime_7d"]) == 7 and detail["downtime_7d"][-1]["count"] == 1  # today's downtime
     kinds = {e["kind"] for e in detail["timeline"]}
     assert kinds == {"downtime", "task", "action"}                   # all three merged
     assert all(e["detail"] != "leak" for e in detail["timeline"])    # GMATS action excluded

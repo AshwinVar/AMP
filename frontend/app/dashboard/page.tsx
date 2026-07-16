@@ -29,6 +29,7 @@ import type { User } from "../../lib/types";
 import QualitySection from "../../components/QualitySection";
 import ExecutiveOeeSection from "../../components/ExecutiveOeeSection";
 import FactoryPulse from "../../components/FactoryPulse";
+import QualitySnapshot from "../../components/QualitySnapshot";
 import DigitalTwinSection from "../../components/DigitalTwinSection";
 import OrdersDispatchSection from "../../components/OrdersDispatchSection";
 import PurchasingSection from "../../components/PurchasingSection";
@@ -1900,6 +1901,10 @@ export default function DashboardPage() {
 
       <div className="mb-8">
         <FactoryPulse />
+      </div>
+
+      <div className="mb-8">
+        <QualitySnapshot />
       </div>
 
       <section className="mb-6 rounded-2xl bg-slate-900 border border-slate-800 p-4 flex flex-col md:flex-row md:items-center md:justify-between gap-3">

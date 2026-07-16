@@ -857,6 +857,13 @@ def get_downtime_summary(db: Session = Depends(get_db), current_user: dict = Dep
     return ai.downtime.build_downtime_summary(db, current_user.get("tenant", "DEFAULT"))
 
 
+@app.get("/quality-summary")
+def get_quality_summary(db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
+    # Quality summary (ADR-0007): first-pass yield, fail rate, a defect Pareto,
+    # and the worst machines by fail rate — over the tenant's inspections.
+    return ai.quality.build_quality_summary(db, current_user.get("tenant", "DEFAULT"))
+
+
 @app.get("/machine-health/{machine_id}")
 def get_machine_detail(machine_id: int, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
     # Machine Health detail (ADR-0006): the single-machine cockpit — the twin

@@ -58,11 +58,13 @@ DOWNTIME_REASONS = ["Feeder jam", "Solder bridging", "Reflow profile fault",
 DEFECTS = ["Solder defect", "Component misalignment", "Tombstoning",
            "Display pixel fault", "Backlight uneven", "Cold joint"]
 
-# Tables to clear for DEFAULT, children before parents (FK-safe order).
+# Tables to clear for DEFAULT, children before parents (FK-safe order). Every
+# table with a foreign key to machines / work_orders / production_plans is here,
+# so deleting the machines never orphans a row.
 _WIPE_ORDER = [
-    models.CustomerOrder, models.QualityInspection, models.ProductionSchedule,
-    models.ProductionPlan, models.MaintenanceTask, models.Escalation,
-    models.DowntimeLog, models.ProductionRecord, models.MachineEvent,
+    models.CustomerOrder, models.OperatorJobExecution, models.QualityInspection,
+    models.ProductionSchedule, models.ProductionPlan, models.MaintenanceTask,
+    models.Escalation, models.DowntimeLog, models.ProductionRecord, models.MachineEvent,
     models.FactoryLayoutNode, models.IoTTelemetry, models.AIRecommendation,
     models.AgentAction, models.ShiftData, models.Notification, models.Alert,
     models.WorkOrder, models.Machine,
@@ -70,6 +72,13 @@ _WIPE_ORDER = [
 
 
 def _wipe(db):
+    # The industrial PLC devices/signals stay (they're the connectivity layer);
+    # just detach them from the machines we're about to delete — their machine
+    # FK is nullable, so this keeps the reset FK-safe on Postgres.
+    db.query(models.IndustrialSignal).filter(models.IndustrialSignal.tenant_code == TENANT) \
+        .update({models.IndustrialSignal.machine_id: None}, synchronize_session=False)
+    db.query(models.IndustrialDevice).filter(models.IndustrialDevice.tenant_code == TENANT) \
+        .update({models.IndustrialDevice.linked_machine_id: None}, synchronize_session=False)
     for model in _WIPE_ORDER:
         db.query(model).filter(model.tenant_code == TENANT).delete(synchronize_session=False)
     db.commit()

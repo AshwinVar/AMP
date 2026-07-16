@@ -6,7 +6,7 @@ across all three material states, the digital-twin zones, and live module data.
 
 Run:  python backend/test_reset_factory.py     (exit 0 = pass)
 """
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, event
 from sqlalchemy.orm import sessionmaker
 
 import models
@@ -15,21 +15,39 @@ import reset_factory
 
 
 def _fresh_session():
+    """SQLite with foreign-key enforcement ON, so the reset's delete order is
+    validated the same way Postgres (prod) would enforce it."""
     engine = create_engine("sqlite://", connect_args={"check_same_thread": False})
+
+    @event.listens_for(engine, "connect")
+    def _fk_on(dbapi_con, _record):
+        dbapi_con.execute("PRAGMA foreign_keys=ON")
+
     Base.metadata.create_all(bind=engine)
     return sessionmaker(bind=engine)()
 
 
 def test_rebuild_creates_two_line_smt_ic_factory():
     db = _fresh_session()
-    # pre-existing data to prove the wipe is scoped
-    db.add(models.Machine(tenant_code="DEFAULT", name="CNC-OLD", status="Running", utilization=50))
-    db.add(models.WorkOrder(tenant_code="DEFAULT", work_order_no="WO-OLD", part_number="X",
-                            batch_number="B", machine_id=None, target_quantity=10))
+    # pre-existing DEFAULT data — including every table that FK-references a
+    # machine — to prove the wipe is complete and FK-safe. GMATS is left alone.
+    old = models.Machine(tenant_code="DEFAULT", name="CNC-OLD", status="Running", utilization=50)
+    db.add(old)
     db.add(models.Machine(tenant_code="GMATS", name="GMATS-KEEP", status="Running", utilization=50))
+    db.flush()
+    db.add(models.WorkOrder(tenant_code="DEFAULT", work_order_no="WO-OLD", part_number="X",
+                            batch_number="B", machine_id=old.id, target_quantity=10))
+    db.add(models.OperatorJobExecution(tenant_code="DEFAULT", execution_no="OJ-OLD",
+                                       operator_name="op", machine_id=old.id, job_status="Started"))
+    dev = models.IndustrialDevice(tenant_code="DEFAULT", device_code="PLC-OLD",
+                                  device_name="Old PLC", linked_machine_id=old.id)
+    db.add(dev)
+    db.flush()
+    db.add(models.IndustrialSignal(tenant_code="DEFAULT", device_id=dev.id, machine_id=old.id,
+                                   signal_name="temp", signal_value="42"))
     db.commit()
 
-    reset_factory.rebuild_factory(db)
+    reset_factory.rebuild_factory(db)   # with FK enforcement on, a missed table would raise here
 
     # ── machines: 8, split 4 SMT / 4 IC; the old one is gone ──────────
     machines = db.query(models.Machine).filter(models.Machine.tenant_code == "DEFAULT").all()
@@ -64,6 +82,15 @@ def test_rebuild_creates_two_line_smt_ic_factory():
     # ── digital twin: two zones ───────────────────────────────────────
     nodes = db.query(models.FactoryLayoutNode).filter(models.FactoryLayoutNode.tenant_code == "DEFAULT").all()
     assert len(nodes) == 8 and {n.zone for n in nodes} == {"SMT Line", "IC Line"}
+
+    # ── the FK-referencing tables were handled cleanly ────────────────
+    # operator jobs are factory data -> wiped; the PLC device/signal stay (the
+    # connectivity layer) but are detached from the deleted machines.
+    assert db.query(models.OperatorJobExecution).filter(models.OperatorJobExecution.tenant_code == "DEFAULT").count() == 0
+    dev2 = db.query(models.IndustrialDevice).filter(models.IndustrialDevice.device_code == "PLC-OLD").first()
+    assert dev2 is not None and dev2.linked_machine_id is None
+    sig = db.query(models.IndustrialSignal).filter(models.IndustrialSignal.device_id == dev2.id).first()
+    assert sig is not None and sig.machine_id is None
 
     # ── modules light up ──────────────────────────────────────────────
     assert db.query(models.ProductionRecord).filter(models.ProductionRecord.tenant_code == "DEFAULT").count() > 0

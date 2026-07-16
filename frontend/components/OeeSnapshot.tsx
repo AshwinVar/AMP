@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { apiGet } from "../lib/api";
+import MachineDetailDrawer from "./MachineDetailDrawer";
 
 // Mirrors the backend OEE summary (ai/oee.py build_oee_summary).
 type MachineOee = {
@@ -70,6 +71,7 @@ function Component({ label, value, drag }: { label: string; value: number; drag:
 // prop-drilling. Renders nothing until there's production to measure.
 export default function OeeSnapshot() {
   const [s, setS] = useState<OeeSummary | null>(null);
+  const [machine, setMachine] = useState<number | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -114,16 +116,26 @@ export default function OeeSnapshot() {
           <p className="text-xs text-slate-500 mb-2">Machines</p>
           <div className="space-y-2">
             {worst && (
-              <div className="flex items-center justify-between rounded-lg border border-slate-700 px-3 py-1.5 text-sm">
+              <button
+                type="button"
+                onClick={() => setMachine(worst.machine_id)}
+                className="w-full flex items-center justify-between rounded-lg border border-slate-700 px-3 py-1.5 text-sm hover:border-slate-500 hover:bg-slate-800 transition focus:outline-none focus:ring-2 focus:ring-slate-600"
+                title={`${worst.name} — open machine cockpit`}
+              >
                 <span className="text-slate-400">Lowest · {worst.name}</span>
                 <span className={`font-semibold ${oeeColor(worst.oee)}`}>{worst.oee}%</span>
-              </div>
+              </button>
             )}
             {best && best.machine_id !== worst?.machine_id && (
-              <div className="flex items-center justify-between rounded-lg border border-slate-700 px-3 py-1.5 text-sm">
+              <button
+                type="button"
+                onClick={() => setMachine(best.machine_id)}
+                className="w-full flex items-center justify-between rounded-lg border border-slate-700 px-3 py-1.5 text-sm hover:border-slate-500 hover:bg-slate-800 transition focus:outline-none focus:ring-2 focus:ring-slate-600"
+                title={`${best.name} — open machine cockpit`}
+              >
                 <span className="text-slate-400">Highest · {best.name}</span>
                 <span className={`font-semibold ${oeeColor(best.oee)}`}>{best.oee}%</span>
-              </div>
+              </button>
             )}
           </div>
         </div>
@@ -148,6 +160,9 @@ export default function OeeSnapshot() {
             })}
           </div>
         </div>
+      )}
+      {machine != null && (
+        <MachineDetailDrawer machineId={machine} onClose={() => setMachine(null)} onChanged={load} />
       )}
     </div>
   );

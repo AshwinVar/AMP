@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { apiGet } from "../lib/api";
 import QualityDefectDrawer from "./QualityDefectDrawer";
+import MachineDetailDrawer from "./MachineDetailDrawer";
 
 // Mirrors the backend quality summary (ai/quality.py build_quality_summary).
 type QualitySummary = {
@@ -31,6 +32,7 @@ function yieldColor(fpy: number) {
 export default function QualitySnapshot() {
   const [q, setQ] = useState<QualitySummary | null>(null);
   const [defect, setDefect] = useState<string | null>(null);
+  const [machine, setMachine] = useState<number | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -98,15 +100,24 @@ export default function QualitySnapshot() {
           ) : (
             <div className="flex flex-wrap gap-2">
               {q.by_machine.map((m) => (
-                <span key={m.machine_id} className="rounded-lg border border-slate-700 px-3 py-1.5 text-sm text-slate-300">
+                <button
+                  key={m.machine_id}
+                  type="button"
+                  onClick={() => setMachine(m.machine_id)}
+                  className="rounded-lg border border-slate-700 px-3 py-1.5 text-sm text-slate-300 hover:border-slate-500 hover:bg-slate-800 transition focus:outline-none focus:ring-2 focus:ring-slate-600"
+                  title={`${m.name} — open machine cockpit`}
+                >
                   {m.name} <span className="text-slate-500">· {m.fail_rate}%</span>
-                </span>
+                </button>
               ))}
             </div>
           )}
         </div>
       </div>
       {defect && <QualityDefectDrawer category={defect} onClose={() => setDefect(null)} />}
+      {machine != null && (
+        <MachineDetailDrawer machineId={machine} onClose={() => setMachine(null)} onChanged={load} />
+      )}
     </div>
   );
 }

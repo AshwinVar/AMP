@@ -55,6 +55,35 @@ def test_quality_summary_rolls_up_yield_defects_and_machines():
     assert empty["inspections"] == 0 and empty["first_pass_yield"] == 0 and empty["top_defects"] == []
 
 
+def test_defect_detail_drills_into_one_category():
+    db = _fresh_session()
+    db.add(models.Machine(id=1, name="PRESS-01", status="Running", utilization=60))
+    db.add(models.Machine(id=2, name="CNC-02", status="Running", utilization=60))
+    db.add_all([
+        _insp("QC-1", 1, inspected=100, passed=80, failed=20, defect="surface", rework=5, scrap=3),
+        _insp("QC-2", 2, inspected=100, passed=93, failed=7, defect="surface", rework=1, scrap=6),
+        _insp("QC-3", 1, inspected=100, passed=98, failed=2, defect="dimension"),   # other category
+        _insp("QC-4", 1, inspected=100, passed=100, failed=0, defect="surface"),    # no failures -> excluded
+    ])
+    db.commit()
+
+    d = quality.build_defect_detail(db, "DEFAULT", "surface")
+    assert d["category"] == "surface"
+    assert d["inspections"] == 2                            # QC-1 + QC-2 (QC-4 has no failures)
+    assert d["failed"] == 27 and d["rework"] == 6 and d["scrap"] == 9
+    # PRESS-01 (20 failed) leads CNC-02 (7 failed)
+    assert d["by_machine"][0]["name"] == "PRESS-01" and d["by_machine"][0]["failed"] == 20
+    assert d["by_machine"][0]["inspections"] == 1
+    assert d["by_machine"][1]["name"] == "CNC-02" and d["by_machine"][1]["failed"] == 7
+    assert {r["inspection_no"] for r in d["recent"]} == {"QC-1", "QC-2"}   # only failing surface inspections
+
+    # a category with no failures -> zeroed, no crash
+    none = quality.build_defect_detail(db, "DEFAULT", "phantom")
+    assert none["inspections"] == 0 and none["failed"] == 0 and none["recent"] == []
+
+
 if __name__ == "__main__":
     test_quality_summary_rolls_up_yield_defects_and_machines()
-    print("QUALITY OK: first-pass yield + fail rate + defect Pareto + worst machines; empty-safe")
+    test_defect_detail_drills_into_one_category()
+    print("QUALITY OK: first-pass yield + fail rate + defect Pareto + worst machines; empty-safe; "
+          "defect drill-down (failed/rework/scrap, machines, inspections)")

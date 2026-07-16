@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { apiGet } from "../lib/api";
+import QualityDefectDrawer from "./QualityDefectDrawer";
 
 // Mirrors the backend quality summary (ai/quality.py build_quality_summary).
 type QualitySummary = {
@@ -29,6 +30,7 @@ function yieldColor(fpy: number) {
 // screen without prop-drilling. Renders nothing until there's data.
 export default function QualitySnapshot() {
   const [q, setQ] = useState<QualitySummary | null>(null);
+  const [defect, setDefect] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -71,13 +73,19 @@ export default function QualitySnapshot() {
                 const lead = q.top_defects[0].count || 1;
                 const pct = Math.round((d.count / lead) * 100);
                 return (
-                  <div key={d.category} className="flex items-center gap-3">
-                    <span className="w-28 shrink-0 text-sm text-slate-300 truncate" title={d.category}>{d.category}</span>
+                  <button
+                    key={d.category}
+                    type="button"
+                    onClick={() => setDefect(d.category)}
+                    className="w-full flex items-center gap-3 rounded-lg px-1 py-1 -mx-1 hover:bg-slate-800/60 transition focus:outline-none focus:ring-2 focus:ring-slate-600"
+                    title={`${d.category} — click for detail`}
+                  >
+                    <span className="w-28 shrink-0 text-sm text-slate-300 truncate text-left">{d.category}</span>
                     <div className="flex-1 h-2 rounded bg-slate-800 overflow-hidden">
                       <div className="h-full bg-orange-500/60" style={{ width: `${Math.max(6, pct)}%` }} />
                     </div>
                     <span className="w-8 text-right text-xs text-slate-400">{d.count}</span>
-                  </div>
+                  </button>
                 );
               })}
             </div>
@@ -98,6 +106,7 @@ export default function QualitySnapshot() {
           )}
         </div>
       </div>
+      {defect && <QualityDefectDrawer category={defect} onClose={() => setDefect(null)} />}
     </div>
   );
 }

@@ -18,6 +18,8 @@ alone. Run once:
 import random
 from datetime import datetime, date, timedelta
 
+from sqlalchemy import or_
+
 from database import SessionLocal, engine, Base
 import models
 
@@ -58,29 +60,60 @@ DOWNTIME_REASONS = ["Feeder jam", "Solder bridging", "Reflow profile fault",
 DEFECTS = ["Solder defect", "Component misalignment", "Tombstoning",
            "Display pixel fault", "Backlight uneven", "Cold joint"]
 
-# Tables to clear for DEFAULT, children before parents (FK-safe order). Every
-# table with a foreign key to machines / work_orders / production_plans is here,
-# so deleting the machines never orphans a row.
-_WIPE_ORDER = [
-    models.CustomerOrder, models.OperatorJobExecution, models.QualityInspection,
-    models.ProductionSchedule, models.ProductionPlan, models.MaintenanceTask,
-    models.Escalation, models.DowntimeLog, models.ProductionRecord, models.MachineEvent,
-    models.FactoryLayoutNode, models.IoTTelemetry, models.AIRecommendation,
-    models.AgentAction, models.ShiftData, models.Notification, models.Alert,
-    models.WorkOrder, models.Machine,
-]
-
-
 def _wipe(db):
+    """Remove the whole DEFAULT factory. Children are matched by their *reference*
+    to the machines / work orders / plans being removed (not by their own
+    tenant_code — legacy rows can carry a NULL / unbackfilled tenant), so nothing
+    is left dangling. Children are deleted before parents (FK-safe on Postgres)."""
+    mids = [r[0] for r in db.query(models.Machine.id).filter(models.Machine.tenant_code == TENANT).all()]
+    wids = [r[0] for r in db.query(models.WorkOrder.id).filter(models.WorkOrder.tenant_code == TENANT).all()]
+    pids = [r[0] for r in db.query(models.ProductionPlan.id).filter(models.ProductionPlan.tenant_code == TENANT).all()]
+
+    def wipe(model, tenant_col, refs=()):
+        clauses = [tenant_col == TENANT]
+        for col, ids in refs:
+            if ids:
+                clauses.append(col.in_(ids))
+        db.query(model).filter(or_(*clauses)).delete(synchronize_session=False)
+
     # The industrial PLC devices/signals stay (they're the connectivity layer);
-    # just detach them from the machines we're about to delete — their machine
-    # FK is nullable, so this keeps the reset FK-safe on Postgres.
-    db.query(models.IndustrialSignal).filter(models.IndustrialSignal.tenant_code == TENANT) \
-        .update({models.IndustrialSignal.machine_id: None}, synchronize_session=False)
-    db.query(models.IndustrialDevice).filter(models.IndustrialDevice.tenant_code == TENANT) \
-        .update({models.IndustrialDevice.linked_machine_id: None}, synchronize_session=False)
-    for model in _WIPE_ORDER:
-        db.query(model).filter(model.tenant_code == TENANT).delete(synchronize_session=False)
+    # just detach them from the machines being removed — their machine FK is
+    # nullable, so this keeps the reset FK-safe.
+    if mids:
+        db.query(models.IndustrialSignal).filter(models.IndustrialSignal.machine_id.in_(mids)) \
+            .update({models.IndustrialSignal.machine_id: None}, synchronize_session=False)
+        db.query(models.IndustrialDevice).filter(models.IndustrialDevice.linked_machine_id.in_(mids)) \
+            .update({models.IndustrialDevice.linked_machine_id: None}, synchronize_session=False)
+
+    m = models  # brevity
+    wipe(m.CustomerOrder, m.CustomerOrder.tenant_code,
+         [(m.CustomerOrder.linked_work_order_id, wids), (m.CustomerOrder.linked_production_plan_id, pids)])
+    wipe(m.OperatorJobExecution, m.OperatorJobExecution.tenant_code,
+         [(m.OperatorJobExecution.machine_id, mids), (m.OperatorJobExecution.work_order_id, wids),
+          (m.OperatorJobExecution.production_plan_id, pids)])
+    wipe(m.QualityInspection, m.QualityInspection.tenant_code,
+         [(m.QualityInspection.machine_id, mids), (m.QualityInspection.work_order_id, wids),
+          (m.QualityInspection.production_plan_id, pids)])
+    wipe(m.ProductionSchedule, m.ProductionSchedule.tenant_code,
+         [(m.ProductionSchedule.machine_id, mids), (m.ProductionSchedule.work_order_id, wids),
+          (m.ProductionSchedule.production_plan_id, pids)])
+    wipe(m.ProductionPlan, m.ProductionPlan.tenant_code,
+         [(m.ProductionPlan.machine_id, mids), (m.ProductionPlan.work_order_id, wids)])
+    wipe(m.MaintenanceTask, m.MaintenanceTask.tenant_code, [(m.MaintenanceTask.machine_id, mids)])
+    wipe(m.Escalation, m.Escalation.tenant_code, [(m.Escalation.machine_id, mids)])
+    wipe(m.DowntimeLog, m.DowntimeLog.tenant_code, [(m.DowntimeLog.machine_id, mids)])
+    wipe(m.ProductionRecord, m.ProductionRecord.tenant_code, [(m.ProductionRecord.machine_id, mids)])
+    wipe(m.MachineEvent, m.MachineEvent.tenant_code, [(m.MachineEvent.machine_id, mids)])
+    wipe(m.FactoryLayoutNode, m.FactoryLayoutNode.tenant_code, [(m.FactoryLayoutNode.machine_id, mids)])
+    wipe(m.IoTTelemetry, m.IoTTelemetry.tenant_code, [(m.IoTTelemetry.machine_id, mids)])
+    wipe(m.AIRecommendation, m.AIRecommendation.tenant_code, [(m.AIRecommendation.related_machine_id, mids)])
+    wipe(m.AgentAction, m.AgentAction.tenant_code, [(m.AgentAction.related_machine_id, mids)])
+    wipe(m.ShiftData, m.ShiftData.tenant_code)
+    wipe(m.Notification, m.Notification.tenant_code)
+    wipe(m.Alert, m.Alert.tenant_code)
+    wipe(m.WorkOrder, m.WorkOrder.tenant_code, [(m.WorkOrder.machine_id, mids)])
+    wipe(m.Machine, m.Machine.tenant_code)
+
     db.commit()
     db.expunge_all()  # drop the deleted rows from the identity map before reseeding
 

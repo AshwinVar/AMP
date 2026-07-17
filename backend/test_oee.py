@@ -28,15 +28,15 @@ def test_empty_plant_reports_no_data():
     s = oee.build_oee_summary(db, "DEFAULT")
     assert s["plant"]["has_data"] is False and s["plant"]["oee"] == 0
     assert s["machine_count"] == 1 and s["machines_with_data"] == 0
-    assert s["machines"] == [] and s["biggest_drag"] is None
+    assert s["machines"] == [] and s["biggest_drag"] is None and s["by_line"] == []
     assert s["worst"] is None and s["best"] is None
     assert len(s["daily"]) == 7 and all(d["oee"] == 0 for d in s["daily"])   # flat-zero trend
 
 
 def test_plant_oee_pools_machines_and_ranks_worst_first():
     db = _fresh_session()
-    db.add(models.Machine(id=1, name="PRESS-01", status="Running", utilization=90))
-    db.add(models.Machine(id=2, name="CNC-02", status="Running", utilization=70))
+    db.add(models.Machine(id=1, name="PRESS-01", status="Running", utilization=90, line="SMT"))
+    db.add(models.Machine(id=2, name="CNC-02", status="Running", utilization=70, line="IC"))
     # PRESS-01 runs fast machines slowly: ideal 30s x 100 units = 3000 machine-s
     # against 440 min = 26,400 s of runtime -> a very low performance component.
     db.add(models.ProductionRecord(machine_id=1, planned_minutes=480, runtime_minutes=440,
@@ -63,6 +63,11 @@ def test_plant_oee_pools_machines_and_ranks_worst_first():
     assert len(s["daily"]) == 7
     assert s["daily"][-1]["oee"] == s["plant"]["oee"]
     assert s["daily"][0]["oee"] == 0
+    # per-line OEE: SMT (PRESS-01, quality 90/100) and IC (CNC-02, quality 380/400)
+    by_line = {l["line"]: l for l in s["by_line"]}
+    assert set(by_line) == {"SMT", "IC"}
+    assert by_line["SMT"]["quality"] == 90 and by_line["IC"]["quality"] == 95
+    assert s["machines"][0]["line"] in ("SMT", "IC")
 
 
 if __name__ == "__main__":

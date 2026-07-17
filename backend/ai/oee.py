@@ -42,13 +42,23 @@ def build_oee_summary(db, tenant: str) -> dict:
     records = _recent_production(db, days=WINDOW_DAYS)
     plant = _oee_from_records(records)
 
-    names = {m.id: m.name for m in db.query(models.Machine).all()}
+    all_machines = db.query(models.Machine).all()
+    names = {m.id: m.name for m in all_machines}
+    line_of = {m.id: (m.line or "") for m in all_machines}
     machines = [
-        {"machine_id": mid, "name": names.get(mid, f"#{mid}"), **o}
+        {"machine_id": mid, "name": names.get(mid, f"#{mid}"), "line": line_of.get(mid, ""), **o}
         for mid, o in _oee_by_machine(db, days=WINDOW_DAYS).items()
         if o["has_data"]
     ]
     machines.sort(key=lambda m: m["oee"])  # worst OEE first, for triage
+
+    # Per-line OEE: pool each line's machines' production (e.g. SMT vs IC).
+    line_recs: dict = {}
+    for r in records:
+        ln = line_of.get(r.machine_id, "")
+        if ln:
+            line_recs.setdefault(ln, []).append(r)
+    by_line = [{"line": ln, **_oee_from_records(recs)} for ln, recs in sorted(line_recs.items())]
 
     # Which of the three levers is holding the plant back — the story a manager
     # wants first ("we're losing OEE to Performance, not Quality").
@@ -62,6 +72,7 @@ def build_oee_summary(db, tenant: str) -> dict:
         "machines_with_data": len(machines),
         "biggest_drag": drag,                 # the component pulling plant OEE down
         "daily": _daily_oee(records, WINDOW_DAYS),  # 7-day OEE trend
+        "by_line": by_line,                   # OEE per production line (SMT / IC)
         "worst": machines[0] if machines else None,
         "best": machines[-1] if machines else None,
         "machines": machines,

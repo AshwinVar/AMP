@@ -23,6 +23,7 @@ type OeeSummary = {
   machines_with_data: number;
   biggest_drag: "availability" | "performance" | "quality" | null;
   daily: { date: string; oee: number }[];
+  by_line: { line: string; oee: number; availability: number; performance: number; quality: number; has_data: boolean }[];
   worst: MachineOee | null;
   best: MachineOee | null;
   machines: MachineOee[];
@@ -45,6 +46,12 @@ function barColor(v: number) {
 function wk(iso: string) {
   const d = new Date(iso);
   return Number.isNaN(d.getTime()) ? "" : d.toLocaleDateString(undefined, { weekday: "short" });
+}
+
+function lineStyle(line: string) {
+  if (line === "SMT") return "border-sky-500/40 bg-sky-500/10 text-sky-300";
+  if (line === "IC") return "border-violet-500/40 bg-violet-500/10 text-violet-300";
+  return "border-slate-600/40 bg-slate-500/10 text-slate-300";
 }
 
 function Component({ label, value, drag }: { label: string; value: number; drag: boolean }) {
@@ -140,6 +147,16 @@ export default function OeeSnapshot() {
           </div>
         </div>
       </div>
+      {s.by_line.length > 0 && (
+        <div className="mt-5 flex flex-wrap items-center gap-2">
+          <span className="text-xs text-slate-500 mr-1">By line:</span>
+          {s.by_line.map((l) => (
+            <span key={l.line} className={`rounded-lg border px-3 py-1 text-sm ${lineStyle(l.line)}`}>
+              {l.line} <span className={`font-semibold ${oeeColor(l.oee)}`}>{l.oee}%</span>
+            </span>
+          ))}
+        </div>
+      )}
       {s.daily.some((d) => d.oee > 0) && (
         <div className="mt-6">
           <p className="text-xs text-slate-500 mb-2">7-day OEE trend</p>

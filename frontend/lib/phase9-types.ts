@@ -7,6 +7,7 @@ export type WorkOrder = {
   target_quantity: number;
   actual_quantity: number;
   status: string;
+  material_state?: string;
   planned_start?: string;
   planned_end?: string;
   created_at?: string;

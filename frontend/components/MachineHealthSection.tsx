@@ -9,6 +9,7 @@ import DowntimeSnapshot from "./DowntimeSnapshot";
 type Twin = {
   machine_id: number;
   name: string;
+  line: string;
   status: string;
   utilization: number;
   downtime: string;
@@ -42,6 +43,12 @@ function oeeColor(v: number) {
   if (v >= 60) return "text-yellow-400";
   if (v >= 40) return "text-orange-400";
   return "text-red-400";
+}
+
+function lineStyle(line: string) {
+  if (line === "SMT") return "border-sky-500/40 bg-sky-500/10 text-sky-300";
+  if (line === "IC") return "border-violet-500/40 bg-violet-500/10 text-violet-300";
+  return "border-slate-600/40 bg-slate-500/10 text-slate-300";
 }
 
 function statusDot(status: string) {
@@ -161,6 +168,9 @@ export default function MachineHealthSection() {
                 <div className="flex items-center gap-2">
                   <span className={`h-2.5 w-2.5 rounded-full ${statusDot(t.status)}`} />
                   <h3 className="text-xl font-bold">{t.name}</h3>
+                  {t.line && (
+                    <span className={`rounded-full px-2 py-0.5 text-[10px] border ${lineStyle(t.line)}`}>{t.line}</span>
+                  )}
                 </div>
                 <span className={`rounded-full px-3 py-1 text-xs border ${bandStyle(t.health_band)}`}>{t.health_band}</span>
               </div>

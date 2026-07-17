@@ -91,6 +91,7 @@ def _machine_twin(db, machine, risk, tenant, oee=None) -> dict:
     return {
         "machine_id": machine.id,
         "name": machine.name,
+        "line": machine.line or "",
         "status": machine.status,
         "utilization": machine.utilization,
         "downtime": machine.downtime,

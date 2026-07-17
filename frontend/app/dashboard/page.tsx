@@ -37,6 +37,7 @@ import LossesSnapshot from "../../components/LossesSnapshot";
 import InventorySnapshot from "../../components/InventorySnapshot";
 import FlowSnapshot from "../../components/FlowSnapshot";
 import ShiftSnapshot from "../../components/ShiftSnapshot";
+import BriefingSnapshot from "../../components/BriefingSnapshot";
 import DigitalTwinSection from "../../components/DigitalTwinSection";
 import OrdersDispatchSection from "../../components/OrdersDispatchSection";
 import PurchasingSection from "../../components/PurchasingSection";
@@ -1908,6 +1909,10 @@ export default function DashboardPage() {
           Real-time machine downtime visibility for SME factories.
         </p>
       </section>
+
+      <div className="mb-8">
+        <BriefingSnapshot />
+      </div>
 
       <div className="mb-8">
         <FactoryPulse />

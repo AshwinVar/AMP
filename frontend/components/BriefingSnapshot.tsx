@@ -27,6 +27,16 @@ const sevRail: Record<string, string> = {
   low: "border-l-slate-600",
 };
 
+// Each alert's module → the dashboard view that drills into it. Views the user's
+// role or plan can't open are gated gracefully by the dashboard's renderSection.
+const MODULE_TO_VIEW: Record<string, string> = {
+  machines: "machines",
+  inventory: "inventory",
+  quality: "quality",
+  downtime: "downtime",
+  oee: "executive",
+};
+
 // OEE trend arrow — up is good (green), down is bad (red), flat is neutral.
 function trendMark(t: Briefing["oee_trend"]) {
   if (t === "up") return { glyph: "↑", cls: "text-emerald-400", label: "trending up" };
@@ -37,7 +47,7 @@ function trendMark(t: Briefing["oee_trend"]) {
 // The morning briefing: the plant's "what needs attention right now" hero for the
 // top of the Overview home. Self-contained — fetches its own digest and refreshes,
 // and renders nothing until there's production to brief on.
-export default function BriefingSnapshot() {
+export default function BriefingSnapshot({ onOpen }: { onOpen?: (viewKey: string) => void }) {
   const [b, setB] = useState<Briefing | null>(null);
 
   const load = useCallback(async () => {
@@ -76,21 +86,41 @@ export default function BriefingSnapshot() {
 
       {b.alerts.length > 0 ? (
         <div className="mt-5 space-y-2">
-          {b.alerts.map((a) => (
-            <div
-              key={a.key}
-              className={`flex items-start gap-3 rounded-lg border border-slate-800 border-l-2 ${sevRail[a.severity]} bg-slate-900/60 px-3 py-2.5`}
-            >
-              <span className={`mt-1.5 h-2 w-2 shrink-0 rounded-full ${sevDot[a.severity]}`} />
-              <div className="min-w-0 flex-1">
-                <p className="text-sm text-slate-200">{a.title}</p>
-                {a.detail && <p className="text-xs text-slate-500 mt-0.5 truncate">{a.detail}</p>}
+          {b.alerts.map((a) => {
+            const view = MODULE_TO_VIEW[a.module];
+            const clickable = Boolean(onOpen && view);
+            const base = `group flex items-start gap-3 rounded-lg border border-slate-800 border-l-2 ${sevRail[a.severity]} bg-slate-900/60 px-3 py-2.5`;
+            const inner = (
+              <>
+                <span className={`mt-1.5 h-2 w-2 shrink-0 rounded-full ${sevDot[a.severity]}`} />
+                <div className="min-w-0 flex-1">
+                  <p className="text-sm text-slate-200">{a.title}</p>
+                  {a.detail && <p className="text-xs text-slate-500 mt-0.5 truncate">{a.detail}</p>}
+                </div>
+                <span className="shrink-0 rounded bg-slate-800 px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-slate-400">
+                  {a.module}
+                </span>
+                {clickable && (
+                  <span className="shrink-0 text-slate-600 group-hover:text-slate-200 transition mt-0.5" aria-hidden>→</span>
+                )}
+              </>
+            );
+            return clickable ? (
+              <button
+                key={a.key}
+                type="button"
+                onClick={() => onOpen!(view)}
+                className={`${base} w-full text-left hover:border-slate-600 hover:bg-slate-800/60 transition focus:outline-none focus:ring-2 focus:ring-slate-600`}
+                title={`Open ${a.module}`}
+              >
+                {inner}
+              </button>
+            ) : (
+              <div key={a.key} className={base}>
+                {inner}
               </div>
-              <span className="shrink-0 rounded bg-slate-800 px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-slate-400">
-                {a.module}
-              </span>
-            </div>
-          ))}
+            );
+          })}
         </div>
       ) : (
         <p className="mt-5 text-sm text-emerald-400">Nothing needs attention — plant is running clean.</p>

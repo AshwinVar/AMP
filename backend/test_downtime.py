@@ -28,8 +28,8 @@ def _dt(machine_id, reason, when):
 def test_downtime_summary_rolls_up_reasons_machines_and_days():
     db = _fresh_session()
     now = datetime.utcnow()
-    db.add(models.Machine(id=1, name="PRESS-01", status="Running", utilization=60))
-    db.add(models.Machine(id=2, name="CNC-02", status="Running", utilization=60))
+    db.add(models.Machine(id=1, name="PRESS-01", status="Running", utilization=60, line="SMT"))
+    db.add(models.Machine(id=2, name="CNC-02", status="Running", utilization=60, line="IC"))
     db.add_all([
         _dt(1, "Breakdown", now),
         _dt(1, "Breakdown", now - timedelta(days=1)),
@@ -42,6 +42,8 @@ def test_downtime_summary_rolls_up_reasons_machines_and_days():
 
     s = downtime.build_downtime_summary(db, "DEFAULT")
     assert s["total_events"] == 5                                    # 9-days-ago excluded
+    # per-line rollup: SMT (PRESS-01) 3 in-window events, IC (CNC-02) 2; sorted by line name
+    assert s["by_line"] == [{"line": "IC", "count": 2}, {"line": "SMT", "count": 3}]
     # Pareto: Breakdown(3) leads, then Tooling/Changeover(1)
     assert s["top_reasons"][0] == {"reason": "Breakdown", "count": 3}
     assert {r["reason"] for r in s["top_reasons"]} == {"Breakdown", "Tooling", "Changeover"}

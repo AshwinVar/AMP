@@ -11,8 +11,17 @@ type DowntimeSummary = {
   total_events: number;
   top_reasons: { reason: string; count: number }[];
   by_machine: { machine_id: number; name: string; count: number }[];
+  by_line: { line: string; count: number }[];
   daily: { date: string; count: number }[];
 };
+
+// SMT and IC each get a consistent accent across the dashboard (sky / violet).
+const lineChip = (line: string) =>
+  line === "SMT"
+    ? "border-sky-500/40 bg-sky-500/10 text-sky-300"
+    : line === "IC"
+    ? "border-violet-500/40 bg-violet-500/10 text-violet-300"
+    : "border-slate-700 bg-slate-800 text-slate-300";
 
 // A glanceable downtime Pareto — top reasons + most-affected machines over the
 // last 7 days. Self-contained: fetches its own summary and refreshes, so it
@@ -86,6 +95,21 @@ export default function DowntimeSnapshot() {
           </div>
         </div>
       </div>
+      {dt.by_line.length > 1 && (
+        <div className="mt-4 pt-4 border-t border-slate-800/70">
+          <p className="text-xs text-slate-500 mb-2">By line</p>
+          <div className="flex flex-wrap gap-2">
+            {dt.by_line.map((l) => (
+              <span
+                key={l.line}
+                className={`rounded-md border px-2.5 py-1 text-xs font-medium ${lineChip(l.line)}`}
+              >
+                {l.line} <span className="opacity-70">· {l.count} event{l.count !== 1 ? "s" : ""}</span>
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
       {reason && <DowntimeReasonDrawer reason={reason} onClose={() => setReason(null)} />}
       {machine != null && (
         <MachineDetailDrawer machineId={machine} onClose={() => setMachine(null)} onChanged={load} />

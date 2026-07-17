@@ -48,11 +48,20 @@ def build_downtime_summary(db, tenant: str) -> dict:
     top_reasons = [{"reason": r, "count": c} for r, c in reasons.most_common(TOP_N)]
 
     per_machine = Counter(d.machine_id for d in logs if d.machine_id is not None)
-    names = {m.id: m.name for m in db.query(models.Machine).all()}
+    all_machines = db.query(models.Machine).all()
+    names = {m.id: m.name for m in all_machines}
+    line_of = {m.id: (m.line or "") for m in all_machines}
     by_machine = [
         {"machine_id": mid, "name": names.get(mid, f"#{mid}"), "count": c}
         for mid, c in per_machine.most_common(TOP_N)
     ]
+
+    per_line: Counter = Counter()
+    for d in logs:
+        ln = line_of.get(d.machine_id, "")
+        if ln:
+            per_line[ln] += 1
+    by_line = [{"line": ln, "count": c} for ln, c in sorted(per_line.items())]
 
     per_day = Counter(d.created_at.date() for d in logs)
     daily = [{"date": dd.isoformat(), "count": per_day.get(dd, 0)} for dd in window]
@@ -62,6 +71,7 @@ def build_downtime_summary(db, tenant: str) -> dict:
         "total_events": len(logs),
         "top_reasons": top_reasons,
         "by_machine": by_machine,
+        "by_line": by_line,
         "daily": daily,
     }
 

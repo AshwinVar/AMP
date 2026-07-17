@@ -1,10 +1,10 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useState, type SyntheticEvent } from "react";
 import { apiGet, apiPost, getUserRole } from "../lib/api";
 
 // Mirrors the backend briefing read-model (ai/briefing.py build_briefing).
-type Alert = { key: string; severity: "high" | "medium" | "low"; title: string; detail: string; module: string; escalated: boolean };
+type Alert = { key: string; severity: "high" | "medium" | "low"; title: string; detail: string; module: string; escalated: boolean; escalation_id: number | null };
 type Win = { title: string; detail: string };
 type Briefing = {
   has_data: boolean;
@@ -47,7 +47,13 @@ function trendMark(t: Briefing["oee_trend"]) {
 // The morning briefing: the plant's "what needs attention right now" hero for the
 // top of the Overview home. Self-contained — fetches its own digest and refreshes,
 // and renders nothing until there's production to brief on.
-export default function BriefingSnapshot({ onOpen }: { onOpen?: (viewKey: string) => void }) {
+export default function BriefingSnapshot({
+  onOpen,
+  onOpenEscalation,
+}: {
+  onOpen?: (viewKey: string) => void;
+  onOpenEscalation?: (escalationId: number) => void;
+}) {
   const [b, setB] = useState<Briefing | null>(null);
   const [role, setRole] = useState("");
   const [escalating, setEscalating] = useState(false);
@@ -141,14 +147,25 @@ export default function BriefingSnapshot({ onOpen }: { onOpen?: (viewKey: string
                   <p className="text-sm text-slate-200">{a.title}</p>
                   {a.detail && <p className="text-xs text-slate-500 mt-0.5 truncate">{a.detail}</p>}
                 </div>
-                {a.escalated && (
-                  <span
-                    className="shrink-0 rounded bg-amber-500/15 px-1.5 py-0.5 text-[10px] font-medium text-amber-300"
-                    title="Escalated by the agent — awaiting approval in Agent Activity"
-                  >
-                    ⚡ escalated
-                  </span>
-                )}
+                {a.escalated && (() => {
+                  const openable = Boolean(onOpenEscalation && a.escalation_id);
+                  const open = (e: SyntheticEvent) => {
+                    e.stopPropagation();
+                    if (a.escalation_id) onOpenEscalation!(a.escalation_id);
+                  };
+                  return (
+                    <span
+                      role={openable ? "button" : undefined}
+                      tabIndex={openable ? 0 : undefined}
+                      onClick={openable ? open : undefined}
+                      onKeyDown={openable ? (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); open(e); } } : undefined}
+                      className={`shrink-0 rounded bg-amber-500/15 px-1.5 py-0.5 text-[10px] font-medium text-amber-300${openable ? " cursor-pointer hover:bg-amber-500/25 transition focus:outline-none focus:ring-2 focus:ring-amber-500/40" : ""}`}
+                      title={openable ? "Open the escalation the agent filed" : "Escalated by the agent — awaiting approval in Agent Activity"}
+                    >
+                      ⚡ escalated
+                    </span>
+                  );
+                })()}
                 <span className="shrink-0 rounded bg-slate-800 px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-slate-400">
                   {a.module}
                 </span>

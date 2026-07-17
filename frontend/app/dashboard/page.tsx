@@ -268,6 +268,9 @@ export default function DashboardPage() {
   const [downtimeLogs, setDowntimeLogs] = useState<DowntimeLog[]>([]);
   const [shifts, setShifts] = useState<Shift[]>([]);
   const [activeView, setActiveView] = useState("mission");
+  // Escalation the briefing hero deep-linked to, so the Escalation Center can
+  // highlight + scroll to it when opened from an "⚡ escalated" pill.
+  const [focusedEscalationId, setFocusedEscalationId] = useState<number | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
   const [searchResults, setSearchResults] = useState<typeof NAV_ITEMS>([]);
 
@@ -1916,6 +1919,10 @@ export default function DashboardPage() {
             setActiveView(view);
             window.scrollTo({ top: 0, behavior: "smooth" });
           }}
+          onOpenEscalation={(id) => {
+            setFocusedEscalationId(id);
+            setActiveView("escalations");
+          }}
         />
       </div>
 
@@ -2395,6 +2402,7 @@ export default function DashboardPage() {
           machines={machines}
           escalations={escalations}
           analytics={escalationAnalytics}
+          focusedId={focusedEscalationId}
           form={escalationForm}
           setForm={setEscalationForm}
           createEscalation={createEscalation}

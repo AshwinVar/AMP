@@ -127,12 +127,14 @@ def build_briefing(db, tenant: str) -> dict:
 
     alerts.sort(key=lambda a: _SEV.get(a["severity"], 0), reverse=True)
 
-    # Mark alerts the Escalation agent has already proactively raised, so the UI
-    # can show it acted (and not offer to escalate the same signal twice).
-    from ai.agents import open_briefing_alert_keys  # lazy: avoids an import cycle at package load
-    escalated = open_briefing_alert_keys(db, tenant)
+    # Mark alerts the Escalation agent has already proactively raised (and carry the
+    # escalation id) so the UI can show it acted, link straight to the escalation,
+    # and not offer to escalate the same signal twice.
+    from ai.agents import open_briefing_escalation_ids  # lazy: avoids an import cycle at package load
+    esc_ids = open_briefing_escalation_ids(db, tenant)
     for a in alerts:
-        a["escalated"] = a["key"] in escalated
+        a["escalation_id"] = esc_ids.get(a["key"])
+        a["escalated"] = a["key"] in esc_ids
 
     # Wins — a couple of positives so the briefing isn't only bad news.
     wins: list = []

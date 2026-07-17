@@ -24,6 +24,7 @@ type TimelineEvent = {
 type Detail = {
   machine_id: number;
   name: string;
+  line: string;
   status: string;
   utilization: number;
   downtime: string;
@@ -64,6 +65,12 @@ function OeeBar({ label, value }: { label: string; value: number }) {
       <span className="w-10 text-right text-xs text-slate-300">{value}%</span>
     </div>
   );
+}
+
+function lineStyle(line: string) {
+  if (line === "SMT") return "border-sky-500/40 bg-sky-500/10 text-sky-300";
+  if (line === "IC") return "border-violet-500/40 bg-violet-500/10 text-violet-300";
+  return "border-slate-600/40 bg-slate-500/10 text-slate-300";
 }
 
 function bandStyle(band: string) {
@@ -189,7 +196,12 @@ export default function MachineDetailDrawer({
       >
         <div className="flex items-start justify-between gap-3">
           <div>
-            <h2 className="text-2xl font-bold">{detail?.name ?? "Machine"}</h2>
+            <div className="flex items-center gap-2">
+              <h2 className="text-2xl font-bold">{detail?.name ?? "Machine"}</h2>
+              {detail?.line && (
+                <span className={`rounded-full px-2 py-0.5 text-[11px] border ${lineStyle(detail.line)}`}>{detail.line}</span>
+              )}
+            </div>
             <p className="text-slate-500 text-sm mt-1">Machine cockpit — health, risk, and history</p>
           </div>
           <button onClick={onClose} className="text-slate-400 hover:text-white text-xl px-2" aria-label="Close">

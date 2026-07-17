@@ -23,6 +23,20 @@ function statusStyle(status: string) {
   }
 }
 
+// Material state as the part flows the lines: RAW -> (SMT) -> SEMI -> (IC) -> FIN.
+function stateStyle(state?: string) {
+  switch (state) {
+    case "RAW":
+      return "border-slate-500/40 bg-slate-500/10 text-slate-300";
+    case "SEMI":
+      return "border-amber-500/40 bg-amber-500/10 text-amber-300";
+    case "FIN":
+      return "border-emerald-500/40 bg-emerald-500/10 text-emerald-300";
+    default:
+      return "border-slate-700 bg-slate-800/40 text-slate-500";
+  }
+}
+
 export default function WorkOrdersSection({
   machines,
   workOrders,
@@ -152,6 +166,7 @@ export default function WorkOrdersSection({
               <tr>
                 <th className="py-3 px-4">WO</th>
                 <th className="py-3 px-4">Part</th>
+                <th className="py-3 px-4">Stage</th>
                 <th className="py-3 px-4">Batch</th>
                 <th className="py-3 px-4">Machine</th>
                 <th className="py-3 px-4">Target</th>
@@ -180,6 +195,11 @@ export default function WorkOrdersSection({
                       {wo.work_order_no}
                     </td>
                     <td className="py-3 px-4">{wo.part_number}</td>
+                    <td className="py-3 px-4">
+                      <span className={`rounded-full px-2.5 py-0.5 text-xs border ${stateStyle(wo.material_state)}`}>
+                        {wo.material_state || "—"}
+                      </span>
+                    </td>
                     <td className="py-3 px-4">{wo.batch_number}</td>
                     <td className="py-3 px-4">
                       {getMachineName(wo.machine_id)}
@@ -244,7 +264,7 @@ export default function WorkOrdersSection({
 
               {workOrders.length === 0 && (
                 <tr>
-                  <td colSpan={9} className="py-6 px-4 text-slate-400">
+                  <td colSpan={10} className="py-6 px-4 text-slate-400">
                     No work orders yet.
                   </td>
                 </tr>

@@ -24,7 +24,7 @@ def _fresh_session():
 def test_twin_composes_health_and_is_tenant_scoped():
     db = _fresh_session()
     # critical machine: breakdown (+35) + util<40 (+20) + downtime>=120 (+25) = 80 risk -> health 20
-    db.add(models.Machine(id=1, name="PRESS-01", status="Breakdown", utilization=30))
+    db.add(models.Machine(id=1, name="PRESS-01", status="Breakdown", utilization=30, line="SMT"))
     db.add(models.DowntimeLog(machine_id=1, reason="Wear", duration="120 min"))
     db.add(models.MaintenanceTask(tenant_code="DEFAULT", task_no="AUTO-1", machine_id=1,
                                   task_type="Predictive (auto)", priority="Critical",
@@ -43,6 +43,7 @@ def test_twin_composes_health_and_is_tenant_scoped():
     twins = twin.build_twins(db, "DEFAULT")
     assert len(twins) == 2
     assert twins[0]["machine_id"] == 1                              # worst health first
+    assert twins[0]["line"] == "SMT"                                # production line flows through
     assert twins[0]["health_score"] == 20 and twins[0]["risk_score"] == 80
     assert twins[0]["health_band"] == "Critical"
     assert twins[0]["open_maintenance_tasks"] == 1

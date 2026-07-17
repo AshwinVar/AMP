@@ -36,11 +36,20 @@ def build_production_summary(db, tenant: str) -> dict:
     good = sum(r.good_count or 0 for r in records)
     rejected = sum(r.rejected_count or 0 for r in records)
 
+    all_machines = db.query(models.Machine).all()
+    names = {m.id: m.name for m in all_machines}
+    line_of = {m.id: (m.line or "") for m in all_machines}
+
     per_machine: dict = defaultdict(int)
+    line_good: dict = defaultdict(int)
+    line_total: dict = defaultdict(int)
     for r in records:
         if r.machine_id is not None:
             per_machine[r.machine_id] += r.good_count or 0
-    names = {m.id: m.name for m in db.query(models.Machine).all()}
+        ln = line_of.get(r.machine_id, "")
+        if ln:
+            line_good[ln] += r.good_count or 0
+            line_total[ln] += r.total_count or 0
     by_machine = sorted(
         ({"machine_id": mid, "name": names.get(mid, f"#{mid}"), "good": g} for mid, g in per_machine.items()),
         key=lambda m: m["good"], reverse=True,
@@ -51,6 +60,11 @@ def build_production_summary(db, tenant: str) -> dict:
         per_day[r.created_at.date()] += r.good_count or 0
     daily = [{"date": d.isoformat(), "count": per_day.get(d, 0)} for d in window]
 
+    by_line = [
+        {"line": ln, "good": line_good[ln], "total": line_total[ln], "good_rate": _pct(line_good[ln], line_total[ln])}
+        for ln in sorted(line_good)
+    ]
+
     return {
         "days": WINDOW_DAYS,
         "runs": len(records),
@@ -59,5 +73,6 @@ def build_production_summary(db, tenant: str) -> dict:
         "rejected": rejected,
         "good_rate": _pct(good, total),
         "by_machine": by_machine,
+        "by_line": by_line,
         "daily": daily,
     }

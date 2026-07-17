@@ -94,17 +94,21 @@ def test_briefing_marks_alerts_the_agent_has_escalated():
                                    ideal_cycle_time_seconds=30, total_count=100, good_count=90,
                                    rejected_count=10, created_at=now))
     # an open escalation the agent already raised, tagged with the briefing marker
-    db.add(models.Escalation(tenant_code="DEFAULT", machine_id=1, title="Briefing: 1 machine down",
-                             severity="High", owner="Plant Manager", department="Maintenance",
-                             status="Proposed", source="Escalation agent",
-                             notes="[briefing:machines_down] raised from the briefing"))
+    esc = models.Escalation(tenant_code="DEFAULT", machine_id=1, title="Briefing: 1 machine down",
+                            severity="High", owner="Plant Manager", department="Maintenance",
+                            status="Proposed", source="Escalation agent",
+                            notes="[briefing:machines_down] raised from the briefing")
+    db.add(esc)
     db.commit()
 
     b = briefing.build_briefing(db, "DEFAULT")
     by = {a["key"]: a for a in b["alerts"]}
-    # the escalated signal is marked; a different alert with no escalation is not
+    # the escalated signal is marked and links to the escalation id
     assert by["machines_down"]["escalated"] is True
+    assert by["machines_down"]["escalation_id"] == esc.id
+    # a different alert with no escalation is not marked and has no id
     assert "oee_loss" in by and by["oee_loss"]["escalated"] is False
+    assert by["oee_loss"]["escalation_id"] is None
 
 
 if __name__ == "__main__":

@@ -1,3 +1,6 @@
+"use client";
+
+import { useEffect, useRef, useState } from "react";
 import type { Escalation, EscalationAnalytics } from "../lib/phase12-types";
 
 type Machine = {
@@ -43,10 +46,12 @@ export default function EscalationSection({
   deleteEscalation,
   generateFromSmartAlerts,
   getMachineName,
+  focusedId,
 }: {
   machines: Machine[];
   escalations: Escalation[];
   analytics: EscalationAnalytics | null;
+  focusedId?: number | null;
   form: {
     machine_id: string;
     title: string;
@@ -70,6 +75,18 @@ export default function EscalationSection({
   generateFromSmartAlerts: () => void;
   getMachineName: (id: number) => string;
 }) {
+  // When opened from a briefing "⚡ escalated" pill, scroll that escalation into
+  // view and flash it so it's easy to spot in the table.
+  const rowRefs = useRef<Record<number, HTMLTableRowElement | null>>({});
+  const [highlightId, setHighlightId] = useState<number | null>(null);
+  useEffect(() => {
+    if (focusedId == null) return;
+    rowRefs.current[focusedId]?.scrollIntoView({ behavior: "smooth", block: "center" });
+    setHighlightId(focusedId);
+    const t = setTimeout(() => setHighlightId(null), 3000);
+    return () => clearTimeout(t);
+  }, [focusedId]);
+
   return (
     <section className="mt-8 space-y-6">
       <div className="flex flex-col md:flex-row md:items-end md:justify-between gap-4">
@@ -188,7 +205,11 @@ export default function EscalationSection({
 
             <tbody>
               {escalations.map((row) => (
-                <tr key={row.id} className="border-b border-slate-800">
+                <tr
+                  key={row.id}
+                  ref={(el) => { rowRefs.current[row.id] = el; }}
+                  className={`border-b border-slate-800 transition-colors ${highlightId === row.id ? "bg-amber-500/10" : ""}`}
+                >
                   <td className="py-3 px-4">
                     <p className="font-semibold">{row.title}</p>
                     <p className="text-xs text-slate-500">{row.notes || "-"}</p>

@@ -297,24 +297,26 @@ def _briefing_marker(key: str) -> str:
     return f"[briefing:{key}]"
 
 
-def open_briefing_alert_keys(db, tenant) -> set:
-    """Briefing-alert keys that already have an open (Proposed/Open) escalation
-    raised by the Escalation agent — so the briefing can show which alerts it has
-    already acted on, and the agent won't raise the same one twice."""
+def open_briefing_escalation_ids(db, tenant) -> dict:
+    """Map each briefing-alert key to the id of the open (Proposed/Open) escalation
+    the Escalation agent raised for it — so the briefing can mark which alerts it
+    acted on, link straight to the escalation, and not raise the same one twice.
+    Reads the ``[briefing:<key>]`` marker the agent stamps into the notes."""
     rows = (db.query(models.Escalation)
             .filter(models.Escalation.tenant_code == tenant,
                     models.Escalation.source == "Escalation agent",
                     models.Escalation.status.in_(("Proposed", "Open")),
                     models.Escalation.notes.like("%[briefing:%"))
+            .order_by(models.Escalation.id)
             .all())
-    keys = set()
+    out: dict = {}
     for r in rows:
         n = r.notes or ""
         i = n.find("[briefing:")
         j = n.find("]", i)
         if i != -1 and j > i:
-            keys.add(n[i + len("[briefing:"):j])
-    return keys
+            out[n[i + len("[briefing:"):j]] = r.id   # later (higher id) wins
+    return out
 
 
 def escalate_from_briefing(db, tenant) -> dict:
@@ -332,7 +334,7 @@ def escalate_from_briefing(db, tenant) -> dict:
     top = next((a for a in b["alerts"] if a["severity"] == "high"), None)
     if top is None:
         return {"escalated": False, "reason": "no_high_alert"}
-    if top["key"] in open_briefing_alert_keys(db, tenant):
+    if top["key"] in open_briefing_escalation_ids(db, tenant):
         return {"escalated": False, "reason": "already_open", "alert_key": top["key"]}
 
     # Link the escalation to a machine when the alert is about machines being down.

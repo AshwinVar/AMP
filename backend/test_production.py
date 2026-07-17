@@ -32,8 +32,8 @@ def _rec(machine_id, total, good, rejected, when):
 def test_production_summary_rolls_up_throughput_and_producers():
     db = _fresh_session()
     now = datetime.utcnow()
-    db.add(models.Machine(id=1, name="PRESS-01", status="Running", utilization=70))
-    db.add(models.Machine(id=2, name="CNC-02", status="Running", utilization=70))
+    db.add(models.Machine(id=1, name="PRESS-01", status="Running", utilization=70, line="SMT"))
+    db.add(models.Machine(id=2, name="CNC-02", status="Running", utilization=70, line="IC"))
     db.add_all([
         _rec(1, total=100, good=95, rejected=5, when=now),
         _rec(1, total=100, good=90, rejected=10, when=now - timedelta(days=2)),
@@ -52,10 +52,16 @@ def test_production_summary_rolls_up_throughput_and_producers():
     # daily series: 7 entries oldest->newest, today = 95 + 99 = 194
     assert len(s["daily"]) == 7 and s["daily"][-1]["count"] == 194
     assert sum(e["count"] for e in s["daily"]) == 284        # matches total good in window
+    # throughput per line: SMT (PRESS-01) 185 good / 200, IC (CNC-02) 99 good / 100
+    by_line = {l["line"]: l for l in s["by_line"]}
+    assert set(by_line) == {"SMT", "IC"}
+    assert by_line["SMT"]["good"] == 185 and by_line["SMT"]["total"] == 200
+    assert by_line["IC"]["good"] == 99 and by_line["IC"]["good_rate"] == 99
 
     # empty -> zeros, no divide-by-zero
     empty = production.build_production_summary(_fresh_session(), "DEFAULT")
     assert empty["runs"] == 0 and empty["good_rate"] == 0 and len(empty["daily"]) == 7
+    assert empty["by_line"] == []
 
 
 if __name__ == "__main__":

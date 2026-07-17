@@ -13,6 +13,7 @@ type ProductionSummary = {
   rejected: number;
   good_rate: number;
   by_machine: { machine_id: number; name: string; good: number }[];
+  by_line: { line: string; good: number; total: number; good_rate: number }[];
   daily: { date: string; count: number }[];
 };
 
@@ -21,6 +22,12 @@ function rateColor(r: number) {
   if (r >= 95) return "text-yellow-400";
   if (r >= 90) return "text-orange-400";
   return "text-red-400";
+}
+
+function lineStyle(line: string) {
+  if (line === "SMT") return "border-sky-500/40 bg-sky-500/10 text-sky-300";
+  if (line === "IC") return "border-violet-500/40 bg-violet-500/10 text-violet-300";
+  return "border-slate-600/40 bg-slate-500/10 text-slate-300";
 }
 
 function wk(iso: string) {
@@ -103,6 +110,17 @@ export default function ProductionSnapshot() {
           </div>
         </div>
       </div>
+      {p.by_line.length > 0 && (
+        <div className="mt-5 flex flex-wrap items-center gap-2">
+          <span className="text-xs text-slate-500 mr-1">By line:</span>
+          {p.by_line.map((l) => (
+            <span key={l.line} className={`rounded-lg border px-3 py-1 text-sm ${lineStyle(l.line)}`}>
+              {l.line} <span className="text-slate-400">· {l.good.toLocaleString()} good</span>{" "}
+              <span className="text-slate-500">({l.good_rate}%)</span>
+            </span>
+          ))}
+        </div>
+      )}
       {machine != null && (
         <MachineDetailDrawer machineId={machine} onClose={() => setMachine(null)} onChanged={load} />
       )}

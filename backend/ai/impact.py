@@ -56,6 +56,29 @@ def build_impact(db, tenant: str) -> dict:
     recent = [r for r in rows if r.created_at and r.created_at >= cutoff]
     recent_status = Counter(r.status for r in recent)
 
+    # Per-agent contribution — who did what, for the ROI view ("meet your workers").
+    from ai.roster import AGENTS  # lazy: avoids an import cycle at package load
+    agent_names = {a["key"]: a["name"] for a in AGENTS}
+    per_agent: dict = {}
+    for r in rows:
+        pa = per_agent.setdefault(r.agent, {
+            "agent": r.agent, "name": agent_names.get(r.agent, r.agent),
+            "actions": 0, "approved": 0, "auto_approved": 0, "pending": 0,
+            "outputs": {label: 0 for label in _OUTPUT_LABELS.values()},
+        })
+        pa["actions"] += 1
+        if r.status == "Approved":
+            pa["approved"] += 1
+        if r.status == "Proposed":
+            pa["pending"] += 1
+        if r.decided_by == "auto-policy":
+            pa["auto_approved"] += 1
+        if r.status in ("Proposed", "Approved"):
+            key = _OUTPUT_LABELS.get(r.ref_kind)
+            if key:
+                pa["outputs"][key] += 1
+    by_agent = sorted(per_agent.values(), key=lambda a: a["actions"], reverse=True)
+
     agents_active = sorted({r.agent for r in rows})
     return {
         "agents_active": agents_active,
@@ -66,6 +89,7 @@ def build_impact(db, tenant: str) -> dict:
         "auto_rate": round(auto / decided * 100) if decided else 0,   # % of decisions made autonomously
         "pending_backlog": by_status.get("Proposed", 0),              # human decisions still waiting
         "outputs": outputs,
+        "by_agent": by_agent,                                         # per-agent contribution
         "last_7_days": {
             "total": len(recent),
             "proposed": recent_status.get("Proposed", 0),

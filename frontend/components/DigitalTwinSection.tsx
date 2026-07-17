@@ -23,6 +23,13 @@ function statusStyle(status: string) {
   }
 }
 
+// A soft band behind each production line/zone, so the floor reads as its lines.
+function zoneBandStyle(zone: string) {
+  if (zone.includes("SMT")) return "border-sky-500/25 bg-sky-500/[0.05] text-sky-300";
+  if (zone.includes("IC")) return "border-violet-500/25 bg-violet-500/[0.05] text-violet-300";
+  return "border-slate-600/25 bg-slate-500/[0.04] text-slate-300";
+}
+
 export default function DigitalTwinSection({
   machines,
   nodes,
@@ -60,6 +67,15 @@ export default function DigitalTwinSection({
   function statusForNode(node: FactoryLayoutNode) {
     return machineForNode(node)?.status || "Area";
   }
+
+  // One band per zone, spanning the vertical extent of its nodes (data-driven,
+  // so it groups whatever lines/zones the layout actually has).
+  const zoneBands = Array.from(new Set(nodes.map((n) => n.zone).filter(Boolean))).map((zone) => {
+    const zn = nodes.filter((n) => n.zone === zone);
+    const top = Math.min(...zn.map((n) => n.y_position)) - 18;
+    const bottom = Math.max(...zn.map((n) => n.y_position + n.height)) + 14;
+    return { zone, top, height: bottom - top };
+  });
 
   return (
     <section className="mt-8 space-y-6">
@@ -135,6 +151,15 @@ export default function DigitalTwinSection({
 
         <div className="relative w-full h-[640px] bg-slate-950 border border-slate-800 rounded-2xl overflow-auto">
           <div className="relative w-[1200px] h-[640px] bg-[radial-gradient(circle_at_1px_1px,#334155_1px,transparent_0)] [background-size:24px_24px]">
+            {zoneBands.map((b) => (
+              <div
+                key={b.zone}
+                className={`absolute left-0 right-0 rounded-xl border ${zoneBandStyle(b.zone)}`}
+                style={{ top: b.top, height: b.height }}
+              >
+                <span className="absolute left-3 top-2 text-[11px] font-semibold uppercase tracking-wide">{b.zone}</span>
+              </div>
+            ))}
             {nodes.map((node) => {
               const machine = machineForNode(node);
               const status = statusForNode(node);

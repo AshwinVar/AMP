@@ -127,6 +127,13 @@ def build_briefing(db, tenant: str) -> dict:
 
     alerts.sort(key=lambda a: _SEV.get(a["severity"], 0), reverse=True)
 
+    # Mark alerts the Escalation agent has already proactively raised, so the UI
+    # can show it acted (and not offer to escalate the same signal twice).
+    from ai.agents import open_briefing_alert_keys  # lazy: avoids an import cycle at package load
+    escalated = open_briefing_alert_keys(db, tenant)
+    for a in alerts:
+        a["escalated"] = a["key"] in escalated
+
     # Wins — a couple of positives so the briefing isn't only bad news.
     wins: list = []
     if plant["oee"] >= oee["world_class"]:

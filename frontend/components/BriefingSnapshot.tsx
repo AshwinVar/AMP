@@ -1,10 +1,10 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { apiGet } from "../lib/api";
+import { apiGet, apiPost, getUserRole } from "../lib/api";
 
 // Mirrors the backend briefing read-model (ai/briefing.py build_briefing).
-type Alert = { key: string; severity: "high" | "medium" | "low"; title: string; detail: string; module: string };
+type Alert = { key: string; severity: "high" | "medium" | "low"; title: string; detail: string; module: string; escalated: boolean };
 type Win = { title: string; detail: string };
 type Briefing = {
   has_data: boolean;
@@ -49,6 +49,9 @@ function trendMark(t: Briefing["oee_trend"]) {
 // and renders nothing until there's production to brief on.
 export default function BriefingSnapshot({ onOpen }: { onOpen?: (viewKey: string) => void }) {
   const [b, setB] = useState<Briefing | null>(null);
+  const [role, setRole] = useState("");
+  const [escalating, setEscalating] = useState(false);
+  const [note, setNote] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -59,14 +62,39 @@ export default function BriefingSnapshot({ onOpen }: { onOpen?: (viewKey: string
   }, []);
 
   useEffect(() => {
+    setRole(getUserRole());
     load();
     const id = setInterval(load, 30000);
     return () => clearInterval(id);
   }, [load]);
 
+  // Hand the briefing's most urgent alert to the Escalation agent, which files it
+  // into the approval queue. The agent already does this on its own; this is the
+  // "act now" shortcut for a supervisor watching the board.
+  const escalate = useCallback(async () => {
+    setEscalating(true);
+    setNote(null);
+    try {
+      const r = await apiPost<{ escalated: boolean; reason?: string }>("/briefing/escalate", {});
+      setNote(
+        r.escalated ? "Escalated to the approval queue"
+          : r.reason === "already_open" ? "Already escalated"
+          : "Nothing urgent to escalate",
+      );
+      await load();
+    } catch {
+      setNote("Couldn't escalate — try again");
+    } finally {
+      setEscalating(false);
+    }
+  }, [load]);
+
   if (!b || !b.has_data) return null;
 
   const tm = trendMark(b.oee_trend);
+  const canEscalate = role === "Admin" || role === "Supervisor";
+  const nextHigh = b.alerts.find((a) => a.severity === "high" && !a.escalated);
+  const showEscalate = canEscalate && Boolean(nextHigh);
 
   return (
     <div className="rounded-2xl border border-slate-800 bg-gradient-to-br from-slate-900 to-slate-900/40 p-6">
@@ -74,6 +102,22 @@ export default function BriefingSnapshot({ onOpen }: { onOpen?: (viewKey: string
         <div>
           <h3 className="text-xs font-semibold uppercase tracking-wide text-slate-300">Morning briefing</h3>
           <p className="text-slate-400 text-sm mt-1">{b.headline}</p>
+          {(showEscalate || note) && (
+            <div className="mt-2 flex items-center gap-3">
+              {showEscalate && (
+                <button
+                  type="button"
+                  onClick={escalate}
+                  disabled={escalating}
+                  className="rounded-md border border-amber-500/40 bg-amber-500/10 px-2.5 py-1 text-xs font-medium text-amber-300 hover:bg-amber-500/20 transition focus:outline-none focus:ring-2 focus:ring-amber-500/40 disabled:opacity-50"
+                  title="Hand the top alert to the Escalation agent"
+                >
+                  {escalating ? "Escalating…" : "⚡ Escalate top alert"}
+                </button>
+              )}
+              {note && <span className="text-xs text-slate-400">{note}</span>}
+            </div>
+          )}
         </div>
         <div className="text-right">
           <p className="text-3xl font-bold text-slate-100 flex items-center gap-1.5 justify-end">
@@ -97,6 +141,14 @@ export default function BriefingSnapshot({ onOpen }: { onOpen?: (viewKey: string
                   <p className="text-sm text-slate-200">{a.title}</p>
                   {a.detail && <p className="text-xs text-slate-500 mt-0.5 truncate">{a.detail}</p>}
                 </div>
+                {a.escalated && (
+                  <span
+                    className="shrink-0 rounded bg-amber-500/15 px-1.5 py-0.5 text-[10px] font-medium text-amber-300"
+                    title="Escalated by the agent — awaiting approval in Agent Activity"
+                  >
+                    ⚡ escalated
+                  </span>
+                )}
                 <span className="shrink-0 rounded bg-slate-800 px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-slate-400">
                   {a.module}
                 </span>

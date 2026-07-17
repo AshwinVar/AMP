@@ -283,6 +283,82 @@ def escalate_on_repeated_downtime(event: DowntimeStarted, db) -> None:
              ref_kind="escalation", ref_id=esc.id, severity="High", machine_id=event.machine_id)
 
 
+# ── Escalation agent, proactive mode (from the morning briefing) ───
+# Department that owns each briefing module's escalation.
+_BRIEFING_DEPT = {
+    "machines": "Maintenance", "downtime": "Maintenance",
+    "inventory": "Procurement", "quality": "Quality", "oee": "Operations",
+}
+
+
+def _briefing_marker(key: str) -> str:
+    """A stable machine-readable tag stamped into an escalation's notes so the
+    briefing signal it came from can be recognised later (dedupe + UI state)."""
+    return f"[briefing:{key}]"
+
+
+def open_briefing_alert_keys(db, tenant) -> set:
+    """Briefing-alert keys that already have an open (Proposed/Open) escalation
+    raised by the Escalation agent — so the briefing can show which alerts it has
+    already acted on, and the agent won't raise the same one twice."""
+    rows = (db.query(models.Escalation)
+            .filter(models.Escalation.tenant_code == tenant,
+                    models.Escalation.source == "Escalation agent",
+                    models.Escalation.status.in_(("Proposed", "Open")),
+                    models.Escalation.notes.like("%[briefing:%"))
+            .all())
+    keys = set()
+    for r in rows:
+        n = r.notes or ""
+        i = n.find("[briefing:")
+        j = n.find("]", i)
+        if i != -1 and j > i:
+            keys.add(n[i + len("[briefing:"):j])
+    return keys
+
+
+def escalate_from_briefing(db, tenant) -> dict:
+    """Escalation agent, proactive mode: turn the morning briefing's most urgent
+    (high-severity) alert into a proposed Escalation + AgentAction, so it lands in
+    the approval queue and notifications instead of only being displayed on the
+    dashboard. Deduped per alert kind (one open agent escalation per briefing
+    signal). Returns a small result the caller can report; makes no change when
+    there's nothing urgent to raise."""
+    from ai.briefing import build_briefing, DOWN_STATUSES  # lazy: avoids an import cycle at package load
+
+    b = build_briefing(db, tenant)
+    if not b["has_data"]:
+        return {"escalated": False, "reason": "no_data"}
+    top = next((a for a in b["alerts"] if a["severity"] == "high"), None)
+    if top is None:
+        return {"escalated": False, "reason": "no_high_alert"}
+    if top["key"] in open_briefing_alert_keys(db, tenant):
+        return {"escalated": False, "reason": "already_open", "alert_key": top["key"]}
+
+    # Link the escalation to a machine when the alert is about machines being down.
+    machine_id = None
+    if top["key"] == "machines_down":
+        m = (db.query(models.Machine)
+             .filter(models.Machine.tenant_code == tenant,
+                     models.Machine.status.in_(DOWN_STATUSES)).first())
+        machine_id = m.id if m else None
+
+    esc = models.Escalation(
+        tenant_code=tenant, machine_id=machine_id,
+        title=f"Briefing: {top['title']}", severity="High",
+        owner="Plant Manager", department=_BRIEFING_DEPT.get(top["module"], "Operations"),
+        status="Proposed", source="Escalation agent",
+        notes=(f"{_briefing_marker(top['key'])} Raised by the Escalation agent from the "
+               f"morning briefing. {top['title']} — {top['detail']}. Act in: {top['module']}."),
+    )
+    db.add(esc)
+    db.flush()
+    _propose(db, tenant, "escalation", "raise_escalation",
+             summary=f"Escalate from briefing: {top['title']}",
+             ref_kind="escalation", ref_id=esc.id, severity="High", machine_id=machine_id)
+    return {"escalated": True, "alert_key": top["key"], "summary": esc.title, "escalation_id": esc.id}
+
+
 # ── Yield agent ────────────────────────────────────────────────────
 def _recent_yield(db, machine_id, limit=10):
     """Good/total across a machine's most recent production runs."""

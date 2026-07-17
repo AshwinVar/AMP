@@ -167,6 +167,24 @@ async def _simulation_loop():
             for m in machines:
                 m.utilization = max(40, min(99, m.utilization + random.randint(-5, 5)))
             db.commit()
+
+            # Proactive briefing: the Escalation agent raises the most urgent
+            # briefing alert for each tenant on its own (deduped, so it won't
+            # repeat). Bind the tenant per pass so the read-models see only that
+            # tenant's data (ADR-0002 auto-scoping is a no-op in this background task).
+            if random.random() < 0.3:
+                from tenancy import set_current_tenant, reset_current_tenant
+                tenants = [t for (t,) in db.query(models.Machine.tenant_code).distinct().all() if t]
+                for tc in tenants:
+                    token = set_current_tenant(tc)
+                    try:
+                        ai.agents.escalate_from_briefing(db, tc)
+                        db.commit()
+                    except Exception as esc_err:
+                        db.rollback()
+                        print(f"[SIM ESCALATE ERROR] {tc}: {esc_err}")
+                    finally:
+                        reset_current_tenant(token)
             db.close()
         except Exception as e:
             print(f"[SIM TICK ERROR] {e}")
@@ -955,6 +973,16 @@ def get_briefing(db: Session = Depends(get_db), current_user: dict = Depends(get
     # Morning briefing (ADR-0007): the "what needs attention right now" digest —
     # headline OEE + trend, ranked alerts across every pillar, and a few wins.
     return ai.briefing.build_briefing(db, current_user.get("tenant", "DEFAULT"))
+
+
+@app.post("/briefing/escalate")
+def escalate_briefing(db: Session = Depends(get_db),
+                      current_user: dict = Depends(require_roles(["Admin", "Supervisor"]))):
+    # Proactive briefing (ADR-0005): the Escalation agent turns the briefing's most
+    # urgent (high-severity) alert into a proposed escalation in the approval queue.
+    result = ai.agents.escalate_from_briefing(db, current_user.get("tenant", "DEFAULT"))
+    db.commit()
+    return result
 
 
 @app.get("/machine-health/{machine_id}")

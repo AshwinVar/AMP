@@ -204,6 +204,39 @@ def test_escalation_agent_proposes_after_repeated_downtime():
     assert db.query(models.Escalation).filter_by(source="Escalation agent").count() == 1
 
 
+def test_escalation_agent_escalates_top_briefing_alert():
+    db = _fresh_session()
+    # A down machine (a high-severity briefing alert) plus production so the
+    # briefing has data to summarise.
+    db.add(models.Machine(id=1, name="SMT-Reflow-01", status="Breakdown", utilization=0, line="SMT"))
+    db.add(models.ProductionRecord(machine_id=1, planned_minutes=480, runtime_minutes=440,
+                                   ideal_cycle_time_seconds=30, total_count=100, good_count=90,
+                                   rejected_count=10))
+    db.commit()
+
+    r = agents.escalate_from_briefing(db, "DEFAULT")
+    db.commit()
+    # the most urgent briefing alert (machine down) becomes a proposed escalation
+    assert r["escalated"] is True and r["alert_key"] == "machines_down"
+    escs = db.query(models.Escalation).filter_by(source="Escalation agent").all()
+    assert len(escs) == 1 and escs[0].status == "Proposed" and escs[0].machine_id == 1
+    assert "[briefing:machines_down]" in (escs[0].notes or "")     # dedupe/UI marker stamped
+    actions = db.query(models.AgentAction).filter_by(agent="escalation").all()
+    assert len(actions) == 1 and actions[0].ref_kind == "escalation" and actions[0].status == "Proposed"
+    # escalation is not auto-approved by default -> a human is notified
+    assert db.query(models.Notification).filter_by(notification_type="agent_proposal").count() == 1
+
+    # idempotent: a second pass doesn't raise a duplicate while one is open
+    r2 = agents.escalate_from_briefing(db, "DEFAULT")
+    db.commit()
+    assert r2["escalated"] is False and r2["reason"] == "already_open"
+    assert db.query(models.Escalation).filter_by(source="Escalation agent").count() == 1
+
+    # empty factory -> nothing to escalate, no crash
+    empty = agents.escalate_from_briefing(_fresh_session(), "DEFAULT")
+    assert empty["escalated"] is False and empty["reason"] == "no_data"
+
+
 def test_yield_agent_proposes_on_low_yield():
     db = _fresh_session()
     db.add(models.Machine(id=3, name="MILL-03", status="Running", utilization=70))
@@ -286,6 +319,7 @@ if __name__ == "__main__":
     test_reorder_agent_drafts_po_on_low_stock_idempotently()
     test_quality_agent_proposes_inspection_on_high_fail_rate()
     test_escalation_agent_proposes_after_repeated_downtime()
+    test_escalation_agent_escalates_top_briefing_alert()
     test_yield_agent_proposes_on_low_yield()
     test_approve_and_reject_agent_actions()
     test_proposal_notifies_but_auto_approved_does_not()
@@ -293,4 +327,5 @@ if __name__ == "__main__":
     test_agent_policy_is_per_tenant_with_env_fallback()
     test_register_wires_agents_to_the_stream()
     print("AGENT OK: 5 agents propose; reorder auto-approves, others wait + notify; approve/reject; idempotent; "
-          "per-tenant autonomy policy (saved wins, env fallback); wired")
+          "per-tenant autonomy policy (saved wins, env fallback); wired; "
+          "escalation acts proactively on the briefing's top alert (deduped)")

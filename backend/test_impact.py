@@ -48,10 +48,19 @@ def test_impact_rolls_up_outputs_autonomy_and_backlog():
     assert imp["auto_rate"] == 33
     assert imp["last_7_days"]["total"] == 4                                # all just created
     assert "agent" in imp["headline"]
+    # per-agent contribution (ROI view): reorder led with 1 auto-approved PO
+    by_agent = {a["agent"]: a for a in imp["by_agent"]}
+    assert set(by_agent) == {"reorder", "maintenance", "quality", "escalation"}
+    assert by_agent["reorder"]["actions"] == 1 and by_agent["reorder"]["auto_approved"] == 1
+    assert by_agent["reorder"]["outputs"]["purchase_orders"] == 1
+    assert by_agent["maintenance"]["pending"] == 1
+    assert by_agent["quality"]["approved"] == 1
+    assert all(a["name"] for a in imp["by_agent"])                         # display names present
 
     # empty tenant -> zeroed, no divide-by-zero
     empty = impact.build_impact(db, "NOBODY")
     assert empty["total_actions"] == 0 and empty["auto_rate"] == 0 and empty["agents_active"] == []
+    assert empty["by_agent"] == []
 
 
 if __name__ == "__main__":

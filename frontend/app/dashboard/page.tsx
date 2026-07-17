@@ -46,6 +46,7 @@ import IoTCommandSection from "../../components/IoTCommandSection";
 import AIInsightsSection from "../../components/AIInsightsSection";
 import MissionControlSection from "../../components/MissionControlSection";
 import AgentActivitySection from "../../components/AgentActivitySection";
+import AgentRoiSection from "../../components/AgentRoiSection";
 import MachineHealthSection from "../../components/MachineHealthSection";
 import SaaSAdminSection from "../../components/SaaSAdminSection";
 import CostingSection from "../../components/CostingSection";
@@ -2329,6 +2330,9 @@ export default function DashboardPage() {
 
       {renderSection("agentactivity", (
         <AgentActivitySection />
+      ))}
+      {renderSection("roi", (
+        <AgentRoiSection />
       ))}
 
       {renderSection("machinehealth", (

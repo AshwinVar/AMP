@@ -929,6 +929,13 @@ def get_inventory_summary(db: Session = Depends(get_db), current_user: dict = De
     return ai.inventory.build_inventory_summary(db, current_user.get("tenant", "DEFAULT"))
 
 
+@app.get("/flow-summary")
+def get_flow_summary(db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
+    # WIP flow (ADR-0007): work orders grouped by material state —
+    # RAW -> SMT -> SEMI -> IC -> FIN — for the two-line pipeline view.
+    return ai.flow.build_flow_summary(db, current_user.get("tenant", "DEFAULT"))
+
+
 @app.get("/machine-health/{machine_id}")
 def get_machine_detail(machine_id: int, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
     # Machine Health detail (ADR-0006): the single-machine cockpit — the twin

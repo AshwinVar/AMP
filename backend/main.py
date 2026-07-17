@@ -936,6 +936,13 @@ def get_flow_summary(db: Session = Depends(get_db), current_user: dict = Depends
     return ai.flow.build_flow_summary(db, current_user.get("tenant", "DEFAULT"))
 
 
+@app.get("/shift-summary")
+def get_shift_summary(db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
+    # Shift performance (ADR-0007): attainment (actual vs target) per shift over
+    # the last 7 days, with the best and worst shift.
+    return ai.shift.build_shift_summary(db, current_user.get("tenant", "DEFAULT"))
+
+
 @app.get("/machine-health/{machine_id}")
 def get_machine_detail(machine_id: int, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
     # Machine Health detail (ADR-0006): the single-machine cockpit — the twin

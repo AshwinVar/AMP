@@ -943,6 +943,13 @@ def get_shift_summary(db: Session = Depends(get_db), current_user: dict = Depend
     return ai.shift.build_shift_summary(db, current_user.get("tenant", "DEFAULT"))
 
 
+@app.get("/losses-summary")
+def get_losses_summary(db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
+    # OEE losses (ADR-0007): the OEE gap attributed to availability / performance
+    # / quality (points lost each) with the concrete cost of each.
+    return ai.losses.build_losses_summary(db, current_user.get("tenant", "DEFAULT"))
+
+
 @app.get("/machine-health/{machine_id}")
 def get_machine_detail(machine_id: int, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
     # Machine Health detail (ADR-0006): the single-machine cockpit — the twin

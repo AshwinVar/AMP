@@ -33,6 +33,7 @@ import QualitySnapshot from "../../components/QualitySnapshot";
 import DowntimeSnapshot from "../../components/DowntimeSnapshot";
 import ProductionSnapshot from "../../components/ProductionSnapshot";
 import OeeSnapshot from "../../components/OeeSnapshot";
+import LossesSnapshot from "../../components/LossesSnapshot";
 import InventorySnapshot from "../../components/InventorySnapshot";
 import FlowSnapshot from "../../components/FlowSnapshot";
 import ShiftSnapshot from "../../components/ShiftSnapshot";
@@ -1914,6 +1915,10 @@ export default function DashboardPage() {
 
       <div className="mb-8">
         <OeeSnapshot />
+      </div>
+
+      <div className="mb-8">
+        <LossesSnapshot />
       </div>
 
       <div className="mb-8">

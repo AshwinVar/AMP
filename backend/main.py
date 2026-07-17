@@ -950,6 +950,13 @@ def get_losses_summary(db: Session = Depends(get_db), current_user: dict = Depen
     return ai.losses.build_losses_summary(db, current_user.get("tenant", "DEFAULT"))
 
 
+@app.get("/briefing")
+def get_briefing(db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
+    # Morning briefing (ADR-0007): the "what needs attention right now" digest —
+    # headline OEE + trend, ranked alerts across every pillar, and a few wins.
+    return ai.briefing.build_briefing(db, current_user.get("tenant", "DEFAULT"))
+
+
 @app.get("/machine-health/{machine_id}")
 def get_machine_detail(machine_id: int, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
     # Machine Health detail (ADR-0006): the single-machine cockpit — the twin

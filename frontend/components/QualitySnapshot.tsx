@@ -17,6 +17,7 @@ type QualitySummary = {
   fail_rate: number;
   top_defects: { category: string; count: number }[];
   by_machine: { machine_id: number; name: string; inspected: number; failed: number; fail_rate: number }[];
+  by_line: { line: string; inspected: number; failed: number; fail_rate: number }[];
 };
 
 function yieldColor(fpy: number) {
@@ -25,6 +26,14 @@ function yieldColor(fpy: number) {
   if (fpy >= 90) return "text-orange-400";
   return "text-red-400";
 }
+
+// SMT and IC each get a consistent accent across the dashboard (sky / violet).
+const lineChip = (line: string) =>
+  line === "SMT"
+    ? "border-sky-500/40 bg-sky-500/10 text-sky-300"
+    : line === "IC"
+    ? "border-violet-500/40 bg-violet-500/10 text-violet-300"
+    : "border-slate-700 bg-slate-800 text-slate-300";
 
 // A glanceable quality read-out — first-pass yield, defect Pareto, worst machines.
 // Self-contained: fetches its own summary and refreshes, so it drops onto any
@@ -114,6 +123,22 @@ export default function QualitySnapshot() {
           )}
         </div>
       </div>
+      {q.by_line.length > 1 && (
+        <div className="mt-4 pt-4 border-t border-slate-800/70">
+          <p className="text-xs text-slate-500 mb-2">By line (fail rate)</p>
+          <div className="flex flex-wrap gap-2">
+            {q.by_line.map((l) => (
+              <span
+                key={l.line}
+                className={`rounded-md border px-2.5 py-1 text-xs font-medium ${lineChip(l.line)}`}
+                title={`${l.failed} failed of ${l.inspected} inspected`}
+              >
+                {l.line} <span className="opacity-70">· {l.fail_rate}%</span>
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
       {defect && <QualityDefectDrawer category={defect} onClose={() => setDefect(null)} />}
       {machine != null && (
         <MachineDetailDrawer machineId={machine} onClose={() => setMachine(null)} onChanged={load} />

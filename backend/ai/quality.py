@@ -45,13 +45,28 @@ def build_quality_summary(db, tenant: str) -> dict:
         if i.machine_id is not None:
             agg[i.machine_id]["inspected"] += i.inspected_quantity or 0
             agg[i.machine_id]["failed"] += i.failed_quantity or 0
-    names = {m.id: m.name for m in db.query(models.Machine).all()}
+    all_machines = db.query(models.Machine).all()
+    names = {m.id: m.name for m in all_machines}
+    line_of = {m.id: (m.line or "") for m in all_machines}
     by_machine = [
         {"machine_id": mid, "name": names.get(mid, f"#{mid}"),
          "inspected": a["inspected"], "failed": a["failed"], "fail_rate": _pct(a["failed"], a["inspected"])}
         for mid, a in agg.items() if a["inspected"] > 0
     ]
     by_machine.sort(key=lambda m: (m["fail_rate"], m["failed"]), reverse=True)
+
+    # Fail rate rolled up per production line (SMT vs IC) — same numerator/denominator.
+    line_agg: dict = defaultdict(lambda: {"inspected": 0, "failed": 0})
+    for mid, a in agg.items():
+        ln = line_of.get(mid, "")
+        if ln:
+            line_agg[ln]["inspected"] += a["inspected"]
+            line_agg[ln]["failed"] += a["failed"]
+    by_line = [
+        {"line": ln, "inspected": a["inspected"], "failed": a["failed"],
+         "fail_rate": _pct(a["failed"], a["inspected"])}
+        for ln, a in sorted(line_agg.items()) if a["inspected"] > 0
+    ]
 
     return {
         "inspections": len(inspections),
@@ -64,6 +79,7 @@ def build_quality_summary(db, tenant: str) -> dict:
         "fail_rate": _pct(failed, inspected),
         "top_defects": top_defects,
         "by_machine": by_machine[:TOP_N],
+        "by_line": by_line,
     }
 
 

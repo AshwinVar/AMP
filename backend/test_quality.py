@@ -28,8 +28,8 @@ def _insp(no, machine_id, inspected, passed, failed, defect=None, rework=0, scra
 
 def test_quality_summary_rolls_up_yield_defects_and_machines():
     db = _fresh_session()
-    db.add(models.Machine(id=1, name="PRESS-01", status="Running", utilization=60))
-    db.add(models.Machine(id=2, name="CNC-02", status="Running", utilization=60))
+    db.add(models.Machine(id=1, name="PRESS-01", status="Running", utilization=60, line="SMT"))
+    db.add(models.Machine(id=2, name="CNC-02", status="Running", utilization=60, line="IC"))
     db.add_all([
         _insp("QC-1", 1, inspected=100, passed=80, failed=20, defect="surface", rework=5, scrap=2),
         _insp("QC-2", 1, inspected=100, passed=95, failed=5, defect="surface"),
@@ -49,6 +49,11 @@ def test_quality_summary_rolls_up_yield_defects_and_machines():
     # worst machine by fail rate: PRESS-01 (25/200 = 12.5% -> 12, banker's rounding) before CNC-02 (2/100 = 2%)
     assert s["by_machine"][0]["name"] == "PRESS-01" and s["by_machine"][0]["fail_rate"] == 12
     assert s["by_machine"][1]["name"] == "CNC-02" and s["by_machine"][1]["fail_rate"] == 2
+    # per-line rollup: IC (CNC-02) 2/100 = 2%, SMT (PRESS-01) 25/200 = 12%; sorted by line name
+    assert s["by_line"] == [
+        {"line": "IC", "inspected": 100, "failed": 2, "fail_rate": 2},
+        {"line": "SMT", "inspected": 200, "failed": 25, "fail_rate": 12},
+    ]
 
     # no inspections -> zeros, no divide-by-zero
     empty = quality.build_quality_summary(_fresh_session(), "DEFAULT")

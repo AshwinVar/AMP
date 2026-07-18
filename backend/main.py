@@ -985,6 +985,13 @@ def escalate_briefing(db: Session = Depends(get_db),
     return result
 
 
+@app.get("/delivery-summary")
+def get_delivery_summary(db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
+    # Order delivery outlook (ADR-0007): per-customer on-track / at-risk / late
+    # order states, unit fulfillment, and the specific orders to chase.
+    return ai.delivery.build_delivery_summary(db, current_user.get("tenant", "DEFAULT"))
+
+
 @app.get("/machine-health/{machine_id}")
 def get_machine_detail(machine_id: int, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
     # Machine Health detail (ADR-0006): the single-machine cockpit — the twin

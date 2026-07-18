@@ -38,6 +38,7 @@ import InventorySnapshot from "../../components/InventorySnapshot";
 import FlowSnapshot from "../../components/FlowSnapshot";
 import ShiftSnapshot from "../../components/ShiftSnapshot";
 import BriefingSnapshot from "../../components/BriefingSnapshot";
+import DeliverySnapshot from "../../components/DeliverySnapshot";
 import DigitalTwinSection from "../../components/DigitalTwinSection";
 import OrdersDispatchSection from "../../components/OrdersDispatchSection";
 import PurchasingSection from "../../components/PurchasingSection";
@@ -1960,6 +1961,10 @@ export default function DashboardPage() {
 
       <div className="mb-8">
         <InventorySnapshot />
+      </div>
+
+      <div className="mb-8">
+        <DeliverySnapshot />
       </div>
 
       <section className="mb-6 rounded-2xl bg-slate-900 border border-slate-800 p-4 flex flex-col md:flex-row md:items-center md:justify-between gap-3">

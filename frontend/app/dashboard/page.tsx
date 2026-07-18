@@ -3,6 +3,7 @@
 import "../phase29-enterprise.css";
 
 import { useEffect, useRef, useState } from "react";
+import { apiGet, apiPost, apiPatch, apiDelete, getToken, getUserRole } from "../../lib/api";
 import {
   BarChart,
   Bar,
@@ -123,24 +124,10 @@ type Shift = {
   actual_output: number;
 };
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://127.0.0.1:8000";
-
-function getToken() {
-  if (typeof window === "undefined") return "";
-  return localStorage.getItem("token") || "";
-}
-
-function getUserRole(): string {
-  const token = getToken();
-  if (!token) return "";
-  try {
-    const payload = JSON.parse(atob(token.split(".")[1]));
-    return payload.role || "";
-  } catch {
-    return "";
-  }
-}
-
+// The page uses the canonical API client (lib/api) — one client for the whole
+// app, carrying the query-string-safe cache-buster, the sliding-session token
+// refresh and the expired-session redirect. Only the token-claim readers that
+// lib/api doesn't export stay local.
 function getUserTenant(): string {
   const token = getToken();
   if (!token) return "DEFAULT";
@@ -160,76 +147,6 @@ function getUserName(): string {
     return payload.sub || "";
   } catch {
     return "";
-  }
-}
-
-function getHeaders() {
-  return {
-    "Content-Type": "application/json",
-    Authorization: `Bearer ${getToken()}`,
-  };
-}
-
-async function apiGet<T>(path: string): Promise<T> {
-  // The cache-buster must respect an existing query string (e.g. /search?q=…),
-  // otherwise the ?t=… pollutes the first parameter's value.
-  const sep = path.includes("?") ? "&" : "?";
-  const res = await fetch(`${API_URL}${path}${sep}t=${Date.now()}`, {
-    method: "GET",
-    headers: getHeaders(),
-    cache: "no-store",
-  });
-
-  if (!res.ok) {
-    const text = await res.text();
-    throw new Error(`GET ${path} failed: ${res.status} ${text}`);
-  }
-
-  return res.json();
-}
-
-async function apiPost<T>(path: string, body: unknown): Promise<T> {
-  const res = await fetch(`${API_URL}${path}`, {
-    method: "POST",
-    headers: getHeaders(),
-    body: JSON.stringify(body),
-    cache: "no-store",
-  });
-
-  if (!res.ok) {
-    const text = await res.text();
-    throw new Error(`POST ${path} failed: ${res.status} ${text}`);
-  }
-
-  return res.json();
-}
-
-async function apiPatch<T>(path: string, body?: unknown): Promise<T> {
-  const res = await fetch(`${API_URL}${path}`, {
-    method: "PATCH",
-    headers: getHeaders(),
-    body: body ? JSON.stringify(body) : undefined,
-    cache: "no-store",
-  });
-
-  if (!res.ok) {
-    const text = await res.text();
-    throw new Error(`PATCH ${path} failed: ${res.status} ${text}`);
-  }
-
-  return res.json();
-}
-
-async function apiDelete(path: string): Promise<void> {
-  const res = await fetch(`${API_URL}${path}`, {
-    method: "DELETE",
-    headers: getHeaders(),
-    cache: "no-store",
-  });
-
-  if (!res.ok) {
-    const text = await res.text();
-    throw new Error(`DELETE ${path} failed: ${res.status} ${text}`);
   }
 }
 

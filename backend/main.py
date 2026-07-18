@@ -992,6 +992,20 @@ def get_delivery_summary(db: Session = Depends(get_db), current_user: dict = Dep
     return ai.delivery.build_delivery_summary(db, current_user.get("tenant", "DEFAULT"))
 
 
+@app.get("/cost-summary")
+def get_cost_summary(db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
+    # Cost of losses (ADR-0007): downtime + scrap priced at standard rates, and
+    # recorded costs for the period rolled up by type.
+    return ai.cost.build_cost_summary(db, current_user.get("tenant", "DEFAULT"))
+
+
+@app.get("/handover")
+def get_handover(db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
+    # Shift handover (ADR-0007): output + OEE, open work to carry over, attention
+    # list and wins — the end-of-shift summary composed from the pillar read-models.
+    return ai.handover.build_handover(db, current_user.get("tenant", "DEFAULT"))
+
+
 @app.get("/machine-health/{machine_id}")
 def get_machine_detail(machine_id: int, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
     # Machine Health detail (ADR-0006): the single-machine cockpit — the twin

@@ -39,6 +39,8 @@ import FlowSnapshot from "../../components/FlowSnapshot";
 import ShiftSnapshot from "../../components/ShiftSnapshot";
 import BriefingSnapshot from "../../components/BriefingSnapshot";
 import DeliverySnapshot from "../../components/DeliverySnapshot";
+import CostSnapshot from "../../components/CostSnapshot";
+import HandoverSnapshot from "../../components/HandoverSnapshot";
 import DigitalTwinSection from "../../components/DigitalTwinSection";
 import OrdersDispatchSection from "../../components/OrdersDispatchSection";
 import PurchasingSection from "../../components/PurchasingSection";
@@ -1964,7 +1966,20 @@ export default function DashboardPage() {
       </div>
 
       <div className="mb-8">
-        <DeliverySnapshot />
+        <DeliverySnapshot
+          onOpen={(view) => {
+            setActiveView(view);
+            window.scrollTo({ top: 0, behavior: "smooth" });
+          }}
+        />
+      </div>
+
+      <div className="mb-8">
+        <CostSnapshot />
+      </div>
+
+      <div className="mb-8">
+        <HandoverSnapshot />
       </div>
 
       <section className="mb-6 rounded-2xl bg-slate-900 border border-slate-800 p-4 flex flex-col md:flex-row md:items-center md:justify-between gap-3">

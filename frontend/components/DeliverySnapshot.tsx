@@ -38,7 +38,7 @@ const dueLabel = (o: ChaseOrder) =>
 // per-customer split, and the orders to chase. Self-contained: fetches its own
 // summary and refreshes, so it drops onto any screen. Renders nothing until
 // there are orders.
-export default function DeliverySnapshot() {
+export default function DeliverySnapshot({ onOpen }: { onOpen?: (viewKey: string) => void }) {
   const [d, setD] = useState<DeliverySummary | null>(null);
 
   const load = useCallback(async () => {
@@ -118,25 +118,38 @@ export default function DeliverySnapshot() {
             <p className="text-emerald-400 text-sm">Nothing at risk — order book on track.</p>
           ) : (
             <div className="space-y-2">
-              {d.at_risk_orders.map((o) => (
-                <div
-                  key={o.order_no}
-                  className={`flex items-start gap-3 rounded-lg border border-slate-800 border-l-2 ${o.state === "late" ? "border-l-red-500/70" : "border-l-amber-400/70"} bg-slate-900/40 px-3 py-2`}
-                >
-                  <span className={`mt-1.5 h-2 w-2 shrink-0 rounded-full ${o.state === "late" ? "bg-red-500" : "bg-amber-400"}`} />
-                  <div className="min-w-0 flex-1">
-                    <p className="text-sm text-slate-200 truncate">
-                      {o.order_no} · <span className="text-slate-400">{o.customer}</span>
-                    </p>
-                    <p className="text-[11px] text-slate-500 truncate">
-                      {o.product} · {o.dispatched_quantity}/{o.order_quantity} shipped
-                    </p>
-                  </div>
-                  <span className={`shrink-0 text-[11px] ${o.state === "late" ? "text-red-400" : "text-amber-400"}`}>
-                    {dueLabel(o)}
-                  </span>
-                </div>
-              ))}
+              {d.at_risk_orders.map((o) => {
+                const cls = `flex items-start gap-3 rounded-lg border border-slate-800 border-l-2 ${o.state === "late" ? "border-l-red-500/70" : "border-l-amber-400/70"} bg-slate-900/40 px-3 py-2`;
+                const inner = (
+                  <>
+                    <span className={`mt-1.5 h-2 w-2 shrink-0 rounded-full ${o.state === "late" ? "bg-red-500" : "bg-amber-400"}`} />
+                    <div className="min-w-0 flex-1 text-left">
+                      <p className="text-sm text-slate-200 truncate">
+                        {o.order_no} · <span className="text-slate-400">{o.customer}</span>
+                      </p>
+                      <p className="text-[11px] text-slate-500 truncate">
+                        {o.product} · {o.dispatched_quantity}/{o.order_quantity} shipped
+                      </p>
+                    </div>
+                    <span className={`shrink-0 text-[11px] ${o.state === "late" ? "text-red-400" : "text-amber-400"}`}>
+                      {dueLabel(o)}
+                    </span>
+                  </>
+                );
+                return onOpen ? (
+                  <button
+                    key={o.order_no}
+                    type="button"
+                    onClick={() => onOpen("orders")}
+                    title="Open in Orders & Dispatch"
+                    className={`${cls} w-full hover:border-slate-600 hover:bg-slate-800/60 transition focus:outline-none focus:ring-2 focus:ring-slate-600`}
+                  >
+                    {inner}
+                  </button>
+                ) : (
+                  <div key={o.order_no} className={cls}>{inner}</div>
+                );
+              })}
             </div>
           )}
         </div>

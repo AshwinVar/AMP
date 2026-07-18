@@ -1027,6 +1027,13 @@ def get_maintenance_summary(db: Session = Depends(get_db), current_user: dict = 
     return ai.maintenance.build_maintenance_summary(db, current_user.get("tenant", "DEFAULT"))
 
 
+@app.get("/weekly-report")
+def get_weekly_report(db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
+    # Weekly plant report (ADR-0007): a Markdown report composing the scorecard,
+    # cost, delivery and briefing read-models, ready to copy or download.
+    return ai.report.build_weekly_report(db, current_user.get("tenant", "DEFAULT"))
+
+
 @app.get("/machine-health/{machine_id}")
 def get_machine_detail(machine_id: int, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
     # Machine Health detail (ADR-0006): the single-machine cockpit — the twin

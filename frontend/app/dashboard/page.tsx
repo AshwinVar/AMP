@@ -2,7 +2,7 @@
 
 import "../phase29-enterprise.css";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   BarChart,
   Bar,
@@ -284,6 +284,27 @@ export default function DashboardPage() {
   const [focusedEscalationId, setFocusedEscalationId] = useState<number | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
   const [searchResults, setSearchResults] = useState<typeof NAV_ITEMS>([]);
+  // Global entity search: typed hits (machines, orders, documents, …) from
+  // GET /search, each carrying the view that opens it. Debounced.
+  type EntityHit = { type: string; id: number; label: string; sublabel: string; view: string };
+  const [entityResults, setEntityResults] = useState<EntityHit[]>([]);
+  const searchDebounce = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  function queryEntities(q: string) {
+    if (searchDebounce.current) clearTimeout(searchDebounce.current);
+    if (q.trim().length < 2) {
+      setEntityResults([]);
+      return;
+    }
+    searchDebounce.current = setTimeout(async () => {
+      try {
+        const r = await apiGet<{ results: EntityHit[] }>(`/search?q=${encodeURIComponent(q.trim())}`);
+        setEntityResults((r.results || []).filter((h) => canRoleSeeView(h.view, role, isFounder)));
+      } catch {
+        setEntityResults([]);
+      }
+    }, 250);
+  }
 
   const [name, setName] = useState("");
   const [status, setStatus] = useState("Running");
@@ -1854,21 +1875,24 @@ export default function DashboardPage() {
                 )
               : []
           );
+          queryEntities(q);
         }}
         onKeyDown={(e) => {
-          if (e.key === "Enter" && searchResults.length > 0) {
-            setActiveView(searchResults[0].key);
+          if (e.key === "Enter" && (searchResults.length > 0 || entityResults.length > 0)) {
+            setActiveView(searchResults.length > 0 ? searchResults[0].key : entityResults[0].view);
             setSearchQuery("");
             setSearchResults([]);
+            setEntityResults([]);
           }
           if (e.key === "Escape") {
             setSearchQuery("");
             setSearchResults([]);
+            setEntityResults([]);
           }
         }}
       />
-      {searchResults.length > 0 && (
-        <div className="absolute top-full left-0 mt-1 w-64 bg-slate-900 border border-slate-700 rounded-xl shadow-xl z-50 overflow-hidden">
+      {(searchResults.length > 0 || entityResults.length > 0) && (
+        <div className="absolute top-full left-0 mt-1 w-80 bg-slate-900 border border-slate-700 rounded-xl shadow-xl z-50 overflow-hidden">
           {searchResults.map((r) => (
             <button
               key={r.key}
@@ -1877,12 +1901,38 @@ export default function DashboardPage() {
                 setActiveView(r.key);
                 setSearchQuery("");
                 setSearchResults([]);
+                setEntityResults([]);
               }}
             >
               <span>{r.icon}</span>
               <span>{r.label}</span>
             </button>
           ))}
+          {entityResults.length > 0 && (
+            <>
+              {searchResults.length > 0 && <div className="border-t border-slate-800" />}
+              {entityResults.map((h) => (
+                <button
+                  key={`${h.type}-${h.id}`}
+                  className="w-full text-left px-4 py-2.5 text-sm hover:bg-slate-800 flex items-center gap-2.5"
+                  onClick={() => {
+                    setActiveView(h.view);
+                    setSearchQuery("");
+                    setSearchResults([]);
+                    setEntityResults([]);
+                    window.scrollTo({ top: 0, behavior: "smooth" });
+                  }}
+                >
+                  <span className="shrink-0 rounded bg-slate-800 border border-slate-700 px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-slate-400">
+                    {h.type}
+                  </span>
+                  <span className="min-w-0 flex-1 truncate">
+                    {h.label} <span className="text-slate-500">· {h.sublabel}</span>
+                  </span>
+                </button>
+              ))}
+            </>
+          )}
         </div>
       )}
     </div>

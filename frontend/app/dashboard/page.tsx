@@ -1918,7 +1918,12 @@ export default function DashboardPage() {
       </section>
 
       <div className="mb-8">
-        <ScorecardStrip />
+        <ScorecardStrip
+          onOpen={(view) => {
+            setActiveView(view);
+            window.scrollTo({ top: 0, behavior: "smooth" });
+          }}
+        />
       </div>
 
       <div className="mb-8">

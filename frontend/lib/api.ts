@@ -62,6 +62,29 @@ function maybeRefreshToken() {
     });
 }
 
+// ── Session-expiry handling ─────────────────────────────────────
+// When an authenticated call comes back 401 and the stored token is genuinely
+// expired, the session is over: clear it and send the user to /login instead of
+// leaving a silently broken dashboard. Guarded so a single flake can't loop.
+let redirectingToLogin = false;
+
+function handleUnauthorized() {
+  if (typeof window === "undefined" || redirectingToLogin) return;
+  if (window.location.pathname.startsWith("/login")) return;
+  const token = getToken();
+  if (!token) return;
+  let expMs = 0;
+  try {
+    expMs = (JSON.parse(atob(token.split(".")[1])).exp || 0) * 1000;
+  } catch {
+    expMs = 0;  // unreadable token -> treat as dead
+  }
+  if (expMs > Date.now()) return;  // still valid — the 401 is something else, don't log out
+  redirectingToLogin = true;
+  localStorage.removeItem("token");
+  window.location.href = "/login";
+}
+
 export async function apiGet<T>(path: string): Promise<T> {
   maybeRefreshToken();
   const sep = path.includes("?") ? "&" : "?";
@@ -72,6 +95,7 @@ export async function apiGet<T>(path: string): Promise<T> {
   });
 
   if (!res.ok) {
+    if (res.status === 401) handleUnauthorized();
     const text = await res.text();
     throw new Error(`Failed request: ${path} | ${res.status} | ${text}`);
   }

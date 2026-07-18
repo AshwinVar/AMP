@@ -165,6 +165,16 @@ def _oee(db, tenant):
     return ans, "executive"
 
 
+def _help(db, tenant):
+    return (
+        "I can answer about OEE & performance, the cost of losses, order delivery, "
+        "downtime, quality, maintenance, inventory, machines (ask by name too), "
+        "production, WIP, shifts, and week-on-week trends — from your live data. "
+        "Try \"give me the rundown\" for the whole picture at once.",
+        "overview",
+    )
+
+
 def _machine_named(db, question):
     """The machine whose name is mentioned in the question, if any (longest name
     first so 'SMT-Reflow-01' wins over a bare 'SMT')."""
@@ -225,6 +235,7 @@ def _briefing(db, tenant):
 # "reorder" doesn't match "order"; downtime before machines so "downtime"
 # doesn't match "down".
 _ROUTES = [
+    (("help", "what can you", "what can i ask", "capabilit", "how do you work", "what do you do"), _help),
     (("last week", "vs last", "compared", "week on week", "week-on-week", "trend", "improv",
       "getting better", "getting worse", "better or worse", "since last"), _trend),
     (("reorder", "restock", "stock", "inventory", "out of stock", "replenish"), _inventory),

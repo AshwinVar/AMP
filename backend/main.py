@@ -1034,6 +1034,13 @@ def get_weekly_report(db: Session = Depends(get_db), current_user: dict = Depend
     return ai.report.build_weekly_report(db, current_user.get("tenant", "DEFAULT"))
 
 
+@app.post("/copilot/ask")
+def copilot_ask(payload: dict, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
+    # Rule-first copilot (ADR-0003): answers a plant question from the read-models,
+    # no API key required. Returns the answer text and the view that drills into it.
+    return ai.assistant.answer(db, current_user.get("tenant", "DEFAULT"), payload.get("question", ""))
+
+
 @app.get("/machine-health/{machine_id}")
 def get_machine_detail(machine_id: int, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
     # Machine Health detail (ADR-0006): the single-machine cockpit — the twin

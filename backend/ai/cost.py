@@ -81,9 +81,10 @@ def build_cost_summary(db, tenant: str) -> dict:
              for d in window]
 
     # Costs actually logged in the window, grouped by type (worst first).
-    window_start = today - timedelta(days=WINDOW_DAYS - 1)
-    recs = [c for c in db.query(models.CostRecord).all()
-            if c.created_at and c.created_at.date() >= window_start]
+    # Windowed in SQL — the table grows as costs are logged.
+    window_start = datetime.combine(today - timedelta(days=WINDOW_DAYS - 1), datetime.min.time())
+    recs = (db.query(models.CostRecord)
+            .filter(models.CostRecord.created_at >= window_start).all())
     by_type_amt: Counter = Counter()
     for c in recs:
         by_type_amt[c.cost_type or "Other"] += c.amount or 0

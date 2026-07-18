@@ -47,11 +47,13 @@ def _oee_from_records(records) -> dict:
 
 
 def _recent_production(db, machine_id=None, days: int = 7):
-    cutoff = datetime.utcnow().date() - timedelta(days=days - 1)
-    q = db.query(models.ProductionRecord)
+    # Window in SQL — production_records grows continuously, so a full-table scan
+    # filtered in Python would get slower every week.
+    cutoff = datetime.combine(datetime.utcnow().date() - timedelta(days=days - 1), datetime.min.time())
+    q = db.query(models.ProductionRecord).filter(models.ProductionRecord.created_at >= cutoff)
     if machine_id is not None:
         q = q.filter(models.ProductionRecord.machine_id == machine_id)
-    return [r for r in q.all() if r.created_at and r.created_at.date() >= cutoff]
+    return q.all()
 
 
 def _oee_by_machine(db, days: int = 7) -> dict:

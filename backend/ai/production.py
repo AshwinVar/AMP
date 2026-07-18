@@ -27,8 +27,12 @@ def build_production_summary(db, tenant: str) -> dict:
     today = datetime.utcnow().date()
     window = [today - timedelta(days=i) for i in range(WINDOW_DAYS - 1, -1, -1)]
     window_set = set(window)
+    # Windowed in SQL (the table grows continuously); the set check keeps the
+    # exact per-day semantics for any future-dated rows.
+    start = datetime.combine(window[0], datetime.min.time())
     records = [
-        r for r in db.query(models.ProductionRecord).all()
+        r for r in db.query(models.ProductionRecord)
+        .filter(models.ProductionRecord.created_at >= start).all()
         if r.created_at and r.created_at.date() in window_set
     ]
 

@@ -49,11 +49,15 @@ def _period_kpis(records) -> dict:
 
 
 def _prior_records(db):
-    """Production records from the 7 days before the current window (7-13 days ago)."""
+    """Production records from the 7 days before the current window (7-13 days
+    ago). Bounded in SQL — the table grows continuously."""
     today = datetime.utcnow().date()
-    lo, hi = today - timedelta(days=2 * WINDOW_DAYS - 1), today - timedelta(days=WINDOW_DAYS)
-    return [r for r in db.query(models.ProductionRecord).all()
-            if r.created_at and lo <= r.created_at.date() <= hi]
+    lo = datetime.combine(today - timedelta(days=2 * WINDOW_DAYS - 1), datetime.min.time())
+    hi = datetime.combine(today - timedelta(days=WINDOW_DAYS - 1), datetime.min.time())
+    return (db.query(models.ProductionRecord)
+            .filter(models.ProductionRecord.created_at >= lo,
+                    models.ProductionRecord.created_at < hi)
+            .all())
 
 
 def _delta(cur, prior, has_prior, lower_is_better=False):

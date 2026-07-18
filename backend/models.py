@@ -42,7 +42,7 @@ class ShiftData(Base):
     shift_name = Column(String, nullable=False)
     target_output = Column(Integer, nullable=False)
     actual_output = Column(Integer, nullable=False)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=datetime.utcnow, index=True)
 
 
 class ProductionRecord(Base):

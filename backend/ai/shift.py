@@ -30,8 +30,9 @@ def _base_shift(shift_name: str) -> str:
 def build_shift_summary(db, tenant: str) -> dict:
     """Attainment (actual vs target) per shift over the last 7 days, with the
     best and worst shift. shift_data is auto-scoped (ADR-0002)."""
+    # Windowed in SQL — shift_data grows continuously.
     cutoff = datetime.utcnow() - timedelta(days=WINDOW_DAYS)
-    rows = [s for s in db.query(models.ShiftData).all() if s.created_at and s.created_at >= cutoff]
+    rows = db.query(models.ShiftData).filter(models.ShiftData.created_at >= cutoff).all()
 
     agg: dict = defaultdict(lambda: {"target": 0, "actual": 0, "entries": 0})
     for s in rows:

@@ -24,7 +24,8 @@ def build_maintenance_summary(db, tenant: str) -> dict:
     totals, and the tasks to do next (overdue first, then by priority, then
     soonest planned). maintenance_tasks and machines are auto-scoped (ADR-0002)."""
     today = datetime.utcnow().date()
-    tasks = [t for t in db.query(models.MaintenanceTask).all() if (t.status or "") in OPEN_STATUSES]
+    tasks = (db.query(models.MaintenanceTask)
+             .filter(models.MaintenanceTask.status.in_(OPEN_STATUSES)).all())
     names = {m.id: m.name for m in db.query(models.Machine).all()}
 
     by_priority = Counter(t.priority or "Medium" for t in tasks)

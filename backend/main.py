@@ -110,6 +110,7 @@ _ensure_index("production_records", "created_at")
 _ensure_index("downtime_logs", "created_at")
 _ensure_index("cost_records", "created_at")
 _ensure_index("quality_inspections", "created_at")
+_ensure_index("shift_data", "created_at")
 tenancy.ensure_tenant_columns(engine)  # ADR-0002: tenant_code on core tables
 tenancy.install_scoping()              # ADR-0002: auto-enforce tenant scoping
 

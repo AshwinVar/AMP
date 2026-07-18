@@ -53,6 +53,7 @@ import MaintenanceSection from "../../components/MaintenanceSection";
 import SchedulingSection from "../../components/SchedulingSection";
 import IoTCommandSection from "../../components/IoTCommandSection";
 import AIInsightsSection from "../../components/AIInsightsSection";
+import PlatformStatusCard from "../../components/PlatformStatusCard";
 import MissionControlSection from "../../components/MissionControlSection";
 import AgentActivitySection from "../../components/AgentActivitySection";
 import AgentRoiSection from "../../components/AgentRoiSection";
@@ -2624,7 +2625,12 @@ export default function DashboardPage() {
       ))}
 
       {renderSection("ai", (
-        <AIInsightsSection recommendations={aiRecommendations} insights={aiInsights} generateRecommendations={isAdminOrSupervisor ? generateAiRecommendations : async () => {}} updateRecommendation={updateAiRecommendation} />
+        <>
+          <div className="mt-8">
+            <PlatformStatusCard />
+          </div>
+          <AIInsightsSection recommendations={aiRecommendations} insights={aiInsights} generateRecommendations={isAdminOrSupervisor ? generateAiRecommendations : async () => {}} updateRecommendation={updateAiRecommendation} />
+        </>
       ))}
 
       {renderSection("saas", (

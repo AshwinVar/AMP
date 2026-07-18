@@ -171,7 +171,10 @@ function getHeaders() {
 }
 
 async function apiGet<T>(path: string): Promise<T> {
-  const res = await fetch(`${API_URL}${path}?t=${Date.now()}`, {
+  // The cache-buster must respect an existing query string (e.g. /search?q=…),
+  // otherwise the ?t=… pollutes the first parameter's value.
+  const sep = path.includes("?") ? "&" : "?";
+  const res = await fetch(`${API_URL}${path}${sep}t=${Date.now()}`, {
     method: "GET",
     headers: getHeaders(),
     cache: "no-store",

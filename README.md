@@ -10,16 +10,15 @@ Built for SME manufacturers and smart factories; evolving from an MES into an AI
 
 ## The exec cockpit
 
-The Overview home opens with four self-contained, live read-model cards — *how's my factory* answered in one glance:
+The Overview home leads with three always-on surfaces, then groups the pillar cards into four tabs (Performance · Quality & Maintenance · Business · Reports):
 
-| Card | Answers | Shows |
-|------|---------|-------|
-| **Factory Pulse** | How's my factory, and what needs me? | Fleet health · agent workload · approvals awaiting you |
-| **Quality** | How good is what we're making? | First-pass yield · defect Pareto · worst machines |
-| **Downtime** | What's stopping my machines? | Top reasons (Pareto) · most-affected machines · 7-day trend |
-| **Production** | How much are we making? | Good rate · throughput sparkline · top producers |
+| Surface | Answers |
+|---------|---------|
+| **Executive scorecard** | Plant OEE · good rate · on-time orders · cost of losses — each toned, with **week-on-week deltas**, each clickable to its detail view |
+| **Morning briefing** | What needs attention right now — a ranked alert feed every pillar feeds; the **Escalation agent proactively raises the top alert** into the approval queue, and its ⚡ pill deep-links to the escalation |
+| **Factory Pulse** | Fleet health · agent workload · approvals awaiting you |
 
-Each card fetches its own data, refreshes live, and hides itself when there's nothing to show.
+Behind the tabs: OEE + losses + production + WIP flow + shifts · quality + downtime + maintenance + compliance · delivery (with CSV export) + cost-of-losses + inventory · shift handover (copyable) + a weekly plant report (Markdown, copy/download). Every card fetches its own data, refreshes live, hides when empty, and drills into the view that acts on it.
 
 ---
 
@@ -29,26 +28,27 @@ The AI is a platform, not scattered scripts. Business modules consume `ai.<servi
 
 - **Event-driven backbone** — an in-process domain event bus (`ProductionCompleted`, `DowntimeStarted`, `InventoryLow`, `QualityInspectionFailed`, …) that the AI platform and agents subscribe to.
 - **Multi-tenant by construction** — every query is auto-scoped to the caller's tenant at the ORM layer; stamped tables are filtered explicitly. Leak-proof by default.
-- **Prediction · Recommendations · Copilot** — predictive-maintenance risk scoring, AI recommendations, and a natural-language copilot (LLM-optional) behind one platform surface.
+- **Prediction · Recommendations · Copilot** — predictive-maintenance risk scoring, AI recommendations, and a **rule-first, LLM-optional copilot** that answers plant questions with *no API key*: pillar Q&A, machine-by-name questions, week-on-week trends, and a one-shot "rundown" — each answer with a one-tap drill-in. Setting `ANTHROPIC_API_KEY` adds free-form LLM answers on top.
 
 ### Autonomous agents (with oversight)
 
-Four agents observe the stream and **propose** bounded actions — they create the item in a pending state, log an `AgentAction` (audit trail + approval queue), and either auto-approve trusted low-risk actions by policy or wait for a human:
+Five agents observe the stream and **propose** bounded actions — they create the item in a pending state, log an `AgentAction` (audit trail + approval queue), and either auto-approve trusted low-risk actions by policy or wait for a human:
 
 | Agent | Watches | Proposes |
 |-------|---------|----------|
 | **Maintenance** | Critical machine risk | A maintenance task |
 | **Quality** | High-fail inspections | A machine inspection |
 | **Reorder** | Low stock | A replenishment PO *(auto-approved by policy)* |
-| **Escalation** | Repeated downtime | An escalation to the maintenance lead |
+| **Escalation** | Repeated downtime **and the morning briefing's top alert** | An escalation, deep-linked from the briefing |
+| **Yield** | A machine's good-rate dropping | An investigation task |
 
-Which agents auto-approve is configurable via the `AUTO_APPROVE_AGENTS` env var. Approve advances the item; reject cancels it.
+Auto-approval is a **per-tenant policy** (an Admin sets it in the UI), falling back to the `AUTO_APPROVE_AGENTS` env default. Approve advances the item; reject cancels it.
 
 ### Read-model layer
 
-Nine pure projections that each *answer one question* by composing signals from existing tables (and from other read-models) — no new storage, tenant-scoped, unit-tested in isolation, surfaced through self-contained UI components:
+~27 pure projections that each *answer one question* by composing signals from existing tables (and from other read-models) — no new storage, tenant-scoped, unit-tested in isolation (33 test scripts, all green), surfaced through self-contained UI components. Highlights:
 
-`insights` (Mission Control feed) · `twin` (Machine Health + single-machine cockpit) · `impact` (agent-fleet ROI) · `pulse` (Factory Pulse) · `roster` (the AI workforce) · `trends` (agent activity) · `downtime` (Pareto) · `quality` (first-pass yield) · `production` (throughput).
+`scorecard` (toned KPIs + weekly deltas) · `briefing` (the proactive morning digest) · `oee` / `losses` (the OEE gap attributed, with costs) · `cost` (losses in ₹/$ by line & machine) · `delivery` (order states + chase list) · `maintenance` · `compliance` · `flow` (RAW → SMT → SEMI → IC → FIN) · `handover` · `report` (the weekly plant report) · `twin` (+ a floor-map overlay that heats by status / OEE / cost) · `assistant` (the copilot) · plus `insights`, `impact`, `pulse`, `roster`, `trends`, `downtime`, `quality`, `production`, `shift`, `inventory`. `GET /platform/status` reports the whole surface.
 
 ---
 
@@ -101,12 +101,12 @@ Significant decisions are recorded in [`docs/adr/`](docs/adr/) so the *why* surv
 ```text
 AMP/
 ├── backend/
-│   ├── main.py            # FastAPI app (~210 routes)
+│   ├── main.py            # FastAPI app (~237 routes, incl. public /health)
 │   ├── models.py          # SQLAlchemy models
 │   ├── events.py          # domain event bus (ADR-0001)
-│   ├── ai/                # AI platform: prediction, recommendations, copilot,
-│   │                      #   agents, and the read-models (twin, pulse, impact,
-│   │                      #   roster, trends, downtime, quality, production)
+│   ├── ai/                # AI platform: prediction, recommendations, the agents,
+│   │                      #   the rule-first copilot (assistant), and ~27
+│   │                      #   read-models (scorecard, briefing, oee, cost, …)
 │   ├── predictive_engine.py
 │   └── test_*.py          # per-read-model / per-agent tests
 │
@@ -169,9 +169,13 @@ Point the broker at `127.0.0.1:1883` for local runs.
 
 **Shipped**
 * Event-driven core & multi-tenant isolation (ADR-0001/0002)
-* AI platform: prediction, recommendations, copilot (ADR-0003)
-* Autonomous agent fleet + oversight (ADR-0004/0005)
-* Read-model layer + exec cockpit (ADR-0006/0007)
+* AI platform: prediction, recommendations, rule-first copilot (ADR-0003)
+* Autonomous agent fleet + per-tenant oversight policy (ADR-0004/0005)
+* Read-model layer (~27 projections) + tabbed exec cockpit (ADR-0006/0007)
+* Proactive morning briefing → Escalation agent loop, with deep-linked drill-ins
+* Cost-of-losses, delivery, maintenance & compliance pillars; weekly plant report
+* Two-line SMT → IC demo factory; digital-twin floor map with OEE/cost heat
+* Sliding-session auth (refresh + clean expiry landing); public /health
 * Live MQTT / PLC simulation & industrial gateway
 
 **Next**

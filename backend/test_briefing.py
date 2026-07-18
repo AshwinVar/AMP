@@ -152,6 +152,27 @@ def test_briefing_flags_overdue_maintenance():
     assert "overdue" in by["maintenance"]["title"] and "SMT-Reflow-01" in by["maintenance"]["detail"]
 
 
+def test_briefing_flags_overdue_document_reviews():
+    from datetime import date
+    db = _fresh_session()
+    now = datetime.utcnow()
+    db.add(models.Machine(id=1, name="M1", status="Running", utilization=90, line="SMT"))
+    db.add(models.ProductionRecord(machine_id=1, planned_minutes=480, runtime_minutes=470,
+                                   ideal_cycle_time_seconds=30, total_count=100, good_count=98,
+                                   rejected_count=2, created_at=now))
+    # a controlled document overdue for review -> a medium compliance alert
+    db.add(models.ComplianceDocument(document_no="SOP-1", title="Solder Reflow SOP", document_type="SOP",
+                                     department="Quality", version="1.0", owner="QA Lead",
+                                     approval_status="Approved", review_due_date=(date.today() - timedelta(days=5))))
+    db.commit()
+
+    b = briefing.build_briefing(db, "DEFAULT")
+    by = {a["key"]: a for a in b["alerts"]}
+    assert "compliance" in by
+    assert by["compliance"]["severity"] == "medium" and by["compliance"]["module"] == "documents"
+    assert "overdue" in by["compliance"]["title"] and "Solder Reflow SOP" in by["compliance"]["detail"]
+
+
 if __name__ == "__main__":
     test_briefing_ranks_alerts_and_surfaces_wins()
     test_briefing_empty_is_safe()
@@ -159,6 +180,7 @@ if __name__ == "__main__":
     test_briefing_marks_alerts_the_agent_has_escalated()
     test_briefing_flags_late_orders()
     test_briefing_flags_overdue_maintenance()
+    test_briefing_flags_overdue_document_reviews()
     print("BRIEFING OK: composes pillar read-models into a ranked alert feed (high-first) + wins; "
           "headline OEE + trend; empty-safe; clean plant -> no alerts, only wins; "
           "marks alerts the Escalation agent has proactively raised")

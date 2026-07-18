@@ -14,6 +14,7 @@ from ai.delivery import build_delivery_summary
 from ai.downtime import build_downtime_summary
 from ai.quality import build_quality_summary
 from ai.maintenance import build_maintenance_summary
+from ai.compliance import build_compliance_summary
 from ai.inventory import build_inventory_summary
 from ai.production import build_production_summary
 from ai.flow import build_flow_summary
@@ -91,6 +92,23 @@ def _maintenance(db, tenant):
         t = m["tasks"][0]
         ans += f" Next up: {t['task_type']} on {t['machine']}."
     return ans, "cmms"
+
+
+def _compliance(db, tenant):
+    c = build_compliance_summary(db, tenant)
+    if c["total"] == 0:
+        return "No controlled documents on file.", "documents"
+    ans = f"{c['total']} controlled documents"
+    if c["overdue"]:
+        ans += f", {c['overdue']} review(s) overdue"
+    if c["due_soon"]:
+        ans += f", {c['due_soon']} due soon"
+    if c["pending_approval"]:
+        ans += f", {c['pending_approval']} unapproved"
+    ans += "."
+    if c["documents"] and c["documents"][0]["overdue"]:
+        ans += f" Review {c['documents'][0]['title']} first."
+    return ans, "documents"
 
 
 def _downtime(db, tenant):
@@ -244,6 +262,7 @@ _ROUTES = [
     (("deliver", "on-time", "on time", " late", "customer", "ship", "fulfil", "bugatti", "mercedes", "order"), _delivery),
     (("cost", "money", "losing", "$", "expensive", "spend", "margin"), _cost),
     (("quality", "defect", "reject", "scrap", "fail", "yield", "fpy", "first-pass", "first pass"), _quality),
+    (("compliance", "document", "audit", "iso", "sop", "controlled doc"), _compliance),
     (("maintenance", "overdue", "service", "pm ", " task"), _maintenance),
     (("downtime", "stoppage", "down time"), _downtime),
     (("machine", "breakdown", "running", "idle", "offline", " down"), _machines),

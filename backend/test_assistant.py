@@ -52,6 +52,7 @@ def test_copilot_routes_questions_to_the_right_pillar():
     assert ask("How much are losses costing us?")["matched"] == "cost"
     assert ask("What's our quality fail rate?")["matched"] == "quality"
     assert ask("Any overdue maintenance?")["matched"] == "maintenance"
+    assert ask("Any documents overdue for review?")["matched"] == "compliance"
     assert ask("Why is downtime high?")["matched"] == "downtime"
     assert ask("Summarise today's production")["matched"] == "production"
     assert ask("How much work in progress?")["matched"] == "flow"

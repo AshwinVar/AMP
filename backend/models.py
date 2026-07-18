@@ -212,7 +212,7 @@ class QualityInspection(Base):
     scrap_quantity = Column(Integer, default=0)
     status = Column(String, default="Open")
     notes = Column(String, nullable=True)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=datetime.utcnow, index=True)
 
 
 

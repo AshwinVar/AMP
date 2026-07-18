@@ -1,10 +1,13 @@
 """Quality summary read-model tests (ADR-0007).
 
 First-pass yield, fail rate, a defect Pareto (desc), and the worst machines by
-fail rate — over the tenant's quality inspections.
+fail rate — over the last 7 days' quality inspections (windowed like the other
+pillars; out-of-window rows excluded).
 
 Run:  python backend/test_quality.py     (exit 0 = pass)
 """
+from datetime import datetime, timedelta
+
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
@@ -30,15 +33,18 @@ def test_quality_summary_rolls_up_yield_defects_and_machines():
     db = _fresh_session()
     db.add(models.Machine(id=1, name="PRESS-01", status="Running", utilization=60, line="SMT"))
     db.add(models.Machine(id=2, name="CNC-02", status="Running", utilization=60, line="IC"))
+    old = _insp("QC-OLD", 1, inspected=100, passed=0, failed=100, defect="surface")
+    old.created_at = datetime.utcnow() - timedelta(days=9)   # outside the 7-day window
     db.add_all([
         _insp("QC-1", 1, inspected=100, passed=80, failed=20, defect="surface", rework=5, scrap=2),
         _insp("QC-2", 1, inspected=100, passed=95, failed=5, defect="surface"),
         _insp("QC-3", 2, inspected=100, passed=98, failed=2, defect="dimension"),
+        old,
     ])
     db.commit()
 
     s = quality.build_quality_summary(db, "DEFAULT")
-    assert s["inspections"] == 3
+    assert s["inspections"] == 3                             # QC-OLD (9 days ago) excluded
     assert s["inspected"] == 300 and s["passed"] == 273 and s["failed"] == 27
     assert s["first_pass_yield"] == 91                      # 273/300
     assert s["fail_rate"] == 9                              # 27/300

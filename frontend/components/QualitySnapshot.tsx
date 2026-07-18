@@ -63,7 +63,7 @@ export default function QualitySnapshot() {
     <div className="rounded-2xl border border-slate-800 bg-slate-900/60 p-6">
       <div className="flex items-start justify-between flex-wrap gap-2">
         <div>
-          <h3 className="text-xs font-semibold uppercase tracking-wide text-slate-300">Quality snapshot</h3>
+          <h3 className="text-xs font-semibold uppercase tracking-wide text-slate-300">Quality · last 7 days</h3>
           <p className="text-slate-400 text-sm mt-1">
             {q.inspections} inspection{q.inspections !== 1 ? "s" : ""} · {q.inspected} units · {q.fail_rate}% fail rate
           </p>

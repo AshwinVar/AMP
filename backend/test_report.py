@@ -29,6 +29,10 @@ def test_weekly_report_composes_a_markdown_page():
     db.add(models.CustomerOrder(order_no="BUG-1", customer_name="Bugatti", product_name="CLB-PCB",
                                 order_quantity=100, dispatched_quantity=50, status="Pending",
                                 due_date=(now.date() + timedelta(days=10))))
+    db.add(models.ComplianceDocument(document_no="SOP-1", title="Reflow SOP", document_type="SOP",
+                                     department="Quality", version="1.0", owner="QA Lead",
+                                     approval_status="Approved",
+                                     review_due_date=(now.date() - timedelta(days=3))))
     db.commit()
 
     r = report.build_weekly_report(db, "DEFAULT")
@@ -36,8 +40,9 @@ def test_weekly_report_composes_a_markdown_page():
     md = r["markdown"]
     # the report has the expected sections
     for section in ["# Weekly Plant Report", "## Scorecard", "## Cost of losses",
-                    "## Delivery", "## Needs attention", "## Wins"]:
+                    "## Delivery", "## Compliance", "## Needs attention", "## Wins"]:
         assert section in md
+    assert "1 overdue for review" in md
     # and pulls real figures through
     assert "Plant OEE" in md and "Bugatti" in md and "machine down" in md
     assert "$" in md   # cost of losses rendered as money

@@ -186,9 +186,9 @@ def _oee(db, tenant):
 def _help(db, tenant):
     return (
         "I can answer about OEE & performance, the cost of losses, order delivery, "
-        "downtime, quality, maintenance, inventory, machines (ask by name too), "
-        "production, WIP, shifts, and week-on-week trends — from your live data. "
-        "Try \"give me the rundown\" for the whole picture at once.",
+        "downtime, quality, maintenance, compliance documents, inventory, machines "
+        "(ask by name too), production, WIP, shifts, and week-on-week trends — from "
+        "your live data. Try \"give me the rundown\" for the whole picture at once.",
         "overview",
     )
 

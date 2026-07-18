@@ -66,6 +66,15 @@ def test_copilot_routes_questions_to_the_right_pillar():
     md = ask("How is SMT-Reflow-01 doing?")
     assert md["matched"] == "machine_detail" and md["view"] == "machines"
     assert "SMT-Reflow-01" in md["answer"] and "Breakdown" in md["answer"]
+    # "find X" runs the global entity search and points at the owning view
+    db.add(models.CustomerOrder(order_no="CO-9009", customer_name="Mercedes", product_name="CLB-GAUGE",
+                                order_quantity=10, dispatched_quantity=0, status="Pending",
+                                due_date=(datetime.utcnow() + timedelta(days=30)).date()))
+    db.commit()
+    f = ask("find CO-9009")
+    assert f["matched"] == "find" and f["view"] == "orders" and "CO-9009" in f["answer"]
+    assert "couldn't find" in ask("where is zzz-nothing?")["answer"]
+
     # help/capability questions -> the help intent
     assert ask("What can you do?")["matched"] == "help"
     assert ask("help")["matched"] == "help"

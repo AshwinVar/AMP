@@ -65,6 +65,10 @@ def test_copilot_routes_questions_to_the_right_pillar():
     md = ask("How is SMT-Reflow-01 doing?")
     assert md["matched"] == "machine_detail" and md["view"] == "machines"
     assert "SMT-Reflow-01" in md["answer"] and "Breakdown" in md["answer"]
+    # help/capability questions -> the help intent
+    assert ask("What can you do?")["matched"] == "help"
+    assert ask("help")["matched"] == "help"
+    assert "OEE" in ask("help")["answer"]
     # unknown -> defaults to the attention briefing
     assert ask("hello")["matched"] == "briefing"
 

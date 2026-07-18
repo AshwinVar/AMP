@@ -279,11 +279,11 @@ each recorded as an inventory transaction. So finishing a job of 5 shafts turns 
 
 ## 3.11 The AI Factory Copilot
 
-An **optional** assistant (`ai_copilot.py`). It's **off** unless an `ANTHROPIC_API_KEY` is set in the server's environment — so it costs nothing until a client wants it. When on, it:
+The copilot is **rule‑first, LLM‑optional** (ADR‑0003) and works out of the box with **no API key**:
 
-1. Builds a compact text snapshot of the factory (machines, average OEE, recent downtime, shift outputs, low stock),
-2. Sends that plus the user's question to **Claude** (Anthropic's AI) over a plain HTTPS call (no heavy SDK, so it can never break the deployment),
-3. Returns a concise, practical answer grounded *only* in the real data — plus a one‑click daily management report.
+- **Rule‑based Q&A** (`ai/assistant.py`, `POST /copilot/ask`): a keyword router sends the question to the right pillar read‑model — OEE, cost of losses, delivery, downtime, quality, maintenance, compliance, inventory, machines (ask one **by name**, e.g. "how is SMT‑Reflow‑01 doing?"), production, WIP, shifts, and **week‑on‑week trends** — and phrases its live numbers into a sentence, with a one‑tap drill‑in to the view that owns the detail. "help" lists what it can answer.
+- **The rundown** (`GET /copilot/digest`): a one‑shot plain‑English paragraph of the whole plant — OEE + trend, the week's losses in money, the order book, the most pressing issue, and the wins.
+- **Optional LLM layer** (`ai_copilot.py`): setting `ANTHROPIC_API_KEY` additionally enables free‑form conversational answers via Claude over a plain HTTPS call. It remains off (and free) until a client wants it.
 
 ## 3.12 Industrial connectivity (the bridge to real machines)
 
@@ -291,9 +291,23 @@ An **optional** assistant (`ai_copilot.py`). It's **off** unless an `ANTHROPIC_A
 
 ## 3.13 How it's deployed
 
-- **Backend → Railway.** Push to the `master` branch on GitHub and Railway rebuilds it using **NIXPACKS** (config in `railway.toml`), starting the FastAPI app with `uvicorn`. Its health is checked at `/docs`.
-- **Frontend → Vercel.** Push to `master` and Vercel rebuilds the Next.js site. Production lives at `flow-mes.vercel.app`.
+- **Backend → Railway.** Push to the `master` branch on GitHub and Railway rebuilds it using **NIXPACKS** (config in `railway.toml`), starting the FastAPI app with `uvicorn`. A public **`GET /health`** endpoint (no auth) reports process + database liveness for uptime monitors.
+- **Frontend → Vercel.** Push to `master` and Vercel rebuilds the Next.js site. Production lives at **app.marx8.com**.
 - **Config via environment variables** (never hard‑coded): database URL, secret key, MQTT broker, allowed origins (CORS), the optional AI key, the optional error‑monitoring key, and the GMATS admin password.
+
+## 3.14 The AI read‑model platform (July 2026 expansion)
+
+The intelligence layer is built from **read‑models** (ADR‑0007): pure functions in `backend/ai/` that *compose* the operational tables into an answer, add **no storage**, are tenant‑scoped automatically (ADR‑0002), unit‑tested in isolation, and exposed 1:1 at GET endpoints. `GET /platform/status` lists the registered surface (27 read‑models, 5 agents). The pillars:
+
+- **Performance** — `oee` (plant/line/machine OEE + 7‑day trend), `losses` (the OEE gap attributed to availability/performance/quality with concrete costs), `production`, `flow` (the RAW → SMT → SEMI → IC → FIN pipeline of the two‑line demo factory), `shift`.
+- **Money** — `cost`: downtime + scrap priced at standard rates, by loss type / line / machine (costliest first), a daily trend, and recorded costs by type.
+- **Customers** — `delivery`: every order classified delivered / on‑track / at‑risk / late, per‑customer fulfilment, a chase list, an upcoming‑due series, and one‑click **CSV export** of the order book.
+- **Upkeep** — `maintenance` (open tasks by priority/machine, overdue + awaiting‑approval counts) and `compliance` (controlled‑document reviews overdue / due soon / unapproved).
+- **Composites** — `scorecard` (one toned KPI per pillar **with week‑on‑week deltas**, each clickable to its view), `briefing` (the morning digest below), `handover` (the end‑of‑shift summary, copyable as plain text), `report` (a Markdown **weekly plant report**, copy/download), `twin` overlay (the digital‑twin floor map heats by **status / OEE / cost**).
+
+**The proactive loop.** Every pillar feeds the **morning briefing** as a ranked alert (machines down, out‑of‑stock, late orders, overdue maintenance, overdue document reviews, biggest OEE loss, fail rate, top downtime cause). The **Escalation agent** autonomously turns the top high‑severity alert into a proposed Escalation + AgentAction in the approval queue (deduped via a `[briefing:<key>]` marker), and the briefing shows an **⚡ escalated** pill that deep‑links to the exact escalation. Every alert, KPI and chip drills into the view that acts on it.
+
+**The exec home** keeps the scorecard, briefing and Factory Pulse always on, and groups the pillar cards into four tabs (Performance · Quality & Maintenance · Business · Reports) so only the active tab's cards mount.
 
 ---
 

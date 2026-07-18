@@ -146,6 +146,16 @@ def tenant_from_token(token):
     return payload.get("tenant") if payload else None
 
 
+def effective_tenant(claim_tenant, header_tenant):
+    """The tenant a request is scoped to. Only the founder workspace (a DEFAULT
+    claim) may preview another tenant via the X-Tenant header — that's how the
+    top-bar company switcher works. A client token always stays locked to its
+    own tenant: the header is ignored for every non-DEFAULT claim."""
+    if claim_tenant == DEFAULT_TENANT and header_tenant:
+        return header_tenant
+    return claim_tenant
+
+
 _scoping_installed = False
 
 
@@ -192,13 +202,15 @@ class TenantScopeMiddleware:
             await self.app(scope, receive, send)
             return
         token = None
+        header_tenant = None
         for key, value in scope.get("headers") or []:
             if key == b"authorization":
                 parts = value.decode("latin-1").split(" ", 1)
                 if len(parts) == 2 and parts[0].lower() == "bearer":
                     token = parts[1].strip()
-                break
-        reset = set_current_tenant(tenant_from_token(token))
+            elif key == b"x-tenant":
+                header_tenant = value.decode("latin-1").strip() or None
+        reset = set_current_tenant(effective_tenant(tenant_from_token(token), header_tenant))
         try:
             await self.app(scope, receive, send)
         finally:

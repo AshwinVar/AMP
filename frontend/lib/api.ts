@@ -16,17 +16,33 @@ export function getUserRole(): string {
   }
 }
 
-export function getAuthHeaders() {
-  return {
+// Founder company-switcher preview: when the platform workspace has switched
+// to a customer tenant (localStorage "company"), every request carries an
+// X-Tenant header. The backend honours it only for DEFAULT-claim tokens
+// (tenancy.effective_tenant) — for everyone else it's inert.
+function getPreviewTenant(): string {
+  if (typeof window === "undefined") return "";
+  const company = localStorage.getItem("company") || "";
+  return company && company !== "DEFAULT" ? company : "";
+}
+
+export function getAuthHeaders(): Record<string, string> {
+  const headers: Record<string, string> = {
     "Content-Type": "application/json",
     Authorization: `Bearer ${getToken()}`,
   };
+  const preview = getPreviewTenant();
+  if (preview) headers["X-Tenant"] = preview;
+  return headers;
 }
 
-export function getDownloadHeaders() {
-  return {
+export function getDownloadHeaders(): Record<string, string> {
+  const headers: Record<string, string> = {
     Authorization: `Bearer ${getToken()}`,
   };
+  const preview = getPreviewTenant();
+  if (preview) headers["X-Tenant"] = preview;
+  return headers;
 }
 
 // ── Sliding session ─────────────────────────────────────────────

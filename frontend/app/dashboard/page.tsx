@@ -454,9 +454,10 @@ export default function DashboardPage() {
 
   function switchCompany(code: string) {
     if (!isFounder) return;   // clients cannot switch companies
-    setCompany(code);
     localStorage.setItem("company", code);
-    if (code === "GMATS") setActiveView("inventory");
+    // Full reload so every widget refetches under the new tenant scope — the
+    // X-Tenant preview header is derived from localStorage in lib/api.
+    window.location.reload();
   }
 
   const [users, setUsers] = useState<User[]>([]);
@@ -1882,6 +1883,13 @@ export default function DashboardPage() {
       >
         <option value="DEFAULT">Default Factory</option>
         <option value="GMATS">GMATS Compressors</option>
+        {tenants
+          .filter((t) => t.company_code && t.company_code !== "DEFAULT" && t.company_code !== "GMATS")
+          .map((t) => (
+            <option key={t.company_code} value={t.company_code}>
+              {t.company_name || t.company_code}
+            </option>
+          ))}
       </select>
     ) : (
       <div className="phase29-pill" style={{ color: "#a5b4fc" }}>

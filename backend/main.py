@@ -37,6 +37,16 @@ from report_generator import build_daily_summary_text
 import models
 import schemas
 import tenancy
+import onboard_tenant
+
+
+def _tenant(current_user):
+    """Tenant scope for the request: the middleware-bound effective tenant
+    (which honours the founder's X-Tenant company-switcher preview), falling
+    back to the JWT claim. Token-issuing endpoints (login/refresh) must NOT use
+    this — identity claims always come from the JWT itself."""
+    return tenancy.current_tenant() or current_user.get("tenant", tenancy.DEFAULT_TENANT)
+
 import enterprise_inventory_routes
 import gmats_inventory_routes
 import platform_routes
@@ -460,14 +470,16 @@ def create_employee(
     db: Session = Depends(get_db),
     current_user: dict = Depends(require_roles(["Admin"])),
 ):
-    """Admin adds an employee. New employee inherits the Admin's company (tenant)."""
+    """Admin adds an employee into the current workspace's tenant. For a tenant
+    Admin that's always their own company; for the founder it follows the
+    company switcher — switch to a tenant, then add that tenant's users."""
     if user.role not in VALID_ROLES:
         raise HTTPException(status_code=400, detail="Invalid role")
 
     if db.query(models.User).filter(models.User.username == user.username).first():
         raise HTTPException(status_code=400, detail="Username already exists")
 
-    tenant = current_user.get("tenant", "DEFAULT")
+    tenant = _tenant(current_user)
     try:
         new_user = models.User(
             username=user.username,
@@ -520,7 +532,7 @@ def login(user: schemas.UserLogin, db: Session = Depends(get_db)):
 
 @app.get("/users", response_model=List[schemas.UserResponse])
 def list_users(db: Session = Depends(get_db), current_user: dict = Depends(require_roles(["Admin"]))):
-    tenant = current_user.get("tenant", "DEFAULT")
+    tenant = _tenant(current_user)
     q = db.query(models.User)
     if tenant == "DEFAULT":
         q = q.filter((models.User.tenant_code == "DEFAULT") | (models.User.tenant_code.is_(None)))
@@ -530,7 +542,7 @@ def list_users(db: Session = Depends(get_db), current_user: dict = Depends(requi
 
 
 def _same_tenant_or_403(user, current_user):
-    tenant = current_user.get("tenant", "DEFAULT")
+    tenant = _tenant(current_user)
     user_tenant = user.tenant_code or "DEFAULT"
     if user_tenant != tenant:
         raise HTTPException(status_code=403, detail="You can only manage users in your own company")
@@ -690,7 +702,7 @@ def create_downtime_log(
     # Widen the event stream: a machine entered downtime (ADR-0003). Published
     # before commit so the event and any AI reaction commit atomically.
     event_bus.publish(DowntimeStarted(
-        tenant_code=current_user.get("tenant", "DEFAULT"),
+        tenant_code=_tenant(current_user),
         machine_id=downtime.machine_id,
         reason=downtime.reason,
         duration=downtime.duration,
@@ -916,56 +928,56 @@ def get_predictive_maintenance(db: Session = Depends(get_db), current_user: dict
 def get_insights(db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
     # Mission Control read-model (ADR-0003 step 3): open AI recommendations +
     # recent notable events, unified into one tenant-scoped feed.
-    return ai.insights.build_feed(db, current_user.get("tenant", "DEFAULT"))
+    return ai.insights.build_feed(db, _tenant(current_user))
 
 
 @app.get("/machine-health")
 def get_machine_health(db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
     # Machine Health twin (ADR-0006): a live per-machine snapshot composing state,
     # a health score from predictive risk, downtime, and open tasks/agent actions.
-    return ai.twin.build_twins(db, current_user.get("tenant", "DEFAULT"))
+    return ai.twin.build_twins(db, _tenant(current_user))
 
 
 @app.get("/mission-control/pulse")
 def get_mission_control_pulse(db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
     # Factory Pulse (ADR-0006): the owner's one-glance command header — fleet
     # health from the twins + agent workload from the impact rollup, composed.
-    return ai.pulse.build_pulse(db, current_user.get("tenant", "DEFAULT"))
+    return ai.pulse.build_pulse(db, _tenant(current_user))
 
 
 @app.get("/downtime-summary")
 def get_downtime_summary(db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
     # Downtime summary (ADR-0007): fleet-wide downtime over the last 7 days —
     # total, top reasons (Pareto), worst machines, and a daily series.
-    return ai.downtime.build_downtime_summary(db, current_user.get("tenant", "DEFAULT"))
+    return ai.downtime.build_downtime_summary(db, _tenant(current_user))
 
 
 @app.get("/downtime-reason")
 def get_downtime_reason(reason: str, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
     # Downtime reason drill-down (ADR-0007): for one reason over the last 7 days —
     # events, minutes lost, machines hit, a daily trend, and recent instances.
-    return ai.downtime.build_downtime_reason(db, current_user.get("tenant", "DEFAULT"), reason)
+    return ai.downtime.build_downtime_reason(db, _tenant(current_user), reason)
 
 
 @app.get("/quality-summary")
 def get_quality_summary(db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
     # Quality summary (ADR-0007): first-pass yield, fail rate, a defect Pareto,
     # and the worst machines by fail rate — over the tenant's inspections.
-    return ai.quality.build_quality_summary(db, current_user.get("tenant", "DEFAULT"))
+    return ai.quality.build_quality_summary(db, _tenant(current_user))
 
 
 @app.get("/quality-defect")
 def get_quality_defect(category: str, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
     # Defect drill-down (ADR-0007): for one defect category — units failed
     # (rework/scrap split), the machines producing it, and recent inspections.
-    return ai.quality.build_defect_detail(db, current_user.get("tenant", "DEFAULT"), category)
+    return ai.quality.build_defect_detail(db, _tenant(current_user), category)
 
 
 @app.get("/production-summary")
 def get_production_summary(db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
     # Production summary (ADR-0007): throughput and output quality over the last
     # 7 days — units good/rejected, good rate, top producers, and a daily series.
-    return ai.production.build_production_summary(db, current_user.get("tenant", "DEFAULT"))
+    return ai.production.build_production_summary(db, _tenant(current_user))
 
 
 @app.get("/oee-summary")
@@ -973,7 +985,7 @@ def get_oee_summary(db: Session = Depends(get_db), current_user: dict = Depends(
     # OEE summary (ADR-0007): the plant's headline metric — one plant-level OEE
     # (Availability x Performance x Quality) over the last 7 days, the component
     # dragging it down, and a worst-first per-machine breakdown.
-    return ai.oee.build_oee_summary(db, current_user.get("tenant", "DEFAULT"))
+    return ai.oee.build_oee_summary(db, _tenant(current_user))
 
 
 @app.get("/inventory-summary")
@@ -981,35 +993,35 @@ def get_inventory_summary(db: Session = Depends(get_db), current_user: dict = De
     # Inventory summary (ADR-0007): supply risk — items at/below reorder level
     # (worst coverage first), the out-of-stock count, and the Reorder agent's
     # drafted POs still awaiting approval.
-    return ai.inventory.build_inventory_summary(db, current_user.get("tenant", "DEFAULT"))
+    return ai.inventory.build_inventory_summary(db, _tenant(current_user))
 
 
 @app.get("/flow-summary")
 def get_flow_summary(db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
     # WIP flow (ADR-0007): work orders grouped by material state —
     # RAW -> SMT -> SEMI -> IC -> FIN — for the two-line pipeline view.
-    return ai.flow.build_flow_summary(db, current_user.get("tenant", "DEFAULT"))
+    return ai.flow.build_flow_summary(db, _tenant(current_user))
 
 
 @app.get("/shift-summary")
 def get_shift_summary(db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
     # Shift performance (ADR-0007): attainment (actual vs target) per shift over
     # the last 7 days, with the best and worst shift.
-    return ai.shift.build_shift_summary(db, current_user.get("tenant", "DEFAULT"))
+    return ai.shift.build_shift_summary(db, _tenant(current_user))
 
 
 @app.get("/losses-summary")
 def get_losses_summary(db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
     # OEE losses (ADR-0007): the OEE gap attributed to availability / performance
     # / quality (points lost each) with the concrete cost of each.
-    return ai.losses.build_losses_summary(db, current_user.get("tenant", "DEFAULT"))
+    return ai.losses.build_losses_summary(db, _tenant(current_user))
 
 
 @app.get("/briefing")
 def get_briefing(db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
     # Morning briefing (ADR-0007): the "what needs attention right now" digest —
     # headline OEE + trend, ranked alerts across every pillar, and a few wins.
-    return ai.briefing.build_briefing(db, current_user.get("tenant", "DEFAULT"))
+    return ai.briefing.build_briefing(db, _tenant(current_user))
 
 
 @app.post("/briefing/escalate")
@@ -1017,7 +1029,7 @@ def escalate_briefing(db: Session = Depends(get_db),
                       current_user: dict = Depends(require_roles(["Admin", "Supervisor"]))):
     # Proactive briefing (ADR-0005): the Escalation agent turns the briefing's most
     # urgent (high-severity) alert into a proposed escalation in the approval queue.
-    result = ai.agents.escalate_from_briefing(db, current_user.get("tenant", "DEFAULT"))
+    result = ai.agents.escalate_from_briefing(db, _tenant(current_user))
     db.commit()
     return result
 
@@ -1026,49 +1038,49 @@ def escalate_briefing(db: Session = Depends(get_db),
 def get_delivery_summary(db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
     # Order delivery outlook (ADR-0007): per-customer on-track / at-risk / late
     # order states, unit fulfillment, and the specific orders to chase.
-    return ai.delivery.build_delivery_summary(db, current_user.get("tenant", "DEFAULT"))
+    return ai.delivery.build_delivery_summary(db, _tenant(current_user))
 
 
 @app.get("/cost-summary")
 def get_cost_summary(db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
     # Cost of losses (ADR-0007): downtime + scrap priced at standard rates, and
     # recorded costs for the period rolled up by type.
-    return ai.cost.build_cost_summary(db, current_user.get("tenant", "DEFAULT"))
+    return ai.cost.build_cost_summary(db, _tenant(current_user))
 
 
 @app.get("/handover")
 def get_handover(db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
     # Shift handover (ADR-0007): output + OEE, open work to carry over, attention
     # list and wins — the end-of-shift summary composed from the pillar read-models.
-    return ai.handover.build_handover(db, current_user.get("tenant", "DEFAULT"))
+    return ai.handover.build_handover(db, _tenant(current_user))
 
 
 @app.get("/scorecard")
 def get_scorecard(db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
     # Executive scorecard (ADR-0007): one headline KPI per pillar (OEE, good rate,
     # on-time orders, cost of losses), each with a tone.
-    return ai.scorecard.build_scorecard(db, current_user.get("tenant", "DEFAULT"))
+    return ai.scorecard.build_scorecard(db, _tenant(current_user))
 
 
 @app.get("/twin-overlay")
 def get_twin_overlay(db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
     # Digital-twin overlay (ADR-0007): per-machine OEE + cost of losses, keyed by
     # machine, so the floor map can heat by either metric.
-    return ai.twin.build_twin_overlay(db, current_user.get("tenant", "DEFAULT"))
+    return ai.twin.build_twin_overlay(db, _tenant(current_user))
 
 
 @app.get("/maintenance-summary")
 def get_maintenance_summary(db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
     # Maintenance work summary (ADR-0007): open tasks by priority, overdue +
     # pending-approval counts, and the tasks to do next.
-    return ai.maintenance.build_maintenance_summary(db, current_user.get("tenant", "DEFAULT"))
+    return ai.maintenance.build_maintenance_summary(db, _tenant(current_user))
 
 
 @app.get("/compliance-summary")
 def get_compliance_summary(db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
     # Compliance document summary (ADR-0007): review load — overdue / due-soon /
     # pending-approval counts, a status breakdown, and the docs to review next.
-    return ai.compliance.build_compliance_summary(db, current_user.get("tenant", "DEFAULT"))
+    return ai.compliance.build_compliance_summary(db, _tenant(current_user))
 
 
 @app.get("/search")
@@ -1076,28 +1088,28 @@ def global_search(q: str = "", db: Session = Depends(get_db), current_user: dict
     # Global entity search: one query across machines, work orders, customer
     # orders, inventory, maintenance, escalations and documents — each hit
     # carrying the dashboard view that opens it.
-    return ai.search.build_search(db, current_user.get("tenant", "DEFAULT"), q)
+    return ai.search.build_search(db, _tenant(current_user), q)
 
 
 @app.get("/weekly-report")
 def get_weekly_report(db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
     # Weekly plant report (ADR-0007): a Markdown report composing the scorecard,
     # cost, delivery and briefing read-models, ready to copy or download.
-    return ai.report.build_weekly_report(db, current_user.get("tenant", "DEFAULT"))
+    return ai.report.build_weekly_report(db, _tenant(current_user))
 
 
 @app.post("/copilot/ask")
 def copilot_ask(payload: dict, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
     # Rule-first copilot (ADR-0003): answers a plant question from the read-models,
     # no API key required. Returns the answer text and the view that drills into it.
-    return ai.assistant.answer(db, current_user.get("tenant", "DEFAULT"), payload.get("question", ""))
+    return ai.assistant.answer(db, _tenant(current_user), payload.get("question", ""))
 
 
 @app.get("/copilot/digest")
 def copilot_digest(db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
     # Copilot rundown (ADR-0003): a plain-English one-shot summary of the whole
     # plant, composed from the pillar read-models.
-    return ai.assistant.digest(db, current_user.get("tenant", "DEFAULT"))
+    return ai.assistant.digest(db, _tenant(current_user))
 
 
 @app.post("/auth/refresh")
@@ -1135,7 +1147,7 @@ def health(db: Session = Depends(get_db)):
 def platform_status(db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
     # AI platform self-report (ADR-0003): registered read-models, the agent roster,
     # copilot connectivity, and the tenant's logged agent actions.
-    return ai.platform_status.build_platform_status(db, current_user.get("tenant", "DEFAULT"))
+    return ai.platform_status.build_platform_status(db, _tenant(current_user))
 
 
 def _orders_csv(db) -> str:
@@ -1165,7 +1177,7 @@ def get_machine_detail(machine_id: int, db: Session = Depends(get_db), current_u
     # Machine Health detail (ADR-0006): the single-machine cockpit — the twin
     # snapshot plus a risk-factor breakdown, a unified event timeline, and the
     # agent actions awaiting approval for this machine.
-    detail = ai.twin.build_machine_detail(db, current_user.get("tenant", "DEFAULT"), machine_id)
+    detail = ai.twin.build_machine_detail(db, _tenant(current_user), machine_id)
     if detail is None:
         raise HTTPException(status_code=404, detail="Machine not found")
     return detail
@@ -1255,7 +1267,7 @@ def update_work_order(
     if prev_status != "Completed" and work_order.status == "Completed":
         event_bus.publish(
             ProductionCompleted(
-                tenant_code=current_user.get("tenant", "DEFAULT"),
+                tenant_code=_tenant(current_user),
                 work_order_id=work_order.id,
                 work_order_no=work_order.work_order_no,
                 part_number=work_order.part_number,
@@ -1784,7 +1796,7 @@ def create_inventory_transaction(
     # AI platform can react with a reorder recommendation (ADR-0003).
     if was_above_reorder and item.current_stock <= item.reorder_level:
         event_bus.publish(InventoryLow(
-            tenant_code=current_user.get("tenant", "DEFAULT"),
+            tenant_code=_tenant(current_user),
             item_id=item.id,
             item_code=item.item_code,
             item_name=item.item_name,
@@ -1948,7 +1960,7 @@ def create_quality_inspection(
     # Widen the event stream: a quality inspection recorded failures (ADR-0003).
     if (new_inspection.failed_quantity or 0) > 0:
         event_bus.publish(QualityInspectionFailed(
-            tenant_code=current_user.get("tenant", "DEFAULT"),
+            tenant_code=_tenant(current_user),
             inspection_no=new_inspection.inspection_no,
             failed_quantity=new_inspection.failed_quantity,
             inspected_quantity=new_inspection.inspected_quantity,
@@ -3425,7 +3437,7 @@ def _agent_action_dict(a):
 
 
 def _decide_agent_action(action_id, decision, db, current_user):
-    tenant = current_user.get("tenant", "DEFAULT")
+    tenant = _tenant(current_user)
     action = db.query(models.AgentAction).filter(
         models.AgentAction.id == action_id, models.AgentAction.tenant_code == tenant).first()
     if not action:
@@ -3442,7 +3454,7 @@ def _decide_agent_action(action_id, decision, db, current_user):
 @app.get("/agent-actions")
 def list_agent_actions(status: str = None, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
     # Agent activity log + approval queue (ADR-0005), tenant-scoped.
-    tenant = current_user.get("tenant", "DEFAULT")
+    tenant = _tenant(current_user)
     q = db.query(models.AgentAction).filter(models.AgentAction.tenant_code == tenant)
     if status:
         q = q.filter(models.AgentAction.status == status)
@@ -3454,7 +3466,7 @@ def list_agent_actions(status: str = None, db: Session = Depends(get_db), curren
 def agent_action_stats(db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
     # Agent oversight metrics (ADR-0005), tenant-scoped.
     from collections import Counter
-    tenant = current_user.get("tenant", "DEFAULT")
+    tenant = _tenant(current_user)
     rows = db.query(models.AgentAction).filter(models.AgentAction.tenant_code == tenant).all()
     by_status = Counter(r.status for r in rows)
     by_agent = Counter(r.agent for r in rows)
@@ -3472,29 +3484,29 @@ def agent_action_stats(db: Session = Depends(get_db), current_user: dict = Depen
 def agent_action_impact(db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
     # Agent Impact (ADR-0005): executive rollup of what the agent fleet has produced,
     # how much ran autonomously, and what's still awaiting a human — tenant-scoped.
-    return ai.impact.build_impact(db, current_user.get("tenant", "DEFAULT"))
+    return ai.impact.build_impact(db, _tenant(current_user))
 
 
 @app.get("/agent-roster")
 def agent_roster(db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
     # Agent Roster (ADR-0004/0005): the AI workforce — each agent's role, autonomy,
     # and live activity, tenant-scoped.
-    return ai.roster.build_roster(db, current_user.get("tenant", "DEFAULT"))
+    return ai.roster.build_roster(db, _tenant(current_user))
 
 
 @app.get("/agent-policy")
 def get_agent_policy(db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
     # Agent autonomy policy (ADR-0004\0005): which agents may act without a human,
     # per-tenant, with the platform default as fallback.
-    return ai.roster.build_agent_policy(db, current_user.get("tenant", "DEFAULT"))
+    return ai.roster.build_agent_policy(db, _tenant(current_user))
 
 
 @app.put("/agent-policy")
 def update_agent_policy(payload: schemas.AgentPolicyUpdate, db: Session = Depends(get_db),
                         current_user: dict = Depends(require_roles(["Admin"]))):
     # Changing which agents act autonomously is a trust decision — Admin only.
-    ai.agents.set_agent_policy(db, current_user.get("tenant", "DEFAULT"), payload.auto_approve)
-    return ai.roster.build_agent_policy(db, current_user.get("tenant", "DEFAULT"))
+    ai.agents.set_agent_policy(db, _tenant(current_user), payload.auto_approve)
+    return ai.roster.build_agent_policy(db, _tenant(current_user))
 
 
 @app.get("/agent-roster/{agent_key}")
@@ -3502,7 +3514,7 @@ def agent_detail(agent_key: str, db: Session = Depends(get_db), current_user: di
     # Agent detail (ADR-0004\0005): the single-agent cockpit — role, autonomy,
     # decision tally with an approval rate, produced outputs, a 7-day activity
     # series, and recent actions. 404 for an unknown agent.
-    detail = ai.roster.build_agent_detail(db, current_user.get("tenant", "DEFAULT"), agent_key)
+    detail = ai.roster.build_agent_detail(db, _tenant(current_user), agent_key)
     if detail is None:
         raise HTTPException(status_code=404, detail="Unknown agent")
     return detail
@@ -3512,14 +3524,14 @@ def agent_detail(agent_key: str, db: Session = Depends(get_db), current_user: di
 def agent_action_trend(db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
     # Agent activity trend (ADR-0005/0007): last-7-days daily action counts for a
     # sparkline of how busy the fleet has been, tenant-scoped.
-    return ai.trends.build_agent_trend(db, current_user.get("tenant", "DEFAULT"))
+    return ai.trends.build_agent_trend(db, _tenant(current_user))
 
 
 @app.get("/ops-trends")
 def get_ops_trends(db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
     # Ops trends (ADR-0007): last-7-days daily series across the four pillars —
     # production, downtime, quality, and agent activity — tenant-scoped.
-    return ai.trends.build_ops_trends(db, current_user.get("tenant", "DEFAULT"))
+    return ai.trends.build_ops_trends(db, _tenant(current_user))
 
 
 @app.post("/agent-actions/{action_id}/approve")
@@ -3606,8 +3618,17 @@ def get_company_tenants(db: Session = Depends(get_db), current_user: dict = Depe
     return db.query(models.CompanyTenant).order_by(models.CompanyTenant.id.desc()).limit(300).all()
 
 
+def _require_founder(current_user):
+    """Tenant lifecycle is founder-only: the caller's own workspace (the JWT
+    claim — deliberately not the X-Tenant preview) must be DEFAULT. A tenant
+    Admin manages their factory, not the tenant registry."""
+    if current_user.get("tenant", tenancy.DEFAULT_TENANT) != tenancy.DEFAULT_TENANT:
+        raise HTTPException(status_code=403, detail="Only the platform workspace can manage tenants")
+
+
 @app.post("/saas/tenants", response_model=schemas.CompanyTenantResponse)
 def create_company_tenant(tenant: schemas.CompanyTenantCreate, db: Session = Depends(get_db), current_user: dict = Depends(require_roles(["Admin"]))):
+    _require_founder(current_user)
     existing = db.query(models.CompanyTenant).filter(models.CompanyTenant.company_code == tenant.company_code).first()
     if existing:
         raise HTTPException(status_code=400, detail="Company code already exists")
@@ -3615,11 +3636,18 @@ def create_company_tenant(tenant: schemas.CompanyTenantCreate, db: Session = Dep
     db.add(row)
     db.commit()
     db.refresh(row)
+    # Onboarding: give the new tenant a generic starter factory so its first
+    # login lands on a living dashboard, not an empty one (skips if data exists).
+    try:
+        onboard_tenant.seed_starter_factory(db, row.company_code, row.company_name or "")
+    except Exception as e:
+        print(f"[ONBOARD] starter seed for {row.company_code} failed: {e}")
     return row
 
 
 @app.patch("/saas/tenants/{tenant_id}", response_model=schemas.CompanyTenantResponse)
 def update_company_tenant(tenant_id: int, payload: schemas.CompanyTenantUpdate, db: Session = Depends(get_db), current_user: dict = Depends(require_roles(["Admin"]))):
+    _require_founder(current_user)
     row = db.query(models.CompanyTenant).filter(models.CompanyTenant.id == tenant_id).first()
     if not row:
         raise HTTPException(status_code=404, detail="Tenant not found")
@@ -3632,6 +3660,7 @@ def update_company_tenant(tenant_id: int, payload: schemas.CompanyTenantUpdate, 
 
 @app.delete("/saas/tenants/{tenant_id}")
 def delete_company_tenant(tenant_id: int, db: Session = Depends(get_db), current_user: dict = Depends(require_roles(["Admin"]))):
+    _require_founder(current_user)
     row = db.query(models.CompanyTenant).filter(models.CompanyTenant.id == tenant_id).first()
     if not row:
         raise HTTPException(status_code=404, detail="Tenant not found")

@@ -36,6 +36,7 @@ const MODULE_TO_VIEW: Record<string, string> = {
   downtime: "downtime",
   oee: "executive",
   orders: "orders",
+  cmms: "cmms",
 };
 
 // OEE trend arrow — up is good (green), down is bad (red), flat is neutral.

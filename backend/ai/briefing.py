@@ -18,6 +18,7 @@ from ai.quality import build_quality_summary
 from ai.flow import build_flow_summary
 from ai.inventory import build_inventory_summary
 from ai.delivery import build_delivery_summary
+from ai.maintenance import build_maintenance_summary
 
 name = "briefing"
 
@@ -115,6 +116,23 @@ def build_briefing(db, tenant: str) -> dict:
             "key": "delivery", "severity": "medium",
             "title": f"{delivery['at_risk']} order{_plural(delivery['at_risk'])} at risk",
             "detail": detail, "module": "orders",
+        })
+
+    # Maintenance — tasks overdue (high) or awaiting the manager's approval (low).
+    maint = build_maintenance_summary(db, tenant)
+    if maint["overdue"] > 0:
+        worst = maint["tasks"][0] if maint["tasks"] else None
+        alerts.append({
+            "key": "maintenance", "severity": "high",
+            "title": f"{maint['overdue']} maintenance task{_plural(maint['overdue'])} overdue",
+            "detail": (f"{worst['task_type']} · {worst['machine']}" if worst else ""),
+            "module": "cmms",
+        })
+    elif maint["pending_approval"] > 0:
+        alerts.append({
+            "key": "maintenance", "severity": "low",
+            "title": f"{maint['pending_approval']} maintenance task{_plural(maint['pending_approval'])} awaiting approval",
+            "detail": "proposed by the Maintenance agent", "module": "cmms",
         })
 
     # 3. Biggest OEE loss lever (availability / performance / quality).

@@ -288,7 +288,7 @@ def escalate_on_repeated_downtime(event: DowntimeStarted, db) -> None:
 _BRIEFING_DEPT = {
     "machines": "Maintenance", "downtime": "Maintenance",
     "inventory": "Procurement", "quality": "Quality", "oee": "Operations",
-    "orders": "Planning",
+    "orders": "Planning", "cmms": "Maintenance",
 }
 
 

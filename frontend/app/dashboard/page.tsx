@@ -2506,7 +2506,12 @@ export default function DashboardPage() {
       ))}
 
       {renderSection("copilot", (
-        <AICopilot />
+        <AICopilot
+          onOpen={(view) => {
+            setActiveView(view);
+            window.scrollTo({ top: 0, behavior: "smooth" });
+          }}
+        />
       ))}
 
       {renderSection("connectivity", (

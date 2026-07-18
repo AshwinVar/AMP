@@ -16,6 +16,7 @@ from ai.twin import _recent_production
 name = "cost"
 
 WINDOW_DAYS = 7
+TOP_N = 5
 DOWNTIME_COST_PER_MIN = 12      # $ lost per minute of unplanned downtime
 SCRAP_COST_PER_UNIT = 25        # $ lost per rejected / scrapped unit
 
@@ -34,22 +35,37 @@ def build_cost_summary(db, tenant: str) -> dict:
     scrap_cost = rejected * SCRAP_COST_PER_UNIT
     loss_cost = downtime_cost + scrap_cost
 
-    # Same loss cost attributed to the production line each record ran on (SMT / IC).
-    line_of = {m.id: (m.line or "") for m in db.query(models.Machine).all()}
+    # Loss cost attributed to the line each record ran on (SMT / IC) and to the
+    # individual machine (costliest first, for triage).
+    all_machines = db.query(models.Machine).all()
+    names = {m.id: m.name for m in all_machines}
+    line_of = {m.id: (m.line or "") for m in all_machines}
     line_agg: dict = {}
+    machine_agg: dict = {}
     for r in records:
+        dm = max(0, (r.planned_minutes or 0) - (r.runtime_minutes or 0))
+        rej = r.rejected_count or 0
         ln = line_of.get(r.machine_id, "")
-        if not ln:
-            continue
-        a = line_agg.setdefault(ln, {"downtime_min": 0, "rejected": 0})
-        a["downtime_min"] += max(0, (r.planned_minutes or 0) - (r.runtime_minutes or 0))
-        a["rejected"] += r.rejected_count or 0
-    by_line = [{
-        "line": ln,
-        "downtime_cost": a["downtime_min"] * DOWNTIME_COST_PER_MIN,
-        "scrap_cost": a["rejected"] * SCRAP_COST_PER_UNIT,
-        "cost": a["downtime_min"] * DOWNTIME_COST_PER_MIN + a["rejected"] * SCRAP_COST_PER_UNIT,
-    } for ln, a in sorted(line_agg.items())]
+        if ln:
+            a = line_agg.setdefault(ln, {"downtime_min": 0, "rejected": 0})
+            a["downtime_min"] += dm
+            a["rejected"] += rej
+        if r.machine_id is not None:
+            b = machine_agg.setdefault(r.machine_id, {"downtime_min": 0, "rejected": 0})
+            b["downtime_min"] += dm
+            b["rejected"] += rej
+
+    def _row(extra, a):
+        return {**extra,
+                "downtime_cost": a["downtime_min"] * DOWNTIME_COST_PER_MIN,
+                "scrap_cost": a["rejected"] * SCRAP_COST_PER_UNIT,
+                "cost": a["downtime_min"] * DOWNTIME_COST_PER_MIN + a["rejected"] * SCRAP_COST_PER_UNIT}
+
+    by_line = [_row({"line": ln}, a) for ln, a in sorted(line_agg.items())]
+    by_machine = sorted(
+        (_row({"machine_id": mid, "name": names.get(mid, f"#{mid}")}, a) for mid, a in machine_agg.items()),
+        key=lambda m: m["cost"], reverse=True,
+    )[:TOP_N]
 
     # Daily loss cost across the window (oldest -> newest), for the trend.
     today = datetime.utcnow().date()
@@ -92,6 +108,7 @@ def build_cost_summary(db, tenant: str) -> dict:
         "losses": losses,
         "biggest": biggest["key"] if biggest else None,
         "by_line": by_line,
+        "by_machine": by_machine,
         "daily": daily,
         "recorded_total": sum(by_type_amt.values()),
         "by_type": by_type,

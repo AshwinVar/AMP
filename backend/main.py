@@ -1041,6 +1041,30 @@ def copilot_ask(payload: dict, db: Session = Depends(get_db), current_user: dict
     return ai.assistant.answer(db, current_user.get("tenant", "DEFAULT"), payload.get("question", ""))
 
 
+@app.get("/health")
+def health(db: Session = Depends(get_db)):
+    # Public liveness/readiness check for uptime monitors and load balancers:
+    # confirms the process is up and the database answers a trivial query.
+    from sqlalchemy import text as _sql_text
+    db_ok = True
+    try:
+        db.execute(_sql_text("SELECT 1"))
+    except Exception:
+        db_ok = False
+    return {
+        "status": "ok" if db_ok else "degraded",
+        "database": "ok" if db_ok else "down",
+        "time": datetime.utcnow().isoformat(),
+    }
+
+
+@app.get("/platform/status")
+def platform_status(db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
+    # AI platform self-report (ADR-0003): registered read-models, the agent roster,
+    # copilot connectivity, and the tenant's logged agent actions.
+    return ai.platform_status.build_platform_status(db, current_user.get("tenant", "DEFAULT"))
+
+
 @app.get("/machine-health/{machine_id}")
 def get_machine_detail(machine_id: int, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
     # Machine Health detail (ADR-0006): the single-machine cockpit — the twin

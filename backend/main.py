@@ -216,17 +216,35 @@ async def startup_event():
     asyncio.create_task(_simulation_loop())
     try:
         db = SessionLocal()
-        # One-time factory rebuild: set RESEED_FACTORY=1 in the Railway env to
-        # rebuild the DEFAULT tenant as the SMT->IC plant on this boot (runs here,
-        # so it hits the prod DB), then remove the flag. Idempotent + DEFAULT-only.
-        if os.environ.get("RESEED_FACTORY") == "1":
-            try:
-                from reset_factory import rebuild_factory
-                rebuild_factory(db)
-                print("[RESEED] DEFAULT rebuilt to the SMT->IC factory (RESEED_FACTORY=1)")
-            except Exception as e:
-                db.rollback()
-                print(f"[RESEED] factory reset failed: {e}")
+        # One-time factory rebuild: set RESEED_FACTORY=<any value> to rebuild the
+        # DEFAULT tenant as the SMT->IC plant. SINGLE-SHOT: each flag value is
+        # consumed exactly once (recorded in the append-only event_log, which the
+        # wipe never touches), so a forgotten flag can no longer silently reseed
+        # on every deploy — that wiped prod ~41 times on 2026-07-18. To reseed
+        # again, set a NEW value (e.g. a date). DEFAULT-only; GMATS untouched.
+        reseed_flag = os.environ.get("RESEED_FACTORY")
+        if reseed_flag:
+            import json as _json
+            consumed = (db.query(models.EventLog)
+                        .filter(models.EventLog.event_type == "FactoryReseeded",
+                                models.EventLog.payload.contains(f'"flag": "{reseed_flag}"'))
+                        .first())
+            if consumed:
+                print(f"[RESEED] flag '{reseed_flag}' already consumed — skipping "
+                      "(set a new value to reseed again, and remove the variable when done)")
+            else:
+                try:
+                    from reset_factory import rebuild_factory
+                    rebuild_factory(db)
+                    db.add(models.EventLog(tenant_code="DEFAULT", event_type="FactoryReseeded",
+                                           event_version=1,
+                                           payload=_json.dumps({"flag": reseed_flag})))
+                    db.commit()
+                    print(f"[RESEED] DEFAULT rebuilt to the SMT->IC factory "
+                          f"(flag '{reseed_flag}' consumed; future boots skip it)")
+                except Exception as e:
+                    db.rollback()
+                    print(f"[RESEED] factory reset failed: {e}")
         gmats_inventory_routes.seed_gmats(db)
         # Core MES: ensure OEE + timeline have data (production records & machine events).
         from factory_simulator import _production_records, _machine_events

@@ -275,6 +275,9 @@ export default function DashboardPage() {
   const [downtimeLogs, setDowntimeLogs] = useState<DowntimeLog[]>([]);
   const [shifts, setShifts] = useState<Shift[]>([]);
   const [activeView, setActiveView] = useState("mission");
+  // Which Overview card group is open. Only the active group's cards mount, so
+  // the home stays glanceable and the background polling stays light.
+  const [overviewTab, setOverviewTab] = useState("performance");
   // Escalation the briefing hero deep-linked to, so the Escalation Center can
   // highlight + scroll to it when opened from an "⚡ escalated" pill.
   const [focusedEscalationId, setFocusedEscalationId] = useState<number | null>(null);
@@ -1946,81 +1949,87 @@ export default function DashboardPage() {
         <FactoryPulse />
       </div>
 
-      <div className="mb-8">
-        <OeeSnapshot />
+      {/* Overview card groups — only the active tab's cards mount (lighter page,
+          lighter polling). Scorecard, briefing and pulse above stay always-on. */}
+      <div className="mb-4 flex flex-wrap items-center gap-1 rounded-xl border border-slate-800 bg-slate-900/60 p-1 w-fit">
+        {[
+          { key: "performance", label: "Performance" },
+          { key: "qualitymaint", label: "Quality & Maintenance" },
+          { key: "business", label: "Business" },
+          { key: "reports", label: "Reports" },
+        ].map((t) => (
+          <button
+            key={t.key}
+            type="button"
+            onClick={() => setOverviewTab(t.key)}
+            className={`rounded-lg px-3 py-1.5 text-sm transition ${overviewTab === t.key ? "bg-slate-700 text-white" : "text-slate-400 hover:text-slate-200"}`}
+          >
+            {t.label}
+          </button>
+        ))}
       </div>
 
-      <div className="mb-8">
-        <LossesSnapshot />
-      </div>
+      {overviewTab === "performance" && (
+        <>
+          <div className="mb-8"><OeeSnapshot /></div>
+          <div className="mb-8"><LossesSnapshot /></div>
+          <div className="mb-8"><ProductionSnapshot /></div>
+          <div className="mb-8"><FlowSnapshot /></div>
+          <div className="mb-8"><ShiftSnapshot /></div>
+        </>
+      )}
 
-      <div className="mb-8">
-        <QualitySnapshot />
-      </div>
+      {overviewTab === "qualitymaint" && (
+        <>
+          <div className="mb-8"><QualitySnapshot /></div>
+          <div className="mb-8"><DowntimeSnapshot /></div>
+          <div className="mb-8">
+            <MaintenanceSnapshot
+              onOpen={(view) => {
+                setActiveView(view);
+                window.scrollTo({ top: 0, behavior: "smooth" });
+              }}
+            />
+          </div>
+          <div className="mb-8">
+            <ComplianceSnapshot
+              onOpen={(view) => {
+                setActiveView(view);
+                window.scrollTo({ top: 0, behavior: "smooth" });
+              }}
+            />
+          </div>
+        </>
+      )}
 
-      <div className="mb-8">
-        <DowntimeSnapshot />
-      </div>
+      {overviewTab === "business" && (
+        <>
+          <div className="mb-8">
+            <DeliverySnapshot
+              onOpen={(view) => {
+                setActiveView(view);
+                window.scrollTo({ top: 0, behavior: "smooth" });
+              }}
+            />
+          </div>
+          <div className="mb-8">
+            <CostSnapshot
+              onOpen={(view) => {
+                setActiveView(view);
+                window.scrollTo({ top: 0, behavior: "smooth" });
+              }}
+            />
+          </div>
+          <div className="mb-8"><InventorySnapshot /></div>
+        </>
+      )}
 
-      <div className="mb-8">
-        <ProductionSnapshot />
-      </div>
-
-      <div className="mb-8">
-        <FlowSnapshot />
-      </div>
-
-      <div className="mb-8">
-        <ShiftSnapshot />
-      </div>
-
-      <div className="mb-8">
-        <InventorySnapshot />
-      </div>
-
-      <div className="mb-8">
-        <DeliverySnapshot
-          onOpen={(view) => {
-            setActiveView(view);
-            window.scrollTo({ top: 0, behavior: "smooth" });
-          }}
-        />
-      </div>
-
-      <div className="mb-8">
-        <CostSnapshot
-          onOpen={(view) => {
-            setActiveView(view);
-            window.scrollTo({ top: 0, behavior: "smooth" });
-          }}
-        />
-      </div>
-
-      <div className="mb-8">
-        <HandoverSnapshot />
-      </div>
-
-      <div className="mb-8">
-        <MaintenanceSnapshot
-          onOpen={(view) => {
-            setActiveView(view);
-            window.scrollTo({ top: 0, behavior: "smooth" });
-          }}
-        />
-      </div>
-
-      <div className="mb-8">
-        <ComplianceSnapshot
-          onOpen={(view) => {
-            setActiveView(view);
-            window.scrollTo({ top: 0, behavior: "smooth" });
-          }}
-        />
-      </div>
-
-      <div className="mb-8">
-        <WeeklyReportSnapshot />
-      </div>
+      {overviewTab === "reports" && (
+        <>
+          <div className="mb-8"><HandoverSnapshot /></div>
+          <div className="mb-8"><WeeklyReportSnapshot /></div>
+        </>
+      )}
 
       <section className="mb-6 rounded-2xl bg-slate-900 border border-slate-800 p-4 flex flex-col md:flex-row md:items-center md:justify-between gap-3">
         <div>

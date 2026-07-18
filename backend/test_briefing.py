@@ -131,12 +131,34 @@ def test_briefing_flags_late_orders():
     assert "BUG-9" in by["delivery"]["detail"] and "overdue" in by["delivery"]["detail"]
 
 
+def test_briefing_flags_overdue_maintenance():
+    from datetime import date
+    db = _fresh_session()
+    now = datetime.utcnow()
+    db.add(models.Machine(id=1, name="SMT-Reflow-01", status="Running", utilization=90, line="SMT"))
+    db.add(models.ProductionRecord(machine_id=1, planned_minutes=480, runtime_minutes=460,
+                                   ideal_cycle_time_seconds=30, total_count=100, good_count=98,
+                                   rejected_count=2, created_at=now))
+    # an overdue maintenance task -> a high-severity maintenance alert
+    db.add(models.MaintenanceTask(task_no="M-1", machine_id=1, task_type="Predictive (auto)",
+                                  priority="Critical", assigned_to="Maintenance team",
+                                  planned_date=(date.today() - timedelta(days=2)), status="Open"))
+    db.commit()
+
+    b = briefing.build_briefing(db, "DEFAULT")
+    by = {a["key"]: a for a in b["alerts"]}
+    assert "maintenance" in by
+    assert by["maintenance"]["severity"] == "high" and by["maintenance"]["module"] == "cmms"
+    assert "overdue" in by["maintenance"]["title"] and "SMT-Reflow-01" in by["maintenance"]["detail"]
+
+
 if __name__ == "__main__":
     test_briefing_ranks_alerts_and_surfaces_wins()
     test_briefing_empty_is_safe()
     test_clean_plant_has_no_alerts_but_reports_wins()
     test_briefing_marks_alerts_the_agent_has_escalated()
     test_briefing_flags_late_orders()
+    test_briefing_flags_overdue_maintenance()
     print("BRIEFING OK: composes pillar read-models into a ranked alert feed (high-first) + wins; "
           "headline OEE + trend; empty-safe; clean plant -> no alerts, only wins; "
           "marks alerts the Escalation agent has proactively raised")

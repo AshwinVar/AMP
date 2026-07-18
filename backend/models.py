@@ -29,7 +29,7 @@ class DowntimeLog(Base):
     reason = Column(String, nullable=False)
     duration = Column(String, nullable=False)
     notes = Column(String, nullable=True)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=datetime.utcnow, index=True)
 
     machine = relationship("Machine", back_populates="downtime_logs")
 
@@ -57,7 +57,7 @@ class ProductionRecord(Base):
     total_count = Column(Integer, nullable=False)
     good_count = Column(Integer, nullable=False)
     rejected_count = Column(Integer, nullable=False)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=datetime.utcnow, index=True)
 
     machine = relationship("Machine", back_populates="production_records")
 
@@ -454,7 +454,7 @@ class CostRecord(Base):
     description = Column(String, nullable=False)
     amount = Column(Integer, default=0)
     department = Column(String, nullable=True)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=datetime.utcnow, index=True)
 
 
 class OperatorJobExecution(Base):

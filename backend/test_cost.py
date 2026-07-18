@@ -19,7 +19,7 @@ def _fresh_session():
 
 def test_cost_prices_downtime_and_scrap_and_rolls_up_recorded():
     db = _fresh_session()
-    db.add(models.Machine(id=1, name="M1", status="Running", utilization=80))
+    db.add(models.Machine(id=1, name="M1", status="Running", utilization=80, line="SMT"))
     # 40 min downtime (480 planned - 440 runtime); 10 rejected units
     db.add(models.ProductionRecord(machine_id=1, planned_minutes=480, runtime_minutes=440,
                                    ideal_cycle_time_seconds=30, total_count=100, good_count=90,
@@ -38,6 +38,8 @@ def test_cost_prices_downtime_and_scrap_and_rolls_up_recorded():
     # recorded costs grouped by type, worst first
     assert s["recorded_total"] == 650
     assert s["by_type"][0] == {"type": "Rework", "amount": 500}
+    # the loss cost attributed to the SMT line (the only line here)
+    assert s["by_line"] == [{"line": "SMT", "downtime_cost": 480, "scrap_cost": 250, "cost": 730}]
 
     # empty -> no data, no crash
     empty = cost.build_cost_summary(_fresh_session(), "DEFAULT")

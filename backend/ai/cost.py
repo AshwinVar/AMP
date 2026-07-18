@@ -34,6 +34,23 @@ def build_cost_summary(db, tenant: str) -> dict:
     scrap_cost = rejected * SCRAP_COST_PER_UNIT
     loss_cost = downtime_cost + scrap_cost
 
+    # Same loss cost attributed to the production line each record ran on (SMT / IC).
+    line_of = {m.id: (m.line or "") for m in db.query(models.Machine).all()}
+    line_agg: dict = {}
+    for r in records:
+        ln = line_of.get(r.machine_id, "")
+        if not ln:
+            continue
+        a = line_agg.setdefault(ln, {"downtime_min": 0, "rejected": 0})
+        a["downtime_min"] += max(0, (r.planned_minutes or 0) - (r.runtime_minutes or 0))
+        a["rejected"] += r.rejected_count or 0
+    by_line = [{
+        "line": ln,
+        "downtime_cost": a["downtime_min"] * DOWNTIME_COST_PER_MIN,
+        "scrap_cost": a["rejected"] * SCRAP_COST_PER_UNIT,
+        "cost": a["downtime_min"] * DOWNTIME_COST_PER_MIN + a["rejected"] * SCRAP_COST_PER_UNIT,
+    } for ln, a in sorted(line_agg.items())]
+
     # Costs actually logged in the window, grouped by type (worst first).
     window_start = datetime.utcnow().date() - timedelta(days=WINDOW_DAYS - 1)
     recs = [c for c in db.query(models.CostRecord).all()
@@ -61,6 +78,7 @@ def build_cost_summary(db, tenant: str) -> dict:
         "rejected_units": rejected,
         "losses": losses,
         "biggest": biggest["key"] if biggest else None,
+        "by_line": by_line,
         "recorded_total": sum(by_type_amt.values()),
         "by_type": by_type,
     }

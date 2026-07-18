@@ -243,6 +243,35 @@ _ROUTES = [
 ]
 
 
+def digest(db, tenant: str) -> dict:
+    """A conversational one-shot rundown of the whole plant — OEE and trend, the
+    week's losses, the order book, the most pressing issue and the wins — composed
+    from the pillar read-models into a plain-English paragraph."""
+    b = build_briefing(db, tenant)
+    if not b["has_data"]:
+        return {"digest": "No production data yet — nothing to report."}
+    cost = build_cost_summary(db, tenant)
+    delivery = build_delivery_summary(db, tenant)
+
+    lines = [f"Plant OEE is {b['oee']}% and trending {b['oee_trend']}."]
+    if cost["has_data"]:
+        lines.append(f"Losses have cost about ${cost['loss_cost']:,} this week.")
+    if delivery["total"]:
+        lines.append(f"On the order book, {delivery['fulfillment_rate']}% of units are fulfilled, "
+                     f"with {delivery['late']} late and {delivery['at_risk']} at risk.")
+    if b["alerts"]:
+        top = b["alerts"][0]
+        lines.append(f"The most pressing issue is {top['title']}"
+                     + (f" ({top['detail']})" if top.get("detail") else "") + ".")
+        if len(b["alerts"]) > 1:
+            lines.append(f"There are {len(b['alerts'])} things needing attention in all.")
+    else:
+        lines.append("Nothing needs attention right now.")
+    if b["wins"]:
+        lines.append("On the upside: " + "; ".join(w["title"] for w in b["wins"]) + ".")
+    return {"digest": " ".join(lines)}
+
+
 def answer(db, tenant: str, question: str) -> dict:
     """Answer a plant question from the read-models: a sentence plus the view that
     drills into it. Routes by keyword; defaults to 'what needs attention'."""

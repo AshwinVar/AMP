@@ -117,6 +117,24 @@ def build_twins(db, tenant: str):
     return twins
 
 
+def build_twin_overlay(db, tenant: str) -> dict:
+    """Per-machine metrics for painting the digital-twin floor map — OEE and the
+    week's cost of losses, keyed by machine so the map can heat by either. Composes
+    the OEE and cost read-models (ADR-0007); no storage."""
+    from ai.oee import build_oee_summary      # lazy: twin is imported by these modules
+    from ai.cost import build_cost_summary
+
+    oee = {m["machine_id"]: m["oee"] for m in build_oee_summary(db, tenant)["machines"]}
+    cost = {m["machine_id"]: m["cost"] for m in build_cost_summary(db, tenant)["by_machine"]}
+    ids = set(oee) | set(cost)
+    return {
+        "machines": [
+            {"machine_id": mid, "oee": oee.get(mid), "cost": cost.get(mid, 0)}
+            for mid in sorted(ids)
+        ],
+    }
+
+
 # ── Single-machine detail (the drill-down cockpit) ─────────────────
 def _iso(dt):
     return dt.isoformat() if dt else None

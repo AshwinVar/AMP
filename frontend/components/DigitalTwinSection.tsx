@@ -1,3 +1,7 @@
+"use client";
+
+import { useCallback, useEffect, useState } from "react";
+import { apiGet } from "../lib/api";
 import type { FactoryCommandCenter, FactoryLayoutNode } from "../lib/phase16-types";
 
 type Machine = {
@@ -7,6 +11,8 @@ type Machine = {
   utilization: number;
   downtime: string;
 };
+
+type Overlay = "status" | "oee" | "cost";
 
 function statusStyle(status: string) {
   switch (status) {
@@ -21,6 +27,23 @@ function statusStyle(status: string) {
     default:
       return "border-slate-500/60 bg-slate-500/20 text-slate-300";
   }
+}
+
+// OEE heat: green world-class, amber ok, red dragging, slate when no data.
+function oeeStyle(oee?: number | null) {
+  if (oee == null) return "border-slate-500/60 bg-slate-500/20 text-slate-300";
+  if (oee >= 85) return "border-green-500/60 bg-green-500/20 text-green-300";
+  if (oee >= 70) return "border-yellow-500/60 bg-yellow-500/20 text-yellow-300";
+  return "border-red-500/60 bg-red-500/20 text-red-300";
+}
+
+// Cost heat: hotter (redder) the more a machine cost this week, relative to the worst.
+function costStyle(cost: number, max: number) {
+  if (!cost) return "border-slate-500/60 bg-slate-500/10 text-slate-300";
+  const r = max ? cost / max : 0;
+  if (r > 0.66) return "border-red-500/60 bg-red-500/25 text-red-300";
+  if (r > 0.33) return "border-orange-500/60 bg-orange-500/20 text-orange-300";
+  return "border-yellow-500/60 bg-yellow-500/15 text-yellow-300";
 }
 
 // A soft band behind each production line/zone, so the floor reads as its lines.
@@ -76,6 +99,38 @@ export default function DigitalTwinSection({
     const bottom = Math.max(...zn.map((n) => n.y_position + n.height)) + 14;
     return { zone, top, height: bottom - top };
   });
+
+  // Overlay: heat the floor map by machine status, OEE, or cost of losses.
+  const [overlay, setOverlay] = useState<Overlay>("status");
+  const [metrics, setMetrics] = useState<{ machine_id: number; oee: number | null; cost: number }[]>([]);
+  const loadMetrics = useCallback(async () => {
+    try {
+      setMetrics((await apiGet<{ machines: typeof metrics }>("/twin-overlay")).machines);
+    } catch {
+      // overlay is a bonus lens — stay quiet on error.
+    }
+  }, []);
+  useEffect(() => {
+    loadMetrics();
+    const id = setInterval(loadMetrics, 30000);
+    return () => clearInterval(id);
+  }, [loadMetrics]);
+  const oeeMap = new Map(metrics.map((m) => [m.machine_id, m.oee]));
+  const costMap = new Map(metrics.map((m) => [m.machine_id, m.cost]));
+  const maxCost = Math.max(1, ...metrics.map((m) => m.cost));
+
+  function nodeStyle(node: FactoryLayoutNode) {
+    const m = machineForNode(node);
+    if (overlay === "oee") return oeeStyle(m ? oeeMap.get(m.id) : null);
+    if (overlay === "cost") return costStyle((m && costMap.get(m.id)) || 0, maxCost);
+    return statusStyle(statusForNode(node));
+  }
+
+  const OVERLAYS: { key: Overlay; label: string }[] = [
+    { key: "status", label: "Status" },
+    { key: "oee", label: "OEE" },
+    { key: "cost", label: "Cost" },
+  ];
 
   return (
     <section className="mt-8 space-y-6">
@@ -144,9 +199,20 @@ export default function DigitalTwinSection({
       </form>
 
       <div className="rounded-2xl bg-slate-900 border border-slate-800 p-5">
-        <div className="flex items-center justify-between gap-4 mb-4">
+        <div className="flex items-center justify-between gap-4 mb-4 flex-wrap">
           <h3 className="text-2xl font-semibold">Factory Floor Live Map</h3>
-          <p className="text-sm text-slate-400">Canvas: 1200 x 640</p>
+          <div className="flex items-center gap-1 rounded-xl border border-slate-700 p-1">
+            {OVERLAYS.map((o) => (
+              <button
+                key={o.key}
+                type="button"
+                onClick={() => setOverlay(o.key)}
+                className={`rounded-lg px-3 py-1.5 text-sm transition ${overlay === o.key ? "bg-slate-700 text-white" : "text-slate-400 hover:text-slate-200"}`}
+              >
+                {o.label}
+              </button>
+            ))}
+          </div>
         </div>
 
         <div className="relative w-full h-[640px] bg-slate-950 border border-slate-800 rounded-2xl overflow-auto">
@@ -167,7 +233,7 @@ export default function DigitalTwinSection({
               return (
                 <div
                   key={node.id}
-                  className={`absolute rounded-2xl border p-3 shadow-xl ${statusStyle(status)}`}
+                  className={`absolute rounded-2xl border p-3 shadow-xl transition-colors ${nodeStyle(node)}`}
                   style={{
                     left: node.x_position,
                     top: node.y_position,
@@ -186,9 +252,17 @@ export default function DigitalTwinSection({
                   </div>
 
                   <div className="mt-3 text-xs space-y-1">
-                    <p>Status: {status}</p>
-                    <p>Util: {machine?.utilization ?? 0}%</p>
-                    <p>Downtime: {machine?.downtime ?? "-"}</p>
+                    {overlay === "oee" ? (
+                      <p>OEE: {machine ? oeeMap.get(machine.id) ?? "—" : "—"}%</p>
+                    ) : overlay === "cost" ? (
+                      <p>Cost: ${(machine ? costMap.get(machine.id) ?? 0 : 0).toLocaleString()}</p>
+                    ) : (
+                      <>
+                        <p>Status: {status}</p>
+                        <p>Util: {machine?.utilization ?? 0}%</p>
+                        <p>Downtime: {machine?.downtime ?? "-"}</p>
+                      </>
+                    )}
                   </div>
                 </div>
               );

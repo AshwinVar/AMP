@@ -1013,6 +1013,13 @@ def get_scorecard(db: Session = Depends(get_db), current_user: dict = Depends(ge
     return ai.scorecard.build_scorecard(db, current_user.get("tenant", "DEFAULT"))
 
 
+@app.get("/twin-overlay")
+def get_twin_overlay(db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
+    # Digital-twin overlay (ADR-0007): per-machine OEE + cost of losses, keyed by
+    # machine, so the floor map can heat by either metric.
+    return ai.twin.build_twin_overlay(db, current_user.get("tenant", "DEFAULT"))
+
+
 @app.get("/machine-health/{machine_id}")
 def get_machine_detail(machine_id: int, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
     # Machine Health detail (ADR-0006): the single-machine cockpit — the twin

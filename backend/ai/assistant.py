@@ -16,6 +16,8 @@ from ai.quality import build_quality_summary
 from ai.maintenance import build_maintenance_summary
 from ai.inventory import build_inventory_summary
 from ai.production import build_production_summary
+from ai.flow import build_flow_summary
+from ai.shift import build_shift_summary
 from ai.briefing import build_briefing
 from ai.scorecard import build_scorecard
 
@@ -128,6 +130,28 @@ def _production(db, tenant):
     return ans, "analytics"
 
 
+def _flow(db, tenant):
+    f = build_flow_summary(db, tenant)
+    if f["total"] == 0:
+        return "No work orders on the floor right now.", "workorders"
+    stages = ", ".join(f"{s['label']} {s['count']}" for s in f["stages"])
+    return (f"{f['wip']} work orders in progress, {f['finished']} finished "
+            f"({f['total']} total). Pipeline: {stages}."), "workorders"
+
+
+def _shift(db, tenant):
+    sh = build_shift_summary(db, tenant)
+    if sh["entries"] == 0:
+        return "No shift data recorded yet.", "shifts"
+    ans = (f"Shift attainment is {sh['attainment']}% ({sh['actual']:,} of "
+           f"{sh['target']:,} target) over the last {sh['days']} days.")
+    if sh.get("best"):
+        ans += f" Best: {sh['best']['shift']} at {sh['best']['attainment']}%."
+    if sh.get("worst") and sh["worst"] is not sh.get("best"):
+        ans += f" Worst: {sh['worst']['shift']} at {sh['worst']['attainment']}%."
+    return ans, "shifts"
+
+
 def _oee(db, tenant):
     o = build_oee_summary(db, tenant)
     plant = o["plant"]
@@ -204,6 +228,8 @@ _ROUTES = [
     (("last week", "vs last", "compared", "week on week", "week-on-week", "trend", "improv",
       "getting better", "getting worse", "better or worse", "since last"), _trend),
     (("reorder", "restock", "stock", "inventory", "out of stock", "replenish"), _inventory),
+    (("wip", "work in progress", "work-in-progress", "in progress", "pipeline", "work order", "raw ", "semi", "finished good"), _flow),
+    (("shift", "attainment", "crew", "night", "day shift"), _shift),
     (("deliver", "on-time", "on time", " late", "customer", "ship", "fulfil", "bugatti", "mercedes", "order"), _delivery),
     (("cost", "money", "losing", "$", "expensive", "spend", "margin"), _cost),
     (("quality", "defect", "reject", "scrap", "fail", "yield", "fpy", "first-pass", "first pass"), _quality),

@@ -54,6 +54,8 @@ def test_copilot_routes_questions_to_the_right_pillar():
     assert ask("Any overdue maintenance?")["matched"] == "maintenance"
     assert ask("Why is downtime high?")["matched"] == "downtime"
     assert ask("Summarise today's production")["matched"] == "production"
+    assert ask("How much work in progress?")["matched"] == "flow"
+    assert ask("How's the shift attainment?")["matched"] == "shift"
     # temporal questions -> the trend intent (week-on-week from the scorecard)
     assert ask("How are we doing vs last week?")["matched"] == "trend"
     assert ask("Is OEE improving?")["matched"] == "trend"

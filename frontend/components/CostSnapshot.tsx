@@ -12,11 +12,20 @@ type CostSummary = {
   scrap_cost: number;
   losses: Loss[];
   biggest: string | null;
+  by_line: { line: string; downtime_cost: number; scrap_cost: number; cost: number }[];
   recorded_total: number;
   by_type: { type: string; amount: number }[];
 };
 
 const money = (n: number) => `$${n.toLocaleString()}`;
+
+// SMT and IC each get a consistent accent across the dashboard (sky / violet).
+const lineChip = (line: string) =>
+  line === "SMT"
+    ? "border-sky-500/40 bg-sky-500/10 text-sky-300"
+    : line === "IC"
+    ? "border-violet-500/40 bg-violet-500/10 text-violet-300"
+    : "border-slate-700 bg-slate-800 text-slate-300";
 
 // The cost-of-losses card: what downtime and scrap cost this week, in money,
 // plus the costs actually recorded. Self-contained — fetches its own summary and
@@ -75,6 +84,23 @@ export default function CostSnapshot() {
           );
         })}
       </div>
+
+      {s.by_line.length > 1 && (
+        <div className="mt-4 pt-4 border-t border-slate-800/70">
+          <p className="text-xs text-slate-500 mb-2">By line</p>
+          <div className="flex flex-wrap gap-2">
+            {s.by_line.map((l) => (
+              <span
+                key={l.line}
+                className={`rounded-md border px-2.5 py-1 text-xs font-medium ${lineChip(l.line)}`}
+                title={`Downtime ${money(l.downtime_cost)} · Scrap ${money(l.scrap_cost)}`}
+              >
+                {l.line} <span className="opacity-70">· {money(l.cost)}</span>
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
 
       {s.by_type.length > 0 && (
         <div className="mt-4 pt-4 border-t border-slate-800/70">

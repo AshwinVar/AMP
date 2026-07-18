@@ -276,6 +276,9 @@ export default function DashboardPage() {
   const [downtimeLogs, setDowntimeLogs] = useState<DowntimeLog[]>([]);
   const [shifts, setShifts] = useState<Shift[]>([]);
   const [activeView, setActiveView] = useState("mission");
+  // Narrow-viewport nav: below 1180px the sidebar is off-canvas; the topbar
+  // hamburger toggles it, and navigating closes it.
+  const [mobileNavOpen, setMobileNavOpen] = useState(false);
   // Which Overview card group is open. Only the active group's cards mount, so
   // the home stays glanceable and the background polling stays light.
   const [overviewTab, setOverviewTab] = useState("performance");
@@ -1811,7 +1814,7 @@ export default function DashboardPage() {
 
   return (
     <main className="phase29-shell min-h-screen bg-slate-950 text-white p-6">
-<aside className="phase29-sidebar">
+<aside className={`phase29-sidebar ${mobileNavOpen ? "phase29-sidebar-open" : ""}`}>
   <div className="phase29-brand">
     <div className="phase29-brand-mark">⌁</div>
     <div>
@@ -1836,7 +1839,10 @@ export default function DashboardPage() {
           {items.map((item) => (
             <button
               key={item.key}
-              onClick={() => setActiveView(item.key)}
+              onClick={() => {
+                setActiveView(item.key);
+                setMobileNavOpen(false);
+              }}
               className={`phase29-nav-item ${
                 activeView === item.key ? "phase29-nav-item-active" : ""
               } ${!unlocked ? "opacity-40 cursor-pointer" : ""}`}
@@ -1853,9 +1859,19 @@ export default function DashboardPage() {
 </aside>
 
 <header className="phase29-topbar">
-  <div>
-    <p className="phase29-eyebrow">Welcome back, {userName || "there"}</p>
-    <h1>{activeLabel}</h1>
+  <div className="flex items-center gap-3 min-w-0">
+    <button
+      type="button"
+      className="phase29-menu-btn"
+      onClick={() => setMobileNavOpen((o) => !o)}
+      aria-label={mobileNavOpen ? "Close menu" : "Open menu"}
+    >
+      {mobileNavOpen ? "✕" : "☰"}
+    </button>
+    <div className="min-w-0">
+      <p className="phase29-eyebrow">Welcome back, {userName || "there"}</p>
+      <h1>{activeLabel}</h1>
+    </div>
   </div>
   <div className="phase29-topbar-actions">
     <div className="relative" style={{width:280,minHeight:38,display:"flex",alignItems:"center",border:"1px solid rgba(255,255,255,0.1)",borderRadius:12,background:"rgba(15,23,42,0.6)"}}>

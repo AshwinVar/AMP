@@ -20,9 +20,12 @@ def build_agent_trend(db, tenant: str) -> dict:
     today = datetime.utcnow().date()
     window = [today - timedelta(days=i) for i in range(WINDOW_DAYS - 1, -1, -1)]
     window_set = set(window)
+    start = datetime.combine(window[0], datetime.min.time())
     counts = Counter(
         r.created_at.date()
-        for r in db.query(models.AgentAction).filter(models.AgentAction.tenant_code == tenant).all()
+        for r in db.query(models.AgentAction)
+        .filter(models.AgentAction.tenant_code == tenant,
+                models.AgentAction.created_at >= start).all()
         if r.created_at and r.created_at.date() in window_set
     )
     daily = [{"date": d.isoformat(), "count": counts.get(d, 0)} for d in window]
@@ -56,10 +59,14 @@ def build_ops_trends(db, tenant: str) -> dict:
     def day(dt):
         return dt.date() if dt and dt.date() in window_set else None
 
-    prod = db.query(models.ProductionRecord).all()
-    down = db.query(models.DowntimeLog).all()
-    qual = db.query(models.QualityInspection).all()
-    acts = db.query(models.AgentAction).filter(models.AgentAction.tenant_code == tenant).all()
+    # Windowed in SQL — these tables grow continuously (created_at is indexed).
+    start = datetime.combine(window[0], datetime.min.time())
+    prod = db.query(models.ProductionRecord).filter(models.ProductionRecord.created_at >= start).all()
+    down = db.query(models.DowntimeLog).filter(models.DowntimeLog.created_at >= start).all()
+    qual = db.query(models.QualityInspection).filter(models.QualityInspection.created_at >= start).all()
+    acts = (db.query(models.AgentAction)
+            .filter(models.AgentAction.tenant_code == tenant,
+                    models.AgentAction.created_at >= start).all())
 
     return {
         "days": WINDOW_DAYS,

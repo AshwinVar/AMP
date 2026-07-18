@@ -20,10 +20,18 @@ const fmt = (k: Kpi) =>
     : k.unit === "%" ? `${k.value}%`
     : `${k.value}${k.unit}`;
 
+// Each KPI drills into the view that owns its detail.
+const KPI_TO_VIEW: Record<string, string> = {
+  oee: "executive",
+  good_rate: "quality",
+  on_time: "orders",
+  loss_cost: "costing",
+};
+
 // The executive scorecard strip: one headline KPI per pillar, colour-toned, at
 // the top of the exec home. Self-contained — fetches its own summary and
 // refreshes. Renders nothing until there's data.
-export default function ScorecardStrip() {
+export default function ScorecardStrip({ onOpen }: { onOpen?: (viewKey: string) => void }) {
   const [s, setS] = useState<Scorecard | null>(null);
 
   const load = useCallback(async () => {
@@ -44,12 +52,33 @@ export default function ScorecardStrip() {
 
   return (
     <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-      {s.kpis.map((k) => (
-        <div key={k.key} className="rounded-2xl border border-slate-800 bg-slate-900/60 p-5">
-          <p className="text-[11px] uppercase tracking-wide text-slate-500">{k.label}</p>
-          <p className={`text-3xl font-bold mt-1 ${toneCls[k.tone]}`}>{fmt(k)}</p>
-        </div>
-      ))}
+      {s.kpis.map((k) => {
+        const view = KPI_TO_VIEW[k.key];
+        const clickable = Boolean(onOpen && view);
+        const cls = "group rounded-2xl border border-slate-800 bg-slate-900/60 p-5";
+        const inner = (
+          <>
+            <p className="text-[11px] uppercase tracking-wide text-slate-500 flex items-center justify-between">
+              {k.label}
+              {clickable && <span className="text-slate-600 group-hover:text-slate-300 transition" aria-hidden>→</span>}
+            </p>
+            <p className={`text-3xl font-bold mt-1 ${toneCls[k.tone]}`}>{fmt(k)}</p>
+          </>
+        );
+        return clickable ? (
+          <button
+            key={k.key}
+            type="button"
+            onClick={() => onOpen!(view)}
+            title={`Open ${k.label}`}
+            className={`${cls} w-full text-left hover:border-slate-600 hover:bg-slate-800/60 transition focus:outline-none focus:ring-2 focus:ring-slate-600`}
+          >
+            {inner}
+          </button>
+        ) : (
+          <div key={k.key} className={cls}>{inner}</div>
+        );
+      })}
     </div>
   );
 }

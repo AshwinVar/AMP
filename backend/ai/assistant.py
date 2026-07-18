@@ -17,6 +17,7 @@ from ai.maintenance import build_maintenance_summary
 from ai.inventory import build_inventory_summary
 from ai.production import build_production_summary
 from ai.briefing import build_briefing
+from ai.scorecard import build_scorecard
 
 name = "assistant"
 
@@ -140,6 +141,23 @@ def _oee(db, tenant):
     return ans, "executive"
 
 
+def _trend(db, tenant):
+    sc = build_scorecard(db, tenant)
+    if not sc["has_data"]:
+        return "No production data yet, so there's nothing to compare.", "overview"
+    moves = []
+    for k in sc["kpis"]:
+        if k.get("delta") is None or k["delta"] == 0:
+            continue
+        arrow = "up" if k["delta"] > 0 else "down"
+        mag = f"${abs(k['delta']):,}" if k["unit"] == "$" else f"{abs(k['delta'])}{'' if k['unit'] == '%' else k['unit']}"
+        verdict = "better" if k.get("delta_tone") == "good" else "worse"
+        moves.append(f"{k['label']} {arrow} {mag} ({verdict})")
+    if not moves:
+        return "Steady vs last week — no material change in OEE, good rate or cost of losses.", "executive"
+    return "Vs last week: " + "; ".join(moves) + ".", "executive"
+
+
 def _briefing(db, tenant):
     b = build_briefing(db, tenant)
     if not b["has_data"]:
@@ -154,6 +172,8 @@ def _briefing(db, tenant):
 # "reorder" doesn't match "order"; downtime before machines so "downtime"
 # doesn't match "down".
 _ROUTES = [
+    (("last week", "vs last", "compared", "week on week", "week-on-week", "trend", "improv",
+      "getting better", "getting worse", "better or worse", "since last"), _trend),
     (("reorder", "restock", "stock", "inventory", "out of stock", "replenish"), _inventory),
     (("deliver", "on-time", "on time", " late", "customer", "ship", "fulfil", "bugatti", "mercedes", "order"), _delivery),
     (("cost", "money", "losing", "$", "expensive", "spend", "margin"), _cost),

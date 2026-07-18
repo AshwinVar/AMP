@@ -10,6 +10,7 @@ const SUGGESTIONS = [
   "What should I reorder first?",
   "Are any orders late?",
   "How much are losses costing us?",
+  "How are we doing vs last week?",
   "Summarise today's production.",
 ];
 

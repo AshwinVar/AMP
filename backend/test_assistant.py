@@ -26,6 +26,10 @@ def _seed(db):
     db.add(models.ProductionRecord(machine_id=1, planned_minutes=480, runtime_minutes=440,
                                    ideal_cycle_time_seconds=30, total_count=100, good_count=90,
                                    rejected_count=10, created_at=now))
+    # a prior-week run (8 days ago) so the scorecard has a period to compare against
+    db.add(models.ProductionRecord(machine_id=2, planned_minutes=480, runtime_minutes=400,
+                                   ideal_cycle_time_seconds=30, total_count=100, good_count=80,
+                                   rejected_count=20, created_at=now - timedelta(days=8)))
     db.add(models.InventoryItem(item_code="CLB-PCB", item_name="Cluster PCB", category="PCB",
                                 current_stock=0, reorder_level=50, unit="pcs", supplier="Acme"))
     db.add(models.CustomerOrder(order_no="BUG-1", customer_name="Bugatti", product_name="P",
@@ -50,6 +54,11 @@ def test_copilot_routes_questions_to_the_right_pillar():
     assert ask("Any overdue maintenance?")["matched"] == "maintenance"
     assert ask("Why is downtime high?")["matched"] == "downtime"
     assert ask("Summarise today's production")["matched"] == "production"
+    # temporal questions -> the trend intent (week-on-week from the scorecard)
+    assert ask("How are we doing vs last week?")["matched"] == "trend"
+    assert ask("Is OEE improving?")["matched"] == "trend"
+    tr = ask("Are we better or worse than last week?")
+    assert tr["view"] == "executive" and tr["answer"]
     # unknown -> defaults to the attention briefing
     assert ask("hello")["matched"] == "briefing"
 

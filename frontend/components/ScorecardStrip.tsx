@@ -4,7 +4,11 @@ import { useCallback, useEffect, useState } from "react";
 import { apiGet } from "../lib/api";
 
 // Mirrors the backend scorecard read-model (ai/scorecard.py build_scorecard).
-type Kpi = { key: string; label: string; value: number | null; unit: string; tone: "good" | "warn" | "bad" | "none" };
+type Kpi = {
+  key: string; label: string; value: number | null; unit: string;
+  tone: "good" | "warn" | "bad" | "none";
+  delta: number | null; delta_tone: "good" | "bad" | "flat" | null;
+};
 type Scorecard = { has_data: boolean; kpis: Kpi[] };
 
 const toneCls: Record<string, string> = {
@@ -14,11 +18,24 @@ const toneCls: Record<string, string> = {
   none: "text-slate-300",
 };
 
+const deltaCls: Record<string, string> = {
+  good: "text-emerald-400",
+  bad: "text-red-400",
+  flat: "text-slate-500",
+};
+
 const fmt = (k: Kpi) =>
   k.value == null ? "—"
     : k.unit === "$" ? `$${k.value.toLocaleString()}`
     : k.unit === "%" ? `${k.value}%`
     : `${k.value}${k.unit}`;
+
+// The delta magnitude, formatted like the KPI (absolute value; the arrow carries the sign).
+const fmtDelta = (k: Kpi) => {
+  const a = Math.abs(k.delta as number);
+  return k.unit === "$" ? `$${a.toLocaleString()}` : `${a}${k.unit === "%" ? "" : k.unit}`;
+};
+const deltaGlyph = (d: number) => (d > 0 ? "↑" : d < 0 ? "↓" : "→");
 
 // Each KPI drills into the view that owns its detail.
 const KPI_TO_VIEW: Record<string, string> = {
@@ -63,6 +80,11 @@ export default function ScorecardStrip({ onOpen }: { onOpen?: (viewKey: string) 
               {clickable && <span className="text-slate-600 group-hover:text-slate-300 transition" aria-hidden>→</span>}
             </p>
             <p className={`text-3xl font-bold mt-1 ${toneCls[k.tone]}`}>{fmt(k)}</p>
+            {k.delta != null && (
+              <p className={`text-xs mt-0.5 ${deltaCls[k.delta_tone ?? "flat"]}`}>
+                {deltaGlyph(k.delta)} {fmtDelta(k)} <span className="text-slate-600">vs last wk</span>
+              </p>
+            )}
           </>
         );
         return clickable ? (

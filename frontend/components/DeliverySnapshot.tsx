@@ -19,6 +19,7 @@ type DeliverySummary = {
   fulfillment_rate: number;
   by_customer: ByCustomer[];
   at_risk_orders: ChaseOrder[];
+  upcoming: { date: string; orders: number }[];
 };
 
 function fulfillColor(pct: number) {
@@ -57,6 +58,8 @@ export default function DeliverySnapshot({ onOpen }: { onOpen?: (viewKey: string
 
   if (!d || d.total === 0) return null;
 
+  const upcomingPeak = Math.max(...d.upcoming.map((u) => u.orders), 1);
+
   const states: { key: keyof DeliverySummary; label: string; cls: string }[] = [
     { key: "delivered", label: "Delivered", cls: "text-emerald-400" },
     { key: "on_track", label: "On track", cls: "text-slate-300" },
@@ -88,6 +91,22 @@ export default function DeliverySnapshot({ onOpen }: { onOpen?: (viewKey: string
           </div>
         ))}
       </div>
+
+      {d.upcoming.some((u) => u.orders > 0) && (
+        <div className="mt-4">
+          <p className="text-xs text-slate-500 mb-1.5">Due next 7 days</p>
+          <div className="flex items-end gap-1 h-10">
+            {d.upcoming.map((u) => (
+              <div
+                key={u.date}
+                className="flex-1 rounded-sm bg-sky-500/60"
+                style={{ height: `${Math.max(4, Math.round((u.orders / upcomingPeak) * 100))}%` }}
+                title={`${u.date}: ${u.orders} due`}
+              />
+            ))}
+          </div>
+        </div>
+      )}
 
       <div className="mt-5 grid grid-cols-1 md:grid-cols-2 gap-6">
         {/* by customer */}

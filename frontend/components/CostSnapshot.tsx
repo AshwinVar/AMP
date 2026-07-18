@@ -13,6 +13,7 @@ type CostSummary = {
   losses: Loss[];
   biggest: string | null;
   by_line: { line: string; downtime_cost: number; scrap_cost: number; cost: number }[];
+  daily: { date: string; cost: number }[];
   recorded_total: number;
   by_type: { type: string; amount: number }[];
 };
@@ -30,7 +31,7 @@ const lineChip = (line: string) =>
 // The cost-of-losses card: what downtime and scrap cost this week, in money,
 // plus the costs actually recorded. Self-contained — fetches its own summary and
 // refreshes. Renders nothing until there's something to price.
-export default function CostSnapshot() {
+export default function CostSnapshot({ onOpen }: { onOpen?: (viewKey: string) => void }) {
   const [s, setS] = useState<CostSummary | null>(null);
 
   const load = useCallback(async () => {
@@ -50,6 +51,7 @@ export default function CostSnapshot() {
   if (!s || !s.has_data) return null;
 
   const peak = s.losses.reduce((m, l) => Math.max(m, l.cost), 0) || 1;
+  const dailyPeak = Math.max(...s.daily.map((d) => d.cost), 1);
 
   return (
     <div className="rounded-2xl border border-slate-800 bg-slate-900/60 p-6">
@@ -57,6 +59,15 @@ export default function CostSnapshot() {
         <div>
           <h3 className="text-xs font-semibold uppercase tracking-wide text-slate-300">Cost of losses · last 7 days</h3>
           <p className="text-slate-400 text-sm mt-1">What downtime and scrap cost the plant this week</p>
+          {onOpen && (
+            <button
+              type="button"
+              onClick={() => onOpen("costing")}
+              className="mt-2 rounded-md border border-slate-700 px-2.5 py-1 text-xs text-slate-300 hover:border-slate-500 hover:bg-slate-800 transition focus:outline-none focus:ring-2 focus:ring-slate-600"
+            >
+              Manage costs →
+            </button>
+          )}
         </div>
         <div className="text-right">
           <p className="text-3xl font-bold text-red-400">{money(s.loss_cost)}</p>
@@ -84,6 +95,22 @@ export default function CostSnapshot() {
           );
         })}
       </div>
+
+      {s.daily.some((d) => d.cost > 0) && (
+        <div className="mt-4">
+          <p className="text-xs text-slate-500 mb-1.5">Daily · last 7 days</p>
+          <div className="flex items-end gap-1 h-12">
+            {s.daily.map((d) => (
+              <div
+                key={d.date}
+                className="flex-1 rounded-sm bg-red-500/60"
+                style={{ height: `${Math.max(3, Math.round((d.cost / dailyPeak) * 100))}%` }}
+                title={`${d.date}: ${money(d.cost)}`}
+              />
+            ))}
+          </div>
+        </div>
+      )}
 
       {s.by_line.length > 1 && (
         <div className="mt-4 pt-4 border-t border-slate-800/70">

@@ -24,6 +24,7 @@ const trendGlyph = (t: Handover["oee_trend"]) => (t === "up" ? "↑" : t === "do
 // refreshes. Renders nothing until there's data.
 export default function HandoverSnapshot() {
   const [h, setH] = useState<Handover | null>(null);
+  const [copied, setCopied] = useState(false);
 
   const load = useCallback(async () => {
     try {
@@ -41,6 +42,34 @@ export default function HandoverSnapshot() {
 
   if (!h || !h.has_data) return null;
 
+  // Build the handover as plain text a shift lead can paste into a log or message.
+  const summaryText = () => {
+    const lines = [
+      "SHIFT HANDOVER",
+      `Plant OEE: ${h.oee}% (${h.oee_trend})`,
+      `Produced: ${h.produced.good.toLocaleString()} good units (${h.produced.good_rate}%, ${h.produced.runs} runs)`,
+      `Open: ${h.open_work.pending_approvals} approval(s) pending, ${h.open_work.open_escalations} escalation(s)`,
+    ];
+    if (h.attention.length) {
+      lines.push("", "Needs attention:");
+      h.attention.forEach((a) => lines.push(`- [${a.severity}] ${a.title}${a.detail ? ` — ${a.detail}` : ""}`));
+    }
+    if (h.wins.length) {
+      lines.push("", "Wins:");
+      h.wins.forEach((w) => lines.push(`- ${w.title}`));
+    }
+    return lines.join("\n");
+  };
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(summaryText());
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch {
+      // clipboard blocked (e.g. insecure context) — no-op.
+    }
+  };
+
   const tiles = [
     { label: "Good units", value: h.produced.good.toLocaleString(), sub: `${h.produced.good_rate}% good` },
     { label: "Plant OEE", value: `${h.oee}% ${trendGlyph(h.oee_trend)}`, sub: `${h.produced.runs} runs` },
@@ -55,6 +84,13 @@ export default function HandoverSnapshot() {
           <h3 className="text-xs font-semibold uppercase tracking-wide text-slate-300">Shift handover</h3>
           <p className="text-slate-400 text-sm mt-1">What was made, and what's open to carry to the next shift</p>
         </div>
+        <button
+          type="button"
+          onClick={copy}
+          className="rounded-md border border-slate-700 px-2.5 py-1 text-xs text-slate-300 hover:border-slate-500 hover:bg-slate-800 transition focus:outline-none focus:ring-2 focus:ring-slate-600"
+        >
+          {copied ? "Copied ✓" : "Copy summary"}
+        </button>
       </div>
 
       <div className="mt-4 grid grid-cols-2 md:grid-cols-4 gap-2">

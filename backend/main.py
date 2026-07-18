@@ -89,9 +89,26 @@ def _ensure_column(table: str, column: str, ddl: str):
         print(f"[MIGRATE] {table}.{column} skipped: {e}")
 
 
+def _ensure_index(table: str, column: str):
+    """Idempotent migration: index a column on an existing table (create_all only
+    creates missing tables, so existing prod tables need it added explicitly).
+    CREATE INDEX IF NOT EXISTS works on both PostgreSQL and SQLite."""
+    from sqlalchemy import text
+    try:
+        with engine.begin() as conn:
+            conn.execute(text(f"CREATE INDEX IF NOT EXISTS ix_{table}_{column} ON {table} ({column})"))
+    except Exception as e:
+        print(f"[MIGRATE] index {table}.{column} skipped: {e}")
+
+
 _ensure_user_tenant_column()
 _ensure_column("machines", "line", "ALTER TABLE machines ADD COLUMN line VARCHAR DEFAULT ''")
 _ensure_column("work_orders", "material_state", "ALTER TABLE work_orders ADD COLUMN material_state VARCHAR DEFAULT 'RAW'")
+# The windowed read-models filter these by created_at in SQL — index them so the
+# window stays fast as the tables grow.
+_ensure_index("production_records", "created_at")
+_ensure_index("downtime_logs", "created_at")
+_ensure_index("cost_records", "created_at")
 tenancy.ensure_tenant_columns(engine)  # ADR-0002: tenant_code on core tables
 tenancy.install_scoping()              # ADR-0002: auto-enforce tenant scoping
 

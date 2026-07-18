@@ -43,6 +43,7 @@ import CostSnapshot from "../../components/CostSnapshot";
 import HandoverSnapshot from "../../components/HandoverSnapshot";
 import ScorecardStrip from "../../components/ScorecardStrip";
 import MaintenanceSnapshot from "../../components/MaintenanceSnapshot";
+import ComplianceSnapshot from "../../components/ComplianceSnapshot";
 import WeeklyReportSnapshot from "../../components/WeeklyReportSnapshot";
 import DigitalTwinSection from "../../components/DigitalTwinSection";
 import OrdersDispatchSection from "../../components/OrdersDispatchSection";
@@ -2001,6 +2002,15 @@ export default function DashboardPage() {
 
       <div className="mb-8">
         <MaintenanceSnapshot
+          onOpen={(view) => {
+            setActiveView(view);
+            window.scrollTo({ top: 0, behavior: "smooth" });
+          }}
+        />
+      </div>
+
+      <div className="mb-8">
+        <ComplianceSnapshot
           onOpen={(view) => {
             setActiveView(view);
             window.scrollTo({ top: 0, behavior: "smooth" });

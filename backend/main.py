@@ -1027,6 +1027,13 @@ def get_maintenance_summary(db: Session = Depends(get_db), current_user: dict = 
     return ai.maintenance.build_maintenance_summary(db, current_user.get("tenant", "DEFAULT"))
 
 
+@app.get("/compliance-summary")
+def get_compliance_summary(db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
+    # Compliance document summary (ADR-0007): review load — overdue / due-soon /
+    # pending-approval counts, a status breakdown, and the docs to review next.
+    return ai.compliance.build_compliance_summary(db, current_user.get("tenant", "DEFAULT"))
+
+
 @app.get("/weekly-report")
 def get_weekly_report(db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
     # Weekly plant report (ADR-0007): a Markdown report composing the scorecard,

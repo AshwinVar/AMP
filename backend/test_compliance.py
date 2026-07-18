@@ -4,7 +4,7 @@ The controlled-document review load: overdue / due-soon / pending-approval count
 status breakdown, and the docs to review next. Run:
     python backend/test_compliance.py     (exit 0 = pass)
 """
-from datetime import date, timedelta
+from datetime import datetime, timedelta
 
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
@@ -23,7 +23,7 @@ def _fresh_session():
 def _doc(no, status, due_offset, dtype="SOP"):
     return models.ComplianceDocument(document_no=no, title=f"Doc {no}", document_type=dtype,
                                      department="Quality", version="1.0", owner="QA Lead",
-                                     approval_status=status, review_due_date=date.today() + timedelta(days=due_offset))
+                                     approval_status=status, review_due_date=datetime.utcnow().date() + timedelta(days=due_offset))
 
 
 def test_compliance_summary_rolls_up_the_review_load():

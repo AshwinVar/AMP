@@ -3613,9 +3613,21 @@ def get_ai_insights(db: Session = Depends(get_db), current_user: dict = Depends(
 
 
 
+def _registry_scope(query, current_user):
+    """The tenant registry is founder data. A non-DEFAULT workspace sees only
+    its own row — scoped by the raw JWT claim (not the X-Tenant preview), and
+    returned as data rather than a 403 so client dashboards' batched fetch
+    keeps working."""
+    claim = current_user.get("tenant", tenancy.DEFAULT_TENANT)
+    if claim != tenancy.DEFAULT_TENANT:
+        query = query.filter(models.CompanyTenant.company_code == claim)
+    return query
+
+
 @app.get("/saas/tenants", response_model=List[schemas.CompanyTenantResponse])
 def get_company_tenants(db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
-    return db.query(models.CompanyTenant).order_by(models.CompanyTenant.id.desc()).limit(300).all()
+    q = _registry_scope(db.query(models.CompanyTenant), current_user)
+    return q.order_by(models.CompanyTenant.id.desc()).limit(300).all()
 
 
 def _require_founder(current_user):
@@ -3671,7 +3683,7 @@ def delete_company_tenant(tenant_id: int, db: Session = Depends(get_db), current
 
 @app.get("/analytics/saas")
 def get_saas_analytics(db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
-    rows = db.query(models.CompanyTenant).all()
+    rows = _registry_scope(db.query(models.CompanyTenant), current_user).all()
     return {
         "total_tenants": len(rows),
         "trial": len([r for r in rows if r.subscription_status == "Trial"]),

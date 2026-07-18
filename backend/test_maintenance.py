@@ -4,7 +4,7 @@ Open maintenance load: counts by priority, overdue + pending-approval totals, an
 the tasks to do next (overdue first, then priority). Run:
     python backend/test_maintenance.py     (exit 0 = pass)
 """
-from datetime import date, timedelta
+from datetime import datetime, timedelta
 
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
@@ -28,7 +28,9 @@ def _task(no, machine_id, priority, status, planned):
 
 def test_maintenance_summary_rolls_up_open_load():
     db = _fresh_session()
-    today = date.today()
+    # Same clock as the read-model (UTC) — date.today() is local and made this
+    # test fail nightly between 00:00 and 05:30 IST.
+    today = datetime.utcnow().date()
     db.add(models.Machine(id=1, name="SMT-Reflow-01", status="Breakdown", utilization=0))
     db.add_all([
         _task("M-1", 1, "Critical", "Proposed", today - timedelta(days=1)),   # overdue + pending approval

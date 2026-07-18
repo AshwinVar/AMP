@@ -6,7 +6,7 @@ agent's drafted POs still awaiting approval (AUTO-PO-*, status Draft).
 
 Run:  python backend/test_inventory.py     (exit 0 = pass)
 """
-from datetime import date
+from datetime import datetime
 
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
@@ -31,7 +31,7 @@ def _item(code, stock, reorder, name=None):
 def _auto_po(item_id, status="Draft"):
     return models.PurchaseOrder(
         po_no=f"AUTO-PO-{item_id}-123", item_id=item_id, item_name=f"item-{item_id}",
-        order_quantity=50, unit="pcs", expected_delivery_date=date.today(), status=status)
+        order_quantity=50, unit="pcs", expected_delivery_date=datetime.utcnow().date(), status=status)
 
 
 def test_inventory_summary_flags_risk_and_agent_drafts():
@@ -49,7 +49,7 @@ def test_inventory_summary_flags_risk_and_agent_drafts():
         _auto_po(2, "Draft"),                        # pending agent draft
         _auto_po(3, "Approved"),                     # already approved -> not pending
         models.PurchaseOrder(po_no="PO-9001", item_id=2, item_name="manual", order_quantity=10,
-                             unit="pcs", expected_delivery_date=date.today(), status="Draft"),  # manual -> excluded
+                             unit="pcs", expected_delivery_date=datetime.utcnow().date(), status="Draft"),  # manual -> excluded
     ])
     db.commit()
 

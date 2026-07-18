@@ -132,7 +132,7 @@ def test_briefing_flags_late_orders():
 
 
 def test_briefing_flags_overdue_maintenance():
-    from datetime import date
+    from datetime import datetime
     db = _fresh_session()
     now = datetime.utcnow()
     db.add(models.Machine(id=1, name="SMT-Reflow-01", status="Running", utilization=90, line="SMT"))
@@ -142,7 +142,7 @@ def test_briefing_flags_overdue_maintenance():
     # an overdue maintenance task -> a high-severity maintenance alert
     db.add(models.MaintenanceTask(task_no="M-1", machine_id=1, task_type="Predictive (auto)",
                                   priority="Critical", assigned_to="Maintenance team",
-                                  planned_date=(date.today() - timedelta(days=2)), status="Open"))
+                                  planned_date=(datetime.utcnow().date() - timedelta(days=2)), status="Open"))
     db.commit()
 
     b = briefing.build_briefing(db, "DEFAULT")
@@ -153,7 +153,7 @@ def test_briefing_flags_overdue_maintenance():
 
 
 def test_briefing_flags_overdue_document_reviews():
-    from datetime import date
+    from datetime import datetime
     db = _fresh_session()
     now = datetime.utcnow()
     db.add(models.Machine(id=1, name="M1", status="Running", utilization=90, line="SMT"))
@@ -163,7 +163,7 @@ def test_briefing_flags_overdue_document_reviews():
     # a controlled document overdue for review -> a medium compliance alert
     db.add(models.ComplianceDocument(document_no="SOP-1", title="Solder Reflow SOP", document_type="SOP",
                                      department="Quality", version="1.0", owner="QA Lead",
-                                     approval_status="Approved", review_due_date=(date.today() - timedelta(days=5))))
+                                     approval_status="Approved", review_due_date=(datetime.utcnow().date() - timedelta(days=5))))
     db.commit()
 
     b = briefing.build_briefing(db, "DEFAULT")

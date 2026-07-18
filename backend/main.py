@@ -1072,6 +1072,28 @@ def platform_status(db: Session = Depends(get_db), current_user: dict = Depends(
     return ai.platform_status.build_platform_status(db, current_user.get("tenant", "DEFAULT"))
 
 
+def _orders_csv(db) -> str:
+    """The tenant's order book as CSV text (auto-scoped, ADR-0002)."""
+    import io
+    buf = io.StringIO()
+    w = csv.writer(buf)
+    w.writerow(["Order No", "Customer", "Product", "Order Qty", "Dispatched Qty",
+                "Status", "Priority", "Due Date"])
+    for o in db.query(models.CustomerOrder).order_by(models.CustomerOrder.due_date).all():
+        w.writerow([o.order_no, o.customer_name, o.product_name, o.order_quantity or 0,
+                    o.dispatched_quantity or 0, o.status, o.priority or "",
+                    o.due_date.isoformat() if o.due_date else ""])
+    return buf.getvalue()
+
+
+@app.get("/customer-orders/export")
+def export_customer_orders(db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
+    # Export the tenant's order book as CSV — SME manufacturers live in Excel.
+    from fastapi.responses import Response
+    return Response(content=_orders_csv(db), media_type="text/csv",
+                    headers={"Content-Disposition": "attachment; filename=order-book.csv"})
+
+
 @app.get("/machine-health/{machine_id}")
 def get_machine_detail(machine_id: int, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
     # Machine Health detail (ADR-0006): the single-machine cockpit — the twin

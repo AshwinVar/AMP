@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { apiGet } from "../lib/api";
+import { apiGet, API_URL, getAuthHeaders } from "../lib/api";
 
 // Mirrors the backend delivery read-model (ai/delivery.py build_delivery_summary).
 type ByCustomer = {
@@ -60,6 +60,21 @@ export default function DeliverySnapshot({ onOpen }: { onOpen?: (viewKey: string
 
   const upcomingPeak = Math.max(...d.upcoming.map((u) => u.orders), 1);
 
+  const exportCsv = async () => {
+    try {
+      const res = await fetch(`${API_URL}/customer-orders/export`, { headers: getAuthHeaders() });
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = "order-book.csv";
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch {
+      // best-effort export — stay quiet on error.
+    }
+  };
+
   const states: { key: keyof DeliverySummary; label: string; cls: string }[] = [
     { key: "delivered", label: "Delivered", cls: "text-emerald-400" },
     { key: "on_track", label: "On track", cls: "text-slate-300" },
@@ -75,6 +90,13 @@ export default function DeliverySnapshot({ onOpen }: { onOpen?: (viewKey: string
           <p className="text-slate-400 text-sm mt-1">
             {d.total} order{d.total !== 1 ? "s" : ""} · {d.at_risk + d.late} need attention
           </p>
+          <button
+            type="button"
+            onClick={exportCsv}
+            className="mt-2 rounded-md border border-slate-700 px-2.5 py-1 text-xs text-slate-300 hover:border-slate-500 hover:bg-slate-800 transition focus:outline-none focus:ring-2 focus:ring-slate-600"
+          >
+            Export CSV
+          </button>
         </div>
         <div className="text-right">
           <p className={`text-3xl font-bold ${fulfillColor(d.fulfillment_rate)}`}>{d.fulfillment_rate}%</p>

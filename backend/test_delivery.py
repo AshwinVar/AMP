@@ -58,6 +58,10 @@ def test_delivery_classifies_orders_and_rolls_up_by_customer():
     assert [o["order_no"] for o in chase] == ["BUG-2", "MER-1"]
     assert chase[0]["state"] == "late" and chase[0]["days_to_due"] == -2
 
+    # upcoming due load: 7 forward days; only MER-1 (due in 2 days, undelivered) lands
+    assert len(s["upcoming"]) == 7
+    assert sum(u["orders"] for u in s["upcoming"]) == 1 and s["upcoming"][2]["orders"] == 1
+
     # empty order book -> zeros, no divide-by-zero
     empty = delivery.build_delivery_summary(_fresh_session(), "DEFAULT")
     assert empty["total"] == 0 and empty["fulfillment_rate"] == 0 and empty["at_risk_orders"] == []

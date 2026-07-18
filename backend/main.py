@@ -1006,6 +1006,13 @@ def get_handover(db: Session = Depends(get_db), current_user: dict = Depends(get
     return ai.handover.build_handover(db, current_user.get("tenant", "DEFAULT"))
 
 
+@app.get("/scorecard")
+def get_scorecard(db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
+    # Executive scorecard (ADR-0007): one headline KPI per pillar (OEE, good rate,
+    # on-time orders, cost of losses), each with a tone.
+    return ai.scorecard.build_scorecard(db, current_user.get("tenant", "DEFAULT"))
+
+
 @app.get("/machine-health/{machine_id}")
 def get_machine_detail(machine_id: int, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
     # Machine Health detail (ADR-0006): the single-machine cockpit — the twin

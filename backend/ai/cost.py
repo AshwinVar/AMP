@@ -51,8 +51,21 @@ def build_cost_summary(db, tenant: str) -> dict:
         "cost": a["downtime_min"] * DOWNTIME_COST_PER_MIN + a["rejected"] * SCRAP_COST_PER_UNIT,
     } for ln, a in sorted(line_agg.items())]
 
+    # Daily loss cost across the window (oldest -> newest), for the trend.
+    today = datetime.utcnow().date()
+    window = [today - timedelta(days=i) for i in range(WINDOW_DAYS - 1, -1, -1)]
+    day_agg = {d: {"downtime_min": 0, "rejected": 0} for d in window}
+    for r in records:
+        d = r.created_at.date() if r.created_at else None
+        if d in day_agg:
+            day_agg[d]["downtime_min"] += max(0, (r.planned_minutes or 0) - (r.runtime_minutes or 0))
+            day_agg[d]["rejected"] += r.rejected_count or 0
+    daily = [{"date": d.isoformat(),
+              "cost": day_agg[d]["downtime_min"] * DOWNTIME_COST_PER_MIN + day_agg[d]["rejected"] * SCRAP_COST_PER_UNIT}
+             for d in window]
+
     # Costs actually logged in the window, grouped by type (worst first).
-    window_start = datetime.utcnow().date() - timedelta(days=WINDOW_DAYS - 1)
+    window_start = today - timedelta(days=WINDOW_DAYS - 1)
     recs = [c for c in db.query(models.CostRecord).all()
             if c.created_at and c.created_at.date() >= window_start]
     by_type_amt: Counter = Counter()
@@ -79,6 +92,7 @@ def build_cost_summary(db, tenant: str) -> dict:
         "losses": losses,
         "biggest": biggest["key"] if biggest else None,
         "by_line": by_line,
+        "daily": daily,
         "recorded_total": sum(by_type_amt.values()),
         "by_type": by_type,
     }

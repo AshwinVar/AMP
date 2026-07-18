@@ -41,6 +41,7 @@ import BriefingSnapshot from "../../components/BriefingSnapshot";
 import DeliverySnapshot from "../../components/DeliverySnapshot";
 import CostSnapshot from "../../components/CostSnapshot";
 import HandoverSnapshot from "../../components/HandoverSnapshot";
+import ScorecardStrip from "../../components/ScorecardStrip";
 import DigitalTwinSection from "../../components/DigitalTwinSection";
 import OrdersDispatchSection from "../../components/OrdersDispatchSection";
 import PurchasingSection from "../../components/PurchasingSection";
@@ -1917,6 +1918,10 @@ export default function DashboardPage() {
       </section>
 
       <div className="mb-8">
+        <ScorecardStrip />
+      </div>
+
+      <div className="mb-8">
         <BriefingSnapshot
           onOpen={(view) => {
             setActiveView(view);
@@ -1975,7 +1980,12 @@ export default function DashboardPage() {
       </div>
 
       <div className="mb-8">
-        <CostSnapshot />
+        <CostSnapshot
+          onOpen={(view) => {
+            setActiveView(view);
+            window.scrollTo({ top: 0, behavior: "smooth" });
+          }}
+        />
       </div>
 
       <div className="mb-8">

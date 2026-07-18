@@ -8,7 +8,7 @@ per customer (e.g. Bugatti vs Mercedes), and lists the specific orders that need
 chasing. A read-model over customer_orders — auto-scoped to the tenant
 (ADR-0002); it adds no storage.
 """
-from datetime import datetime
+from datetime import datetime, timedelta
 
 import models
 
@@ -85,6 +85,15 @@ def build_delivery_summary(db, tenant: str) -> dict:
                 "days_to_due": (o.due_date - today).days if o.due_date else None,
             })
 
+    # Upcoming due load: not-yet-delivered orders due on each of the next 7 days.
+    upcoming_days = [today + timedelta(days=i) for i in range(7)]
+    due_set = set(upcoming_days)
+    due_count = {d: 0 for d in upcoming_days}
+    for o in orders:
+        if o.due_date in due_set and _state(o, today) != "delivered":
+            due_count[o.due_date] += 1
+    upcoming = [{"date": d.isoformat(), "orders": due_count[d]} for d in upcoming_days]
+
     by_customer = [{**c, "fulfillment_rate": _pct(c["dispatched"], c["ordered"])} for c in per_customer.values()]
     # worst first: most late, then most at-risk, then lowest fulfillment
     by_customer.sort(key=lambda c: (c["late"], c["at_risk"], -c["fulfillment_rate"]), reverse=True)
@@ -102,4 +111,5 @@ def build_delivery_summary(db, tenant: str) -> dict:
         "fulfillment_rate": _pct(dispatched_units, ordered_units),
         "by_customer": by_customer,
         "at_risk_orders": at_risk_orders[:TOP_N],
+        "upcoming": upcoming,
     }

@@ -3,7 +3,7 @@
 One query across the core entities, each hit carrying the view that opens it.
 Run:  python backend/test_search.py     (exit 0 = pass)
 """
-from datetime import date
+from datetime import datetime
 
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
@@ -25,18 +25,18 @@ def _seed(db):
                             machine_id=1, target_quantity=100, actual_quantity=10, status="In Progress"))
     db.add(models.CustomerOrder(order_no="CO-5001", customer_name="Bugatti", product_name="CLB-PCB",
                                 order_quantity=100, dispatched_quantity=0, status="Pending",
-                                due_date=date.today()))
+                                due_date=datetime.utcnow().date()))
     db.add(models.InventoryItem(item_code="CLB-PCB", item_name="Cluster PCB", category="PCB",
                                 current_stock=40, reorder_level=50, unit="pcs", supplier="Acme"))
     db.add(models.MaintenanceTask(task_no="AUTO-MAINT-1-99", machine_id=1, task_type="Predictive (auto)",
                                   priority="High", assigned_to="Maintenance team",
-                                  planned_date=date.today(), status="Open"))
+                                  planned_date=datetime.utcnow().date(), status="Open"))
     db.add(models.Escalation(tenant_code="DEFAULT", machine_id=1, title="Reflow oven overheating",
                              severity="High", owner="Lead", department="Maintenance",
                              status="Open", source="Manual"))
     db.add(models.ComplianceDocument(document_no="SOP-7", title="Reflow profile SOP", document_type="SOP",
                                      department="Quality", version="1.0", owner="QA",
-                                     approval_status="Approved", review_due_date=date.today()))
+                                     approval_status="Approved", review_due_date=datetime.utcnow().date()))
     db.commit()
 
 

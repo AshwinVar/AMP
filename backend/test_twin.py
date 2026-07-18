@@ -5,7 +5,7 @@ open tasks + pending agent actions), worst health first, tenant-scoped.
 
 Run:  python backend/test_twin.py     (exit 0 = pass)
 """
-from datetime import date
+from datetime import datetime
 
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
@@ -28,7 +28,7 @@ def test_twin_composes_health_and_is_tenant_scoped():
     db.add(models.DowntimeLog(machine_id=1, reason="Wear", duration="120 min"))
     db.add(models.MaintenanceTask(tenant_code="DEFAULT", task_no="AUTO-1", machine_id=1,
                                   task_type="Predictive (auto)", priority="Critical",
-                                  assigned_to="x", planned_date=date.today(), status="Open"))
+                                  assigned_to="x", planned_date=datetime.utcnow().date(), status="Open"))
     db.add(models.AgentAction(tenant_code="DEFAULT", agent="maintenance", action_type="open_task",
                               summary="x", ref_kind="maintenance_task", ref_id=1,
                               related_machine_id=1, status="Proposed"))
@@ -59,7 +59,7 @@ def test_machine_detail_composes_cockpit_and_scopes_actions():
     db.add(models.DowntimeLog(machine_id=1, reason="Wear", duration="120 min"))
     db.add(models.MaintenanceTask(tenant_code="DEFAULT", task_no="AUTO-1", machine_id=1,
                                   task_type="Predictive (auto)", priority="Critical",
-                                  assigned_to="x", planned_date=date.today(), status="Proposed"))
+                                  assigned_to="x", planned_date=datetime.utcnow().date(), status="Proposed"))
     db.add(models.AgentAction(tenant_code="DEFAULT", agent="maintenance", action_type="open_task",
                               summary="Open a Critical task", ref_kind="maintenance_task", ref_id=1,
                               related_machine_id=1, status="Proposed"))

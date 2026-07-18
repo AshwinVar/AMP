@@ -5,7 +5,7 @@ do it once (idempotent), and be wired to the maintenance-relevant events.
 
 Run:  python backend/test_agents.py     (exit 0 = pass)
 """
-from datetime import date
+from datetime import datetime
 
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
@@ -90,11 +90,11 @@ def test_approve_and_reject_agent_actions():
     db = _fresh_session()
     db.add(models.MaintenanceTask(id=1, task_no="AUTO-MAINT-1-1", machine_id=1,
                                   task_type="Predictive (auto)", priority="Critical",
-                                  assigned_to="Maintenance team", planned_date=date.today(), status="Proposed"))
+                                  assigned_to="Maintenance team", planned_date=datetime.utcnow().date(), status="Proposed"))
     db.add(models.AgentAction(id=1, tenant_code="DEFAULT", agent="maintenance", action_type="open_task",
                               summary="Open a task", ref_kind="maintenance_task", ref_id=1, status="Proposed"))
     db.add(models.PurchaseOrder(id=1, po_no="AUTO-PO-5-1", item_id=5, item_name="Steel Rod",
-                                order_quantity=17, unit="pcs", expected_delivery_date=date.today(), status="Draft"))
+                                order_quantity=17, unit="pcs", expected_delivery_date=datetime.utcnow().date(), status="Draft"))
     db.add(models.AgentAction(id=2, tenant_code="DEFAULT", agent="reorder", action_type="draft_po",
                               summary="Draft a PO", ref_kind="purchase_order", ref_id=1, status="Proposed"))
     db.commit()

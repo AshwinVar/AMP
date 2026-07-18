@@ -120,9 +120,39 @@ def test_read_models_light_up_for_new_tenant():
     print("PASS read-models light up for the new tenant")
 
 
+def test_registry_scoped_to_own_tenant():
+    """The tenant registry (list + SaaS analytics) is founder data: a client
+    workspace sees only its own row, never other companies' names or fees."""
+    import main
+    db = _fresh_session()
+    db.add(models.CompanyTenant(company_code="GMATS", company_name="GMATS Compressors",
+                                industry="Compressors", plan_name="Growth",
+                                subscription_status="Active", seats=10, monthly_fee=14999))
+    db.add(models.CompanyTenant(company_code="APEX", company_name="Apex Gear Works",
+                                industry="Precision Components", plan_name="Starter",
+                                subscription_status="Trial", seats=5, monthly_fee=0))
+    db.commit()
+
+    founder = {"tenant": "DEFAULT", "role": "Admin"}
+    client = {"tenant": "GMATS", "role": "Admin"}
+
+    assert {t.company_code for t in main.get_company_tenants(db=db, current_user=founder)} == {"GMATS", "APEX"}
+    assert [t.company_code for t in main.get_company_tenants(db=db, current_user=client)] == ["GMATS"]
+
+    founder_saas = main.get_saas_analytics(db=db, current_user=founder)
+    client_saas = main.get_saas_analytics(db=db, current_user=client)
+    assert founder_saas["total_tenants"] == 2
+    assert founder_saas["monthly_recurring_revenue"] == 14999
+    assert client_saas["total_tenants"] == 1
+    assert client_saas["monthly_recurring_revenue"] == 14999  # their own fee only
+    assert client_saas["total_seats"] == 10
+    print("PASS registry scoped to the caller's own tenant")
+
+
 if __name__ == "__main__":
     test_effective_tenant_matrix()
     test_seed_scopes_to_new_tenant_only()
     test_seed_never_overwrites_existing_tenant_data()
     test_read_models_light_up_for_new_tenant()
+    test_registry_scoped_to_own_tenant()
     print("ALL ONBOARDING TESTS PASSED")

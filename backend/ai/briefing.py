@@ -17,6 +17,7 @@ from ai.downtime import build_downtime_summary
 from ai.quality import build_quality_summary
 from ai.flow import build_flow_summary
 from ai.inventory import build_inventory_summary
+from ai.delivery import build_delivery_summary
 
 name = "briefing"
 
@@ -93,6 +94,27 @@ def build_briefing(db, tenant: str) -> dict:
             "title": f"{inventory['at_risk']} item{_plural(inventory['at_risk'])} at reorder level",
             "detail": (f"{pos} draft PO{_plural(pos)} awaiting approval" if pos else "no POs drafted yet"),
             "module": "inventory",
+        })
+
+    # Delivery — customer orders late (high) or at risk of missing their due date.
+    delivery = build_delivery_summary(db, tenant)
+    if delivery["late"] > 0:
+        worst = delivery["at_risk_orders"][0] if delivery["at_risk_orders"] else None
+        detail = (f"worst: {worst['order_no']} · {worst['customer']} · {abs(worst['days_to_due'])}d overdue"
+                  if worst and worst["state"] == "late" and worst["days_to_due"] is not None else "")
+        alerts.append({
+            "key": "delivery", "severity": "high",
+            "title": f"{delivery['late']} order{_plural(delivery['late'])} late",
+            "detail": detail, "module": "orders",
+        })
+    elif delivery["at_risk"] > 0:
+        worst = delivery["at_risk_orders"][0] if delivery["at_risk_orders"] else None
+        detail = (f"soonest: {worst['order_no']} · {worst['customer']} · due in {worst['days_to_due']}d"
+                  if worst and worst["days_to_due"] is not None else "")
+        alerts.append({
+            "key": "delivery", "severity": "medium",
+            "title": f"{delivery['at_risk']} order{_plural(delivery['at_risk'])} at risk",
+            "detail": detail, "module": "orders",
         })
 
     # 3. Biggest OEE loss lever (availability / performance / quality).

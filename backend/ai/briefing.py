@@ -19,6 +19,7 @@ from ai.flow import build_flow_summary
 from ai.inventory import build_inventory_summary
 from ai.delivery import build_delivery_summary
 from ai.maintenance import build_maintenance_summary
+from ai.compliance import build_compliance_summary
 
 name = "briefing"
 
@@ -133,6 +134,17 @@ def build_briefing(db, tenant: str) -> dict:
             "key": "maintenance", "severity": "low",
             "title": f"{maint['pending_approval']} maintenance task{_plural(maint['pending_approval'])} awaiting approval",
             "detail": "proposed by the Maintenance agent", "module": "cmms",
+        })
+
+    # Compliance — controlled-document reviews overdue (medium).
+    comp = build_compliance_summary(db, tenant)
+    if comp["overdue"] > 0:
+        worst = comp["documents"][0] if comp["documents"] else None
+        alerts.append({
+            "key": "compliance", "severity": "medium",
+            "title": f"{comp['overdue']} document review{_plural(comp['overdue'])} overdue",
+            "detail": (f"{worst['title']} ({worst['type']})" if worst else ""),
+            "module": "documents",
         })
 
     # 3. Biggest OEE loss lever (availability / performance / quality).

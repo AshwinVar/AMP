@@ -111,11 +111,32 @@ def test_briefing_marks_alerts_the_agent_has_escalated():
     assert by["oee_loss"]["escalation_id"] is None
 
 
+def test_briefing_flags_late_orders():
+    db = _fresh_session()
+    now = datetime.utcnow()
+    db.add(models.Machine(id=1, name="M1", status="Running", utilization=90, line="SMT"))
+    db.add(models.ProductionRecord(machine_id=1, planned_minutes=480, runtime_minutes=440,
+                                   ideal_cycle_time_seconds=30, total_count=100, good_count=95,
+                                   rejected_count=5, created_at=now))
+    # a customer order past its due date and not shipped -> a high-severity delivery alert
+    db.add(models.CustomerOrder(order_no="BUG-9", customer_name="Bugatti", product_name="CLB-PCB",
+                                order_quantity=100, dispatched_quantity=10, status="Pending",
+                                due_date=(now.date() - timedelta(days=3))))
+    db.commit()
+
+    b = briefing.build_briefing(db, "DEFAULT")
+    by = {a["key"]: a for a in b["alerts"]}
+    assert "delivery" in by
+    assert by["delivery"]["severity"] == "high" and by["delivery"]["module"] == "orders"
+    assert "BUG-9" in by["delivery"]["detail"] and "overdue" in by["delivery"]["detail"]
+
+
 if __name__ == "__main__":
     test_briefing_ranks_alerts_and_surfaces_wins()
     test_briefing_empty_is_safe()
     test_clean_plant_has_no_alerts_but_reports_wins()
     test_briefing_marks_alerts_the_agent_has_escalated()
+    test_briefing_flags_late_orders()
     print("BRIEFING OK: composes pillar read-models into a ranked alert feed (high-first) + wins; "
           "headline OEE + trend; empty-safe; clean plant -> no alerts, only wins; "
           "marks alerts the Escalation agent has proactively raised")

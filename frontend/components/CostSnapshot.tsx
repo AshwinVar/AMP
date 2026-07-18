@@ -13,6 +13,7 @@ type CostSummary = {
   losses: Loss[];
   biggest: string | null;
   by_line: { line: string; downtime_cost: number; scrap_cost: number; cost: number }[];
+  by_machine: { machine_id: number; name: string; downtime_cost: number; scrap_cost: number; cost: number }[];
   daily: { date: string; cost: number }[];
   recorded_total: number;
   by_type: { type: string; amount: number }[];
@@ -125,6 +126,37 @@ export default function CostSnapshot({ onOpen }: { onOpen?: (viewKey: string) =>
                 {l.line} <span className="opacity-70">· {money(l.cost)}</span>
               </span>
             ))}
+          </div>
+        </div>
+      )}
+
+      {s.by_machine.length > 0 && (
+        <div className="mt-4 pt-4 border-t border-slate-800/70">
+          <p className="text-xs text-slate-500 mb-2">Costliest machines</p>
+          <div className="flex flex-wrap gap-2">
+            {s.by_machine.map((m) => {
+              const cls = "rounded-md border border-slate-700 bg-slate-800 px-2.5 py-1 text-xs text-slate-300";
+              const label = (
+                <>
+                  {m.name} <span className="text-slate-500">· {money(m.cost)}</span>
+                </>
+              );
+              return onOpen ? (
+                <button
+                  key={m.machine_id}
+                  type="button"
+                  onClick={() => onOpen("machines")}
+                  title={`Downtime ${money(m.downtime_cost)} · Scrap ${money(m.scrap_cost)} — open Machines`}
+                  className={`${cls} hover:border-slate-500 hover:bg-slate-700 transition focus:outline-none focus:ring-2 focus:ring-slate-600`}
+                >
+                  {label}
+                </button>
+              ) : (
+                <span key={m.machine_id} className={cls} title={`Downtime ${money(m.downtime_cost)} · Scrap ${money(m.scrap_cost)}`}>
+                  {label}
+                </span>
+              );
+            })}
           </div>
         </div>
       )}

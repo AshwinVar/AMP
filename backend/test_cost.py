@@ -40,6 +40,8 @@ def test_cost_prices_downtime_and_scrap_and_rolls_up_recorded():
     assert s["by_type"][0] == {"type": "Rework", "amount": 500}
     # the loss cost attributed to the SMT line (the only line here)
     assert s["by_line"] == [{"line": "SMT", "downtime_cost": 480, "scrap_cost": 250, "cost": 730}]
+    # and to the machine that incurred it, costliest first
+    assert s["by_machine"] == [{"machine_id": 1, "name": "M1", "downtime_cost": 480, "scrap_cost": 250, "cost": 730}]
     # 7-day trend; today's run carries the whole $730
     assert len(s["daily"]) == 7 and s["daily"][-1]["cost"] == 730
     assert sum(d["cost"] for d in s["daily"]) == 730

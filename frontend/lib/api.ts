@@ -29,7 +29,41 @@ export function getDownloadHeaders() {
   };
 }
 
+// ── Sliding session ─────────────────────────────────────────────
+// When the token is within REFRESH_WINDOW of expiry (but still valid), exchange
+// it for a fresh one in the background, so an active user is never logged out
+// mid-shift. Throttled so the check costs at most one request per interval;
+// idle sessions still expire naturally.
+const REFRESH_WINDOW_MS = 60 * 60 * 1000;   // refresh when < 60 min of life left
+const REFRESH_THROTTLE_MS = 5 * 60 * 1000;  // attempt at most every 5 min
+let lastRefreshAttempt = 0;
+
+function maybeRefreshToken() {
+  if (typeof window === "undefined") return;
+  const now = Date.now();
+  if (now - lastRefreshAttempt < REFRESH_THROTTLE_MS) return;
+  const token = getToken();
+  if (!token) return;
+  let expMs = 0;
+  try {
+    expMs = (JSON.parse(atob(token.split(".")[1])).exp || 0) * 1000;
+  } catch {
+    return;
+  }
+  if (expMs <= now || expMs - now > REFRESH_WINDOW_MS) return;  // expired or still fresh
+  lastRefreshAttempt = now;
+  fetch(`${API_URL}/auth/refresh`, { method: "POST", headers: getAuthHeaders() })
+    .then((r) => (r.ok ? r.json() : null))
+    .then((d) => {
+      if (d?.access_token) localStorage.setItem("token", d.access_token);
+    })
+    .catch(() => {
+      // best-effort — the next call will retry after the throttle window.
+    });
+}
+
 export async function apiGet<T>(path: string): Promise<T> {
+  maybeRefreshToken();
   const sep = path.includes("?") ? "&" : "?";
   const res = await fetch(`${API_URL}${path}${sep}t=${Date.now()}`, {
     method: "GET",

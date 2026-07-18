@@ -1055,6 +1055,20 @@ def copilot_digest(db: Session = Depends(get_db), current_user: dict = Depends(g
     return ai.assistant.digest(db, current_user.get("tenant", "DEFAULT"))
 
 
+@app.post("/auth/refresh")
+def refresh_token(current_user: dict = Depends(get_current_user)):
+    # Sliding session: a valid (not-yet-expired) token can be exchanged for a
+    # fresh one carrying the same identity claims. The frontend calls this when
+    # the token nears expiry, so an active user is never logged out mid-shift —
+    # while idle sessions still expire naturally.
+    token = create_access_token(data={
+        "sub": current_user.get("sub"),
+        "role": current_user.get("role"),
+        "tenant": current_user.get("tenant", "DEFAULT"),
+    })
+    return {"access_token": token, "token_type": "bearer"}
+
+
 @app.get("/health")
 def health(db: Session = Depends(get_db)):
     # Public liveness/readiness check for uptime monitors and load balancers:

@@ -79,7 +79,17 @@ def test_copilot_routes_questions_to_the_right_pillar():
     assert "answer" in blank and blank["answer"]
 
 
+def test_copilot_digest_summarises_the_plant():
+    db = _fresh_session()
+    _seed(db)
+    d = assistant.digest(db, "DEFAULT")
+    assert "OEE" in d["digest"] and "$" in d["digest"]
+    # empty-safe on a fresh plant
+    assert "digest" in assistant.digest(_fresh_session(), "DEFAULT")
+
+
 if __name__ == "__main__":
     test_copilot_routes_questions_to_the_right_pillar()
+    test_copilot_digest_summarises_the_plant()
     print("ASSISTANT OK: rule-first copilot routes questions to the right pillar read-model and "
           "phrases an answer + drill-in view; no API key; empty-safe")

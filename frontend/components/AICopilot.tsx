@@ -1,6 +1,6 @@
 "use client";
 import { useState } from "react";
-import { apiPost } from "../lib/api";
+import { apiGet, apiPost } from "../lib/api";
 
 type Turn = { q: string; a: string; view?: string };
 
@@ -43,14 +43,35 @@ export default function AICopilot({ onOpen }: { onOpen?: (viewKey: string) => vo
     setLoading(false);
   }
 
+  async function rundown() {
+    if (loading) return;
+    setLoading(true); setErr("");
+    try {
+      const res = await apiGet<{ digest: string }>("/copilot/digest");
+      setThread((t) => [{ q: "Give me the rundown", a: res.digest }, ...t]);
+    } catch {
+      setErr("Couldn't build the rundown — try again.");
+    }
+    setLoading(false);
+  }
+
   return (
     <section className="mt-8 space-y-6">
-      <div>
-        <h2 className="text-3xl font-bold">AI Factory Copilot</h2>
-        <p className="text-slate-400 mt-2 text-sm">
-          Ask about your live plant — answered instantly from your OEE, cost, delivery, downtime,
-          quality, maintenance and stock. No setup needed.
-        </p>
+      <div className="flex items-start justify-between gap-3 flex-wrap">
+        <div>
+          <h2 className="text-3xl font-bold">AI Factory Copilot</h2>
+          <p className="text-slate-400 mt-2 text-sm">
+            Ask about your live plant — answered instantly from your OEE, cost, delivery, downtime,
+            quality, maintenance and stock. No setup needed.
+          </p>
+        </div>
+        <button
+          onClick={rundown}
+          disabled={loading}
+          className="rounded-xl border border-indigo-500/40 text-indigo-300 px-4 py-2 text-sm hover:bg-indigo-500/10 disabled:opacity-50"
+        >
+          Give me the rundown
+        </button>
       </div>
 
       <div className="rounded-2xl bg-slate-900 border border-slate-800 p-5">

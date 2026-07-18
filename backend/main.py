@@ -1041,6 +1041,13 @@ def copilot_ask(payload: dict, db: Session = Depends(get_db), current_user: dict
     return ai.assistant.answer(db, current_user.get("tenant", "DEFAULT"), payload.get("question", ""))
 
 
+@app.get("/copilot/digest")
+def copilot_digest(db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
+    # Copilot rundown (ADR-0003): a plain-English one-shot summary of the whole
+    # plant, composed from the pillar read-models.
+    return ai.assistant.digest(db, current_user.get("tenant", "DEFAULT"))
+
+
 @app.get("/health")
 def health(db: Session = Depends(get_db)):
     # Public liveness/readiness check for uptime monitors and load balancers:

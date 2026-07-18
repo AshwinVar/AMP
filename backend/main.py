@@ -1020,6 +1020,13 @@ def get_twin_overlay(db: Session = Depends(get_db), current_user: dict = Depends
     return ai.twin.build_twin_overlay(db, current_user.get("tenant", "DEFAULT"))
 
 
+@app.get("/maintenance-summary")
+def get_maintenance_summary(db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
+    # Maintenance work summary (ADR-0007): open tasks by priority, overdue +
+    # pending-approval counts, and the tasks to do next.
+    return ai.maintenance.build_maintenance_summary(db, current_user.get("tenant", "DEFAULT"))
+
+
 @app.get("/machine-health/{machine_id}")
 def get_machine_detail(machine_id: int, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
     # Machine Health detail (ADR-0006): the single-machine cockpit — the twin

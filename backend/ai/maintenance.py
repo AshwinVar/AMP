@@ -35,6 +35,13 @@ def build_maintenance_summary(db, tenant: str) -> dict:
         is_overdue = 0 if (t.planned_date and t.planned_date < today) else 1
         return (is_overdue, PRIORITY_ORDER.get(t.priority, 2), t.planned_date or today)
 
+    # Open-task load per machine (most first), so triage knows where it's piling up.
+    per_machine = Counter(t.machine_id for t in tasks if t.machine_id is not None)
+    by_machine = [
+        {"machine_id": mid, "name": names.get(mid, f"#{mid}"), "count": c}
+        for mid, c in per_machine.most_common(TOP_N)
+    ]
+
     top = sorted(tasks, key=_sort_key)[:TOP_N]
     rows = [{
         "task_no": t.task_no,
@@ -52,5 +59,6 @@ def build_maintenance_summary(db, tenant: str) -> dict:
         "pending_approval": pending_approval,
         "overdue": overdue,
         "by_priority": [{"priority": p, "count": by_priority[p]} for p in _PRIORITIES if by_priority.get(p)],
+        "by_machine": by_machine,
         "tasks": rows,
     }

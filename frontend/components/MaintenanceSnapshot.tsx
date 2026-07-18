@@ -13,6 +13,7 @@ type MaintenanceSummary = {
   pending_approval: number;
   overdue: number;
   by_priority: { priority: string; count: number }[];
+  by_machine: { machine_id: number; name: string; count: number }[];
   tasks: Task[];
 };
 
@@ -92,6 +93,31 @@ export default function MaintenanceSnapshot({ onOpen }: { onOpen?: (viewKey: str
               {p.priority} <span className="opacity-70">· {p.count}</span>
             </span>
           ))}
+        </div>
+      )}
+
+      {s.by_machine.length > 0 && (
+        <div className="mt-4">
+          <p className="text-xs text-slate-500 mb-2">By machine</p>
+          <div className="flex flex-wrap gap-2">
+            {s.by_machine.map((m) => {
+              const cls = "rounded-md border border-slate-700 bg-slate-800 px-2.5 py-1 text-xs text-slate-300";
+              const label = <>{m.name} <span className="text-slate-500">· {m.count}</span></>;
+              return onOpen ? (
+                <button
+                  key={m.machine_id}
+                  type="button"
+                  onClick={() => onOpen("machines")}
+                  title={`${m.count} open task${m.count !== 1 ? "s" : ""} — open Machines`}
+                  className={`${cls} hover:border-slate-500 hover:bg-slate-700 transition focus:outline-none focus:ring-2 focus:ring-slate-600`}
+                >
+                  {label}
+                </button>
+              ) : (
+                <span key={m.machine_id} className={cls}>{label}</span>
+              );
+            })}
+          </div>
         </div>
       )}
 

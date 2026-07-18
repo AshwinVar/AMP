@@ -59,6 +59,10 @@ def test_copilot_routes_questions_to_the_right_pillar():
     assert ask("Is OEE improving?")["matched"] == "trend"
     tr = ask("Are we better or worse than last week?")
     assert tr["view"] == "executive" and tr["answer"]
+    # a specific machine named in the question -> that machine's detail
+    md = ask("How is SMT-Reflow-01 doing?")
+    assert md["matched"] == "machine_detail" and md["view"] == "machines"
+    assert "SMT-Reflow-01" in md["answer"] and "Breakdown" in md["answer"]
     # unknown -> defaults to the attention briefing
     assert ask("hello")["matched"] == "briefing"
 

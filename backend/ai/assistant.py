@@ -141,6 +141,35 @@ def _oee(db, tenant):
     return ans, "executive"
 
 
+def _machine_named(db, question):
+    """The machine whose name is mentioned in the question, if any (longest name
+    first so 'SMT-Reflow-01' wins over a bare 'SMT')."""
+    q = (question or "").lower()
+    machines = sorted(db.query(models.Machine).all(),
+                      key=lambda m: len(m.name or ""), reverse=True)
+    for m in machines:
+        if m.name and m.name.lower() in q:
+            return m
+    return None
+
+
+def _machine_answer(db, tenant, machine):
+    from ai.twin import build_twins   # lazy: twin imports pull in the pillar modules
+    tw = next((t for t in build_twins(db, tenant) if t["machine_id"] == machine.id), None)
+    if tw is None:
+        return f"{machine.name}: no data yet.", "machines"
+    parts = [f"{tw['name']} is {tw['status']}", f"health {tw['health_score']}/100"]
+    if tw.get("oee") and tw["oee"].get("has_data"):
+        parts.append(f"OEE {tw['oee']['oee']}%")
+    if tw.get("open_maintenance_tasks"):
+        parts.append(f"{tw['open_maintenance_tasks']} open maintenance task(s)")
+    ans = ", ".join(parts) + "."
+    if tw.get("recent_downtime"):
+        d = tw["recent_downtime"][0]
+        ans += f" Latest downtime: {d['reason']} ({d['duration']})."
+    return ans, "machines"
+
+
 def _trend(db, tenant):
     sc = build_scorecard(db, tenant)
     if not sc["has_data"]:
@@ -191,6 +220,12 @@ _ROUTES = [
 def answer(db, tenant: str, question: str) -> dict:
     """Answer a plant question from the read-models: a sentence plus the view that
     drills into it. Routes by keyword; defaults to 'what needs attention'."""
+    # A specific machine named in the question wins — answer about that machine.
+    named = _machine_named(db, question)
+    if named is not None:
+        text, view = _machine_answer(db, tenant, named)
+        return {"question": question, "answer": text, "view": view, "matched": "machine_detail"}
+
     q = f" {(question or '').lower()} "
     for keys, fn in _ROUTES:
         if any(k in q for k in keys):

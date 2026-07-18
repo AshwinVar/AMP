@@ -1,0 +1,57 @@
+"""Compliance document summary — the quality-system paperwork at a glance (ADR-0007).
+
+Answers "which controlled documents are overdue for review, which are due soon,
+and what's still waiting for approval?": the review load an ISO-pursuing plant
+has to stay on top of, with the specific documents to review next (overdue
+first). A read-model over compliance_documents — auto-scoped to the tenant
+(ADR-0002); it adds no storage.
+"""
+from collections import Counter
+from datetime import datetime, timedelta
+
+import models
+
+name = "compliance"
+
+DUE_SOON_DAYS = 30
+TOP_N = 8
+APPROVED = "Approved"
+
+
+def build_compliance_summary(db, tenant: str) -> dict:
+    """The document review load: totals, overdue and due-soon counts, how many are
+    unapproved, a status breakdown, and the documents to review next (overdue
+    first, then soonest due). compliance_documents is auto-scoped (ADR-0002)."""
+    today = datetime.utcnow().date()
+    docs = db.query(models.ComplianceDocument).all()
+
+    by_status = Counter(d.approval_status or "Draft" for d in docs)
+    overdue = sum(1 for d in docs if d.review_due_date and d.review_due_date < today)
+    due_soon = sum(1 for d in docs
+                   if d.review_due_date and today <= d.review_due_date <= today + timedelta(days=DUE_SOON_DAYS))
+    pending_approval = sum(1 for d in docs if (d.approval_status or "") != APPROVED)
+
+    def _key(d):
+        is_overdue = 0 if (d.review_due_date and d.review_due_date < today) else 1
+        return (is_overdue, d.review_due_date or today)
+
+    review_next = sorted((d for d in docs if d.review_due_date), key=_key)[:TOP_N]
+    rows = [{
+        "document_no": d.document_no,
+        "title": d.title,
+        "type": d.document_type,
+        "department": d.department,
+        "owner": d.owner,
+        "status": d.approval_status,
+        "review_due_date": d.review_due_date.isoformat() if d.review_due_date else None,
+        "overdue": bool(d.review_due_date and d.review_due_date < today),
+    } for d in review_next]
+
+    return {
+        "total": len(docs),
+        "overdue": overdue,
+        "due_soon": due_soon,
+        "pending_approval": pending_approval,
+        "by_status": [{"status": s, "count": c} for s, c in by_status.most_common()],
+        "documents": rows,
+    }

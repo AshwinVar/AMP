@@ -72,8 +72,17 @@ def test_every_read_model_endpoint_answers():
     ans = ask(payload={"question": "Which machines are down?"}, db=_Session(), current_user=USER)
     assert "SMT-Reflow-01" in ans["answer"] and ans["view"] == "machines"
 
+    # the copilot digest, entity search, and platform self-report also answer
+    digest = _handler("/copilot/digest")(db=_Session(), current_user=USER)
+    assert digest["digest"]
+    hits = _handler("/search")(q="BUG-1", db=_Session(), current_user=USER)["results"]
+    assert any(h["type"] == "customer order" and h["view"] == "orders" for h in hits)
+    plat = _handler("/platform/status")(db=_Session(), current_user=USER)
+    assert plat["read_model_count"] >= 25 and plat["agent_count"] == 5
+
 
 if __name__ == "__main__":
     test_every_read_model_endpoint_answers()
     print(f"API SURFACE OK: all {len(READ_ENDPOINTS)} read-model endpoints return an object; composites "
-          "(scorecard/weekly-report/briefing) carry seeded data; copilot answers")
+          "(scorecard/weekly-report/briefing) carry seeded data; copilot ask + digest, entity search "
+          "and platform status answer")

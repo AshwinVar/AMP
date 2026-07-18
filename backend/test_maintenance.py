@@ -48,6 +48,8 @@ def test_maintenance_summary_rolls_up_open_load():
                                 {"priority": "Medium", "count": 1}]
     # to-do order: overdue Critical first, then High, then Medium
     assert [t["task_no"] for t in s["tasks"]] == ["M-1", "M-2", "M-3"]
+    # all 3 open tasks are on machine 1
+    assert s["by_machine"] == [{"machine_id": 1, "name": "SMT-Reflow-01", "count": 3}]
     assert s["tasks"][0]["overdue"] is True and s["tasks"][0]["proposed"] is True
     assert s["tasks"][0]["machine"] == "SMT-Reflow-01"
 

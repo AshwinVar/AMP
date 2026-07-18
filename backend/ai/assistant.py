@@ -183,12 +183,38 @@ def _oee(db, tenant):
     return ans, "executive"
 
 
+_FIND_PREFIXES = ("find ", "where is ", "where's ", "locate ", "look up ", "lookup ", "search for ", "search ")
+
+
+def _find(db, tenant, question):
+    """'find CO-5001' / 'where is the reflow SOP' — strip the find-phrase and run
+    the global entity search, phrasing the top hits with where to open them."""
+    from ai.search import build_search  # lazy: avoids widening import chains
+
+    q = (question or "").strip().lower()
+    term = next((q[len(p):] for p in _FIND_PREFIXES if q.startswith(p)), q)
+    term = term.strip(" ?.!\"'")
+    for noise in ("the ", "my ", "our "):
+        if term.startswith(noise):
+            term = term[len(noise):]
+    hits = build_search(db, tenant, term)["results"]
+    if not hits:
+        return f"I couldn't find anything matching \"{term}\".", "overview"
+    top = hits[0]
+    ans = f"Found {top['label']} ({top['type']} — {top['sublabel']})."
+    if len(hits) > 1:
+        others = ", ".join(f"{h['label']} ({h['type']})" for h in hits[1:4])
+        ans += f" Also matched: {others}."
+    return ans, top["view"]
+
+
 def _help(db, tenant):
     return (
         "I can answer about OEE & performance, the cost of losses, order delivery, "
         "downtime, quality, maintenance, compliance documents, inventory, machines "
         "(ask by name too), production, WIP, shifts, and week-on-week trends — from "
-        "your live data. Try \"give me the rundown\" for the whole picture at once.",
+        "your live data. Say \"find <anything>\" to locate an order, part, task or "
+        "document, or \"give me the rundown\" for the whole picture at once.",
         "overview",
     )
 
@@ -310,6 +336,11 @@ def answer(db, tenant: str, question: str) -> dict:
     if named is not None:
         text, view = _machine_answer(db, tenant, named)
         return {"question": question, "answer": text, "view": view, "matched": "machine_detail"}
+
+    # An explicit find/locate phrase runs the global entity search.
+    if (question or "").strip().lower().startswith(_FIND_PREFIXES):
+        text, view = _find(db, tenant, question)
+        return {"question": question, "answer": text, "view": view, "matched": "find"}
 
     q = f" {(question or '').lower()} "
     for keys, fn in _ROUTES:

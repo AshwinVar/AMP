@@ -12,6 +12,7 @@ from ai.scorecard import build_scorecard
 from ai.cost import build_cost_summary
 from ai.delivery import build_delivery_summary
 from ai.briefing import build_briefing
+from ai.compliance import build_compliance_summary
 
 name = "report"
 
@@ -61,6 +62,13 @@ def build_weekly_report(db, tenant: str) -> dict:
     for c in delivery["by_customer"]:
         lines.append(f"  - {c['customer']}: {c['orders']} orders, {c['fulfillment_rate']}% fulfilled")
     lines.append("")
+
+    comp = build_compliance_summary(db, tenant)
+    if comp["total"]:
+        lines.append("## Compliance")
+        lines.append(f"- {comp['total']} controlled documents · {comp['overdue']} overdue for review · "
+                     f"{comp['due_soon']} due soon · {comp['pending_approval']} unapproved")
+        lines.append("")
 
     lines.append("## Needs attention")
     if briefing["alerts"]:

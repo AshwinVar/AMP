@@ -1,8 +1,9 @@
 "use client";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { apiGet, apiPost } from "../lib/api";
 
-type Turn = { q: string; a: string; view?: string };
+type Turn = { q: string; a: string; view?: string; source?: string; model?: string | null; note?: string };
+type AiStatus = { enabled: boolean; provider?: string | null; model?: string | null };
 
 const SUGGESTIONS = [
   "Why is my OEE low?",
@@ -28,14 +29,33 @@ export default function AICopilot({ onOpen }: { onOpen?: (viewKey: string) => vo
   const [thread, setThread] = useState<Turn[]>([]);
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState("");
+  // When an LLM is connected server-side, questions go through it (grounded in
+  // the same live data); otherwise — and on any LLM hiccup — the rule router
+  // answers. The user just asks; the badge on each answer says which spoke.
+  const [ai, setAi] = useState<AiStatus>({ enabled: false });
+  useEffect(() => {
+    apiGet<AiStatus>("/ai/status").then(setAi).catch(() => {});
+  }, []);
 
   async function ask(q?: string) {
     const query = (q ?? question).trim();
     if (!query || loading) return;
     setLoading(true); setErr("");
     try {
-      const res = await apiPost<{ answer: string; view?: string }>("/copilot/ask", { question: query });
-      setThread((t) => [{ q: query, a: res.answer, view: res.view }, ...t]);
+      let turn: Turn;
+      if (ai.enabled) {
+        try {
+          const res = await apiPost<{ answer: string; view?: string; source?: string; model?: string | null; note?: string }>("/ai/ask", { question: query });
+          turn = { q: query, a: res.answer, view: res.view, source: res.source, model: res.model, note: res.note };
+        } catch {
+          const res = await apiPost<{ answer: string; view?: string }>("/copilot/ask", { question: query });
+          turn = { q: query, a: res.answer, view: res.view, source: "rules" };
+        }
+      } else {
+        const res = await apiPost<{ answer: string; view?: string }>("/copilot/ask", { question: query });
+        turn = { q: query, a: res.answer, view: res.view, source: "rules" };
+      }
+      setThread((t) => [turn, ...t]);
       setQuestion("");
     } catch {
       setErr("Couldn't answer that — try rephrasing.");
@@ -109,8 +129,16 @@ export default function AICopilot({ onOpen }: { onOpen?: (viewKey: string) => vo
       <div className="space-y-3">
         {thread.map((t, i) => (
           <div key={i} className="rounded-2xl bg-slate-900 border border-slate-800 p-5">
-            <p className="text-indigo-300 text-sm font-semibold mb-2">{t.q}</p>
+            <div className="flex items-center justify-between gap-2 mb-2">
+              <p className="text-indigo-300 text-sm font-semibold">{t.q}</p>
+              {t.source && (
+                <span className={`text-[10px] uppercase tracking-wide rounded-full px-2 py-0.5 border shrink-0 ${t.source === "llm" ? "text-emerald-300 border-emerald-500/40" : "text-slate-400 border-slate-700"}`}>
+                  {t.source === "llm" ? `✦ AI · ${t.model || "model"}` : "instant · rules"}
+                </span>
+              )}
+            </div>
             <p className="text-slate-200 text-sm whitespace-pre-wrap leading-relaxed">{t.a}</p>
+            {t.note && <p className="text-amber-300/80 text-xs mt-2">{t.note}</p>}
             {t.view && onOpen && VIEW_LABEL[t.view] && (
               <button
                 onClick={() => onOpen(t.view!)}
@@ -129,7 +157,9 @@ export default function AICopilot({ onOpen }: { onOpen?: (viewKey: string) => vo
       </div>
 
       <p className="text-slate-600 text-xs">
-        Rule-based answers over your live data · set <code className="bg-slate-950 border border-slate-800 rounded px-1.5 py-0.5">ANTHROPIC_API_KEY</code> for free-form conversational answers.
+        {ai.enabled
+          ? <>Conversational answers by <span className="text-slate-400">{ai.model}</span>, grounded in your live plant data — with instant rule-based answers as backup.</>
+          : <>Rule-based answers over your live data · connect an AI key (Anthropic or Gemini) for free-form conversational answers.</>}
       </p>
     </section>
   );

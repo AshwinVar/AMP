@@ -186,11 +186,26 @@ def _ask_gemini(system: str, user: str) -> str:
     return "".join(p.get("text", "") for p in parts).strip()
 
 
+# Last LLM failure, surfaced (founder-only) in /ai/status so "why is the
+# copilot answering from rules?" is answerable from the app, not Railway logs.
+_LAST_LLM_ERROR = None
+
+
 def _ask_llm(system: str, user: str) -> str:
-    """Route one question to the active provider."""
-    if _provider() == "gemini":
-        return _ask_gemini(system, user)
-    return _ask_claude(system, user)
+    """Route one question to the active provider; remember the last failure."""
+    global _LAST_LLM_ERROR
+    try:
+        if _provider() == "gemini":
+            result = _ask_gemini(system, user)
+        else:
+            result = _ask_claude(system, user)
+    except Exception as e:
+        from datetime import datetime
+        _LAST_LLM_ERROR = {"at": datetime.utcnow().isoformat(), "provider": _provider(),
+                           "error": str(e)[:300]}
+        raise
+    _LAST_LLM_ERROR = None
+    return result
 
 
 def register(app):
@@ -204,8 +219,13 @@ def register(app):
     @app.get("/ai/status")
     def ai_status(current_user: dict = Depends(get_current_user)):
         """Lets the UI show 'connect to enable' vs the live copilot."""
-        return {"enabled": _ai_enabled(), "provider": _provider() if _ai_enabled() else None,
-                "model": _current_model() if _ai_enabled() else None}
+        result = {"enabled": _ai_enabled(), "provider": _provider() if _ai_enabled() else None,
+                  "model": _current_model() if _ai_enabled() else None}
+        # The last LLM failure is founder-only: error strings can carry
+        # upstream details a client workspace shouldn't see.
+        if current_user.get("tenant", "DEFAULT") == "DEFAULT":
+            result["last_error"] = _LAST_LLM_ERROR
+        return result
 
     @app.post("/ai/ask")
     def ai_ask(payload: dict, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):

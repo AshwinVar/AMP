@@ -163,6 +163,12 @@ industrial_adapters.register(app)
 # with random ones. Opt a demo tenant in via SIM_TENANTS=DEFAULT,APEX.
 SIM_TENANTS = [t.strip() for t in os.environ.get("SIM_TENANTS", tenancy.DEFAULT_TENANT).split(",") if t.strip()]
 
+# Sim-loop heartbeat, surfaced (founder-only) in /platform/status so "is the
+# sim running, and over which tenants?" is answerable from the app instead of
+# from Railway logs.
+_SIM_LAST_TICK = None
+_SIM_TICK_COUNT = 0
+
 
 async def _simulation_loop():
     """Background task: runs factory simulation ticks every 45 seconds."""
@@ -215,6 +221,9 @@ async def _simulation_loop():
                     print(f"[SIM TICK ERROR] {sim_tenant}: {tick_err}")
                 finally:
                     reset_current_tenant(scope)
+            global _SIM_LAST_TICK, _SIM_TICK_COUNT
+            _SIM_LAST_TICK = datetime.utcnow()
+            _SIM_TICK_COUNT += 1
 
             # Proactive briefing: the Escalation agent raises the most urgent
             # briefing alert for each tenant on its own (deduped, so it won't
@@ -1182,7 +1191,16 @@ def health(db: Session = Depends(get_db)):
 def platform_status(db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
     # AI platform self-report (ADR-0003): registered read-models, the agent roster,
     # copilot connectivity, and the tenant's logged agent actions.
-    return ai.platform_status.build_platform_status(db, _tenant(current_user))
+    result = ai.platform_status.build_platform_status(db, _tenant(current_user))
+    # Sim-loop diagnostics are founder-only: the allowlist names other tenants,
+    # which a client workspace must not see.
+    if current_user.get("tenant", tenancy.DEFAULT_TENANT) == tenancy.DEFAULT_TENANT:
+        result["sim"] = {
+            "tenants": SIM_TENANTS,
+            "last_tick_utc": _SIM_LAST_TICK.isoformat() if _SIM_LAST_TICK else None,
+            "tick_count": _SIM_TICK_COUNT,
+        }
+    return result
 
 
 def _orders_csv(db) -> str:

@@ -9,6 +9,12 @@ on:
 jobs:
   backend:
     runs-on: ubuntu-latest
+    # A throwaway SQLite file stands in for Postgres. database.py deliberately
+    # has NO fallback (a missing DATABASE_URL must fail loudly in production),
+    # so CI supplies its own. The suites build their own in-memory engines;
+    # this one only satisfies import-time wiring and the boot check.
+    env:
+      DATABASE_URL: "sqlite:///./ci.db"
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -18,6 +24,26 @@ jobs:
         run: pip install -r backend/requirements.txt
       - name: Compile-check backend
         run: python -m compileall -q backend
+      # Each suite is a standalone script (exit 0 = pass) that also collects
+      # under pytest. Run them from backend/ — imports are flat (import models).
+      # Every suite runs even if one fails, so a red build reports ALL breakage.
+      - name: Run backend test suites
+        working-directory: backend
+        run: |
+          failed=""
+          for f in test_*.py; do
+            echo "::group::$f"
+            if python "$f"; then echo "PASS $f"; else echo "FAIL $f"; failed="$failed $f"; fi
+            echo "::endgroup::"
+          done
+          if [ -n "$failed" ]; then
+            echo "::error::Failing suites:$failed"
+            exit 1
+          fi
+          echo "All $(ls test_*.py | wc -l) suites passed."
+      - name: Boot check (app imports and registers routes)
+        working-directory: backend
+        run: python -c "import main; print(f'{len(main.app.routes)} routes registered')"
 
   frontend:
     runs-on: ubuntu-latest

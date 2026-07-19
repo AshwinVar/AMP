@@ -702,17 +702,27 @@ def _machine_events(db):
 
 
 def tick_production(db):
-    """Add a fresh production record for a running machine — keeps OEE trends live."""
+    """Occasionally add a SHORT production interval for a running machine — keeps
+    OEE trends live at a physically plausible volume.
+
+    Each record is a 15-minute slice, added on roughly every 4th tick, so a
+    machine accumulates about one real day of planned minutes per day. (It used
+    to write a full 480-minute shift EVERY 45-second tick — which pushed weekly
+    "downtime minutes" past the number of minutes in a week and inflated cost
+    figures ~100x. The OEE ratios were always right; the magnitudes were not.)"""
+    if random.random() > 0.25:
+        return
     machines = db.query(models.Machine).filter(models.Machine.status == "Running").all()
     if not machines:
         return
     machine = random.choice(machines)
-    runtime = random.randint(400, 465)
+    planned = 15
+    runtime = random.randint(12, 15)
     ideal_cycle = random.randint(25, 40)
     total = int((runtime * 60 / ideal_cycle) * random.uniform(0.85, 0.97))
     rejected = int(total * random.uniform(0.01, 0.06))
     db.add(models.ProductionRecord(
-        machine_id=machine.id, planned_minutes=480, runtime_minutes=runtime,
+        machine_id=machine.id, planned_minutes=planned, runtime_minutes=runtime,
         ideal_cycle_time_seconds=ideal_cycle, total_count=total,
         good_count=total - rejected, rejected_count=rejected,
     ))

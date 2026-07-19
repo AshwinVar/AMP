@@ -153,22 +153,25 @@ def test_gemini_failure_falls_back_to_rules():
     print("PASS gemini failure falls back to rules")
 
 
-def test_pick_flash_model():
+def test_pick_flash_models():
     models = [
         {"name": "models/gemini-2.5-flash", "supportedGenerationMethods": ["generateContent"]},
         {"name": "models/gemini-3.0-flash", "supportedGenerationMethods": ["generateContent"]},
         {"name": "models/gemini-3.0-pro", "supportedGenerationMethods": ["generateContent"]},
         {"name": "models/gemini-3.0-flash-image", "supportedGenerationMethods": ["generateContent"]},
+        {"name": "models/gemini-3.5-flash-preview", "supportedGenerationMethods": ["generateContent"]},
         {"name": "models/gemini-3.5-flash", "supportedGenerationMethods": ["embedContent"]},
     ]
-    assert ai_copilot._pick_flash_model(models) == "gemini-3.0-flash"   # newest usable flash
-    assert ai_copilot._pick_flash_model([]) == ""
+    # newest stable first; preview/pro/image/non-text excluded
+    assert ai_copilot._pick_flash_models(models) == ["gemini-3.0-flash", "gemini-2.5-flash"]
+    assert ai_copilot._pick_flash_models([]) == []
     print("PASS flash-model picker")
 
 
-def test_gemini_retired_model_self_heals():
-    """A 404 on the configured model discovers a current one, retries, and
-    caches it — the exact failure seen live with a fresh free-tier key."""
+def test_gemini_unusable_model_self_heals():
+    """A 404 (retired) or 429 (zero-quota model) on the configured model walks
+    the discovered candidates and caches the first that answers — the exact
+    failures seen live with a fresh free-tier key."""
     _clean_env()
     os.environ["AI_PROVIDER"] = "gemini"
     os.environ["GEMINI_API_KEY"] = "test-key"
@@ -179,25 +182,28 @@ def test_gemini_retired_model_self_heals():
         calls.append(model)
         if model == "gemini-2.5-flash":
             raise RuntimeError("Gemini API 404: no longer available to new users")
+        if model == "gemini-3.1-flash":
+            raise RuntimeError("Gemini API 429: You exceeded your current quota")
         return "healed answer"
 
-    orig_gen, orig_disc = ai_copilot._gemini_generate, ai_copilot._gemini_discover_model
+    orig_gen, orig_disc = ai_copilot._gemini_generate, ai_copilot._gemini_discover_models
     ai_copilot._gemini_generate = fake_generate
-    ai_copilot._gemini_discover_model = lambda: "gemini-3.0-flash"
+    ai_copilot._gemini_discover_models = lambda: ["gemini-3.1-flash", "gemini-3.0-flash"]
     try:
         out = ai_copilot._ask_gemini("sys", "hello")
         assert out == "healed answer"
-        assert calls == ["gemini-2.5-flash", "gemini-3.0-flash"]
-        # cached: the next call goes straight to the discovered model
+        # walked: retired default -> quota-less candidate -> working candidate
+        assert calls == ["gemini-2.5-flash", "gemini-3.1-flash", "gemini-3.0-flash"]
+        # cached: the next call goes straight to the winner
         out2 = ai_copilot._ask_gemini("sys", "again")
-        assert out2 == "healed answer" and calls[-1] == "gemini-3.0-flash" and len(calls) == 3
+        assert out2 == "healed answer" and calls[-1] == "gemini-3.0-flash" and len(calls) == 4
         assert ai_copilot._current_model() == "gemini-3.0-flash"
     finally:
         ai_copilot._gemini_generate = orig_gen
-        ai_copilot._gemini_discover_model = orig_disc
+        ai_copilot._gemini_discover_models = orig_disc
         ai_copilot._GEMINI_DISCOVERED = None
         _clean_env()
-    print("PASS retired gemini model self-heals via discovery")
+    print("PASS unusable gemini model self-heals via candidate walk")
 
 
 if __name__ == "__main__":
@@ -207,6 +213,6 @@ if __name__ == "__main__":
     test_provider_selection()
     test_gemini_route_is_used_and_labelled()
     test_gemini_failure_falls_back_to_rules()
-    test_pick_flash_model()
-    test_gemini_retired_model_self_heals()
+    test_pick_flash_models()
+    test_gemini_unusable_model_self_heals()
     print("ALL COPILOT FALLBACK TESTS PASSED")

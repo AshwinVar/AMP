@@ -190,10 +190,11 @@ def _gemini_generate(model: str, system: str, user: str) -> str:
     return "".join(p.get("text", "") for p in parts).strip()
 
 
-def _pick_flash_model(models: list) -> str:
-    """From a ListModels payload, the best generateContent-capable flash-family
-    text model this key can use — highest version wins; specialised variants
-    (image/tts/live/embedding) are skipped. Pure, for testability."""
+def _pick_flash_models(models: list) -> list:
+    """From a ListModels payload, generateContent-capable flash-family TEXT
+    models this key can use, best (newest stable) first. Specialised variants
+    (image/tts/live/embedding) are skipped, and so are preview/experimental
+    names — those often carry zero free-tier quota. Pure, for testability."""
     names = []
     for m in models or []:
         name = (m.get("name") or "").split("/")[-1]
@@ -202,13 +203,14 @@ def _pick_flash_model(models: list) -> str:
             continue
         if "flash" not in name:
             continue
-        if any(x in name for x in ("image", "tts", "live", "embedding", "audio", "thinking")):
+        if any(x in name for x in ("image", "tts", "live", "embedding", "audio",
+                                   "thinking", "preview", "exp")):
             continue
         names.append(name)
-    return max(names) if names else ""
+    return sorted(set(names), reverse=True)
 
 
-def _gemini_discover_model() -> str:
+def _gemini_discover_models() -> list:
     """Ask the Gemini ListModels API which models this key actually has."""
     import json
     import urllib.request
@@ -219,26 +221,34 @@ def _gemini_discover_model() -> str:
     )
     with urllib.request.urlopen(req, timeout=30) as resp:
         data = json.loads(resp.read().decode("utf-8"))
-    return _pick_flash_model(data.get("models"))
+    return _pick_flash_models(data.get("models"))
 
 
 def _ask_gemini(system: str, user: str) -> str:
-    """generateContent with self-healing model choice: if the configured model
-    404s (retired name), discover a current flash model and retry once."""
+    """generateContent with self-healing model choice: when the configured
+    model is retired (404) or out of free-tier quota (429 — quotas are per
+    model, so a sibling flash model may still have allowance), walk the
+    discovered candidates best-first and cache the first that answers."""
     global _GEMINI_DISCOVERED
     model = _GEMINI_DISCOVERED or os.environ.get("GEMINI_MODEL", "gemini-2.5-flash")
     try:
         return _gemini_generate(model, system, user)
     except RuntimeError as e:
-        if "404" not in str(e):
+        if not any(code in str(e) for code in ("404", "429")):
             raise
-        discovered = _gemini_discover_model()
-        if not discovered or discovered == model:
-            raise
-        result = _gemini_generate(discovered, system, user)
-        _GEMINI_DISCOVERED = discovered
-        print(f"[AI COPILOT] Gemini model '{model}' unavailable; discovered and using '{discovered}'")
-        return result
+        last = e
+        for candidate in _gemini_discover_models()[:4]:
+            if candidate == model:
+                continue
+            try:
+                result = _gemini_generate(candidate, system, user)
+            except RuntimeError as retry_err:
+                last = retry_err
+                continue
+            _GEMINI_DISCOVERED = candidate
+            print(f"[AI COPILOT] Gemini model '{model}' unusable; discovered and using '{candidate}'")
+            return result
+        raise last
 
 
 # Last LLM failure, surfaced (founder-only) in /ai/status so "why is the

@@ -39,6 +39,7 @@ import models
 import schemas
 import tenancy
 import onboard_tenant
+import plan_gate
 
 
 def _tenant(current_user):
@@ -341,6 +342,7 @@ app.add_middleware(
 # core-table queries (ADR-0002). Pure-ASGI (tenancy.TenantScopeMiddleware) to
 # avoid BaseHTTPMiddleware's request-body deadlock and to propagate contextvars.
 app.add_middleware(tenancy.TenantScopeMiddleware)
+app.add_middleware(plan_gate.PlanGateMiddleware)
 
 VALID_ROLES = ["Admin", "Supervisor", "Operator"]
 

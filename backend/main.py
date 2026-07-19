@@ -156,6 +156,13 @@ ai.copilot.register(app)
 industrial_adapters.register(app)
 
 
+# Tenants whose factories are ANIMATED by the simulator (comma-separated env,
+# default: only the founder demo workspace). A customer tenant with real
+# machine data must never be ticked — the sim would overwrite real statuses
+# with random ones. Opt a demo tenant in via SIM_TENANTS=DEFAULT,APEX.
+SIM_TENANTS = [t.strip() for t in os.environ.get("SIM_TENANTS", tenancy.DEFAULT_TENANT).split(",") if t.strip()]
+
+
 async def _simulation_loop():
     """Background task: runs factory simulation ticks every 45 seconds."""
     import random
@@ -170,32 +177,43 @@ async def _simulation_loop():
         tick_machine_status,
         MACHINES,
     )
+    from tenancy import set_current_tenant, reset_current_tenant
     await asyncio.sleep(10)  # let the server fully start first
     while True:
         try:
             db = SessionLocal()
-            tick_work_order_progress(db)
-            tick_iot(db)
-            industrial_adapters.tick_industrial(db)   # poll PLCs -> live signals
-            tick_production(db)              # keep OEE trends live
-            if random.random() < 0.2:
-                tick_machine_status(db)      # occasional status change -> timeline event
-            if random.random() < 0.15:
-                tick_inventory(db)
-            if random.random() < 0.5:
-                tick_quality(db)
-            if random.random() < 0.4:
-                tick_shift_entry(db)
-            if random.random() < 0.3:
-                tick_operator(db)
+            # Each sim-enabled tenant is ticked under its own scope, so every
+            # query and every new row inside the ticks stays in that tenant.
+            for sim_tenant in SIM_TENANTS:
+                scope = set_current_tenant(sim_tenant)
+                try:
+                    tick_work_order_progress(db)
+                    tick_iot(db)
+                    industrial_adapters.tick_industrial(db)   # poll PLCs -> live signals
+                    tick_production(db)              # keep OEE trends live
+                    if random.random() < 0.2:
+                        tick_machine_status(db)      # occasional status change -> timeline event
+                    if random.random() < 0.15:
+                        tick_inventory(db)
+                    if random.random() < 0.5:
+                        tick_quality(db)
+                    if random.random() < 0.4:
+                        tick_shift_entry(db)
+                    if random.random() < 0.3:
+                        tick_operator(db)
 
-            # Randomly vary machine utilization to keep dashboard alive
-            machines = db.query(models.Machine).filter(
-                models.Machine.status == "Running"
-            ).all()
-            for m in machines:
-                m.utilization = max(40, min(99, m.utilization + random.randint(-5, 5)))
-            db.commit()
+                    # Randomly vary machine utilization to keep dashboard alive
+                    machines = db.query(models.Machine).filter(
+                        models.Machine.status == "Running"
+                    ).all()
+                    for m in machines:
+                        m.utilization = max(40, min(99, m.utilization + random.randint(-5, 5)))
+                    db.commit()
+                except Exception as tick_err:
+                    db.rollback()
+                    print(f"[SIM TICK ERROR] {sim_tenant}: {tick_err}")
+                finally:
+                    reset_current_tenant(scope)
 
             # Proactive briefing: the Escalation agent raises the most urgent
             # briefing alert for each tenant on its own (deduped, so it won't

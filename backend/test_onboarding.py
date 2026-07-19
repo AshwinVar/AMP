@@ -149,10 +149,41 @@ def test_registry_scoped_to_own_tenant():
     print("PASS registry scoped to the caller's own tenant")
 
 
+def test_sim_tick_cannot_touch_other_tenants():
+    """A simulation tick bound to one tenant must never mutate another tenant's
+    machines — the guarantee that lets real customer tenants coexist with the
+    animated demo factory."""
+    from factory_simulator import tick_machine_status
+    db = _fresh_session()
+    db.add(models.Machine(name="DEMO-M1", status="Running", utilization=80, tenant_code="DEFAULT"))
+    db.add(models.Machine(name="REAL-M1", status="Breakdown", utilization=0, tenant_code="APEX"))
+    db.commit()
+
+    token = set_current_tenant("DEFAULT")
+    try:
+        for _ in range(40):   # plenty of flips — only DEFAULT may be picked
+            tick_machine_status(db)
+        db.commit()
+    finally:
+        reset_current_tenant(token)
+
+    real = db.query(models.Machine).filter(models.Machine.name == "REAL-M1").first()
+    assert real.status == "Breakdown" and real.utilization == 0, "sim leaked into APEX"
+    print("PASS sim tick stays inside its bound tenant")
+
+
+def test_sim_tenants_default():
+    import main
+    assert main.SIM_TENANTS == ["DEFAULT"], main.SIM_TENANTS
+    print("PASS SIM_TENANTS defaults to the demo workspace only")
+
+
 if __name__ == "__main__":
     test_effective_tenant_matrix()
     test_seed_scopes_to_new_tenant_only()
     test_seed_never_overwrites_existing_tenant_data()
     test_read_models_light_up_for_new_tenant()
     test_registry_scoped_to_own_tenant()
+    test_sim_tick_cannot_touch_other_tenants()
+    test_sim_tenants_default()
     print("ALL ONBOARDING TESTS PASSED")

@@ -28,20 +28,45 @@ def purge_tenant_data(db, tenant_code: str) -> dict:
     if not code or code == DEFAULT_TENANT:
         raise ValueError("This tenant cannot be purged")
 
+    targets = []
+    for mapper in models.Base.registry.mappers:
+        cls = mapper.class_
+        if cls.__name__ in _KEEP_HISTORY:
+            continue
+        if getattr(cls, "tenant_code", None) is not None:
+            targets.append(cls)
+
+    # Foreign keys dictate deletion order (children before machines, etc.) and
+    # the mapper registry is unordered — so sweep in passes. Each model's
+    # delete runs in a savepoint: an FK violation rolls back just that model,
+    # which is retried on the next pass once its children are gone. Repeats
+    # until everything is deleted or a pass makes no progress.
     counts = {}
+    remaining = list(targets)
     try:
-        for mapper in models.Base.registry.mappers:
-            cls = mapper.class_
-            if cls.__name__ in _KEEP_HISTORY:
-                continue
-            col = getattr(cls, "tenant_code", None)
-            if col is None:
-                continue
-            n = (db.query(cls)
-                   .filter(col == code)
-                   .delete(synchronize_session=False))
-            if n:
-                counts[cls.__tablename__] = n
+        for _ in range(len(targets) + 1):
+            if not remaining:
+                break
+            progressed = False
+            still = []
+            for cls in remaining:
+                try:
+                    with db.begin_nested():
+                        n = (db.query(cls)
+                               .filter(cls.tenant_code == code)
+                               .delete(synchronize_session=False))
+                    if n:
+                        counts[cls.__tablename__] = counts.get(cls.__tablename__, 0) + n
+                    progressed = True
+                except Exception:
+                    still.append(cls)
+            remaining = still
+            if not progressed:
+                break
+        if remaining:
+            raise RuntimeError(
+                "purge blocked by constraints on: "
+                + ", ".join(c.__tablename__ for c in remaining))
         db.commit()
     except Exception:
         db.rollback()

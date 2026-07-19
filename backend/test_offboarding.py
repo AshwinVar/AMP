@@ -8,7 +8,7 @@ Proves the destructive tail of the lifecycle is both complete and contained:
 
 Run:  python backend/test_offboarding.py     (exit 0 = pass)
 """
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, event
 from sqlalchemy.orm import sessionmaker
 
 import models
@@ -19,7 +19,15 @@ from offboard_tenant import purge_tenant_data
 
 
 def _fresh_session():
+    # PRAGMA foreign_keys=ON so SQLite enforces FKs like prod Postgres does —
+    # without it, deletion-order bugs (machines before their children) pass
+    # here and explode only in production.
     engine = create_engine("sqlite://", connect_args={"check_same_thread": False})
+
+    @event.listens_for(engine, "connect")
+    def _fk_on(dbapi_conn, _):
+        dbapi_conn.execute("PRAGMA foreign_keys=ON")
+
     Base.metadata.create_all(bind=engine)
     install_scoping()
     return sessionmaker(bind=engine)()

@@ -3800,6 +3800,10 @@ def delete_company_tenant(tenant_id: int, purge: bool = False, db: Session = Dep
             purged = offboard_tenant.purge_tenant_data(db, code)
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e))
+        except Exception as e:
+            # Raise a HANDLED error: unhandled exceptions bypass CORS and the
+            # browser sees an opaque network failure instead of this message.
+            raise HTTPException(status_code=500, detail=f"Data purge failed: {e}")
         plan_gate.invalidate(code)
         log_audit(db, current_user.get("sub", "?"), "purge_tenant", "tenant", None,
                   f"tenant={code} rows={sum(purged.values())} tables={len(purged)}")

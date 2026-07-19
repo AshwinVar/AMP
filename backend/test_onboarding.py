@@ -262,6 +262,35 @@ def test_cancelled_subscription_blocks_login():
     print("PASS cancelled subscription blocks login (and only that)")
 
 
+def test_plan_tier_drives_licence():
+    """The SaaS plan picked in SaaS Admin drives the tenant's licence
+    (TenantConfig.enabled_modules) — Starter sees core only, Enterprise sees
+    everything, unknown plans fail open, and a plan change re-syncs."""
+    import main
+    import schemas
+    from platform_routes import apply_plan_tier
+    db = _fresh_session()
+    founder = {"tenant": "DEFAULT", "role": "Admin", "sub": "admin_new"}
+
+    row = main.create_company_tenant(schemas.CompanyTenantCreate(
+        company_code="APEX", company_name="Apex Gear Works", industry="",
+        plan_name="Starter", subscription_status="Trial", seats=5, monthly_fee=0,
+    ), db=db, current_user=founder)
+    cfg = db.query(models.TenantConfig).filter(models.TenantConfig.tenant_code == "APEX").first()
+    assert cfg.plan == "starter" and cfg.enabled_modules == "core"
+
+    # plan change in SaaS Admin re-syncs the licence
+    main.update_company_tenant(row.id, schemas.CompanyTenantUpdate(plan_name="Enterprise"),
+                               db=db, current_user=founder)
+    db.refresh(cfg)
+    assert cfg.plan == "enterprise" and "intelligence" in cfg.enabled_modules
+
+    # Professional maps to the growth tier; unknown fails open to enterprise
+    assert apply_plan_tier(db, "P1", "Professional").enabled_modules == "core,operations,factory"
+    assert apply_plan_tier(db, "U1", "Mystery Plan").plan == "enterprise"
+    print("PASS plan tier drives the licence")
+
+
 def test_sim_diagnostics_founder_only():
     """/platform/status exposes the sim allowlist + heartbeat to the founder
     only — the allowlist names tenants, which a client must not see."""
@@ -285,5 +314,6 @@ if __name__ == "__main__":
     test_sim_tenants_default()
     test_admin_provisioning_and_password_change()
     test_cancelled_subscription_blocks_login()
+    test_plan_tier_drives_licence()
     test_sim_diagnostics_founder_only()
     print("ALL ONBOARDING TESTS PASSED")

@@ -33,6 +33,30 @@ _TENANT_DEFAULTS = {
 }
 
 
+# SaaS plan (CompanyTenant.plan_name, what the founder picks in SaaS Admin) →
+# licence tier (TenantConfig.plan + enabled_modules, what the frontend obeys).
+# "admin" stays in every tier — the frontend force-enables core+admin anyway so
+# no tenant is locked out of account management.
+PLAN_MODULE_TIERS = {
+    "starter": ("starter", "core"),
+    "growth": ("growth", "core,operations,factory"),
+    "professional": ("growth", "core,operations,factory"),
+    "enterprise": ("enterprise", "core,operations,factory,intelligence,admin"),
+}
+
+
+def apply_plan_tier(db, tenant_code, plan_name):
+    """Sync a tenant's licence to its SaaS plan. Called when the founder creates
+    a tenant or changes its plan; unknown plan names fail open to enterprise."""
+    tier, modules = PLAN_MODULE_TIERS.get((plan_name or "").strip().lower(),
+                                          PLAN_MODULE_TIERS["enterprise"])
+    c = get_or_create_config(db, tenant_code)
+    c.plan = tier
+    c.enabled_modules = modules
+    db.commit()
+    return c
+
+
 def log_audit(db, actor, action, entity_type=None, entity_id=None, details=None):
     """Append an audit record. Safe to call anywhere — never raises."""
     try:
@@ -106,22 +130,28 @@ def register(app):
     # ── Tenant config: licensing / feature flags / branding ───────
     @app.get("/tenant-config")
     def tenant_config(db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
-        """The caller's own company config — used by the frontend for branding
-        and to decide which module packs to show."""
-        tenant = current_user.get("tenant", "DEFAULT")
+        """The current workspace's company config — used by the frontend for
+        branding and to decide which module packs to show. Follows the founder's
+        company switcher (effective tenant), so previewing a client shows that
+        client's licence and branding, not the founder's."""
+        import tenancy
+        tenant = tenancy.current_tenant() or current_user.get("tenant", "DEFAULT")
         return _config_dict(get_or_create_config(db, tenant))
 
     @app.patch("/tenant-config")
     def update_tenant_config(payload: dict, db: Session = Depends(get_db),
                              current_user: dict = Depends(require_roles(["Admin"]))):
-        """A client Admin may re-brand their own workspace. Plan/licensing
-        (which modules are unlocked) is reserved for the platform owner."""
-        tenant = current_user.get("tenant", "DEFAULT")
+        """A client Admin may re-brand their own workspace (the founder, while
+        switched, edits the previewed tenant's branding). Plan/licensing edits
+        stay gated on the raw claim — platform owner only."""
+        import tenancy
+        tenant = tenancy.current_tenant() or current_user.get("tenant", "DEFAULT")
+        is_platform_owner = current_user.get("tenant", "DEFAULT") == "DEFAULT"
         c = get_or_create_config(db, tenant)
         for f in ("brand_name", "brand_color", "brand_logo_url"):
             if f in payload:
                 setattr(c, f, payload[f])
-        if tenant == "DEFAULT":  # founder/platform owner can also change licensing
+        if is_platform_owner:
             for f in ("plan", "subscription_status"):
                 if f in payload:
                     setattr(c, f, payload[f])

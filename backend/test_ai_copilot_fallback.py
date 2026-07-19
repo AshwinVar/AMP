@@ -153,6 +153,53 @@ def test_gemini_failure_falls_back_to_rules():
     print("PASS gemini failure falls back to rules")
 
 
+def test_pick_flash_model():
+    models = [
+        {"name": "models/gemini-2.5-flash", "supportedGenerationMethods": ["generateContent"]},
+        {"name": "models/gemini-3.0-flash", "supportedGenerationMethods": ["generateContent"]},
+        {"name": "models/gemini-3.0-pro", "supportedGenerationMethods": ["generateContent"]},
+        {"name": "models/gemini-3.0-flash-image", "supportedGenerationMethods": ["generateContent"]},
+        {"name": "models/gemini-3.5-flash", "supportedGenerationMethods": ["embedContent"]},
+    ]
+    assert ai_copilot._pick_flash_model(models) == "gemini-3.0-flash"   # newest usable flash
+    assert ai_copilot._pick_flash_model([]) == ""
+    print("PASS flash-model picker")
+
+
+def test_gemini_retired_model_self_heals():
+    """A 404 on the configured model discovers a current one, retries, and
+    caches it — the exact failure seen live with a fresh free-tier key."""
+    _clean_env()
+    os.environ["AI_PROVIDER"] = "gemini"
+    os.environ["GEMINI_API_KEY"] = "test-key"
+    ai_copilot._GEMINI_DISCOVERED = None
+    calls = []
+
+    def fake_generate(model, system, user):
+        calls.append(model)
+        if model == "gemini-2.5-flash":
+            raise RuntimeError("Gemini API 404: no longer available to new users")
+        return "healed answer"
+
+    orig_gen, orig_disc = ai_copilot._gemini_generate, ai_copilot._gemini_discover_model
+    ai_copilot._gemini_generate = fake_generate
+    ai_copilot._gemini_discover_model = lambda: "gemini-3.0-flash"
+    try:
+        out = ai_copilot._ask_gemini("sys", "hello")
+        assert out == "healed answer"
+        assert calls == ["gemini-2.5-flash", "gemini-3.0-flash"]
+        # cached: the next call goes straight to the discovered model
+        out2 = ai_copilot._ask_gemini("sys", "again")
+        assert out2 == "healed answer" and calls[-1] == "gemini-3.0-flash" and len(calls) == 3
+        assert ai_copilot._current_model() == "gemini-3.0-flash"
+    finally:
+        ai_copilot._gemini_generate = orig_gen
+        ai_copilot._gemini_discover_model = orig_disc
+        ai_copilot._GEMINI_DISCOVERED = None
+        _clean_env()
+    print("PASS retired gemini model self-heals via discovery")
+
+
 if __name__ == "__main__":
     test_ask_falls_back_to_rules()
     test_report_falls_back_to_rules()
@@ -160,4 +207,6 @@ if __name__ == "__main__":
     test_provider_selection()
     test_gemini_route_is_used_and_labelled()
     test_gemini_failure_falls_back_to_rules()
+    test_pick_flash_model()
+    test_gemini_retired_model_self_heals()
     print("ALL COPILOT FALLBACK TESTS PASSED")

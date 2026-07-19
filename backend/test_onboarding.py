@@ -229,6 +229,19 @@ def _pw(current, new):
     return schemas.ChangePasswordRequest(current_password=current, new_password=new)
 
 
+def test_sim_diagnostics_founder_only():
+    """/platform/status exposes the sim allowlist + heartbeat to the founder
+    only — the allowlist names tenants, which a client must not see."""
+    import main
+    db = _fresh_session()
+    founder_view = main.platform_status(db=db, current_user={"tenant": "DEFAULT", "role": "Admin"})
+    client_view = main.platform_status(db=db, current_user={"tenant": "APEX", "role": "Admin"})
+    assert founder_view["sim"]["tenants"] == ["DEFAULT"]
+    assert "tick_count" in founder_view["sim"]
+    assert "sim" not in client_view
+    print("PASS sim diagnostics are founder-only")
+
+
 if __name__ == "__main__":
     test_effective_tenant_matrix()
     test_seed_scopes_to_new_tenant_only()
@@ -238,4 +251,5 @@ if __name__ == "__main__":
     test_sim_tick_cannot_touch_other_tenants()
     test_sim_tenants_default()
     test_admin_provisioning_and_password_change()
+    test_sim_diagnostics_founder_only()
     print("ALL ONBOARDING TESTS PASSED")

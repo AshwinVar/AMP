@@ -328,6 +328,12 @@ ALLOWED_ORIGINS = [
     if o.strip()
 ]
 
+# Middleware order note: Starlette runs the LAST-added middleware FIRST
+# (outermost). The plan gate must sit INSIDE CORS — its 403 responses need
+# CORS headers or cross-origin browsers report an opaque network error
+# instead of a readable 403 — so it is added BEFORE CORSMiddleware.
+app.add_middleware(plan_gate.PlanGateMiddleware)
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=ALLOWED_ORIGINS,
@@ -342,7 +348,6 @@ app.add_middleware(
 # core-table queries (ADR-0002). Pure-ASGI (tenancy.TenantScopeMiddleware) to
 # avoid BaseHTTPMiddleware's request-body deadlock and to propagate contextvars.
 app.add_middleware(tenancy.TenantScopeMiddleware)
-app.add_middleware(plan_gate.PlanGateMiddleware)
 
 VALID_ROLES = ["Admin", "Supervisor", "Operator"]
 

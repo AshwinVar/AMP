@@ -229,6 +229,39 @@ def _pw(current, new):
     return schemas.ChangePasswordRequest(current_password=current, new_password=new)
 
 
+def test_cancelled_subscription_blocks_login():
+    """A tenant whose registry row says Cancelled cannot sign in; Trial/Active,
+    registry-less tenants, and the founder are unaffected."""
+    import main
+    import schemas
+    from fastapi import HTTPException
+    from security import hash_password
+    db = _fresh_session()
+    db.add(models.CompanyTenant(company_code="APEX", company_name="Apex", industry="",
+                                plan_name="Starter", subscription_status="Cancelled",
+                                seats=5, monthly_fee=0))
+    db.add(models.User(username="apex_admin", password=hash_password("pw-apex-123"),
+                       role="Admin", tenant_code="APEX"))
+    db.add(models.User(username="ghost_admin", password=hash_password("pw-ghost-12"),
+                       role="Admin", tenant_code="GHOST"))   # no registry row
+    db.commit()
+
+    try:
+        main.login(schemas.UserLogin(username="apex_admin", password="pw-apex-123"), db=db)
+        assert False, "cancelled tenant login should 403"
+    except HTTPException as e:
+        assert e.status_code == 403
+
+    # registry-less tenant still signs in
+    assert main.login(schemas.UserLogin(username="ghost_admin", password="pw-ghost-12"), db=db)["access_token"]
+
+    # flip back to Active -> login works again
+    db.query(models.CompanyTenant).first().subscription_status = "Active"
+    db.commit()
+    assert main.login(schemas.UserLogin(username="apex_admin", password="pw-apex-123"), db=db)["tenant"] == "APEX"
+    print("PASS cancelled subscription blocks login (and only that)")
+
+
 def test_sim_diagnostics_founder_only():
     """/platform/status exposes the sim allowlist + heartbeat to the founder
     only — the allowlist names tenants, which a client must not see."""
@@ -251,5 +284,6 @@ if __name__ == "__main__":
     test_sim_tick_cannot_touch_other_tenants()
     test_sim_tenants_default()
     test_admin_provisioning_and_password_change()
+    test_cancelled_subscription_blocks_login()
     test_sim_diagnostics_founder_only()
     print("ALL ONBOARDING TESTS PASSED")

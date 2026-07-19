@@ -547,6 +547,16 @@ def login(user: schemas.UserLogin, db: Session = Depends(get_db)):
             db.rollback()
 
     tenant = getattr(db_user, "tenant_code", None) or CLIENT_TENANTS.get(db_user.username.lower(), "DEFAULT")
+
+    # Subscription enforcement: a cancelled company can no longer sign in.
+    # Only applies when the tenant has a registry row that says Cancelled —
+    # tenants outside the registry (legacy) and Trial/Active/Past Due all pass.
+    if tenant != tenancy.DEFAULT_TENANT:
+        reg = db.query(models.CompanyTenant).filter(models.CompanyTenant.company_code == tenant).first()
+        if reg and reg.subscription_status == "Cancelled":
+            log_audit(db, db_user.username, "login_blocked", "user", db_user.id, f"tenant={tenant} cancelled")
+            raise HTTPException(status_code=403, detail="Subscription inactive — contact your provider")
+
     log_audit(db, db_user.username, "login", "user", db_user.id, f"tenant={tenant}")
     token = create_access_token(data={"sub": db_user.username, "role": db_user.role, "tenant": tenant})
 

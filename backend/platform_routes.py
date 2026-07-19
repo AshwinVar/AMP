@@ -54,6 +54,9 @@ def apply_plan_tier(db, tenant_code, plan_name):
     c.plan = tier
     c.enabled_modules = modules
     db.commit()
+    # The API gate caches licences briefly — a plan change applies immediately.
+    import plan_gate
+    plan_gate.invalidate(tenant_code)
     return c
 
 

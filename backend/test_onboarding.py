@@ -83,6 +83,19 @@ def test_seed_scopes_to_new_tenant_only():
     print("PASS seed scopes to the new tenant only")
 
 
+def test_two_tenants_can_seed_in_the_same_database():
+    """Regression: item_code is globally unique, so the SECOND tenant's seed
+    used to fail on duplicate starter inventory codes (found live when the
+    third tenant, OFFTEST, came up with an empty factory)."""
+    db = _fresh_session()
+    assert seed_starter_factory(db, "APEX", "Apex Gear Works") is True
+    assert seed_starter_factory(db, "OFFTEST", "Offboarding Test Co") is True
+    assert _count(db, models.Machine, "APEX") == 4
+    assert _count(db, models.Machine, "OFFTEST") == 4
+    assert _count(db, models.InventoryItem, "OFFTEST") == 3
+    print("PASS two tenants seed side by side")
+
+
 def test_seed_never_overwrites_existing_tenant_data():
     db = _fresh_session()
     assert seed_starter_factory(db, "APEX", "Apex Gear Works") is True
@@ -307,6 +320,7 @@ def test_sim_diagnostics_founder_only():
 if __name__ == "__main__":
     test_effective_tenant_matrix()
     test_seed_scopes_to_new_tenant_only()
+    test_two_tenants_can_seed_in_the_same_database()
     test_seed_never_overwrites_existing_tenant_data()
     test_read_models_light_up_for_new_tenant()
     test_registry_scoped_to_own_tenant()

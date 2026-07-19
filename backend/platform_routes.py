@@ -15,6 +15,7 @@ everywhere. Registered from main.py at import time via register(app).
 from datetime import datetime, timedelta
 
 from fastapi import Depends, HTTPException
+from fastapi.responses import JSONResponse
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
@@ -118,17 +119,22 @@ def register(app):
     # ── Health (public — for uptime monitors) ─────────────────────
     @app.get("/health")
     def health():
+        # Return the health in the HTTP STATUS, not just the body: an uptime
+        # monitor (and Railway's probe, if pointed here) checks the status code.
+        # 200 when the DB answers, 503 when it doesn't — so a dead database is
+        # actually detectable instead of hiding behind a 200 with "down" text.
         db_ok = True
         try:
             with engine.connect() as conn:
                 conn.execute(text("SELECT 1"))
         except Exception:
             db_ok = False
-        return {
+        body = {
             "status": "ok" if db_ok else "degraded",
             "database": "ok" if db_ok else "down",
             "time": datetime.utcnow().isoformat(),
         }
+        return JSONResponse(body, status_code=200 if db_ok else 503)
 
     # ── Tenant config: licensing / feature flags / branding ───────
     @app.get("/tenant-config")

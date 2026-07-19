@@ -58,7 +58,7 @@ def _current_model():
     if p == "anthropic":
         return AI_MODEL
     if p == "gemini":
-        return os.environ.get("GEMINI_MODEL", "gemini-2.5-flash")
+        return _GEMINI_DISCOVERED or os.environ.get("GEMINI_MODEL", "gemini-2.5-flash")
     return None
 
 
@@ -152,15 +152,19 @@ def _ask_claude(system: str, user: str) -> str:
     return "".join(parts).strip()
 
 
-def _ask_gemini(system: str, user: str) -> str:
-    """Single call to the Gemini generateContent REST API (free tier via
-    Google AI Studio). Key goes in a header, never the URL, so it can't leak
-    into request logs."""
+# Google retires model names over time (a fresh key 404'd on the shipped
+# default with "no longer available to new users"). Instead of chasing names,
+# discover what THIS key can use and remember it for the process lifetime.
+_GEMINI_DISCOVERED = None
+
+
+def _gemini_generate(model: str, system: str, user: str) -> str:
+    """One generateContent call. Key goes in a header, never the URL, so it
+    can't leak into request logs."""
     import json
     import urllib.error
     import urllib.request
 
-    model = os.environ.get("GEMINI_MODEL", "gemini-2.5-flash")
     body = json.dumps({
         "system_instruction": {"parts": [{"text": system}]},
         "contents": [{"role": "user", "parts": [{"text": user}]}],
@@ -184,6 +188,57 @@ def _ask_gemini(system: str, user: str) -> str:
     candidates = data.get("candidates") or [{}]
     parts = candidates[0].get("content", {}).get("parts", [])
     return "".join(p.get("text", "") for p in parts).strip()
+
+
+def _pick_flash_model(models: list) -> str:
+    """From a ListModels payload, the best generateContent-capable flash-family
+    text model this key can use — highest version wins; specialised variants
+    (image/tts/live/embedding) are skipped. Pure, for testability."""
+    names = []
+    for m in models or []:
+        name = (m.get("name") or "").split("/")[-1]
+        methods = m.get("supportedGenerationMethods") or []
+        if "generateContent" not in methods:
+            continue
+        if "flash" not in name:
+            continue
+        if any(x in name for x in ("image", "tts", "live", "embedding", "audio", "thinking")):
+            continue
+        names.append(name)
+    return max(names) if names else ""
+
+
+def _gemini_discover_model() -> str:
+    """Ask the Gemini ListModels API which models this key actually has."""
+    import json
+    import urllib.request
+
+    req = urllib.request.Request(
+        "https://generativelanguage.googleapis.com/v1beta/models?pageSize=200",
+        headers={"x-goog-api-key": os.environ.get("GEMINI_API_KEY", "")},
+    )
+    with urllib.request.urlopen(req, timeout=30) as resp:
+        data = json.loads(resp.read().decode("utf-8"))
+    return _pick_flash_model(data.get("models"))
+
+
+def _ask_gemini(system: str, user: str) -> str:
+    """generateContent with self-healing model choice: if the configured model
+    404s (retired name), discover a current flash model and retry once."""
+    global _GEMINI_DISCOVERED
+    model = _GEMINI_DISCOVERED or os.environ.get("GEMINI_MODEL", "gemini-2.5-flash")
+    try:
+        return _gemini_generate(model, system, user)
+    except RuntimeError as e:
+        if "404" not in str(e):
+            raise
+        discovered = _gemini_discover_model()
+        if not discovered or discovered == model:
+            raise
+        result = _gemini_generate(discovered, system, user)
+        _GEMINI_DISCOVERED = discovered
+        print(f"[AI COPILOT] Gemini model '{model}' unavailable; discovered and using '{discovered}'")
+        return result
 
 
 # Last LLM failure, surfaced (founder-only) in /ai/status so "why is the

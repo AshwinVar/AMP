@@ -8,6 +8,7 @@ export type CompanyTenant = {
   seats: number;
   monthly_fee: number;
   created_at?: string;
+  trial_days_left?: number | null;
 };
 
 export type SaaSAnalytics = {

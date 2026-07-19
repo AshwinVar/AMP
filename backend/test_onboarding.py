@@ -275,6 +275,45 @@ def test_cancelled_subscription_blocks_login():
     print("PASS cancelled subscription blocks login (and only that)")
 
 
+def test_trial_expiry_blocks_login():
+    """A Trial tenant older than TRIAL_DAYS is blocked at sign-in; fresh
+    trials, Active tenants (however old), and registry-less tenants pass."""
+    from datetime import datetime, timedelta
+    import main
+    import schemas
+    from fastapi import HTTPException
+    from security import hash_password
+    db = _fresh_session()
+
+    def company(code, status, days_old):
+        db.add(models.CompanyTenant(company_code=code, company_name=code, industry="",
+                                    plan_name="Starter", subscription_status=status,
+                                    seats=1, monthly_fee=0,
+                                    created_at=datetime.utcnow() - timedelta(days=days_old)))
+        db.add(models.User(username=f"{code.lower()}_admin", password=hash_password("pw-123456"),
+                           role="Admin", tenant_code=code))
+
+    company("OLDTRIAL", "Trial", 40)    # expired
+    company("NEWTRIAL", "Trial", 3)     # fresh
+    company("OLDACTIVE", "Active", 400) # paid — age irrelevant
+    db.commit()
+
+    try:
+        main.login(schemas.UserLogin(username="oldtrial_admin", password="pw-123456"), db=db)
+        assert False, "expired trial should 403"
+    except HTTPException as e:
+        assert e.status_code == 403 and "Trial expired" in e.detail
+    assert main.login(schemas.UserLogin(username="newtrial_admin", password="pw-123456"), db=db)["access_token"]
+    assert main.login(schemas.UserLogin(username="oldactive_admin", password="pw-123456"), db=db)["access_token"]
+
+    # days-left surface for the UI
+    rows = {r.company_code: r for r in db.query(models.CompanyTenant).all()}
+    assert rows["OLDTRIAL"].trial_days_left == 0
+    assert rows["NEWTRIAL"].trial_days_left == models.TRIAL_DAYS - 3
+    assert rows["OLDACTIVE"].trial_days_left is None
+    print("PASS trial expiry blocks login (and only that)")
+
+
 def test_plan_tier_drives_licence():
     """The SaaS plan picked in SaaS Admin drives the tenant's licence
     (TenantConfig.enabled_modules) — Starter sees core only, Enterprise sees
@@ -328,6 +367,7 @@ if __name__ == "__main__":
     test_sim_tenants_default()
     test_admin_provisioning_and_password_change()
     test_cancelled_subscription_blocks_login()
+    test_trial_expiry_blocks_login()
     test_plan_tier_drives_licence()
     test_sim_diagnostics_founder_only()
     print("ALL ONBOARDING TESTS PASSED")

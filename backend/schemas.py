@@ -713,6 +713,7 @@ class CompanyTenantResponse(BaseModel):
     seats: int
     monthly_fee: int
     created_at: Optional[datetime] = None
+    trial_days_left: Optional[int] = None   # model property; None off-trial
 
     class Config:
         from_attributes = True

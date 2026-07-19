@@ -3717,6 +3717,11 @@ def create_company_tenant(tenant: schemas.CompanyTenantCreate, db: Session = Dep
         onboard_tenant.seed_starter_factory(db, row.company_code, row.company_name or "")
     except Exception as e:
         print(f"[ONBOARD] starter seed for {row.company_code} failed: {e}")
+    # Licence follows the chosen plan (Starter/Professional/Enterprise tiers).
+    try:
+        platform_routes.apply_plan_tier(db, row.company_code, row.plan_name)
+    except Exception as e:
+        print(f"[ONBOARD] plan tier for {row.company_code} failed: {e}")
     return row
 
 
@@ -3754,10 +3759,17 @@ def update_company_tenant(tenant_id: int, payload: schemas.CompanyTenantUpdate, 
     row = db.query(models.CompanyTenant).filter(models.CompanyTenant.id == tenant_id).first()
     if not row:
         raise HTTPException(status_code=404, detail="Tenant not found")
-    for key, value in payload.model_dump(exclude_unset=True).items():
+    changes = payload.model_dump(exclude_unset=True)
+    for key, value in changes.items():
         setattr(row, key, value)
     db.commit()
     db.refresh(row)
+    if "plan_name" in changes:
+        # Changing the plan re-syncs the licence (which module packs unlock).
+        try:
+            platform_routes.apply_plan_tier(db, row.company_code, row.plan_name)
+        except Exception as e:
+            print(f"[SAAS] plan tier for {row.company_code} failed: {e}")
     return row
 
 

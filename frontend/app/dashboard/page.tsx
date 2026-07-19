@@ -520,6 +520,14 @@ export default function DashboardPage() {
   ) as ReturnType<typeof getEnabledModules>;
   const brandName = tenantCfg?.brand_name || "AMP";
 
+  // If the licence that just loaded doesn't cover the current view (e.g. a
+  // Starter-plan tenant landing on the legacy inventory default), snap to
+  // Overview instead of a locked-module screen.
+  useEffect(() => {
+    if (tenantCfg && !isViewEnabled(activeView, enabledModules)) setActiveView("overview");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tenantCfg]);
+
   function logout() {
     localStorage.clear();
     sessionStorage.clear();

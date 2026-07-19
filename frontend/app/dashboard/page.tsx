@@ -1605,6 +1605,35 @@ export default function DashboardPage() {
     catch (error) { console.error(error); alert("Failed to delete tenant."); }
   }
 
+  // Self-service password rotation (pairs with provisioned temp passwords).
+  const [pwOpen, setPwOpen] = useState(false);
+  const [pwCurrent, setPwCurrent] = useState("");
+  const [pwNew, setPwNew] = useState("");
+  const [pwMsg, setPwMsg] = useState("");
+  async function changeOwnPassword(e: React.FormEvent) {
+    e.preventDefault();
+    try {
+      await apiPost("/auth/change-password", { current_password: pwCurrent, new_password: pwNew });
+      setPwMsg("Password changed");
+      setPwCurrent(""); setPwNew("");
+    } catch {
+      setPwMsg("Failed — check the current password");
+    }
+  }
+
+  // One-click tenant admin provisioning. The temporary password appears only in
+  // this response — it's held in state for a single display, never persisted.
+  const [adminCreds, setAdminCreds] = useState<{ username: string; temporary_password: string; company_code: string } | null>(null);
+  async function provisionAdmin(id: number) {
+    try {
+      setAdminCreds(await apiPost<{ username: string; temporary_password: string; company_code: string }>(`/saas/tenants/${id}/admin`, {}));
+      fetchAll();
+    } catch (error) {
+      console.error(error);
+      alert("Failed to create the admin login (it may already exist).");
+    }
+  }
+
   async function createCost(e: React.FormEvent) {
     e.preventDefault();
     try { await apiPost<CostRecord>("/cost-records", costForm); setCostForm({ cost_no: "", cost_type: "Material", reference_type: "", reference_id: 0, description: "", amount: 0, department: "Production" }); fetchAll(); }
@@ -1897,6 +1926,27 @@ export default function DashboardPage() {
       </div>
     )}
     <div className="phase29-user">{userName || "User"} · {role || "—"}</div>
+    <div style={{ position: "relative" }}>
+      <button
+        onClick={() => { setPwOpen(!pwOpen); setPwMsg(""); }}
+        className="phase29-pill"
+        style={{ cursor: "pointer" }}
+        title="Change password"
+      >
+        Password
+      </button>
+      {pwOpen && (
+        <form
+          onSubmit={changeOwnPassword}
+          style={{ position: "absolute", right: 0, top: "110%", zIndex: 60, background: "#0f172a", border: "1px solid #334155", borderRadius: 12, padding: 12, display: "flex", flexDirection: "column", gap: 8, width: 230 }}
+        >
+          <input type="password" placeholder="Current password" value={pwCurrent} onChange={(e) => setPwCurrent(e.target.value)} required style={{ background: "#020617", border: "1px solid #334155", borderRadius: 8, padding: "6px 10px", color: "#e2e8f0" }} />
+          <input type="password" placeholder="New password (min 8)" value={pwNew} onChange={(e) => setPwNew(e.target.value)} required minLength={8} style={{ background: "#020617", border: "1px solid #334155", borderRadius: 8, padding: "6px 10px", color: "#e2e8f0" }} />
+          <button type="submit" style={{ background: "#e2e8f0", color: "#0f172a", borderRadius: 8, padding: "6px 10px", fontWeight: 600, cursor: "pointer" }}>Change password</button>
+          {pwMsg && <span style={{ fontSize: 12, color: pwMsg === "Password changed" ? "#6ee7b7" : "#fca5a5" }}>{pwMsg}</span>}
+        </form>
+      )}
+    </div>
     <button
       onClick={logout}
       className="phase29-pill"
@@ -2628,7 +2678,7 @@ export default function DashboardPage() {
       ))}
 
       {renderSection("saas", (
-        <SaaSAdminSection tenants={tenants} analytics={saasAnalytics} form={tenantForm} setForm={setTenantForm} createTenant={isAdmin ? createTenant : async () => {}} updateTenant={isAdmin ? updateTenant : async () => {}} deleteTenant={isAdmin ? deleteTenant : undefined} />
+        <SaaSAdminSection tenants={tenants} analytics={saasAnalytics} form={tenantForm} setForm={setTenantForm} createTenant={isAdmin ? createTenant : async () => {}} updateTenant={isAdmin ? updateTenant : async () => {}} deleteTenant={isAdmin ? deleteTenant : undefined} provisionAdmin={isAdmin ? provisionAdmin : undefined} adminCreds={adminCreds} clearAdminCreds={() => setAdminCreds(null)} />
       ))}
 
       {renderSection("costing", (

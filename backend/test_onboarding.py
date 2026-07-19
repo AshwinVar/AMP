@@ -178,6 +178,57 @@ def test_sim_tenants_default():
     print("PASS SIM_TENANTS defaults to the demo workspace only")
 
 
+def test_admin_provisioning_and_password_change():
+    """Founder provisions a tenant admin with a one-time password; the admin can
+    then rotate it. Non-founders can't provision; repeats are rejected."""
+    import main
+    from fastapi import HTTPException
+    from security import verify_password
+    db = _fresh_session()
+    db.add(models.CompanyTenant(company_code="APEX", company_name="Apex Gear Works",
+                                industry="", plan_name="Starter",
+                                subscription_status="Trial", seats=5, monthly_fee=0))
+    db.commit()
+    tid = db.query(models.CompanyTenant).first().id
+    founder = {"tenant": "DEFAULT", "role": "Admin", "sub": "admin_new"}
+
+    creds = main.create_tenant_admin(tid, db=db, current_user=founder)
+    assert creds["username"] == "apex_admin" and len(creds["temporary_password"]) >= 10
+    made = db.query(models.User).filter(models.User.username == "apex_admin").first()
+    assert made.tenant_code == "APEX" and made.role == "Admin"
+    assert verify_password(creds["temporary_password"], made.password)
+
+    # repeat -> 400; non-founder -> 403
+    for user, code in ((founder, 400), ({"tenant": "GMATS", "role": "Admin", "sub": "g"}, 403)):
+        try:
+            main.create_tenant_admin(tid, db=db, current_user=user)
+            assert False, "should have raised"
+        except HTTPException as e:
+            assert e.status_code == code
+
+    # the provisioned admin rotates their password
+    apex_admin = {"sub": "apex_admin", "tenant": "APEX", "role": "Admin"}
+    try:
+        main.change_password(_pw(creds["temporary_password"][:-1] + "x", "new-password-1"), db=db, current_user=apex_admin)
+        assert False, "wrong current password should 401"
+    except HTTPException as e:
+        assert e.status_code == 401
+    try:
+        main.change_password(_pw(creds["temporary_password"], "short"), db=db, current_user=apex_admin)
+        assert False, "short password should 400"
+    except HTTPException as e:
+        assert e.status_code == 400
+    main.change_password(_pw(creds["temporary_password"], "rotated-pass-9"), db=db, current_user=apex_admin)
+    db.refresh(made)
+    assert verify_password("rotated-pass-9", made.password)
+    print("PASS admin provisioning + password rotation")
+
+
+def _pw(current, new):
+    import schemas
+    return schemas.ChangePasswordRequest(current_password=current, new_password=new)
+
+
 if __name__ == "__main__":
     test_effective_tenant_matrix()
     test_seed_scopes_to_new_tenant_only()
@@ -186,4 +237,5 @@ if __name__ == "__main__":
     test_registry_scoped_to_own_tenant()
     test_sim_tick_cannot_touch_other_tenants()
     test_sim_tenants_default()
+    test_admin_provisioning_and_password_change()
     print("ALL ONBOARDING TESTS PASSED")

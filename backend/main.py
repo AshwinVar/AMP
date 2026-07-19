@@ -1,5 +1,6 @@
 import asyncio
 import csv
+import secrets
 import io
 import os
 import re
@@ -1142,6 +1143,22 @@ def refresh_token(current_user: dict = Depends(get_current_user)):
         "tenant": current_user.get("tenant", "DEFAULT"),
     })
     return {"access_token": token, "token_type": "bearer"}
+
+
+@app.post("/auth/change-password")
+def change_password(payload: schemas.ChangePasswordRequest, db: Session = Depends(get_db),
+                    current_user: dict = Depends(get_current_user)):
+    """Any signed-in user can rotate their own password (used after receiving a
+    provisioned temporary password, or routinely)."""
+    db_user = db.query(models.User).filter(models.User.username == current_user.get("sub")).first()
+    if not db_user or not verify_password(payload.current_password, db_user.password):
+        raise HTTPException(status_code=401, detail="Current password is incorrect")
+    if len(payload.new_password) < 8:
+        raise HTTPException(status_code=400, detail="New password must be at least 8 characters")
+    db_user.password = hash_password(payload.new_password)
+    db.commit()
+    log_audit(db, db_user.username, "change_password", "user", db_user.id, "self-service")
+    return {"message": "Password changed"}
 
 
 @app.get("/health")
@@ -3673,6 +3690,34 @@ def create_company_tenant(tenant: schemas.CompanyTenantCreate, db: Session = Dep
     except Exception as e:
         print(f"[ONBOARD] starter seed for {row.company_code} failed: {e}")
     return row
+
+
+@app.post("/saas/tenants/{tenant_id}/admin")
+def create_tenant_admin(tenant_id: int, db: Session = Depends(get_db),
+                        current_user: dict = Depends(require_roles(["Admin"]))):
+    """Founder-only: provision the tenant's Admin login with a generated
+    temporary password. The password is returned ONCE in this response and
+    stored only as a bcrypt hash — hand it to the customer, who should rotate
+    it via /auth/change-password after first login."""
+    _require_founder(current_user)
+    row = db.query(models.CompanyTenant).filter(models.CompanyTenant.id == tenant_id).first()
+    if not row:
+        raise HTTPException(status_code=404, detail="Tenant not found")
+    username = f"{row.company_code.lower()}_admin"
+    if db.query(models.User).filter(models.User.username == username).first():
+        raise HTTPException(status_code=400, detail=f"Admin login '{username}' already exists for this tenant")
+    temp_password = secrets.token_urlsafe(9)
+    db.add(models.User(username=username, password=hash_password(temp_password),
+                       role="Admin", tenant_code=row.company_code))
+    db.commit()
+    log_audit(db, current_user.get("sub", "?"), "provision_admin", "user", None,
+              f"tenant={row.company_code} username={username}")
+    return {
+        "username": username,
+        "temporary_password": temp_password,
+        "company_code": row.company_code,
+        "note": "Shown once. Share securely; the customer should change it after first login.",
+    }
 
 
 @app.patch("/saas/tenants/{tenant_id}", response_model=schemas.CompanyTenantResponse)

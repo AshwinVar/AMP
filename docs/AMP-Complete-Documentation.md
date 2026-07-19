@@ -283,7 +283,11 @@ The copilot is **rule‑first, LLM‑optional** (ADR‑0003) and works out of th
 
 - **Rule‑based Q&A** (`ai/assistant.py`, `POST /copilot/ask`): a keyword router sends the question to the right pillar read‑model — OEE, cost of losses, delivery, downtime, quality, maintenance, compliance, inventory, machines (ask one **by name**, e.g. "how is SMT‑Reflow‑01 doing?"), production, WIP, shifts, and **week‑on‑week trends** — and phrases its live numbers into a sentence, with a one‑tap drill‑in to the view that owns the detail. "help" lists what it can answer.
 - **The rundown** (`GET /copilot/digest`): a one‑shot plain‑English paragraph of the whole plant — OEE + trend, the week's losses in money, the order book, the most pressing issue, and the wins.
-- **Optional LLM layer** (`ai_copilot.py`): setting `ANTHROPIC_API_KEY` additionally enables free‑form conversational answers via Claude over a plain HTTPS call. It remains off (and free) until a client wants it.
+- **Optional LLM layer** (`ai_copilot.py`): connecting an API key additionally enables free‑form conversational answers and an AI‑written management report, grounded in the same live factory data. It stays off (and free) until connected, and **degrades gracefully** — any LLM failure (no credits, rate limit, outage, a retired model) falls back to the rule‑based answer, so a customer never sees a raw API error. Two providers, chosen by environment only:
+  - **Anthropic** (`AI_PROVIDER=anthropic` + `ANTHROPIC_API_KEY`, default model `claude-haiku-4-5`) — paid, with commercial data terms; the choice for real clients.
+  - **Gemini** (`AI_PROVIDER=gemini` + `GEMINI_API_KEY`, Google AI Studio free tier) — demo‑only, since free‑tier data may be used for training. The code self‑discovers a usable model via the ListModels API and walks candidates on a 404 (retired name) or 429 (a model with no free quota), so it survives Google's model churn without a config change.
+
+  With both keys present, `AI_PROVIDER` decides; unset, Anthropic wins. `GET /ai/status` reports the active provider, the resolved model, and (founder‑only) the last LLM error. **Production currently runs the Gemini free tier**; switching to Anthropic for a real client is one variable plus credits.
 
 ## 3.12 Industrial connectivity (the bridge to real machines)
 
@@ -291,7 +295,7 @@ The copilot is **rule‑first, LLM‑optional** (ADR‑0003) and works out of th
 
 ## 3.13 How it's deployed
 
-- **Backend → Railway.** Push to the `master` branch on GitHub and Railway rebuilds it using **NIXPACKS** (config in `railway.toml`), starting the FastAPI app with `uvicorn`. A public **`GET /health`** endpoint (no auth) reports process + database liveness for uptime monitors.
+- **Backend → Railway.** Push to the `master` branch on GitHub and Railway rebuilds it using **NIXPACKS** (config in `railway.toml`), starting the FastAPI app with `uvicorn`. A public **`GET /health`** endpoint (no auth) reports process + database liveness — **HTTP 200 when the DB answers, 503 when it doesn't**, so an uptime monitor sees the failure in the status code. (Railway's own deploy probe still points at `/docs`; pointing it at `/health` is a pending config change.)
 - **Frontend → Vercel.** Push to `master` and Vercel rebuilds the Next.js site. Production lives at **app.marx8.com**.
 - **Config via environment variables** (never hard‑coded): database URL, secret key, MQTT broker, allowed origins (CORS), the optional AI key, the optional error‑monitoring key, and the GMATS admin password.
 
@@ -383,7 +387,7 @@ The intelligence layer is built from **read‑models** (ADR‑0007): pure functi
 
 ### `backend/ai_copilot.py` — the optional AI assistant
 - **Plain English:** A chatbot that answers factory questions and writes reports from your real data — switched on only when a client provides an AI key.
-- **Technical:** `register(app)` adds `/ai/status`, `/ai/ask`, `/ai/report`. `_build_factory_context` compiles a token‑efficient data snapshot; `_ask_claude` calls the Anthropic Messages REST API via stdlib `urllib` (no SDK). Gated on `ANTHROPIC_API_KEY`; model from `AI_MODEL` (default `claude-haiku-4-5`).
+- **Technical:** `register(app)` adds `/ai/status`, `/ai/ask`, `/ai/report`. `_build_factory_context` compiles a token‑efficient data snapshot; `_ask_llm` routes to the active provider — `_ask_claude` (Anthropic Messages API) or `_ask_gemini` (Gemini generateContent, with model self‑discovery on 404/429) — each over stdlib `urllib`, no SDK, key in a header not the URL. Provider chosen by `AI_PROVIDER` (else auto‑detect, Anthropic first); on any failure the endpoints fall back to the rule‑based `ai.assistant`/`ai.report` and label the response `source: "rules"`.
 
 ### `backend/industrial_adapters.py` — the protocol bridge
 - **Plain English:** The part designed to talk to real machine controllers over industrial languages; today it fakes them realistically.
@@ -489,7 +493,7 @@ On first start the backend auto‑creates the tables and seeds a full demo facto
 ## 5.2 Deploy it (already set up)
 
 - Push to **`master`** → the **backend redeploys on Railway** and the **frontend redeploys on Vercel**, automatically.
-- Set secrets as **environment variables** on Railway (`DATABASE_URL`, `SECRET_KEY`, `ALLOWED_ORIGINS`, optional `ANTHROPIC_API_KEY`, `SENTRY_DSN`, `GMATS_ADMIN_PASSWORD`) — never in code.
+- Set secrets as **environment variables** on Railway (`DATABASE_URL`, `SECRET_KEY`, `ALLOWED_ORIGINS`, optional LLM keys `AI_PROVIDER` + `ANTHROPIC_API_KEY` / `GEMINI_API_KEY`, optional `SIM_TENANTS`, `SENTRY_DSN`, `GMATS_ADMIN_PASSWORD`) — never in code.
 - ⚠️ Do **not** add a `Dockerfile` in `backend/` — Railway would use it instead of NIXPACKS and deploys would silently fail.
 
 ## 5.3 Add a new module (the pattern)
@@ -634,7 +638,7 @@ GET    /analytics/things  → summary/KPIs for that module
 | `POST` | `/ai/generate-recommendations` | Generate rule‑based recommendations. |
 | `GET` | `/analytics/ai-insights` | AI‑insights analytics. |
 | `GET` | `/ai/status` | Is the Claude copilot connected? |
-| `POST` | `/ai/ask` | Ask the copilot a question *(needs `ANTHROPIC_API_KEY`)*. |
+| `POST` | `/ai/ask` | Ask the copilot a question via the connected LLM *(needs an LLM key; falls back to rules on failure)*. |
 | `POST` | `/ai/report` | Generate a daily AI management report *(needs key)*. |
 
 ### Industrial IoT & connectivity
@@ -729,7 +733,7 @@ The dashboard (`app/dashboard/page.tsx`) is one big menu that swaps in a differe
 |---|---|
 | `PredictiveMaintenanceSection` | Per‑machine failure‑risk scores and recommendations. |
 | `AIInsightsSection` | Rule‑based AI recommendations. |
-| `AICopilot` | The chat panel for the optional Claude copilot (ask questions, get reports). |
+| `AICopilot` | The chat panel for the copilot — rule‑based by default, LLM answers when connected, each answer badged with its source. |
 | `IoTCommandSection` | The IoT telemetry command center. |
 | `IndustrialConnectivity` | The industrial‑protocol connectivity screen (devices, protocols). |
 | `IndustrialGatewaySection` | The industrial gateway (device/signal mappings). |

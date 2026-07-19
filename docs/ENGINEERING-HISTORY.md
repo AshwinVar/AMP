@@ -358,8 +358,11 @@ Monolith + SPA                     (Jun 04)
 **7.5 The unexpected discovery: build the diagnostic first.** `/platform/status`'s sim block (#119) and LLM `last_error` (#132) were each built to answer a question that had cost real time — and each immediately exposed a *different* bug within minutes (the mis-applied `SIM_TENANTS` variable; the retired Gemini model). Observability paid for itself on the first use, twice.
 
 **7.6 Documentation-vs-code inconsistencies found during this reconstruction**
-1. **`railway.toml` still sets `healthcheckPath = "/docs"`** — pointing Railway's health probe at the Swagger UI, even though a purpose-built public `/health` (with a real DB check) shipped in #91. Harmless today, wrong in principle: the probe passes whenever FastAPI is up, including when the database is down.
-2. **The docs describe an Anthropic-only LLM.** `docs/AMP-Complete-Documentation.md` (lines ~286, 386, 492, 637) and the README describe `ANTHROPIC_API_KEY` as *the* switch and `_ask_claude` as *the* call path. Since #131–#134 the code supports a Gemini provider with model self-discovery; **no documentation file mentions Gemini at all.** Production currently runs Gemini.
+
+*(Addendum, 2026-07-20: items 1 and 2 partially/fully resolved immediately after this document was compiled — see the trailing notes. Kept in place because the reconstruction found them.)*
+
+1. **`railway.toml` still sets `healthcheckPath = "/docs"`** — pointing Railway's health probe at the Swagger UI, even though a purpose-built public `/health` (with a real DB check) shipped in #91. Harmless today, wrong in principle: the probe passes whenever FastAPI is up, including when the database is down. — *Partly addressed: #140 made `/health` return 503 on a dead DB (so an external uptime monitor now works); pointing Railway's own probe at it changes deploy-cutover behavior and is left as a deliberate, separately-decided config change.*
+2. **The docs describe an Anthropic-only LLM.** `docs/AMP-Complete-Documentation.md` and the README described `ANTHROPIC_API_KEY` as *the* switch and `_ask_claude` as *the* call path. Since #131–#134 the code supports a Gemini provider with model self-discovery; production runs Gemini. — *Resolved: the complete documentation's LLM sections now describe the dual-provider design and the graceful fallback.*
 3. **ADR-0002 promises a CI guard** that "fails loudly when a core query is missing a tenant filter." `.github/workflows/ci.yml` runs only `compileall` and `npm run build`. The guard was never built; the ORM chokepoint made it less necessary, but the ADR overstates what shipped.
 4. **`FlowMES-Enterprise/`** remains tracked at the repo root as a stale gitlink containing a nested `.git`.
 5. **Internal PR numbering desynced from GitHub** on 2026-07-14 (`PR#13 … (#12)`, `PR#12 … (#13)`).
@@ -383,9 +386,9 @@ Monolith + SPA                     (Jun 04)
 
 **8.5 What needs redesign or attention**
 - **`backend/main.py` at 4,274 lines and 192 endpoints** is the standing structural debt. It has survived because the chokepoints keep its correctness properties centralised — but route modules (the `platform_routes.py` / `enterprise_inventory_routes.py` pattern) should keep peeling domains off it.
-- **CI is a build check, not a test run.** The 40 suites are executed by hand before every push; CI runs `compileall` and `npm run build`. Wiring the suites into the workflow is the single highest-value hour available.
+- **CI is a build check, not a test run.** *(Resolved 2026-07-20, #139.)* CI now runs all backend suites and a boot check on every push. Wiring them in immediately surfaced a latent defect: `database.py` did `os.environ["DATABASE_URL"]` with no fallback, so any fresh clone or CI runner would have `KeyError`'d on every test — fixed by giving CI a throwaway SQLite DB while keeping the app fail-loud.
 - **Documentation drift** (§7.6) — the LLM chapter is materially out of date.
-- **`railway.toml` healthcheck** should point at `/health`.
+- **`railway.toml` healthcheck** should point at `/health` (which now returns a truthful status code, #140) rather than `/docs` — pending, as it changes deploy cutover.
 - **No database backups and no uptime monitor** — the two remaining production risks, both requiring account-level action.
 - **Login-time-only commercial enforcement** — a cancelled tenant's existing token remains valid for up to 4 hours (accepted in ADR-0008).
 - **`FlowMES-Enterprise/`** should be removed.

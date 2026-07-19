@@ -145,8 +145,21 @@ def register(app):
         try:
             answer = _ask_claude(system, f"Factory data:\n{context}\n\nQuestion: {question}")
         except Exception as e:
-            raise HTTPException(status_code=502, detail=f"AI request failed: {e}")
-        return {"answer": answer, "model": AI_MODEL}
+            # Graceful degradation: an LLM failure (no credits, rate limit,
+            # outage) must never surface a raw API error in a customer's
+            # copilot. Answer from the rule-based assistant instead, honestly
+            # labelled — the factory data is all local, so this always works.
+            print(f"[AI COPILOT] LLM failed, answering from rules: {e}")
+            import ai
+            fallback = ai.assistant.answer(db, tenant, question)
+            return {
+                "answer": fallback.get("answer", "I couldn't reach the AI model just now — try again shortly."),
+                "view": fallback.get("view"),
+                "model": None,
+                "source": "rules",
+                "note": "AI model temporarily unavailable — answered from live factory data.",
+            }
+        return {"answer": answer, "model": AI_MODEL, "source": "llm"}
 
     @app.post("/ai/report")
     def ai_report(db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
@@ -162,5 +175,15 @@ def register(app):
         try:
             report = _ask_claude(system, f"Factory data:\n{context}\n\nWrite today's report.")
         except Exception as e:
-            raise HTTPException(status_code=502, detail=f"AI request failed: {e}")
-        return {"report": report, "model": AI_MODEL}
+            # Same graceful degradation as /ai/ask: fall back to the
+            # rule-composed weekly report rather than erroring.
+            print(f"[AI COPILOT] LLM failed, reporting from rules: {e}")
+            import ai
+            built = ai.report.build_weekly_report(db, tenant)
+            return {
+                "report": built.get("markdown") or built.get("report") or "Report unavailable right now.",
+                "model": None,
+                "source": "rules",
+                "note": "AI model temporarily unavailable — composed from live factory data.",
+            }
+        return {"report": report, "model": AI_MODEL, "source": "llm"}

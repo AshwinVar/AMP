@@ -70,13 +70,16 @@ def seed_starter_factory(db, tenant_code: str, company_name: str = "") -> bool:
         db.add(models.ShiftData(shift_name=f"Day – {now.date().isoformat()}",
                                 target_output=1500, actual_output=1385))
 
-        db.add(models.InventoryItem(item_code="RM-001", item_name="Raw stock bar",
+        # item_code is globally unique across tenants (models.py), so starter
+        # codes must be tenant-prefixed like every other seeded business key —
+        # unprefixed codes made every seed after the first tenant's fail.
+        db.add(models.InventoryItem(item_code=f"{tenant_code}-RM-001", item_name="Raw stock bar",
                                     category="Raw material", unit="pcs",
                                     current_stock=140, reorder_level=100, supplier="Starter Supply Co"))
-        db.add(models.InventoryItem(item_code="RM-002", item_name="Fastener kit",
+        db.add(models.InventoryItem(item_code=f"{tenant_code}-RM-002", item_name="Fastener kit",
                                     category="Raw material", unit="kits",
                                     current_stock=45, reorder_level=60, supplier="Starter Supply Co"))
-        db.add(models.InventoryItem(item_code="FG-001", item_name=f"{label} finished unit",
+        db.add(models.InventoryItem(item_code=f"{tenant_code}-FG-001", item_name=f"{label} finished unit",
                                     category="Finished goods", unit="pcs",
                                     current_stock=32, reorder_level=0, supplier=""))
 
@@ -89,7 +92,7 @@ def seed_starter_factory(db, tenant_code: str, company_name: str = "") -> bool:
 
         for i, state in enumerate(("RAW", "SEMI"), start=1):
             db.add(models.WorkOrder(
-                work_order_no=f"{tenant_code}-WO-{i}", part_number="FG-001",
+                work_order_no=f"{tenant_code}-WO-{i}", part_number=f"{tenant_code}-FG-001",
                 batch_number=f"B{i}", machine_id=machines[i - 1].id,
                 target_quantity=250, actual_quantity=40 * i, status="In Progress",
                 material_state=state))

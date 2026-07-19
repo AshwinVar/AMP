@@ -5,15 +5,26 @@ It answers plant-floor questions ("why is my OEE low?", "what should I
 reorder?"), does AI root-cause analysis, and generates management reports —
 grounded in the company's real machines, downtime, OEE, shifts and inventory.
 
-  OFF BY DEFAULT. To turn it on later (when a client signs up):
-    1. Get an API key at console.anthropic.com
-    2. In Railway -> AMP -> Variables, add  ANTHROPIC_API_KEY = <the key>
-    3. (optional) AI_MODEL  — defaults to claude-haiku-4-5 (cheapest/fastest)
-    4. Redeploy. That's it — the copilot detects the key and switches on.
+  OFF BY DEFAULT. Two providers, chosen by environment only:
 
-No code change is needed to connect; the key lives only in the environment.
-Calls the Anthropic Messages REST API via the standard library (no SDK
-dependency), so adding the copilot never affects the deploy build.
+    Anthropic (paid, commercial data terms — for real clients):
+      ANTHROPIC_API_KEY = <key from the Claude Platform Console>
+      AI_MODEL          = claude-haiku-4-5 (default; cheapest/fastest)
+
+    Gemini (free tier via aistudio.google.com — DEMO USE ONLY; free-tier
+    data may be used for training, so never route a paying customer's
+    factory data through it):
+      AI_PROVIDER    = gemini
+      GEMINI_API_KEY = <key from Google AI Studio>
+      GEMINI_MODEL   = gemini-2.5-flash (default)
+
+  With both keys present, AI_PROVIDER decides; unset, Anthropic wins.
+  Switching back for a real client is one variable: AI_PROVIDER=anthropic
+  (or just delete AI_PROVIDER).
+
+No code change is needed to connect; keys live only in the environment.
+Both providers are called over plain REST via the standard library (no SDK
+dependency), so the copilot never affects the deploy build.
 """
 import os
 
@@ -24,14 +35,41 @@ import models
 from auth import get_current_user
 from database import SessionLocal
 
-# Cheap + fast model by default; override with AI_MODEL (e.g. claude-sonnet-4-6
-# for deeper analysis). The key itself is never in code — only in the env.
+# Cheap + fast models by default; override with AI_MODEL / GEMINI_MODEL.
+# Keys are never in code — only in the env.
 AI_MODEL = os.environ.get("AI_MODEL", "claude-haiku-4-5")
 
 
+def _provider():
+    """Active LLM provider name, or None when no key is configured.
+    Explicit AI_PROVIDER wins; otherwise auto-detect, Anthropic first."""
+    explicit = os.environ.get("AI_PROVIDER", "").strip().lower()
+    if explicit in ("anthropic", "gemini"):
+        return explicit
+    if os.environ.get("ANTHROPIC_API_KEY"):
+        return "anthropic"
+    if os.environ.get("GEMINI_API_KEY"):
+        return "gemini"
+    return None
+
+
+def _current_model():
+    p = _provider()
+    if p == "anthropic":
+        return AI_MODEL
+    if p == "gemini":
+        return os.environ.get("GEMINI_MODEL", "gemini-2.5-flash")
+    return None
+
+
 def _ai_enabled() -> bool:
-    """The copilot is on only when an API key is present in the environment."""
-    return bool(os.environ.get("ANTHROPIC_API_KEY"))
+    """The copilot is on only when the active provider's key is present."""
+    p = _provider()
+    if p == "anthropic":
+        return bool(os.environ.get("ANTHROPIC_API_KEY"))
+    if p == "gemini":
+        return bool(os.environ.get("GEMINI_API_KEY"))
+    return False
 
 
 def _build_factory_context(db: Session, tenant: str) -> str:
@@ -114,6 +152,47 @@ def _ask_claude(system: str, user: str) -> str:
     return "".join(parts).strip()
 
 
+def _ask_gemini(system: str, user: str) -> str:
+    """Single call to the Gemini generateContent REST API (free tier via
+    Google AI Studio). Key goes in a header, never the URL, so it can't leak
+    into request logs."""
+    import json
+    import urllib.error
+    import urllib.request
+
+    model = os.environ.get("GEMINI_MODEL", "gemini-2.5-flash")
+    body = json.dumps({
+        "system_instruction": {"parts": [{"text": system}]},
+        "contents": [{"role": "user", "parts": [{"text": user}]}],
+        "generationConfig": {"maxOutputTokens": 1500},
+    }).encode("utf-8")
+    req = urllib.request.Request(
+        f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent",
+        data=body,
+        headers={
+            "x-goog-api-key": os.environ.get("GEMINI_API_KEY", ""),
+            "content-type": "application/json",
+        },
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=60) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+    except urllib.error.HTTPError as e:
+        detail = e.read().decode("utf-8", "ignore")
+        raise RuntimeError(f"Gemini API {e.code}: {detail[:300]}")
+    candidates = data.get("candidates") or [{}]
+    parts = candidates[0].get("content", {}).get("parts", [])
+    return "".join(p.get("text", "") for p in parts).strip()
+
+
+def _ask_llm(system: str, user: str) -> str:
+    """Route one question to the active provider."""
+    if _provider() == "gemini":
+        return _ask_gemini(system, user)
+    return _ask_claude(system, user)
+
+
 def register(app):
     def get_db():
         db = SessionLocal()
@@ -125,7 +204,8 @@ def register(app):
     @app.get("/ai/status")
     def ai_status(current_user: dict = Depends(get_current_user)):
         """Lets the UI show 'connect to enable' vs the live copilot."""
-        return {"enabled": _ai_enabled(), "model": AI_MODEL if _ai_enabled() else None}
+        return {"enabled": _ai_enabled(), "provider": _provider() if _ai_enabled() else None,
+                "model": _current_model() if _ai_enabled() else None}
 
     @app.post("/ai/ask")
     def ai_ask(payload: dict, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
@@ -143,7 +223,7 @@ def register(app):
             "When asked 'why', do a short root-cause analysis from the data."
         )
         try:
-            answer = _ask_claude(system, f"Factory data:\n{context}\n\nQuestion: {question}")
+            answer = _ask_llm(system, f"Factory data:\n{context}\n\nQuestion: {question}")
         except Exception as e:
             # Graceful degradation: an LLM failure (no credits, rate limit,
             # outage) must never surface a raw API error in a customer's
@@ -159,7 +239,7 @@ def register(app):
                 "source": "rules",
                 "note": "AI model temporarily unavailable — answered from live factory data.",
             }
-        return {"answer": answer, "model": AI_MODEL, "source": "llm"}
+        return {"answer": answer, "model": _current_model(), "source": "llm"}
 
     @app.post("/ai/report")
     def ai_report(db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
@@ -173,7 +253,7 @@ def register(app):
             "Be specific and concise — no fluff."
         )
         try:
-            report = _ask_claude(system, f"Factory data:\n{context}\n\nWrite today's report.")
+            report = _ask_llm(system, f"Factory data:\n{context}\n\nWrite today's report.")
         except Exception as e:
             # Same graceful degradation as /ai/ask: fall back to the
             # rule-composed weekly report rather than erroring.
@@ -186,4 +266,4 @@ def register(app):
                 "source": "rules",
                 "note": "AI model temporarily unavailable — composed from live factory data.",
             }
-        return {"report": report, "model": AI_MODEL, "source": "llm"}
+        return {"report": report, "model": _current_model(), "source": "llm"}

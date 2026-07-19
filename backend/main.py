@@ -564,6 +564,9 @@ def login(user: schemas.UserLogin, db: Session = Depends(get_db)):
         if reg and reg.subscription_status == "Cancelled":
             log_audit(db, db_user.username, "login_blocked", "user", db_user.id, f"tenant={tenant} cancelled")
             raise HTTPException(status_code=403, detail="Subscription inactive — contact your provider")
+        if reg and reg.trial_expired:
+            log_audit(db, db_user.username, "login_blocked", "user", db_user.id, f"tenant={tenant} trial expired")
+            raise HTTPException(status_code=403, detail="Trial expired — contact your provider to activate your subscription")
 
     log_audit(db, db_user.username, "login", "user", db_user.id, f"tenant={tenant}")
     token = create_access_token(data={"sub": db_user.username, "role": db_user.role, "tenant": tenant})

@@ -1,8 +1,12 @@
+import os
 from datetime import datetime
 from sqlalchemy import Column, Integer, String, ForeignKey, DateTime, Date, Text
 from sqlalchemy.orm import relationship
 
 from database import Base
+
+# Trial length for new companies (days from tenant creation).
+TRIAL_DAYS = int(os.environ.get("TRIAL_DAYS", "30"))
 
 
 class Machine(Base):
@@ -440,6 +444,19 @@ class CompanyTenant(Base):
     seats = Column(Integer, default=5)
     monthly_fee = Column(Integer, default=0)
     created_at = Column(DateTime, default=datetime.utcnow)
+
+    @property
+    def trial_days_left(self):
+        """Days of trial remaining (0 = expired today), or None off-trial."""
+        if self.subscription_status != "Trial" or not self.created_at:
+            return None
+        return max(0, TRIAL_DAYS - (datetime.utcnow() - self.created_at).days)
+
+    @property
+    def trial_expired(self):
+        """True when a Trial tenant has outlived TRIAL_DAYS."""
+        return (self.subscription_status == "Trial" and self.created_at is not None
+                and (datetime.utcnow() - self.created_at).days >= TRIAL_DAYS)
 
 
 class CostRecord(Base):

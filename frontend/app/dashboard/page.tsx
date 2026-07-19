@@ -1941,6 +1941,12 @@ export default function DashboardPage() {
         {company === "GMATS" ? "GMATS Compressors" : company}
       </div>
     )}
+    {!isFounder && tenants[0]?.subscription_status === "Trial" && tenants[0]?.trial_days_left != null && (
+      <div className="phase29-pill" style={{ color: "#fbbf24", borderColor: "rgba(251,191,36,0.4)" }}
+           title="Contact your provider to activate your subscription">
+        Trial · {tenants[0].trial_days_left}d left
+      </div>
+    )}
     <div className="phase29-user">{userName || "User"} · {role || "—"}</div>
     <div style={{ position: "relative" }}>
       <button

@@ -1609,7 +1609,15 @@ export default function DashboardPage() {
   }
 
   async function deleteTenant(id: number) {
-    try { await apiDelete(`/saas/tenants/${id}`); fetchAll(); }
+    const row = tenants.find((t) => t.id === id);
+    const name = row ? `${row.company_name} (${row.company_code})` : "this tenant";
+    if (!window.confirm(`Remove ${name} from the tenant registry?`)) return;
+    // Second, separate decision: purging is irreversible and much bigger.
+    const purge = window.confirm(
+      `Also PERMANENTLY delete all of ${name}'s data — machines, production history, orders, users, licence?\n\n` +
+      `OK = wipe everything (cannot be undone)\nCancel = keep the data, remove only the registry entry`
+    );
+    try { await apiDelete(`/saas/tenants/${id}${purge ? "?purge=true" : ""}`); fetchAll(); }
     catch (error) { console.error(error); alert("Failed to delete tenant."); }
   }
 

@@ -39,6 +39,7 @@ import models
 import schemas
 import tenancy
 import onboard_tenant
+import offboard_tenant
 import plan_gate
 
 
@@ -3781,14 +3782,28 @@ def update_company_tenant(tenant_id: int, payload: schemas.CompanyTenantUpdate, 
 
 
 @app.delete("/saas/tenants/{tenant_id}")
-def delete_company_tenant(tenant_id: int, db: Session = Depends(get_db), current_user: dict = Depends(require_roles(["Admin"]))):
+def delete_company_tenant(tenant_id: int, purge: bool = False, db: Session = Depends(get_db), current_user: dict = Depends(require_roles(["Admin"]))):
+    """Founder-only. Removes the registry row; with ``?purge=true`` also
+    permanently deletes ALL of the tenant's data across every tenant-aware
+    table (machines, records, orders, users, licence — everything except the
+    immutable event history). The purge is irreversible and audit-logged."""
     _require_founder(current_user)
     row = db.query(models.CompanyTenant).filter(models.CompanyTenant.id == tenant_id).first()
     if not row:
         raise HTTPException(status_code=404, detail="Tenant not found")
+    code = row.company_code
     db.delete(row)
     db.commit()
-    return {"message": "Tenant deleted successfully"}
+    purged = None
+    if purge:
+        try:
+            purged = offboard_tenant.purge_tenant_data(db, code)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+        plan_gate.invalidate(code)
+        log_audit(db, current_user.get("sub", "?"), "purge_tenant", "tenant", None,
+                  f"tenant={code} rows={sum(purged.values())} tables={len(purged)}")
+    return {"message": "Tenant deleted successfully", "purged": purged}
 
 
 @app.get("/analytics/saas")

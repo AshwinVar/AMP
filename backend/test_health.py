@@ -44,7 +44,20 @@ def test_health_503_when_db_down():
     print("PASS /health returns 503 when the DB is down")
 
 
+def test_exactly_one_health_route_from_platform_routes():
+    """Guard against a shadowing duplicate: /health must be registered exactly
+    once, by platform_routes (the 503-capable one). A second /health defined
+    elsewhere would be dead if registered later, or — worse — silently disable
+    DB monitoring if it registered first. Regression guard for the removed
+    always-200 duplicate in main.py."""
+    health = [r for r in main.app.routes if getattr(r, "path", "") == "/health"]
+    assert len(health) == 1, f"expected exactly one /health route, found {len(health)}"
+    assert health[0].endpoint.__module__ == "platform_routes"
+    print("PASS exactly one /health, owned by platform_routes")
+
+
 if __name__ == "__main__":
     test_health_ok_when_db_answers()
     test_health_503_when_db_down()
+    test_exactly_one_health_route_from_platform_routes()
     print("ALL HEALTH TESTS PASSED")

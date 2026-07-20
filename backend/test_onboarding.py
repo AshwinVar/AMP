@@ -223,7 +223,9 @@ def test_admin_provisioning_and_password_change():
     # the provisioned admin rotates their password
     apex_admin = {"sub": "apex_admin", "tenant": "APEX", "role": "Admin"}
     try:
-        main.change_password(_pw(creds["temporary_password"][:-1] + "x", "new-password-1"), db=db, current_user=apex_admin)
+        # A guaranteed-wrong current password. (Deriving it as password[:-1]+"x"
+        # was flaky: a token_urlsafe password ending in "x" matched the real one.)
+        main.change_password(_pw(creds["temporary_password"] + "-wrong", "new-password-1"), db=db, current_user=apex_admin)
         assert False, "wrong current password should 401"
     except HTTPException as e:
         assert e.status_code == 401

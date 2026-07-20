@@ -63,6 +63,7 @@ import inventory_routes
 import quality_routes
 import production_planning_routes
 import industrial_iot_routes
+import operator_routes
 import industrial_adapters
 from bom import PART_BOM
 from events import event_bus, ProductionCompleted, DowntimeStarted, InventoryLow, QualityInspectionFailed
@@ -192,6 +193,7 @@ inventory_routes.register(app)
 quality_routes.register(app)
 production_planning_routes.register(app)
 industrial_iot_routes.register(app)
+operator_routes.register(app)
 
 # Register the AI Factory Copilot behind the platform (off until ANTHROPIC_API_KEY is set).
 ai.copilot.register(app)
@@ -1686,52 +1688,6 @@ def get_ai_insights(db: Session = Depends(get_db), current_user: dict = Depends(
         "medium": len([row for row in rows if row.severity == "Medium"]),
         "low": len([row for row in rows if row.severity == "Low"]),
     }
-
-
-@app.get("/operator/executions", response_model=List[schemas.OperatorJobExecutionResponse])
-def get_operator_executions(db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
-    return db.query(models.OperatorJobExecution).order_by(models.OperatorJobExecution.id.desc()).limit(500).all()
-
-
-@app.post("/operator/executions", response_model=schemas.OperatorJobExecutionResponse)
-def create_operator_execution(execution: schemas.OperatorJobExecutionCreate, db: Session = Depends(get_db), current_user: dict = Depends(require_roles(["Admin", "Supervisor", "Operator"]))):
-    existing = db.query(models.OperatorJobExecution).filter(models.OperatorJobExecution.execution_no == execution.execution_no).first()
-    if existing:
-        raise HTTPException(status_code=400, detail="Execution number already exists")
-
-    machine = db.query(models.Machine).filter(models.Machine.id == execution.machine_id).first()
-    if not machine:
-        raise HTTPException(status_code=404, detail="Machine not found")
-
-    row = models.OperatorJobExecution(**execution.model_dump())
-    db.add(row)
-    db.commit()
-    db.refresh(row)
-    return row
-
-
-@app.patch("/operator/executions/{execution_id}", response_model=schemas.OperatorJobExecutionResponse)
-def update_operator_execution(execution_id: int, payload: schemas.OperatorJobExecutionUpdate, db: Session = Depends(get_db), current_user: dict = Depends(require_roles(["Admin", "Supervisor", "Operator"]))):
-    row = db.query(models.OperatorJobExecution).filter(models.OperatorJobExecution.id == execution_id).first()
-    if not row:
-        raise HTTPException(status_code=404, detail="Operator execution not found")
-    for key, value in payload.model_dump(exclude_unset=True).items():
-        setattr(row, key, value)
-    if row.job_status == "Completed" and row.completed_at is None:
-        row.completed_at = datetime.utcnow()
-    db.commit()
-    db.refresh(row)
-    return row
-
-
-@app.delete("/operator/executions/{execution_id}")
-def delete_operator_execution(execution_id: int, db: Session = Depends(get_db), current_user: dict = Depends(require_roles(["Admin"]))):
-    row = db.query(models.OperatorJobExecution).filter(models.OperatorJobExecution.id == execution_id).first()
-    if not row:
-        raise HTTPException(status_code=404, detail="Operator execution not found")
-    db.delete(row)
-    db.commit()
-    return {"message": "Operator execution deleted successfully"}
 
 
 @app.get("/analytics/operator-terminal")

@@ -64,6 +64,7 @@ import quality_routes
 import production_planning_routes
 import industrial_iot_routes
 import operator_routes
+import users_routes
 import industrial_adapters
 from bom import PART_BOM
 from events import event_bus, ProductionCompleted, DowntimeStarted, InventoryLow, QualityInspectionFailed
@@ -194,6 +195,7 @@ quality_routes.register(app)
 production_planning_routes.register(app)
 industrial_iot_routes.register(app)
 operator_routes.register(app)
+users_routes.register(app)
 
 # Register the AI Factory Copilot behind the platform (off until ANTHROPIC_API_KEY is set).
 ai.copilot.register(app)
@@ -394,8 +396,6 @@ app.add_middleware(
 # avoid BaseHTTPMiddleware's request-body deadlock and to propagate contextvars.
 app.add_middleware(tenancy.TenantScopeMiddleware)
 
-VALID_ROLES = ["Admin", "Supervisor", "Operator"]
-
 # Maps a client login to its tenant/company. Added to the JWT so the frontend
 # lands that user on their own company's data. Extend per onboarded client.
 CLIENT_TENANTS = {"gmats": "GMATS"}
@@ -544,42 +544,6 @@ def register_user(user: schemas.UserCreate, db: Session = Depends(get_db)):
         raise HTTPException(status_code=500, detail=f"Register failed: {str(e)}")
 
 
-@app.post("/users", response_model=schemas.UserResponse)
-def create_employee(
-    user: schemas.UserCreate,
-    db: Session = Depends(get_db),
-    current_user: dict = Depends(require_roles(["Admin"])),
-):
-    """Admin adds an employee into the current workspace's tenant. For a tenant
-    Admin that's always their own company; for the founder it follows the
-    company switcher — switch to a tenant, then add that tenant's users."""
-    if user.role not in VALID_ROLES:
-        raise HTTPException(status_code=400, detail="Invalid role")
-
-    if db.query(models.User).filter(models.User.username == user.username).first():
-        raise HTTPException(status_code=400, detail="Username already exists")
-
-    tenant = _tenant(current_user)
-    try:
-        new_user = models.User(
-            username=user.username,
-            password=hash_password(user.password),
-            role=user.role,
-            tenant_code=tenant,
-        )
-        db.add(new_user)
-        db.commit()
-        db.refresh(new_user)
-        log_audit(db, current_user.get("sub"), "create_employee", "user", new_user.id, f"{user.username} ({user.role}) in {tenant}")
-        return new_user
-    except IntegrityError as e:
-        db.rollback()
-        raise HTTPException(status_code=400, detail=f"Database integrity error: {str(e)}")
-    except Exception as e:
-        db.rollback()
-        raise HTTPException(status_code=500, detail=f"Create employee failed: {str(e)}")
-
-
 @app.post("/login")
 def login(user: schemas.UserLogin, db: Session = Depends(get_db)):
     db_user = db.query(models.User).filter(models.User.username == user.username).first()
@@ -623,93 +587,11 @@ def login(user: schemas.UserLogin, db: Session = Depends(get_db)):
     }
 
 
-@app.get("/users", response_model=List[schemas.UserResponse])
-def list_users(db: Session = Depends(get_db), current_user: dict = Depends(require_roles(["Admin"]))):
-    tenant = _tenant(current_user)
-    q = db.query(models.User)
-    if tenant == "DEFAULT":
-        q = q.filter((models.User.tenant_code == "DEFAULT") | (models.User.tenant_code.is_(None)))
-    else:
-        q = q.filter(models.User.tenant_code == tenant)
-    return q.order_by(models.User.id.asc()).all()
-
-
 def _same_tenant_or_403(user, current_user):
     tenant = _tenant(current_user)
     user_tenant = user.tenant_code or "DEFAULT"
     if user_tenant != tenant:
         raise HTTPException(status_code=403, detail="You can only manage users in your own company")
-
-
-@app.patch("/users/{user_id}/role", response_model=schemas.UserResponse)
-def update_user_role(
-    user_id: int,
-    payload: schemas.UserRoleUpdate,
-    db: Session = Depends(get_db),
-    current_user: dict = Depends(require_roles(["Admin"])),
-):
-    if payload.role not in VALID_ROLES:
-        raise HTTPException(status_code=400, detail="Invalid role")
-
-    user = db.query(models.User).filter(models.User.id == user_id).first()
-
-    if not user:
-        raise HTTPException(status_code=404, detail="User not found")
-
-    _same_tenant_or_403(user, current_user)
-
-    user.role = payload.role
-    db.commit()
-    db.refresh(user)
-
-    return user
-
-
-@app.delete("/users/{user_id}")
-def delete_user(
-    user_id: int,
-    db: Session = Depends(get_db),
-    current_user: dict = Depends(require_roles(["Admin"])),
-):
-    user = db.query(models.User).filter(models.User.id == user_id).first()
-
-    if not user:
-        raise HTTPException(status_code=404, detail="User not found")
-
-    _same_tenant_or_403(user, current_user)
-
-    if user.username == current_user.get("sub"):
-        raise HTTPException(status_code=400, detail="You cannot delete your own account")
-
-    deleted_name = user.username
-    db.delete(user)
-    db.commit()
-    log_audit(db, current_user.get("sub"), "delete_user", "user", user_id, deleted_name)
-
-    return {"message": "User deleted successfully"}
-
-
-@app.patch("/users/{user_id}/password")
-def reset_user_password(
-    user_id: int,
-    payload: dict,
-    db: Session = Depends(get_db),
-    current_user: dict = Depends(require_roles(["Admin"])),
-):
-    """Admin resets an employee's password (within their own company)."""
-    user = db.query(models.User).filter(models.User.id == user_id).first()
-    if not user:
-        raise HTTPException(status_code=404, detail="User not found")
-
-    _same_tenant_or_403(user, current_user)
-
-    new_password = (payload.get("password") or "").strip()
-    if len(new_password) < 4:
-        raise HTTPException(status_code=400, detail="Password must be at least 4 characters")
-
-    user.password = hash_password(new_password)
-    db.commit()
-    return {"message": "Password reset successfully"}
 
 
 @app.get("/oee/summary")

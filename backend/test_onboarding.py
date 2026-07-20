@@ -15,6 +15,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 import models
+import saas_routes
 from database import Base
 from tenancy import (DEFAULT_TENANT, effective_tenant, install_scoping,
                      set_current_tenant, reset_current_tenant)
@@ -149,11 +150,11 @@ def test_registry_scoped_to_own_tenant():
     founder = {"tenant": "DEFAULT", "role": "Admin"}
     client = {"tenant": "GMATS", "role": "Admin"}
 
-    assert {t.company_code for t in main.get_company_tenants(db=db, current_user=founder)} == {"GMATS", "APEX"}
-    assert [t.company_code for t in main.get_company_tenants(db=db, current_user=client)] == ["GMATS"]
+    assert {t.company_code for t in saas_routes.get_company_tenants(db=db, current_user=founder)} == {"GMATS", "APEX"}
+    assert [t.company_code for t in saas_routes.get_company_tenants(db=db, current_user=client)] == ["GMATS"]
 
-    founder_saas = main.get_saas_analytics(db=db, current_user=founder)
-    client_saas = main.get_saas_analytics(db=db, current_user=client)
+    founder_saas = saas_routes.get_saas_analytics(db=db, current_user=founder)
+    client_saas = saas_routes.get_saas_analytics(db=db, current_user=client)
     assert founder_saas["total_tenants"] == 2
     assert founder_saas["monthly_recurring_revenue"] == 14999
     assert client_saas["total_tenants"] == 1
@@ -205,7 +206,7 @@ def test_admin_provisioning_and_password_change():
     tid = db.query(models.CompanyTenant).first().id
     founder = {"tenant": "DEFAULT", "role": "Admin", "sub": "admin_new"}
 
-    creds = main.create_tenant_admin(tid, db=db, current_user=founder)
+    creds = saas_routes.create_tenant_admin(tid, db=db, current_user=founder)
     assert creds["username"] == "apex_admin" and len(creds["temporary_password"]) >= 10
     made = db.query(models.User).filter(models.User.username == "apex_admin").first()
     assert made.tenant_code == "APEX" and made.role == "Admin"
@@ -214,7 +215,7 @@ def test_admin_provisioning_and_password_change():
     # repeat -> 400; non-founder -> 403
     for user, code in ((founder, 400), ({"tenant": "GMATS", "role": "Admin", "sub": "g"}, 403)):
         try:
-            main.create_tenant_admin(tid, db=db, current_user=user)
+            saas_routes.create_tenant_admin(tid, db=db, current_user=user)
             assert False, "should have raised"
         except HTTPException as e:
             assert e.status_code == code
@@ -324,7 +325,7 @@ def test_plan_tier_drives_licence():
     db = _fresh_session()
     founder = {"tenant": "DEFAULT", "role": "Admin", "sub": "admin_new"}
 
-    row = main.create_company_tenant(schemas.CompanyTenantCreate(
+    row = saas_routes.create_company_tenant(schemas.CompanyTenantCreate(
         company_code="APEX", company_name="Apex Gear Works", industry="",
         plan_name="Starter", subscription_status="Trial", seats=5, monthly_fee=0,
     ), db=db, current_user=founder)
@@ -332,7 +333,7 @@ def test_plan_tier_drives_licence():
     assert cfg.plan == "starter" and cfg.enabled_modules == "core"
 
     # plan change in SaaS Admin re-syncs the licence
-    main.update_company_tenant(row.id, schemas.CompanyTenantUpdate(plan_name="Enterprise"),
+    saas_routes.update_company_tenant(row.id, schemas.CompanyTenantUpdate(plan_name="Enterprise"),
                                db=db, current_user=founder)
     db.refresh(cfg)
     assert cfg.plan == "enterprise" and "intelligence" in cfg.enabled_modules

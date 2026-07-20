@@ -12,6 +12,7 @@ from sqlalchemy import create_engine, event
 from sqlalchemy.orm import sessionmaker
 
 import models
+import saas_routes
 from database import Base
 from tenancy import install_scoping
 from onboard_tenant import seed_starter_factory
@@ -81,12 +82,12 @@ def test_delete_endpoint_with_purge():
     import schemas
     db = _fresh_session()
     founder = {"tenant": "DEFAULT", "role": "Admin", "sub": "admin_new"}
-    row = main.create_company_tenant(schemas.CompanyTenantCreate(
+    row = saas_routes.create_company_tenant(schemas.CompanyTenantCreate(
         company_code="APEX", company_name="Apex Gear Works", industry="",
         plan_name="Starter", subscription_status="Trial", seats=5, monthly_fee=0,
     ), db=db, current_user=founder)
 
-    result = main.delete_company_tenant(row.id, purge=True, db=db, current_user=founder)
+    result = saas_routes.delete_company_tenant(row.id, purge=True, db=db, current_user=founder)
     assert result["purged"] and result["purged"]["machines"] == 4
     assert db.query(models.CompanyTenant).count() == 0
     assert db.query(models.Machine).count() == 0

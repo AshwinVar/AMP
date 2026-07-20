@@ -61,6 +61,7 @@ import factory_ops_routes
 import work_orders_routes
 import inventory_routes
 import quality_routes
+import production_planning_routes
 import industrial_adapters
 from bom import PART_BOM
 from events import event_bus, ProductionCompleted, DowntimeStarted, InventoryLow, QualityInspectionFailed
@@ -188,6 +189,7 @@ factory_ops_routes.register(app)
 work_orders_routes.register(app)
 inventory_routes.register(app)
 quality_routes.register(app)
+production_planning_routes.register(app)
 
 # Register the AI Factory Copilot behind the platform (off until ANTHROPIC_API_KEY is set).
 ai.copilot.register(app)
@@ -999,74 +1001,6 @@ def get_work_order_analytics(db: Session = Depends(get_db), current_user: dict =
     }
 
 
-@app.get("/production-plans", response_model=List[schemas.ProductionPlanResponse])
-def get_production_plans(db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
-    return db.query(models.ProductionPlan).order_by(models.ProductionPlan.id.desc()).limit(200).all()
-
-
-@app.post("/production-plans", response_model=schemas.ProductionPlanResponse)
-def create_production_plan(
-    plan: schemas.ProductionPlanCreate,
-    db: Session = Depends(get_db),
-    current_user: dict = Depends(require_roles(["Admin", "Supervisor"])),
-):
-    machine = db.query(models.Machine).filter(models.Machine.id == plan.machine_id).first()
-    if not machine:
-        raise HTTPException(status_code=404, detail="Machine not found")
-
-    work_order = db.query(models.WorkOrder).filter(models.WorkOrder.id == plan.work_order_id).first()
-    if not work_order:
-        raise HTTPException(status_code=404, detail="Work order not found")
-
-    existing = db.query(models.ProductionPlan).filter(models.ProductionPlan.plan_no == plan.plan_no).first()
-    if existing:
-        raise HTTPException(status_code=400, detail="Plan number already exists")
-
-    new_plan = models.ProductionPlan(**plan.model_dump())
-    db.add(new_plan)
-    db.commit()
-    db.refresh(new_plan)
-    return new_plan
-
-
-@app.patch("/production-plans/{plan_id}", response_model=schemas.ProductionPlanResponse)
-def update_production_plan(
-    plan_id: int,
-    payload: schemas.ProductionPlanUpdate,
-    db: Session = Depends(get_db),
-    current_user: dict = Depends(require_roles(["Admin", "Supervisor", "Operator"])),
-):
-    plan = db.query(models.ProductionPlan).filter(models.ProductionPlan.id == plan_id).first()
-    if not plan:
-        raise HTTPException(status_code=404, detail="Production plan not found")
-
-    if payload.actual_quantity is not None:
-        plan.actual_quantity = payload.actual_quantity
-        if plan.actual_quantity >= plan.planned_quantity:
-            plan.status = "Completed"
-
-    if payload.status is not None:
-        plan.status = payload.status
-
-    db.commit()
-    db.refresh(plan)
-    return plan
-
-
-@app.delete("/production-plans/{plan_id}")
-def delete_production_plan(
-    plan_id: int,
-    db: Session = Depends(get_db),
-    current_user: dict = Depends(require_roles(["Admin"])),
-):
-    plan = db.query(models.ProductionPlan).filter(models.ProductionPlan.id == plan_id).first()
-    if not plan:
-        raise HTTPException(status_code=404, detail="Production plan not found")
-    db.delete(plan)
-    db.commit()
-    return {"message": "Production plan deleted successfully"}
-
-
 @app.get("/analytics/production-plans")
 def get_production_plan_analytics(db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
     plans = db.query(models.ProductionPlan).all()
@@ -1582,79 +1516,6 @@ def get_maintenance_analytics(
         "avg_repair_minutes": avg_repair,
         "machine_counts": machine_counts,
     }
-
-
-@app.get("/production-schedules", response_model=List[schemas.ProductionScheduleResponse])
-def get_production_schedules(
-    db: Session = Depends(get_db),
-    current_user: dict = Depends(get_current_user),
-):
-    return db.query(models.ProductionSchedule).order_by(models.ProductionSchedule.id.desc()).limit(500).all()
-
-
-@app.post("/production-schedules", response_model=schemas.ProductionScheduleResponse)
-def create_production_schedule(
-    schedule: schemas.ProductionScheduleCreate,
-    db: Session = Depends(get_db),
-    current_user: dict = Depends(require_roles(["Admin", "Supervisor"])),
-):
-    existing = db.query(models.ProductionSchedule).filter(models.ProductionSchedule.schedule_no == schedule.schedule_no).first()
-    if existing:
-        raise HTTPException(status_code=400, detail="Schedule number already exists")
-
-    machine = db.query(models.Machine).filter(models.Machine.id == schedule.machine_id).first()
-    if not machine:
-        raise HTTPException(status_code=404, detail="Machine not found")
-
-    if schedule.work_order_id:
-        work_order = db.query(models.WorkOrder).filter(models.WorkOrder.id == schedule.work_order_id).first()
-        if not work_order:
-            raise HTTPException(status_code=404, detail="Work order not found")
-
-    if schedule.production_plan_id:
-        plan = db.query(models.ProductionPlan).filter(models.ProductionPlan.id == schedule.production_plan_id).first()
-        if not plan:
-            raise HTTPException(status_code=404, detail="Production plan not found")
-
-    new_schedule = models.ProductionSchedule(**schedule.model_dump())
-    db.add(new_schedule)
-    db.commit()
-    db.refresh(new_schedule)
-    return new_schedule
-
-
-@app.patch("/production-schedules/{schedule_id}", response_model=schemas.ProductionScheduleResponse)
-def update_production_schedule(
-    schedule_id: int,
-    payload: schemas.ProductionScheduleUpdate,
-    db: Session = Depends(get_db),
-    current_user: dict = Depends(require_roles(["Admin", "Supervisor", "Operator"])),
-):
-    schedule = db.query(models.ProductionSchedule).filter(models.ProductionSchedule.id == schedule_id).first()
-    if not schedule:
-        raise HTTPException(status_code=404, detail="Production schedule not found")
-
-    for key, value in payload.model_dump(exclude_unset=True).items():
-        setattr(schedule, key, value)
-
-    db.commit()
-    db.refresh(schedule)
-    return schedule
-
-
-@app.delete("/production-schedules/{schedule_id}")
-def delete_production_schedule(
-    schedule_id: int,
-    db: Session = Depends(get_db),
-    current_user: dict = Depends(require_roles(["Admin"])),
-):
-    schedule = db.query(models.ProductionSchedule).filter(models.ProductionSchedule.id == schedule_id).first()
-    if not schedule:
-        raise HTTPException(status_code=404, detail="Production schedule not found")
-
-    db.delete(schedule)
-    db.commit()
-    return {"message": "Production schedule deleted successfully"}
 
 
 @app.get("/analytics/production-schedules")

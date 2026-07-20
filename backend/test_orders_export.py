@@ -9,6 +9,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 import main
+import orders_routes
 import models
 from database import Base
 
@@ -29,7 +30,7 @@ def test_orders_export_renders_csv():
                                 priority="Medium", due_date=date(2026, 7, 20)))
     db.commit()
 
-    csv_text = main._orders_csv(db)
+    csv_text = orders_routes._orders_csv(db)
     lines = csv_text.strip().splitlines()
     # header + 2 orders
     assert lines[0].startswith("Order No,Customer,Product")
@@ -39,7 +40,7 @@ def test_orders_export_renders_csv():
     assert "BUG-1,Bugatti,CLB-PCB,100,40,Pending,High,2026-08-01" in csv_text
 
     # empty book -> just the header, no crash
-    assert main._orders_csv(_fresh_session()).strip().splitlines() == [
+    assert orders_routes._orders_csv(_fresh_session()).strip().splitlines() == [
         "Order No,Customer,Product,Order Qty,Dispatched Qty,Status,Priority,Due Date"
     ]
 

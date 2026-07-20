@@ -3,7 +3,6 @@ import csv
 import secrets
 import io
 import os
-import re
 from datetime import datetime
 from typing import List
 
@@ -32,7 +31,10 @@ from analytics_engine import (
     build_shift_kpis,
     build_oee_trends,
     build_smart_alerts,
+    calculate_fallback_oee,
     calculate_oee_from_record,
+    generate_alerts,
+    parse_duration_to_minutes,
 )
 from report_generator import build_daily_summary_text
 
@@ -410,88 +412,6 @@ def get_db():
         yield db
     finally:
         db.close()
-
-
-def parse_duration_to_minutes(value: str):
-    if not value:
-        return 0
-
-    lower = value.lower()
-    total = 0
-
-    hour_match = re.search(r"(\d+)\s*h", lower)
-    minute_match = re.search(r"(\d+)\s*m", lower)
-
-    if hour_match:
-        total += int(hour_match.group(1)) * 60
-
-    if minute_match:
-        total += int(minute_match.group(1))
-
-    if not hour_match and not minute_match:
-        plain = re.sub(r"\D", "", lower)
-        total += int(plain) if plain else 0
-
-    return total
-
-
-def calculate_fallback_oee(utilization: int):
-    return round((utilization / 100) * 0.9 * 0.95 * 100)
-
-
-def generate_alerts(db: Session):
-    machines = db.query(models.Machine).all()
-    production_records = (
-        db.query(models.ProductionRecord)
-        .order_by(models.ProductionRecord.id.desc())
-        .limit(50)
-        .all()
-    )
-
-    dynamic_alerts = []
-    seen = set()
-
-    def add_alert(alert_type: str, severity: str, machine_name: str, message: str):
-        key = f"{machine_name}:{alert_type}"
-        if key in seen:
-            return
-        seen.add(key)
-        dynamic_alerts.append(
-            {
-                "type": alert_type,
-                "severity": severity,
-                "machine": machine_name,
-                "message": message,
-            }
-        )
-
-    for machine in machines:
-        if machine.status == "Breakdown":
-            add_alert("Breakdown", "High", machine.name, f"{machine.name} is currently in breakdown")
-
-        if machine.utilization < 50:
-            add_alert("Low Utilization", "Medium", machine.name, f"{machine.name} utilization is below 50%")
-
-    latest_by_machine = {}
-
-    for record in production_records:
-        if record.machine_id not in latest_by_machine:
-            latest_by_machine[record.machine_id] = record
-
-    for record in latest_by_machine.values():
-        oee = calculate_oee_from_record(record)
-        machine_name = record.machine.name if record.machine else f"Machine {record.machine_id}"
-
-        if oee["oee"] < 60:
-            add_alert("Low OEE", "High", machine_name, f"{machine_name} OEE is below target at {oee['oee']}%")
-
-        if record.rejected_count > 0 and record.total_count:
-            reject_rate = (record.rejected_count / record.total_count) * 100
-
-            if reject_rate > 5:
-                add_alert("Quality Loss", "Medium", machine_name, f"{machine_name} reject rate is above 5%")
-
-    return dynamic_alerts
 
 
 @app.get("/")

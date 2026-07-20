@@ -54,6 +54,7 @@ from platform_routes import log_audit
 import read_model_routes
 import agent_routes
 import saas_routes
+import costing_routes
 import industrial_adapters
 from bom import PART_BOM
 from events import event_bus, ProductionCompleted, DowntimeStarted, InventoryLow, QualityInspectionFailed
@@ -163,6 +164,9 @@ agent_routes.register(app)
 # Register the SaaS / tenant-lifecycle endpoints (ADR-0008) — the founder's
 # control plane: registry, onboarding, admin provisioning, plan/status, delete.
 saas_routes.register(app)
+
+# Register the costing endpoints — cost-record CRUD + costing analytics.
+costing_routes.register(app)
 
 # Register the AI Factory Copilot behind the platform (off until ANTHROPIC_API_KEY is set).
 ai.copilot.register(app)
@@ -3398,75 +3402,6 @@ def get_ai_insights(db: Session = Depends(get_db), current_user: dict = Depends(
         "high": len([row for row in rows if row.severity == "High"]),
         "medium": len([row for row in rows if row.severity == "Medium"]),
         "low": len([row for row in rows if row.severity == "Low"]),
-    }
-
-
-@app.get("/cost-records", response_model=List[schemas.CostRecordResponse])
-def get_cost_records(db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
-    return db.query(models.CostRecord).order_by(models.CostRecord.id.desc()).limit(500).all()
-
-
-@app.post("/cost-records", response_model=schemas.CostRecordResponse)
-def create_cost_record(cost: schemas.CostRecordCreate, db: Session = Depends(get_db), current_user: dict = Depends(require_roles(["Admin", "Supervisor"]))):
-    existing = db.query(models.CostRecord).filter(models.CostRecord.cost_no == cost.cost_no).first()
-    if existing:
-        raise HTTPException(status_code=400, detail="Cost number already exists")
-    row = models.CostRecord(**cost.model_dump())
-    db.add(row)
-    db.commit()
-    db.refresh(row)
-    return row
-
-
-@app.patch("/cost-records/{cost_id}", response_model=schemas.CostRecordResponse)
-def update_cost_record(cost_id: int, payload: schemas.CostRecordUpdate, db: Session = Depends(get_db), current_user: dict = Depends(require_roles(["Admin", "Supervisor"]))):
-    row = db.query(models.CostRecord).filter(models.CostRecord.id == cost_id).first()
-    if not row:
-        raise HTTPException(status_code=404, detail="Cost record not found")
-    for key, value in payload.model_dump(exclude_unset=True).items():
-        setattr(row, key, value)
-    db.commit()
-    db.refresh(row)
-    return row
-
-
-@app.delete("/cost-records/{cost_id}")
-def delete_cost_record(cost_id: int, db: Session = Depends(get_db), current_user: dict = Depends(require_roles(["Admin"]))):
-    row = db.query(models.CostRecord).filter(models.CostRecord.id == cost_id).first()
-    if not row:
-        raise HTTPException(status_code=404, detail="Cost record not found")
-    db.delete(row)
-    db.commit()
-    return {"message": "Cost record deleted successfully"}
-
-
-@app.get("/analytics/costing")
-def get_costing_analytics(db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
-    costs = db.query(models.CostRecord).all()
-    pos = db.query(models.PurchaseOrder).all()
-    production = db.query(models.ProductionRecord).all()
-
-    material_spend = sum(po.received_quantity for po in pos)
-    manual_cost = sum(row.amount for row in costs)
-    production_units = sum(row.good_count for row in production)
-
-    by_type = {}
-    by_department = {}
-    for row in costs:
-        by_type[row.cost_type] = by_type.get(row.cost_type, 0) + row.amount
-        department = row.department or "Unassigned"
-        by_department[department] = by_department.get(department, 0) + row.amount
-
-    cost_per_good_unit = round(manual_cost / production_units) if production_units else 0
-
-    return {
-        "total_cost_records": len(costs),
-        "manual_cost_total": manual_cost,
-        "production_units": production_units,
-        "cost_per_good_unit": cost_per_good_unit,
-        "supplier_receipt_units": material_spend,
-        "by_type": by_type,
-        "by_department": by_department,
     }
 
 

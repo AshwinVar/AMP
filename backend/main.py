@@ -1192,21 +1192,12 @@ def change_password(payload: schemas.ChangePasswordRequest, db: Session = Depend
     return {"message": "Password changed"}
 
 
-@app.get("/health")
-def health(db: Session = Depends(get_db)):
-    # Public liveness/readiness check for uptime monitors and load balancers:
-    # confirms the process is up and the database answers a trivial query.
-    from sqlalchemy import text as _sql_text
-    db_ok = True
-    try:
-        db.execute(_sql_text("SELECT 1"))
-    except Exception:
-        db_ok = False
-    return {
-        "status": "ok" if db_ok else "degraded",
-        "database": "ok" if db_ok else "down",
-        "time": datetime.utcnow().isoformat(),
-    }
+# NOTE: /health is owned by platform_routes.register() (registered first, so it
+# wins routing) and returns a truthful status code — 200 healthy / 503 DB down.
+# A second /health used to be defined here; it was dead (shadowed) and always
+# returned 200, so removing it changes nothing served while eliminating a
+# duplicate that could silently disable DB monitoring if registration order
+# ever changed. See platform_routes.py.
 
 
 @app.get("/platform/status")

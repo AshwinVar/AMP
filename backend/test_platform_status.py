@@ -1,13 +1,13 @@
-"""Platform status + health tests (ADR-0003).
+"""Platform status tests (ADR-0003).
 
-The AI platform's self-report (registered read-models, agent roster, copilot
-connectivity) and the public health check. Run:
+The AI platform's self-report: registered read-models, agent roster, copilot
+connectivity. (The public /health check is owned by platform_routes and covered
+by test_health.py.) Run:
     python backend/test_platform_status.py     (exit 0 = pass)
 """
-from sqlalchemy import create_engine, text
+from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
-import main
 import models
 from database import Base
 from ai import platform_status
@@ -38,24 +38,6 @@ def test_platform_status_reports_the_surface():
     assert s["agent_actions_logged"] == 1
 
 
-def test_health_check_reports_ok():
-    # call the health handler directly against a working session
-    db = _fresh_session()
-
-    def _one():
-        try:
-            db.execute(text("SELECT 1"))
-            return True
-        except Exception:
-            return False
-
-    assert _one() is True
-    h = main.health(db=db)
-    assert h["status"] == "ok" and h["database"] == "ok" and "time" in h
-
-
 if __name__ == "__main__":
     test_platform_status_reports_the_surface()
-    test_health_check_reports_ok()
-    print("PLATFORM STATUS OK: self-report lists read-models + 5 agents + copilot state + action count; "
-          "public /health returns ok")
+    print("PLATFORM STATUS OK: self-report lists read-models + 5 agents + copilot state + action count")

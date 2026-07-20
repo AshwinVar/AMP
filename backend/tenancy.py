@@ -156,6 +156,14 @@ def effective_tenant(claim_tenant, header_tenant):
     return claim_tenant
 
 
+def request_tenant(current_user):
+    """Tenant scope for a request handler: the middleware-bound effective tenant
+    (which honours the founder's X-Tenant company-switcher preview), falling
+    back to the JWT claim. Token-issuing endpoints (login/refresh) must NOT use
+    this — identity claims always come from the JWT itself."""
+    return current_tenant() or (current_user or {}).get("tenant", DEFAULT_TENANT)
+
+
 _scoping_installed = False
 
 

@@ -14,6 +14,7 @@ Guiding principles: incremental (strangler) evolution, never a rewrite; backward
 | [0006](0006-machine-health-twin.md) | Machine Health twin (per-machine read-model) | Accepted |
 | [0007](0007-read-models-projections.md) | Read-models: projections that answer one question | Accepted |
 | [0008](0008-tenant-lifecycle-and-commercial-enforcement.md) | Tenant lifecycle & commercial enforcement | Accepted |
+| [0009](0009-modularize-main-route-modules.md) | Modularize main.py by domain (route modules) | Accepted |
 
 **Recommended order:** 0001 first (smaller, proves the pattern; events carry `tenant_code`), then 0002.
 

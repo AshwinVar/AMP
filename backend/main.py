@@ -750,20 +750,6 @@ def generate_ai_recommendations(db: Session = Depends(get_db), current_user: dic
     return {"created": created}
 
 
-@app.get("/audit-logs", response_model=List[schemas.AuditLogResponse])
-def get_audit_logs(db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
-    return db.query(models.AuditLog).order_by(models.AuditLog.id.desc()).limit(500).all()
-
-
-@app.post("/audit-logs", response_model=schemas.AuditLogResponse)
-def create_audit_log(payload: schemas.AuditLogCreate, db: Session = Depends(get_db), current_user: dict = Depends(require_roles(["Admin", "Supervisor"]))):
-    row = models.AuditLog(**payload.model_dump())
-    db.add(row)
-    db.commit()
-    db.refresh(row)
-    return row
-
-
 @app.websocket("/ws/live")
 async def websocket_live_dashboard(websocket: WebSocket):
     # Authenticate the live feed by the JWT passed as ?token= (browsers can't set

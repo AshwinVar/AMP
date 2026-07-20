@@ -21,6 +21,7 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 import models
+import schemas
 from auth import get_current_user, require_roles
 from database import SessionLocal, engine
 
@@ -212,3 +213,11 @@ def register(app):
              "entity_id": r.entity_id, "details": r.details, "created_at": r.created_at}
             for r in rows
         ]
+
+    @app.post("/audit-logs", response_model=schemas.AuditLogResponse)
+    def create_audit_log(payload: schemas.AuditLogCreate, db: Session = Depends(get_db), current_user: dict = Depends(require_roles(["Admin", "Supervisor"]))):
+        row = models.AuditLog(**payload.model_dump())
+        db.add(row)
+        db.commit()
+        db.refresh(row)
+        return row

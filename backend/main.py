@@ -55,6 +55,7 @@ import read_model_routes
 import agent_routes
 import saas_routes
 import costing_routes
+import machines_routes
 import industrial_adapters
 from bom import PART_BOM
 from events import event_bus, ProductionCompleted, DowntimeStarted, InventoryLow, QualityInspectionFailed
@@ -167,6 +168,10 @@ saas_routes.register(app)
 
 # Register the costing endpoints — cost-record CRUD + costing analytics.
 costing_routes.register(app)
+
+# Register the machine & telemetry CRUD (ADR-0009) — machines, downtime, shifts,
+# production records, and the machine-event stream.
+machines_routes.register(app)
 
 # Register the AI Factory Copilot behind the platform (off until ANTHROPIC_API_KEY is set).
 ai.copilot.register(app)
@@ -685,141 +690,6 @@ def reset_user_password(
     return {"message": "Password reset successfully"}
 
 
-@app.get("/machines", response_model=List[schemas.MachineResponse])
-def get_machines(db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
-    return db.query(models.Machine).order_by(models.Machine.id.asc()).all()
-
-
-@app.post("/machines", response_model=schemas.MachineResponse)
-def create_machine(
-    machine: schemas.MachineCreate,
-    db: Session = Depends(get_db),
-    current_user: dict = Depends(require_roles(["Admin"])),
-):
-    new_machine = models.Machine(**machine.model_dump())
-    db.add(new_machine)
-    db.commit()
-    db.refresh(new_machine)
-    return new_machine
-
-
-@app.delete("/machines/{machine_id}")
-def delete_machine(
-    machine_id: int,
-    db: Session = Depends(get_db),
-    current_user: dict = Depends(require_roles(["Admin"])),
-):
-    machine = db.query(models.Machine).filter(models.Machine.id == machine_id).first()
-    if machine is None:
-        raise HTTPException(status_code=404, detail="Machine not found")
-    db.delete(machine)
-    db.commit()
-    return {"message": "Machine deleted successfully"}
-
-
-@app.patch("/machines/{machine_id}/status")
-def update_machine_status(
-    machine_id: int,
-    status: str,
-    db: Session = Depends(get_db),
-    current_user: dict = Depends(require_roles(["Admin", "Supervisor"])),
-):
-    machine = db.query(models.Machine).filter(models.Machine.id == machine_id).first()
-    if machine is None:
-        raise HTTPException(status_code=404, detail="Machine not found")
-
-    old_status = machine.status
-    machine.status = status
-    db.commit()
-    db.refresh(machine)
-
-    if old_status != status:
-        event = models.MachineEvent(
-            machine_id=machine.id,
-            machine_name=machine.name,
-            old_status=old_status,
-            new_status=status,
-            utilization=machine.utilization,
-            source="manual",
-        )
-        db.add(event)
-        db.commit()
-
-    return machine
-
-
-@app.get("/downtime-logs", response_model=List[schemas.DowntimeResponse])
-def get_downtime_logs(db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
-    return db.query(models.DowntimeLog).order_by(models.DowntimeLog.id.desc()).limit(100).all()
-
-
-@app.post("/downtime-logs", response_model=schemas.DowntimeResponse)
-def create_downtime_log(
-    downtime: schemas.DowntimeCreate,
-    db: Session = Depends(get_db),
-    current_user: dict = Depends(require_roles(["Admin", "Supervisor", "Operator"])),
-):
-    machine = db.query(models.Machine).filter(models.Machine.id == downtime.machine_id).first()
-    if not machine:
-        raise HTTPException(status_code=404, detail="Machine not found")
-    new_log = models.DowntimeLog(**downtime.model_dump())
-    db.add(new_log)
-
-    # Widen the event stream: a machine entered downtime (ADR-0003). Published
-    # before commit so the event and any AI reaction commit atomically.
-    event_bus.publish(DowntimeStarted(
-        tenant_code=_tenant(current_user),
-        machine_id=downtime.machine_id,
-        reason=downtime.reason,
-        duration=downtime.duration,
-    ), db)
-
-    db.commit()
-    db.refresh(new_log)
-    return new_log
-
-
-@app.get("/shifts", response_model=List[schemas.ShiftResponse])
-def get_shifts(db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
-    return db.query(models.ShiftData).order_by(models.ShiftData.id.desc()).limit(100).all()
-
-
-@app.post("/shifts", response_model=schemas.ShiftResponse)
-def create_shift(
-    shift: schemas.ShiftCreate,
-    db: Session = Depends(get_db),
-    current_user: dict = Depends(require_roles(["Admin", "Supervisor"])),
-):
-    new_shift = models.ShiftData(**shift.model_dump())
-    db.add(new_shift)
-    db.commit()
-    db.refresh(new_shift)
-    return new_shift
-
-
-@app.get("/production-records", response_model=List[schemas.ProductionResponse])
-def get_production_records(db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
-    return db.query(models.ProductionRecord).order_by(models.ProductionRecord.id.desc()).limit(100).all()
-
-
-@app.post("/production-records", response_model=schemas.ProductionResponse)
-def create_production_record(
-    record: schemas.ProductionCreate,
-    db: Session = Depends(get_db),
-    current_user: dict = Depends(require_roles(["Admin", "Supervisor", "Operator"])),
-):
-    machine = db.query(models.Machine).filter(models.Machine.id == record.machine_id).first()
-    if not machine:
-        raise HTTPException(status_code=404, detail="Machine not found")
-    if record.good_count + record.rejected_count != record.total_count:
-        raise HTTPException(status_code=400, detail="good_count + rejected_count must equal total_count")
-    new_record = models.ProductionRecord(**record.model_dump())
-    db.add(new_record)
-    db.commit()
-    db.refresh(new_record)
-    return new_record
-
-
 @app.get("/oee/summary")
 def oee_summary(db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
     records = db.query(models.ProductionRecord).order_by(models.ProductionRecord.id.desc()).limit(100).all()
@@ -913,11 +783,6 @@ def analytics_summary(db: Session = Depends(get_db), current_user: dict = Depend
 @app.get("/alerts")
 def get_alerts(db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
     return generate_alerts(db)
-
-
-@app.get("/machine-events")
-def get_machine_events(db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
-    return db.query(models.MachineEvent).order_by(models.MachineEvent.id.desc()).limit(200).all()
 
 
 @app.get("/analytics/machine-timeline")

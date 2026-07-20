@@ -21,3 +21,6 @@ __pycache__/
 *.pyc
 venv/
 .venv/
+
+# Orphan nested repo from commit 1 — untracked; delete the local dir at will.
+FlowMES-Enterprise/

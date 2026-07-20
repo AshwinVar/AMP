@@ -40,15 +40,37 @@ existing `register(app)` pattern.
   effective-tenant resolver, formerly `main._tenant`) moved to `tenancy`; each
   domain's private helpers move with it (`_registry_scope`/`_require_founder` →
   `saas_routes`, `_agent_action_dict`/`_decide_agent_action` → `agent_routes`).
-- **Leave the stateful core in main.** Endpoints that read main-local globals
-  (`/platform/status` reads the sim heartbeat) or don't fit a clean domain
-  (`/ops-trends`, `/briefing/escalate`) stay until they have a natural home.
+- **Event coupling survives the move, byte-for-byte.** A handler that publishes a
+  domain event imports the bus and event class directly (`from events import
+  event_bus, ProductionCompleted`) and publishes on the *request* DB session, so
+  the event and its subscribers still commit atomically with the write. The guard
+  test asserts the publish is still present in the moved module's source, not just
+  that the route registered.
+- **Leave the stateful core — and the shared compute — in main until it has a home.**
+  Endpoints that read main-local globals (`/platform/status` reads the sim
+  heartbeat) or don't fit a clean domain (`/ops-trends`, `/briefing/escalate`)
+  stay. So does any endpoint that calls a *main-local compute helper*: the
+  reporting peel-off left `/reports/daily-summary.txt` behind because it calls the
+  `analytics_summary` endpoint function directly, and excluded
+  `/escalations/from-smart-alerts` earlier because it shares `generate_alerts`.
+  When a shared helper already exists in a service module, the extraction imports
+  *that* one instead — e.g. `reports_routes` and `main` both moved to the single
+  `analytics_engine.calculate_oee_from_record` (#162), retiring main's duplicate.
 
 ## Consequences
 
 **Positive**
-- `main.py`: **4274 → 3847** lines across three peel-offs — `read_model_routes`
-  (#143), `agent_routes` (#146), `saas_routes` (#147).
+- `main.py`: **4274 → 1675** lines (192 → 44 endpoints) across fifteen peel-offs,
+  one domain per PR:
+  `read_model_routes` (#143), `agent_routes` (#146), `saas_routes` (#147),
+  `costing_routes`, `machines_routes`, `orders_routes`, `factory_ops_routes` (#153),
+  then the core-CRUD + reporting wave — `work_orders_routes` (#154, keeps the
+  `ProductionCompleted` publish), `inventory_routes` (#155, `InventoryLow`),
+  `quality_routes` (#156, `QualityInspectionFailed`), `production_planning_routes`
+  (#157), `industrial_iot_routes` (#158), `operator_routes` (#159), `users_routes`
+  (#160, `VALID_ROLES` moved with it), and `reports_routes` (#161, all compute
+  imported from the shared engines). Every extraction held the route-count
+  invariant and shipped a registration-guard test.
 - New endpoints in a domain get an obvious home; merge conflicts localize.
 - Duplicate-route hazards are now caught mechanically (registration guards +
   route-count invariant), not by luck.
@@ -74,6 +96,21 @@ existing `register(app)` pattern.
 ## Rollout
 
 Incremental, one domain per PR, each verified by the route-count invariant + the
-full test suite (CI-enforced) + a live smoke on production. Remaining large
-clusters in `main.py` (inventory / costing / orders / machines CRUD) can follow the
-same template when they warrant it.
+full test suite (CI-enforced) + a live smoke on production. The CRUD clusters
+named at first writing (inventory / costing / orders / machines) are done, along
+with work-orders, quality, planning, industrial-IoT, operator, users and
+reporting.
+
+**What is left, and what it needs first.** The dominant remaining cluster is
+`/analytics` (~23 endpoints) plus `/alerts`, `/oee` and `/machine-health`. Unlike
+the CRUD domains, these are pinned to two *main-local* compute helpers —
+`generate_alerts` and `analytics_summary` (the latter is itself an endpoint
+function called directly by other handlers). Extracting the cluster is therefore
+a two-step job, not a byte-preserving route move: first relocate those helpers to
+a shared engine (`analytics_engine`) as plain functions, rewire main's remaining
+callers to import them, *then* peel the routes. The `calculate_oee_from_record`
+dedup (#162) was the first of those enabling moves. This is a larger,
+higher-touch change on the hot dashboard path and is best done as its own focused
+step rather than bundled with a mechanical extraction. The genuinely stateful
+core (`/platform/status`, `/ops-trends`, auth/bootstrap, `/briefing`) is expected
+to remain in `main.py` indefinitely.

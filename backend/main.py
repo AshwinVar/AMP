@@ -32,6 +32,7 @@ from analytics_engine import (
     build_shift_kpis,
     build_oee_trends,
     build_smart_alerts,
+    calculate_oee_from_record,
 )
 from report_generator import build_daily_summary_text
 
@@ -432,23 +433,6 @@ def parse_duration_to_minutes(value: str):
         total += int(plain) if plain else 0
 
     return total
-
-
-def calculate_oee_from_record(record: models.ProductionRecord):
-    availability = record.runtime_minutes / record.planned_minutes if record.planned_minutes else 0
-    runtime_seconds = record.runtime_minutes * 60
-    performance = (
-        (record.ideal_cycle_time_seconds * record.total_count) / runtime_seconds
-        if runtime_seconds else 0
-    )
-    quality = record.good_count / record.total_count if record.total_count else 0
-
-    return {
-        "availability": round(availability * 100),
-        "performance": round(min(performance, 1) * 100),
-        "quality": round(quality * 100),
-        "oee": round(availability * min(performance, 1) * quality * 100),
-    }
 
 
 def calculate_fallback_oee(utilization: int):

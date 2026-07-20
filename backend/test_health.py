@@ -22,6 +22,7 @@ def test_health_ok_when_db_answers():
     import json
     body = json.loads(resp.body)
     assert body["database"] == "ok" and body["status"] == "ok"
+    assert "version" in body   # short build sha or null; present so ops can read it
     print("PASS /health returns 200 when the DB answers")
 
 

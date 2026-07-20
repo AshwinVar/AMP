@@ -12,6 +12,7 @@ Everything is keyed by `tenant_code` — the same tenant identity used across
 users and the GMATS inventory — so a company's licence and branding follow it
 everywhere. Registered from main.py at import time via register(app).
 """
+import os
 from datetime import datetime, timedelta
 
 from fastapi import Depends, HTTPException
@@ -22,6 +23,12 @@ from sqlalchemy.orm import Session
 import models
 from auth import get_current_user, require_roles
 from database import SessionLocal, engine
+
+# The running build's git commit, if the platform exposes it (Railway sets
+# RAILWAY_GIT_COMMIT_SHA automatically). Short, public, resolved once at import.
+# Lets ops confirm which build is live — and confirms a deploy actually cut over.
+BUILD_SHA = (os.environ.get("RAILWAY_GIT_COMMIT_SHA")
+             or os.environ.get("GIT_COMMIT_SHA") or "")[:7] or None
 
 
 # Defaults applied the first time we see a tenant. DEFAULT is the founder/demo
@@ -133,6 +140,7 @@ def register(app):
             "status": "ok" if db_ok else "degraded",
             "database": "ok" if db_ok else "down",
             "time": datetime.utcnow().isoformat(),
+            "version": BUILD_SHA,   # short git sha of the running build, or null
         }
         return JSONResponse(body, status_code=200 if db_ok else 503)
 

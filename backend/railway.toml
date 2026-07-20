@@ -4,7 +4,11 @@ buildCommand = "pip install -r requirements.txt"
 
 [deploy]
 startCommand = "python -m uvicorn main:app --host 0.0.0.0 --port $PORT"
-healthcheckPath = "/docs"
+# Probe the real health endpoint, not the Swagger UI: /health returns 200 only
+# when the database also answers (503 otherwise), so a deploy that can't reach
+# its DB won't cut over — the last good deploy keeps serving. /docs would 200
+# whenever the web process is up, hiding a dead database.
+healthcheckPath = "/health"
 healthcheckTimeout = 100
 restartPolicyType = "ON_FAILURE"
 restartPolicyMaxRetries = 3

@@ -116,7 +116,7 @@ def seed_tenant_configs(db):
         get_or_create_config(db, code)
 
 
-router = APIRouter()
+router = APIRouter(tags=["Platform"])
 
 
 def get_db():

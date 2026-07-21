@@ -24,7 +24,7 @@ def _get_db():
         db.close()
 
 
-router = APIRouter()
+router = APIRouter(tags=["Costing"])
 
 
 @router.get("/cost-records", response_model=List[schemas.CostRecordResponse])

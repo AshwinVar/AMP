@@ -23,7 +23,7 @@ def _get_db():
         db.close()
 
 
-router = APIRouter()
+router = APIRouter(tags=["Industrial IoT"])
 
 
 @router.get("/iot/telemetry", response_model=List[schemas.IoTTelemetryResponse])

@@ -14,7 +14,7 @@ from auth import get_current_user, require_roles
 from database import SessionLocal
 
 
-router = APIRouter()
+router = APIRouter(tags=["Enterprise Inventory"])
 
 
 def get_db():

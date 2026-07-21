@@ -43,7 +43,7 @@ def _guard_record(current_user, record_tenant):
         raise HTTPException(status_code=403, detail="This record belongs to another company")
 
 
-router = APIRouter()
+router = APIRouter(tags=["GMATS Inventory"])
 
 
 def get_db():

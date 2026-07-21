@@ -31,7 +31,7 @@ def _get_db():
         db.close()
 
 
-router = APIRouter()
+router = APIRouter(tags=["Machines"])
 # ── Machines ──────────────────────────────────────────────────
 
 

@@ -52,7 +52,7 @@ def _decide_agent_action(action_id, decision, db, current_user):
     return _agent_action_dict(action)
 
 
-router = APIRouter()
+router = APIRouter(tags=["Agents"])
 
 
 @router.get("/agent-actions")

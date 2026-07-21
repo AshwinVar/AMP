@@ -113,7 +113,7 @@ def analytics_summary(db: Session = Depends(_get_db), current_user: dict = Depen
     }
 
 
-router = APIRouter()
+router = APIRouter(tags=["Analytics"])
 
 
 @router.get("/oee/summary")

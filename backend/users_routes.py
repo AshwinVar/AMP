@@ -32,7 +32,7 @@ def _get_db():
         db.close()
 
 
-router = APIRouter()
+router = APIRouter(tags=["Users"])
 
 
 @router.post("/users", response_model=schemas.UserResponse)

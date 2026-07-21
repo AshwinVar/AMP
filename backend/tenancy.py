@@ -169,6 +169,15 @@ def request_tenant(current_user):
     return current_tenant() or (current_user or {}).get("tenant", DEFAULT_TENANT)
 
 
+def tenant_unit_value(db, tenant):
+    """The tenant's configured £ margin per good unit (TenantConfig.unit_value_gbp),
+    or None if unset. The single per-tenant £ rate — shared by the recovery
+    read-model and the management summary's estimated_loss_value so every money
+    figure uses the same number (never a made-up default when unset)."""
+    c = db.query(models.TenantConfig).filter(models.TenantConfig.tenant_code == tenant).first()
+    return c.unit_value_gbp if c else None
+
+
 _scoping_installed = False
 
 

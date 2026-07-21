@@ -28,6 +28,7 @@ from analytics_engine import (
 )
 from auth import get_current_user, require_roles
 from database import SessionLocal
+from tenancy import request_tenant, tenant_unit_value
 from report_generator import build_daily_summary_text
 
 
@@ -84,7 +85,8 @@ def export_intelligence_summary(db: Session = Depends(_get_db), current_user: di
     downtime_logs = db.query(models.DowntimeLog).all()
     shifts = db.query(models.ShiftData).all()
     production_records = db.query(models.ProductionRecord).all()
-    summary = build_management_summary(machines, downtime_logs, shifts, production_records)
+    rate = tenant_unit_value(db, request_tenant(current_user))
+    summary = build_management_summary(machines, downtime_logs, shifts, production_records, unit_value_gbp=rate)
     shift_kpis = build_shift_kpis(shifts)
     alerts = build_smart_alerts(machines, production_records, downtime_logs)
     report = build_daily_summary_text(summary, shift_kpis, alerts)

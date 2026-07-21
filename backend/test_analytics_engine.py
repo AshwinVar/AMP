@@ -116,6 +116,25 @@ def test_management_summary_uses_pooled_not_averaged_oee():
     print("PASS build_management_summary pools OEE (volume-weighted), not averages")
 
 
+def test_estimated_loss_value_uses_unit_rate_when_given():
+    machines = [SimpleNamespace(id=1, name="M1", status="Running")]
+    downtime = [SimpleNamespace(machine_id=1, reason="Breakdown", duration="2 hrs")]  # 120 min
+    shifts = [SimpleNamespace(target_output=100, actual_output=90)]
+    recs = [_rec(runtime_minutes=400, planned_minutes=480, ideal_cycle_time_seconds=30,
+                 total_count=700, good_count=690)]
+    # run-rate = 690 good / 400 min = 1.725 units/min; 120 min downtime -> 207 lost units.
+    no_rate = ae.build_management_summary(machines, downtime, shifts, recs)
+    assert no_rate["estimated_loss_units"] == 207
+    assert no_rate["estimated_loss_value"] == 120 * 8       # legacy £8/min when no rate
+    assert no_rate["unit_value_gbp"] is None
+
+    priced = ae.build_management_summary(machines, downtime, shifts, recs, unit_value_gbp=4.50)
+    assert priced["estimated_loss_units"] == 207
+    assert priced["estimated_loss_value"] == round(207 * 4.50)   # lost units x tenant rate
+    assert priced["unit_value_gbp"] == 4.50
+    print("PASS estimated_loss_value = lost units x rate (falls back to £8/min when unset)")
+
+
 def test_build_management_summary_empty_is_safe():
     s = ae.build_management_summary([], [], [], [])
     assert s["top_loss_reason"] == "No data" and s["worst_machine"] == "No data"
@@ -158,6 +177,7 @@ if __name__ == "__main__":
     test_build_oee_trends_indexes_and_names_machines()
     test_build_management_summary()
     test_management_summary_uses_pooled_not_averaged_oee()
+    test_estimated_loss_value_uses_unit_rate_when_given()
     test_build_management_summary_empty_is_safe()
     test_build_smart_alerts_severity_and_dedup()
     test_calculate_fallback_oee_monotonic()

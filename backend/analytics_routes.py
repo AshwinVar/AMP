@@ -35,7 +35,7 @@ from analytics_engine import (
 )
 from auth import get_current_user, require_roles
 from database import SessionLocal
-from tenancy import request_tenant
+from tenancy import request_tenant, tenant_unit_value
 
 
 def _get_db():
@@ -193,7 +193,8 @@ def get_management_dashboard(db: Session = Depends(_get_db), current_user: dict 
     downtime_logs = db.query(models.DowntimeLog).all()
     shifts = db.query(models.ShiftData).all()
     production_records = db.query(models.ProductionRecord).all()
-    return build_management_summary(machines, downtime_logs, shifts, production_records)
+    rate = tenant_unit_value(db, request_tenant(current_user))
+    return build_management_summary(machines, downtime_logs, shifts, production_records, unit_value_gbp=rate)
 
 
 @router.get("/alerts/smart")

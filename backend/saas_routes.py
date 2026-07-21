@@ -16,7 +16,7 @@ saas_routes.<handler>); register() just attaches them to the app.
 import secrets
 from typing import List
 
-from fastapi import Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
 import models
@@ -174,10 +174,10 @@ def get_saas_analytics(db: Session = Depends(_get_db), current_user: dict = Depe
     }
 
 
-def register(app):
-    app.get("/saas/tenants", response_model=List[schemas.CompanyTenantResponse])(get_company_tenants)
-    app.post("/saas/tenants", response_model=schemas.CompanyTenantResponse)(create_company_tenant)
-    app.post("/saas/tenants/{tenant_id}/admin")(create_tenant_admin)
-    app.patch("/saas/tenants/{tenant_id}", response_model=schemas.CompanyTenantResponse)(update_company_tenant)
-    app.delete("/saas/tenants/{tenant_id}")(delete_company_tenant)
-    app.get("/analytics/saas")(get_saas_analytics)
+router = APIRouter()
+router.get("/saas/tenants", response_model=List[schemas.CompanyTenantResponse])(get_company_tenants)
+router.post("/saas/tenants", response_model=schemas.CompanyTenantResponse)(create_company_tenant)
+router.post("/saas/tenants/{tenant_id}/admin")(create_tenant_admin)
+router.patch("/saas/tenants/{tenant_id}", response_model=schemas.CompanyTenantResponse)(update_company_tenant)
+router.delete("/saas/tenants/{tenant_id}")(delete_company_tenant)
+router.get("/analytics/saas")(get_saas_analytics)

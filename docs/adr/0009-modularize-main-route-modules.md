@@ -175,12 +175,23 @@ once. Behaviour is identical — verified by route introspection (all five `/use
 routes still carry the `require_roles` checker) and by the gate rejecting a
 non-Admin (403) and passing an Admin, both locked in by guard tests.
 
-This is deliberately **not** applied elsewhere. The move is only safe when a
-module's gate is *uniform*: the rest mix roles by design — `saas_routes`, for
-instance, gates writes with Admin + a founder check but leaves the registry reads
-open to any authenticated user (`_registry_scope`), so a router-wide Admin
-dependency would change who can reach those reads. `read_model_routes` and
-`ai_copilot` are uniform but on `get_current_user` (authenticated, not admin), so
-they aren't admin-only. A router-level dependency is a per-module judgement, not a
-blanket pass. With this, the ADR-0009 programme is complete on every axis — size,
-shape, metadata, and auth-gating.
+The same move applies one level down, at *authenticated* rather than *admin*.
+`read_model_routes` (25 read projections) and `ai_copilot` (3 endpoints) are
+uniformly gated by `get_current_user`, so each hoists it onto its router,
+`APIRouter(..., dependencies=[Depends(get_current_user)])` (#178) — a future read
+endpoint can't ship public by omission. Note the difference in payoff: every one
+of those 28 handlers uses `current_user` in its body (to derive the tenant), so
+they keep the `Depends(get_current_user)` parameter for the *value*; the router
+dependency doesn't shorten a signature, it adds the module-wide invariant (and
+FastAPI caches `get_current_user`, so it's still decoded once). A guard test
+asserts every route in both modules carries the gate.
+
+What it is **not** is a blanket pass — a router-level dependency is only safe when
+the module's gate is genuinely *uniform*. The role-mixing modules keep their
+per-handler gates: `saas_routes`, for instance, gates writes with Admin + a
+founder check but leaves the registry reads open to any authenticated user
+(`_registry_scope`), so a router-wide Admin dependency would change who can reach
+those reads. So three modules declare their gate at the router (users → Admin,
+read-model + copilot → authenticated) and the rest stay per-handler by design.
+With this, the ADR-0009 programme is complete on every axis — size, shape,
+metadata, and auth-gating.

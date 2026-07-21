@@ -32,10 +32,10 @@ def _get_db():
         db.close()
 
 
-router = APIRouter(tags=["Users"])
+router = APIRouter(prefix="/users", tags=["Users"])
 
 
-@router.post("/users", response_model=schemas.UserResponse)
+@router.post("", response_model=schemas.UserResponse)
 def create_employee(
     user: schemas.UserCreate,
     db: Session = Depends(_get_db),
@@ -71,7 +71,7 @@ def create_employee(
         raise HTTPException(status_code=500, detail=f"Create employee failed: {str(e)}")
 
 
-@router.get("/users", response_model=List[schemas.UserResponse])
+@router.get("", response_model=List[schemas.UserResponse])
 def list_users(db: Session = Depends(_get_db), current_user: dict = Depends(require_roles(["Admin"]))):
     tenant = request_tenant(current_user)
     q = db.query(models.User)
@@ -82,7 +82,7 @@ def list_users(db: Session = Depends(_get_db), current_user: dict = Depends(requ
     return q.order_by(models.User.id.asc()).all()
 
 
-@router.patch("/users/{user_id}/role", response_model=schemas.UserResponse)
+@router.patch("/{user_id}/role", response_model=schemas.UserResponse)
 def update_user_role(
     user_id: int,
     payload: schemas.UserRoleUpdate,
@@ -106,7 +106,7 @@ def update_user_role(
     return user
 
 
-@router.delete("/users/{user_id}")
+@router.delete("/{user_id}")
 def delete_user(
     user_id: int,
     db: Session = Depends(_get_db),
@@ -130,7 +130,7 @@ def delete_user(
     return {"message": "User deleted successfully"}
 
 
-@router.patch("/users/{user_id}/password")
+@router.patch("/{user_id}/password")
 def reset_user_password(
     user_id: int,
     payload: dict,

@@ -28,10 +28,10 @@ def _get_db():
         db.close()
 
 
-router = APIRouter(tags=["Quality"])
+router = APIRouter(prefix="/quality", tags=["Quality"])
 
 
-@router.get("/quality/inspections", response_model=List[schemas.QualityInspectionResponse])
+@router.get("/inspections", response_model=List[schemas.QualityInspectionResponse])
 def get_quality_inspections(
     db: Session = Depends(_get_db),
     current_user: dict = Depends(get_current_user),
@@ -44,7 +44,7 @@ def get_quality_inspections(
     )
 
 
-@router.post("/quality/inspections", response_model=schemas.QualityInspectionResponse)
+@router.post("/inspections", response_model=schemas.QualityInspectionResponse)
 def create_quality_inspection(
     inspection: schemas.QualityInspectionCreate,
     db: Session = Depends(_get_db),
@@ -113,7 +113,7 @@ def create_quality_inspection(
     return new_inspection
 
 
-@router.patch("/quality/inspections/{inspection_id}", response_model=schemas.QualityInspectionResponse)
+@router.patch("/inspections/{inspection_id}", response_model=schemas.QualityInspectionResponse)
 def update_quality_inspection(
     inspection_id: int,
     payload: schemas.QualityInspectionUpdate,
@@ -146,7 +146,7 @@ def update_quality_inspection(
     return inspection
 
 
-@router.delete("/quality/inspections/{inspection_id}")
+@router.delete("/inspections/{inspection_id}")
 def delete_quality_inspection(
     inspection_id: int,
     db: Session = Depends(_get_db),
@@ -167,7 +167,7 @@ def delete_quality_inspection(
     return {"message": "Quality inspection deleted successfully"}
 
 
-@router.post("/quality/generate-defect-escalations")
+@router.post("/generate-defect-escalations")
 def generate_defect_escalations(
     db: Session = Depends(_get_db),
     current_user: dict = Depends(require_roles(["Admin", "Supervisor"])),

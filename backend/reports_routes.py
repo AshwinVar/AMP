@@ -39,10 +39,10 @@ def _get_db():
         db.close()
 
 
-router = APIRouter(tags=["Reports"])
+router = APIRouter(prefix="/reports", tags=["Reports"])
 
 
-@router.get("/reports/downtime.csv")
+@router.get("/downtime.csv")
 def export_downtime_csv(db: Session = Depends(_get_db), current_user: dict = Depends(require_roles(["Admin", "Supervisor"]))):
     logs = db.query(models.DowntimeLog).all()
     output = io.StringIO()
@@ -54,7 +54,7 @@ def export_downtime_csv(db: Session = Depends(_get_db), current_user: dict = Dep
     return Response(content=output.getvalue(), media_type="text/csv", headers={"Content-Disposition": "attachment; filename=downtime_report.csv"})
 
 
-@router.get("/reports/shifts.csv")
+@router.get("/shifts.csv")
 def export_shifts_csv(db: Session = Depends(_get_db), current_user: dict = Depends(require_roles(["Admin", "Supervisor"]))):
     shifts = db.query(models.ShiftData).all()
     output = io.StringIO()
@@ -66,7 +66,7 @@ def export_shifts_csv(db: Session = Depends(_get_db), current_user: dict = Depen
     return Response(content=output.getvalue(), media_type="text/csv", headers={"Content-Disposition": "attachment; filename=shift_report.csv"})
 
 
-@router.get("/reports/oee.csv")
+@router.get("/oee.csv")
 def export_oee_csv(db: Session = Depends(_get_db), current_user: dict = Depends(require_roles(["Admin", "Supervisor"]))):
     records = db.query(models.ProductionRecord).all()
     output = io.StringIO()
@@ -78,7 +78,7 @@ def export_oee_csv(db: Session = Depends(_get_db), current_user: dict = Depends(
     return Response(content=output.getvalue(), media_type="text/csv", headers={"Content-Disposition": "attachment; filename=oee_report.csv"})
 
 
-@router.get("/reports/intelligence-summary.txt")
+@router.get("/intelligence-summary.txt")
 def export_intelligence_summary(db: Session = Depends(_get_db), current_user: dict = Depends(require_roles(["Admin", "Supervisor"]))):
     machines = db.query(models.Machine).all()
     downtime_logs = db.query(models.DowntimeLog).all()
@@ -91,12 +91,12 @@ def export_intelligence_summary(db: Session = Depends(_get_db), current_user: di
     return Response(content=report, media_type="text/plain", headers={"Content-Disposition": "attachment; filename=amp_intelligence_report.txt"})
 
 
-@router.get("/reports", response_model=List[schemas.ReportRequestResponse])
+@router.get("", response_model=List[schemas.ReportRequestResponse])
 def get_reports(db: Session = Depends(_get_db), current_user: dict = Depends(get_current_user)):
     return db.query(models.ReportRequest).order_by(models.ReportRequest.id.desc()).limit(300).all()
 
 
-@router.post("/reports", response_model=schemas.ReportRequestResponse)
+@router.post("", response_model=schemas.ReportRequestResponse)
 def create_report(payload: schemas.ReportRequestCreate, db: Session = Depends(_get_db), current_user: dict = Depends(require_roles(["Admin", "Supervisor"]))):
     existing = db.query(models.ReportRequest).filter(models.ReportRequest.report_no == payload.report_no).first()
     if existing:

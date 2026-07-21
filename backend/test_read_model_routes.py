@@ -48,7 +48,24 @@ def test_mutating_and_stateful_endpoints_stayed_in_main():
     print("PASS mutating / stateful endpoints stayed in main")
 
 
+def test_read_model_and_copilot_authenticated_at_router_level():
+    # Both modules are uniformly get_current_user, so the auth gate is hoisted
+    # onto their APIRouter (dependencies=[Depends(get_current_user)]). Every route
+    # they own — current and future — must carry it, so a new read endpoint can't
+    # ship unauthenticated by omission.
+    for mod in ("read_model_routes", "ai_copilot"):
+        routes = [r for r in main.app.routes
+                  if getattr(r, "endpoint", None) and r.endpoint.__module__ == mod]
+        assert routes, f"no routes registered from {mod}"
+        for r in routes:
+            names = [getattr(d.call, "__name__", "") for d in r.dependant.dependencies]
+            assert "get_current_user" in names, \
+                f"{mod} {r.path} {r.methods} lost the router-level auth gate"
+        print(f"PASS all {len(routes)} {mod} routes require authentication (router-level)")
+
+
 if __name__ == "__main__":
     test_every_read_model_path_registered_once_from_the_module()
     test_mutating_and_stateful_endpoints_stayed_in_main()
+    test_read_model_and_copilot_authenticated_at_router_level()
     print("ALL READ-MODEL ROUTE TESTS PASSED")

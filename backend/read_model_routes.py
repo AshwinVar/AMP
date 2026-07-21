@@ -26,7 +26,7 @@ def _get_db():
         db.close()
 
 
-router = APIRouter(tags=["Read Models"])
+router = APIRouter(tags=["Read Models"], dependencies=[Depends(get_current_user)])
 # Mission Control + twin composites
 
 

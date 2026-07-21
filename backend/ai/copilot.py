@@ -22,8 +22,9 @@ def is_enabled() -> bool:
 def register(app) -> None:
     """Expose the copilot's HTTP routes (/ai/status, /ai/ask, /ai/report).
 
-    Delegates to the engine's registrar so the endpoints and behaviour are
-    identical; the platform now owns Copilot's entry point, consistent with the
-    other services.
+    Includes the engine's APIRouter so the endpoints and behaviour are identical;
+    the platform now owns Copilot's entry point, consistent with the other
+    services. This wrapper stays a thin feature-flag coordinator (see is_enabled)
+    rather than becoming a router itself.
     """
-    ai_copilot.register(app)
+    app.include_router(ai_copilot.router)

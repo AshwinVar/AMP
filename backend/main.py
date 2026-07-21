@@ -160,15 +160,15 @@ app = FastAPI(title="AMP API")
 
 # Register enterprise inventory routes at import time (remnants, issue slips,
 # GRN, cycle count, variance report, CSV import).
-enterprise_inventory_routes.register(app)
+app.include_router(enterprise_inventory_routes.router)
 
 # Register GMATS tenant-scoped enterprise inventory (4-bucket stock, aliases,
 # proforma reservation, tax-invoice deduction, free-spares material issue note).
-gmats_inventory_routes.register(app)
+app.include_router(gmats_inventory_routes.router)
 
 # Register the platform layer: per-tenant licensing/feature-flags, white-label
 # branding, audit log and health check.
-platform_routes.register(app)
+app.include_router(platform_routes.router)
 
 # Register the read-model projection endpoints (ADR-0007) — the pillar summaries,
 # briefing, scorecard, twin, search, weekly report and rule-first copilot.
@@ -203,7 +203,7 @@ app.include_router(production_planning_routes.router)
 app.include_router(industrial_iot_routes.router)
 app.include_router(operator_routes.router)
 app.include_router(users_routes.router)
-reports_routes.register(app)
+app.include_router(reports_routes.router)
 app.include_router(analytics_routes.router)
 app.include_router(recommendations_routes.router)
 
@@ -212,7 +212,7 @@ ai.copilot.register(app)
 
 # Register the industrial connectivity adapter framework (OPC UA, Modbus, S7,
 # Allen-Bradley, Beckhoff, Omron) — GET /industrial/protocols.
-industrial_adapters.register(app)
+app.include_router(industrial_adapters.router)
 
 
 # Tenants whose factories are ANIMATED by the simulator (comma-separated env,

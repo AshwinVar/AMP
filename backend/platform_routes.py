@@ -15,7 +15,7 @@ everywhere. Registered from main.py at import time via register(app).
 import os
 from datetime import datetime, timedelta
 
-from fastapi import Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import JSONResponse
 from sqlalchemy import text
 from sqlalchemy.orm import Session
@@ -116,108 +116,121 @@ def seed_tenant_configs(db):
         get_or_create_config(db, code)
 
 
-def register(app):
-    def get_db():
-        db = SessionLocal()
-        try:
-            yield db
-        finally:
-            db.close()
+router = APIRouter()
 
-    # ── Health (public — for uptime monitors) ─────────────────────
-    @app.get("/health")
-    def health():
-        # Return the health in the HTTP STATUS, not just the body: an uptime
-        # monitor (and Railway's probe, if pointed here) checks the status code.
-        # 200 when the DB answers, 503 when it doesn't — so a dead database is
-        # actually detectable instead of hiding behind a 200 with "down" text.
-        db_ok = True
-        try:
-            with engine.connect() as conn:
-                conn.execute(text("SELECT 1"))
-        except Exception:
-            db_ok = False
-        body = {
-            "status": "ok" if db_ok else "degraded",
-            "database": "ok" if db_ok else "down",
-            "time": datetime.utcnow().isoformat(),
-            "version": BUILD_SHA,   # short git sha of the running build, or null
-        }
-        return JSONResponse(body, status_code=200 if db_ok else 503)
 
-    # ── Tenant config: licensing / feature flags / branding ───────
-    @app.get("/tenant-config")
-    def tenant_config(db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
-        """The current workspace's company config — used by the frontend for
-        branding and to decide which module packs to show. Follows the founder's
-        company switcher (effective tenant), so previewing a client shows that
-        client's licence and branding, not the founder's."""
-        import tenancy
-        tenant = tenancy.current_tenant() or current_user.get("tenant", "DEFAULT")
-        return _config_dict(get_or_create_config(db, tenant))
+def get_db():
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
 
-    @app.patch("/tenant-config")
-    def update_tenant_config(payload: dict, db: Session = Depends(get_db),
-                             current_user: dict = Depends(require_roles(["Admin"]))):
-        """A client Admin may re-brand their own workspace (the founder, while
-        switched, edits the previewed tenant's branding). Plan/licensing edits
-        stay gated on the raw claim — platform owner only."""
-        import tenancy
-        tenant = tenancy.current_tenant() or current_user.get("tenant", "DEFAULT")
-        is_platform_owner = current_user.get("tenant", "DEFAULT") == "DEFAULT"
-        c = get_or_create_config(db, tenant)
-        for f in ("brand_name", "brand_color", "brand_logo_url"):
-            if f in payload:
-                setattr(c, f, payload[f])
-        if is_platform_owner:
-            for f in ("plan", "subscription_status"):
-                if f in payload:
-                    setattr(c, f, payload[f])
-            if "enabled_modules" in payload:
-                mods = payload["enabled_modules"]
-                c.enabled_modules = ",".join(mods) if isinstance(mods, list) else mods
-        db.commit()
-        log_audit(db, current_user.get("sub"), "update_tenant_config", "tenant", None, tenant)
-        return _config_dict(c)
+# ── Health (public — for uptime monitors) ─────────────────────
 
-    # Platform-owner (DEFAULT tenant) view: license/brand ANY client.
-    @app.get("/tenant-configs")
-    def all_tenant_configs(db: Session = Depends(get_db),
-                           current_user: dict = Depends(require_roles(["Admin"]))):
-        if current_user.get("tenant", "DEFAULT") != "DEFAULT":
-            raise HTTPException(status_code=403, detail="Platform owner only")
-        return [_config_dict(c) for c in db.query(models.TenantConfig).order_by(models.TenantConfig.id).all()]
 
-    @app.patch("/tenant-configs/{tenant_code}")
-    def update_any_tenant(tenant_code: str, payload: dict, db: Session = Depends(get_db),
-                          current_user: dict = Depends(require_roles(["Admin"]))):
-        if current_user.get("tenant", "DEFAULT") != "DEFAULT":
-            raise HTTPException(status_code=403, detail="Platform owner only")
-        c = get_or_create_config(db, tenant_code)
-        for f in ("plan", "brand_name", "brand_color", "brand_logo_url", "subscription_status"):
+@router.get("/health")
+def health():
+    # Return the health in the HTTP STATUS, not just the body: an uptime
+    # monitor (and Railway's probe, if pointed here) checks the status code.
+    # 200 when the DB answers, 503 when it doesn't — so a dead database is
+    # actually detectable instead of hiding behind a 200 with "down" text.
+    db_ok = True
+    try:
+        with engine.connect() as conn:
+            conn.execute(text("SELECT 1"))
+    except Exception:
+        db_ok = False
+    body = {
+        "status": "ok" if db_ok else "degraded",
+        "database": "ok" if db_ok else "down",
+        "time": datetime.utcnow().isoformat(),
+        "version": BUILD_SHA,   # short git sha of the running build, or null
+    }
+    return JSONResponse(body, status_code=200 if db_ok else 503)
+
+# ── Tenant config: licensing / feature flags / branding ───────
+
+
+@router.get("/tenant-config")
+def tenant_config(db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
+    """The current workspace's company config — used by the frontend for
+    branding and to decide which module packs to show. Follows the founder's
+    company switcher (effective tenant), so previewing a client shows that
+    client's licence and branding, not the founder's."""
+    import tenancy
+    tenant = tenancy.current_tenant() or current_user.get("tenant", "DEFAULT")
+    return _config_dict(get_or_create_config(db, tenant))
+
+
+@router.patch("/tenant-config")
+def update_tenant_config(payload: dict, db: Session = Depends(get_db),
+                         current_user: dict = Depends(require_roles(["Admin"]))):
+    """A client Admin may re-brand their own workspace (the founder, while
+    switched, edits the previewed tenant's branding). Plan/licensing edits
+    stay gated on the raw claim — platform owner only."""
+    import tenancy
+    tenant = tenancy.current_tenant() or current_user.get("tenant", "DEFAULT")
+    is_platform_owner = current_user.get("tenant", "DEFAULT") == "DEFAULT"
+    c = get_or_create_config(db, tenant)
+    for f in ("brand_name", "brand_color", "brand_logo_url"):
+        if f in payload:
+            setattr(c, f, payload[f])
+    if is_platform_owner:
+        for f in ("plan", "subscription_status"):
             if f in payload:
                 setattr(c, f, payload[f])
         if "enabled_modules" in payload:
             mods = payload["enabled_modules"]
             c.enabled_modules = ",".join(mods) if isinstance(mods, list) else mods
-        db.commit()
-        log_audit(db, current_user.get("sub"), "update_tenant_license", "tenant", None, tenant_code)
-        return _config_dict(c)
+    db.commit()
+    log_audit(db, current_user.get("sub"), "update_tenant_config", "tenant", None, tenant)
+    return _config_dict(c)
 
-    # ── Audit log ─────────────────────────────────────────────────
-    @app.get("/audit-logs")
-    def audit_logs(db: Session = Depends(get_db), current_user: dict = Depends(require_roles(["Admin"]))):
-        rows = db.query(models.AuditLog).order_by(models.AuditLog.id.desc()).limit(200).all()
-        return [
-            {"id": r.id, "actor": r.actor, "action": r.action, "entity_type": r.entity_type,
-             "entity_id": r.entity_id, "details": r.details, "created_at": r.created_at}
-            for r in rows
-        ]
+# Platform-owner (DEFAULT tenant) view: license/brand ANY client.
 
-    @app.post("/audit-logs", response_model=schemas.AuditLogResponse)
-    def create_audit_log(payload: schemas.AuditLogCreate, db: Session = Depends(get_db), current_user: dict = Depends(require_roles(["Admin", "Supervisor"]))):
-        row = models.AuditLog(**payload.model_dump())
-        db.add(row)
-        db.commit()
-        db.refresh(row)
-        return row
+
+@router.get("/tenant-configs")
+def all_tenant_configs(db: Session = Depends(get_db),
+                       current_user: dict = Depends(require_roles(["Admin"]))):
+    if current_user.get("tenant", "DEFAULT") != "DEFAULT":
+        raise HTTPException(status_code=403, detail="Platform owner only")
+    return [_config_dict(c) for c in db.query(models.TenantConfig).order_by(models.TenantConfig.id).all()]
+
+
+@router.patch("/tenant-configs/{tenant_code}")
+def update_any_tenant(tenant_code: str, payload: dict, db: Session = Depends(get_db),
+                      current_user: dict = Depends(require_roles(["Admin"]))):
+    if current_user.get("tenant", "DEFAULT") != "DEFAULT":
+        raise HTTPException(status_code=403, detail="Platform owner only")
+    c = get_or_create_config(db, tenant_code)
+    for f in ("plan", "brand_name", "brand_color", "brand_logo_url", "subscription_status"):
+        if f in payload:
+            setattr(c, f, payload[f])
+    if "enabled_modules" in payload:
+        mods = payload["enabled_modules"]
+        c.enabled_modules = ",".join(mods) if isinstance(mods, list) else mods
+    db.commit()
+    log_audit(db, current_user.get("sub"), "update_tenant_license", "tenant", None, tenant_code)
+    return _config_dict(c)
+
+# ── Audit log ─────────────────────────────────────────────────
+
+
+@router.get("/audit-logs")
+def audit_logs(db: Session = Depends(get_db), current_user: dict = Depends(require_roles(["Admin"]))):
+    rows = db.query(models.AuditLog).order_by(models.AuditLog.id.desc()).limit(200).all()
+    return [
+        {"id": r.id, "actor": r.actor, "action": r.action, "entity_type": r.entity_type,
+         "entity_id": r.entity_id, "details": r.details, "created_at": r.created_at}
+        for r in rows
+    ]
+
+
+@router.post("/audit-logs", response_model=schemas.AuditLogResponse)
+def create_audit_log(payload: schemas.AuditLogCreate, db: Session = Depends(get_db), current_user: dict = Depends(require_roles(["Admin", "Supervisor"]))):
+    row = models.AuditLog(**payload.model_dump())
+    db.add(row)
+    db.commit()
+    db.refresh(row)
+    return row

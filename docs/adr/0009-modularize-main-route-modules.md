@@ -20,12 +20,19 @@ Two route modules already demonstrated the way out: `platform_routes.py` and
 
 ## Decision
 
-Peel cohesive **domains** off `main.py` into route modules, one per PR, using the
-existing `register(app)` pattern.
+Peel cohesive **domains** off `main.py` into route modules, one per PR. The
+extraction wave used the existing `register(app)` pattern; once every domain was
+separated, the modules were migrated to FastAPI `APIRouter`s (see Rollout) — each
+now exposes a module-level `router = APIRouter()` with `@router.<verb>` handlers,
+and `main` wires it with `app.include_router(module.router)`. The two forms are
+behaviourally identical (same routes, same order); everything below applies to
+both.
 
 - **No import cycles.** A route module imports only lower-level modules
   (`models`, `database`, `auth`, `tenancy`, `ai`, and peer service modules) —
-  **never `main`**. `main` imports the module and calls `register(app)`.
+  **never `main`**. `main` imports the module and includes its router (a module
+  may still export a plain symbol back to `main` — `log_audit`,
+  `analytics_summary`).
 - **Preserve the route-count invariant.** An extraction *relocates* endpoints; it
   adds and removes none. The boot check asserts the total registered-route count is
   unchanged, and each module ships a **registration-guard test** proving its paths
@@ -105,9 +112,12 @@ existing `register(app)` pattern.
 
 ## Alternatives considered
 
-- **A full `APIRouter`/prefix restructure.** Cleaner FastAPI idiom, but changes
-  nothing users see and needs no path changes today; `register(app)` matches the
-  existing pattern and is a smaller, safer step. Revisit if module count grows.
+- **A full `APIRouter`/prefix restructure.** Cleaner FastAPI idiom, but during the
+  *extraction* wave it would have changed nothing users see while adding risk;
+  `register(app)` matched the existing pattern and was the smaller, safer step.
+  Deferred then, **adopted after** — once the domains were separated and
+  guard-tested, converting each `register(app)` to an `APIRouter` was mechanical
+  and low-risk (#169–#171). See Rollout.
 - **Split by HTTP verb or by file size.** Rejected — domain cohesion is the right
   axis; the goal is that related endpoints and their helpers live together.
 - **Leave `main.py` as-is.** Rejected — the hidden-duplicate risk is real (#142),
@@ -129,7 +139,17 @@ move. `main.py` finished at **706 lines / 12 endpoints** — the irreducible cor
 three intelligence stragglers) that is expected to stay in `main.py`
 indefinitely.
 
-If the strangler continues, the next axis is no longer file size but shape:
-migrate the `register(app)` modules to FastAPI `APIRouter`s (the alternative
-deferred above), which is now a mechanical, low-risk change since the domains are
-already separated and guard-tested.
+**The shape migration is also done.** With every domain separated and
+guard-tested, the `register(app)` modules were converted to FastAPI `APIRouter`s
+in three mechanical batches (#169 the CRUD modules, #170 the larger/read-model
+modules, #171 the remaining + pre-existing ones). All 22 route modules now expose
+a module-level `router = APIRouter()` and are wired with
+`app.include_router(...)`; the route-count invariant held at 237 throughout, and
+the existing registration-guard tests passed unchanged (a handler's `__module__`
+is still its module). Handlers being module-level retired the old
+nested-vs-module-level split entirely. The lone survivor is `ai.copilot`, a thin
+`register(app)` *coordinator* (feature-flag entry point) that holds no routes of
+its own and simply includes `ai_copilot.router` — correct as-is.
+
+There is no obvious next axis. Routers could later grow prefixes/tags/`dependencies`
+if the API surface warrants it, but that's opportunistic polish, not pending debt.

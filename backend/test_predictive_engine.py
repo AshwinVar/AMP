@@ -12,14 +12,16 @@ from types import SimpleNamespace
 import predictive_engine as pe
 
 
-def test_parse_duration_digits_only():
-    # This engine's parser is deliberately cruder than analytics_engine's: it
-    # concatenates every digit, so "2h30m" reads as 230, not 150.
-    assert pe.parse_duration_to_minutes("2h30m") == 230
-    assert pe.parse_duration_to_minutes("90 min") == 90
-    assert pe.parse_duration_to_minutes("") == 0
-    assert pe.parse_duration_to_minutes(None) == 0
-    print("PASS predictive parse_duration concatenates digits")
+def test_uses_shared_duration_parser():
+    # predictive_engine used to carry a digit-concatenation parser that misread
+    # hour formats ("1 hr" -> 1 minute), understating downtime in the risk score.
+    # It now delegates to the shared, correct parser (full coverage in
+    # test_duration); here we just confirm hours are parsed, not concatenated.
+    import duration
+    assert pe.parse_duration_to_minutes is duration.parse_duration_to_minutes
+    assert pe.parse_duration_to_minutes("1 hr") == 60
+    assert pe.parse_duration_to_minutes("2 hrs 15 min") == 135
+    print("PASS predictive_engine uses the shared correct duration parser")
 
 
 def test_classify_risk_boundaries():
@@ -83,7 +85,7 @@ def test_predictive_risk_reject_rate_guarded():
 
 
 if __name__ == "__main__":
-    test_parse_duration_digits_only()
+    test_uses_shared_duration_parser()
     test_classify_risk_boundaries()
     test_recommendation_tracks_bands()
     test_calculate_predictive_risk_scores_and_sorts()

@@ -1,32 +1,11 @@
-import re
 from collections import defaultdict
 
 from sqlalchemy.orm import Session
 
 import models
-
-
-def parse_duration_to_minutes(value: str):
-    if not value:
-        return 0
-
-    lower = value.lower()
-    total = 0
-
-    hour_match = re.search(r"(\d+)\s*h", lower)
-    minute_match = re.search(r"(\d+)\s*m", lower)
-
-    if hour_match:
-        total += int(hour_match.group(1)) * 60
-
-    if minute_match:
-        total += int(minute_match.group(1))
-
-    if not hour_match and not minute_match:
-        plain = re.sub(r"\D", "", lower)
-        total += int(plain) if plain else 0
-
-    return total
+# Re-exported so existing `from analytics_engine import parse_duration_to_minutes`
+# call sites (recommendations_routes) keep working; single source of truth.
+from duration import parse_duration_to_minutes
 
 
 def calculate_oee_from_record(record):

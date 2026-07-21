@@ -31,13 +31,16 @@ def test_factory_ops_paths_owned_by_module():
     print(f"PASS all {len(EXPECTED)} factory-ops paths owned by factory_ops_routes")
 
 
-def test_from_smart_alerts_stayed_in_main():
+def test_from_smart_alerts_owned_by_core_routes():
+    # /escalations/from-smart-alerts uses generate_alerts (now in analytics_engine),
+    # not the factory-ops escalation CRUD. It was left in main and is now grouped
+    # into core_routes with the other stragglers.
     owners = {getattr(r, "path", ""): r.endpoint.__module__ for r in main.app.routes}
-    assert owners.get("/escalations/from-smart-alerts") == "main"
-    print("PASS /escalations/from-smart-alerts stayed in main (shares generate_alerts)")
+    assert owners.get("/escalations/from-smart-alerts") == "core_routes"
+    print("PASS /escalations/from-smart-alerts is owned by core_routes (not factory_ops)")
 
 
 if __name__ == "__main__":
     test_factory_ops_paths_owned_by_module()
-    test_from_smart_alerts_stayed_in_main()
+    test_from_smart_alerts_owned_by_core_routes()
     print("ALL FACTORY-OPS ROUTE TESTS PASSED")

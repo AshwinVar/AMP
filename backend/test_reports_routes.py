@@ -37,11 +37,14 @@ def test_reports_paths_owned_by_module():
     print(f"PASS all {len(EXPECTED)} reports paths owned by reports_routes")
 
 
-def test_daily_summary_stayed_in_main():
+def test_daily_summary_owned_by_core():
+    # daily-summary.txt calls analytics_summary (not the reports CSV/record CRUD);
+    # it was left in main and is now grouped into core_routes, which imports
+    # analytics_summary from analytics_routes.
     owners = {getattr(r, "path", ""): r.endpoint.__module__ for r in main.app.routes}
-    assert owners.get("/reports/daily-summary.txt") == "main", \
-        "daily-summary.txt shares main's analytics_summary and must stay in main"
-    print("PASS /reports/daily-summary.txt stayed in main (shares analytics_summary)")
+    assert owners.get("/reports/daily-summary.txt") == "core_routes", \
+        "daily-summary.txt should be owned by core_routes"
+    print("PASS /reports/daily-summary.txt is owned by core_routes")
 
 
 def test_module_has_no_main_local_coupling():
@@ -54,6 +57,6 @@ def test_module_has_no_main_local_coupling():
 
 if __name__ == "__main__":
     test_reports_paths_owned_by_module()
-    test_daily_summary_stayed_in_main()
+    test_daily_summary_owned_by_core()
     test_module_has_no_main_local_coupling()
     print("ALL REPORTS ROUTE TESTS PASSED")

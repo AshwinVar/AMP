@@ -31,15 +31,16 @@ def test_every_agent_path_owned_by_agent_routes():
     print(f"PASS all {len(EXPECTED)} agent paths owned by agent_routes")
 
 
-def test_ops_trends_stayed_in_main():
-    # /ops-trends is a cross-pillar trends read-model, not agent oversight — it
-    # deliberately stayed in main (a candidate for a future read-model pass).
+def test_ops_trends_owned_by_core_routes():
+    # /ops-trends is a cross-pillar trends read-model, not agent oversight. It was
+    # never an agent route; it now lives in core_routes with the other main
+    # stragglers (grouped there when the core endpoints were peeled off `app`).
     owners = {getattr(r, "path", ""): r.endpoint.__module__ for r in main.app.routes}
-    assert owners.get("/ops-trends") == "main"
-    print("PASS /ops-trends stayed in main")
+    assert owners.get("/ops-trends") == "core_routes"
+    print("PASS /ops-trends is owned by core_routes (not agent_routes)")
 
 
 if __name__ == "__main__":
     test_every_agent_path_owned_by_agent_routes()
-    test_ops_trends_stayed_in_main()
+    test_ops_trends_owned_by_core_routes()
     print("ALL AGENT ROUTE TESTS PASSED")

@@ -174,7 +174,7 @@ def get_saas_analytics(db: Session = Depends(_get_db), current_user: dict = Depe
     }
 
 
-router = APIRouter()
+router = APIRouter(tags=["SaaS Admin"])
 router.get("/saas/tenants", response_model=List[schemas.CompanyTenantResponse])(get_company_tenants)
 router.post("/saas/tenants", response_model=schemas.CompanyTenantResponse)(create_company_tenant)
 router.post("/saas/tenants/{tenant_id}/admin")(create_tenant_admin)

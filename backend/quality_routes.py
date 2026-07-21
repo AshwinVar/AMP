@@ -28,7 +28,7 @@ def _get_db():
         db.close()
 
 
-router = APIRouter()
+router = APIRouter(tags=["Quality"])
 
 
 @router.get("/quality/inspections", response_model=List[schemas.QualityInspectionResponse])

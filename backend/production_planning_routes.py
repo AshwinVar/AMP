@@ -24,7 +24,7 @@ def _get_db():
         db.close()
 
 
-router = APIRouter()
+router = APIRouter(tags=["Production Planning"])
 
 
 @router.get("/production-plans", response_model=List[schemas.ProductionPlanResponse])

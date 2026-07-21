@@ -30,7 +30,7 @@ def _get_db():
         db.close()
 
 
-router = APIRouter()
+router = APIRouter(tags=["Work Orders"])
 
 
 @router.get("/work-orders", response_model=List[schemas.WorkOrderResponse])

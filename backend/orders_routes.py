@@ -42,7 +42,7 @@ def _orders_csv(db) -> str:
     return buf.getvalue()
 
 
-router = APIRouter()
+router = APIRouter(tags=["Orders & Procurement"])
 
 
 @router.get("/customer-orders/export")

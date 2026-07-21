@@ -26,7 +26,7 @@ def _get_db():
         db.close()
 
 
-router = APIRouter()
+router = APIRouter(tags=["Factory Ops"])
 
 
 @router.get("/escalations", response_model=List[schemas.EscalationResponse])

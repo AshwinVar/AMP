@@ -29,7 +29,7 @@ def _get_db():
         db.close()
 
 
-router = APIRouter()
+router = APIRouter(tags=["AI Recommendations"])
 
 
 @router.get("/ai/recommendations", response_model=List[schemas.AIRecommendationResponse])

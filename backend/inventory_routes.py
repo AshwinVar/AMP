@@ -29,7 +29,7 @@ def _get_db():
         db.close()
 
 
-router = APIRouter()
+router = APIRouter(tags=["Inventory"])
 
 
 @router.get("/inventory/items", response_model=List[schemas.InventoryItemResponse])

@@ -25,7 +25,7 @@ def _get_db():
         db.close()
 
 
-router = APIRouter()
+router = APIRouter(tags=["Operator"])
 
 
 @router.get("/operator/executions", response_model=List[schemas.OperatorJobExecutionResponse])

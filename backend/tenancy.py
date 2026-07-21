@@ -25,6 +25,11 @@ from auth import decode_token_optional
 
 DEFAULT_TENANT = "DEFAULT"
 
+# Client logins whose tenant isn't stored on the user row (legacy accounts created
+# before the tenant_code column) — mapped by username to their tenant. Read at
+# startup (reconcile) and at login (fallback when the user has no tenant_code).
+CLIENT_TENANTS = {"gmats": "GMATS"}
+
 # Core operational tables that gain a tenant_code column in this PR. The rest of
 # the core tables follow in later PRs; platform and GMATS tables are already
 # tenant-aware, and event_log is already tenant-stamped (ADR-0001).

@@ -41,6 +41,7 @@ from report_generator import build_daily_summary_text
 import models
 import schemas
 import tenancy
+import sim_state
 import onboard_tenant
 import offboard_tenant
 import plan_gate
@@ -215,17 +216,9 @@ ai.copilot.register(app)
 app.include_router(industrial_adapters.router)
 
 
-# Tenants whose factories are ANIMATED by the simulator (comma-separated env,
-# default: only the founder demo workspace). A customer tenant with real
-# machine data must never be ticked — the sim would overwrite real statuses
-# with random ones. Opt a demo tenant in via SIM_TENANTS=DEFAULT,APEX.
-SIM_TENANTS = [t.strip() for t in os.environ.get("SIM_TENANTS", tenancy.DEFAULT_TENANT).split(",") if t.strip()]
-
-# Sim-loop heartbeat, surfaced (founder-only) in /platform/status so "is the
-# sim running, and over which tenants?" is answerable from the app instead of
-# from Railway logs.
-_SIM_LAST_TICK = None
-_SIM_TICK_COUNT = 0
+# Simulator heartbeat state — which tenants are animated, last tick, tick count —
+# lives in sim_state so /platform/status (core_routes) can read it without either
+# module importing the other (ADR-0009).
 
 
 async def _simulation_loop():
@@ -249,7 +242,7 @@ async def _simulation_loop():
             db = SessionLocal()
             # Each sim-enabled tenant is ticked under its own scope, so every
             # query and every new row inside the ticks stays in that tenant.
-            for sim_tenant in SIM_TENANTS:
+            for sim_tenant in sim_state.tenants:
                 scope = set_current_tenant(sim_tenant)
                 try:
                     tick_work_order_progress(db)
@@ -279,9 +272,8 @@ async def _simulation_loop():
                     print(f"[SIM TICK ERROR] {sim_tenant}: {tick_err}")
                 finally:
                     reset_current_tenant(scope)
-            global _SIM_LAST_TICK, _SIM_TICK_COUNT
-            _SIM_LAST_TICK = datetime.utcnow()
-            _SIM_TICK_COUNT += 1
+            sim_state.last_tick = datetime.utcnow()
+            sim_state.tick_count += 1
 
             # Proactive briefing: the Escalation agent raises the most urgent
             # briefing alert for each tenant on its own (deduped, so it won't
@@ -364,7 +356,7 @@ async def startup_event():
             print(f"[SEED] GMATS Admin '{gmats_admin_user}' created from GMATS_ADMIN_PASSWORD env")
         # Reconcile client logins to their correct tenant. Users created before the
         # tenant_code column existed were backfilled to DEFAULT by the migration.
-        for uname, tcode in CLIENT_TENANTS.items():
+        for uname, tcode in tenancy.CLIENT_TENANTS.items():
             u = db.query(models.User).filter(models.User.username == uname).first()
             if u and (u.tenant_code or "DEFAULT") != tcode:
                 u.tenant_code = tcode
@@ -405,10 +397,6 @@ app.add_middleware(
 # core-table queries (ADR-0002). Pure-ASGI (tenancy.TenantScopeMiddleware) to
 # avoid BaseHTTPMiddleware's request-body deadlock and to propagate contextvars.
 app.add_middleware(tenancy.TenantScopeMiddleware)
-
-# Maps a client login to its tenant/company. Added to the JWT so the frontend
-# lands that user on their own company's data. Extend per onboarded client.
-CLIENT_TENANTS = {"gmats": "GMATS"}
 
 
 def get_db():
@@ -473,7 +461,7 @@ def login(user: schemas.UserLogin, db: Session = Depends(get_db)):
         except Exception:
             db.rollback()
 
-    tenant = getattr(db_user, "tenant_code", None) or CLIENT_TENANTS.get(db_user.username.lower(), "DEFAULT")
+    tenant = getattr(db_user, "tenant_code", None) or tenancy.CLIENT_TENANTS.get(db_user.username.lower(), "DEFAULT")
 
     # Subscription enforcement: a cancelled company can no longer sign in.
     # Only applies when the tenant has a registry row that says Cancelled —
@@ -562,9 +550,9 @@ def platform_status(db: Session = Depends(get_db), current_user: dict = Depends(
     # which a client workspace must not see.
     if current_user.get("tenant", tenancy.DEFAULT_TENANT) == tenancy.DEFAULT_TENANT:
         result["sim"] = {
-            "tenants": SIM_TENANTS,
-            "last_tick_utc": _SIM_LAST_TICK.isoformat() if _SIM_LAST_TICK else None,
-            "tick_count": _SIM_TICK_COUNT,
+            "tenants": sim_state.tenants,
+            "last_tick_utc": sim_state.last_tick.isoformat() if sim_state.last_tick else None,
+            "tick_count": sim_state.tick_count,
         }
     return result
 

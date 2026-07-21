@@ -187,9 +187,9 @@ def test_sim_tick_cannot_touch_other_tenants():
 
 
 def test_sim_tenants_default():
-    import main
-    assert main.SIM_TENANTS == ["DEFAULT"], main.SIM_TENANTS
-    print("PASS SIM_TENANTS defaults to the demo workspace only")
+    import sim_state
+    assert sim_state.tenants == ["DEFAULT"], sim_state.tenants
+    print("PASS sim_state.tenants defaults to the demo workspace only")
 
 
 def test_admin_provisioning_and_password_change():

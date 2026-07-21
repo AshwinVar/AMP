@@ -51,6 +51,34 @@ def test_component_gaps_and_biggest_lever():
     print("PASS per-component gaps to world-class + biggest lever")
 
 
+def test_biggest_lever_prize_is_quantified():
+    # OEE 72 = availability 83 x performance 87 x quality ~99. Availability is the
+    # biggest lever; closing just it (83 -> 90) scales good output by 90/83.
+    recs = [_r(machine_id=1, planned_minutes=480, runtime_minutes=400,
+               ideal_cycle_time_seconds=30, total_count=700, good_count=690)]
+    out = _run(recs, rate=4.50)
+    assert out["biggest_lever"] == "availability"
+    assert out["lever_label"] == "Availability"
+    assert "downtime" in out["lever_action"].lower()
+    good = out["good_units_window"]
+    expected_year = round(round(good * (90 / 83 - 1)) * 365 / 7)
+    assert out["lever_recoverable_units_per_year"] == expected_year
+    assert out["lever_recoverable_value_per_year"] == round(expected_year * 4.50)
+    # the single lever is a slice of the total gap, never larger than it
+    assert out["lever_recoverable_units_per_year"] <= out["recoverable_units_per_year"]
+    print("PASS biggest-lever prize (units + £) is quantified for 'fix this first'")
+
+
+def test_lever_fields_empty_at_world_class():
+    out = _run([_r(machine_id=1, planned_minutes=100, runtime_minutes=100,
+                   ideal_cycle_time_seconds=60, total_count=100, good_count=100)])
+    assert out["at_world_class"] is True and out["biggest_lever"] is None
+    assert out["lever_label"] is None and out["lever_action"] is None
+    assert out["lever_recoverable_units_per_year"] == 0
+    assert out["lever_recoverable_value_per_year"] is None
+    print("PASS lever fields are empty when already at world-class")
+
+
 def test_at_world_class_has_no_recoverable_units():
     # A near-perfect run above the 85% benchmark: nothing to recover.
     out = _run([_r(planned_minutes=100, runtime_minutes=100, ideal_cycle_time_seconds=60,
@@ -127,6 +155,8 @@ def test_physical_cap_tames_impossible_volume():
 if __name__ == "__main__":
     test_recoverable_units_and_gap()
     test_component_gaps_and_biggest_lever()
+    test_biggest_lever_prize_is_quantified()
+    test_lever_fields_empty_at_world_class()
     test_at_world_class_has_no_recoverable_units()
     test_pound_value_when_rate_configured()
     test_no_pound_value_when_rate_unset()

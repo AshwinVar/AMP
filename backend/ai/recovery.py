@@ -22,12 +22,21 @@ WORLD_CLASS_OEE = 85
 # Classic world-class component benchmarks: 0.90 x 0.95 x ~0.99 ~= 0.85 OEE.
 WORLD_CLASS_COMPONENTS = {"availability": 90, "performance": 95, "quality": 99}
 
+# The one concrete move that closes each lever's gap — what the owner actually does.
+LEVER_ACTIONS = {
+    "availability": "Cut unplanned downtime — attack the machine losing the most runtime.",
+    "performance": "Close the speed loss — bring cycle time back to the ideal rate.",
+    "quality": "Reduce scrap and rework — fix the top recurring defect.",
+}
+
 _EMPTY = {
     "has_data": False, "oee": 0, "world_class": WORLD_CLASS_OEE, "gap_points": 0,
     "at_world_class": False, "good_units_window": 0, "window_days": WINDOW_DAYS,
     "recoverable_units_window": 0, "recoverable_units_per_year": 0,
     "unit_value_gbp": None, "recoverable_value_window": None,
     "recoverable_value_per_year": None, "components": [], "biggest_lever": None,
+    "lever_label": None, "lever_action": None,
+    "lever_recoverable_units_per_year": 0, "lever_recoverable_value_per_year": None,
 }
 
 MINUTES_PER_DAY = 24 * 60
@@ -78,12 +87,22 @@ def build_recovery_summary(db, tenant: str) -> dict:
             "gap_points": max(0, target - current),
         })
     biggest = max(components, key=lambda c: c["gap_points"])
+    lever_key = biggest["key"] if biggest["gap_points"] > 0 else None
 
     # Value the recoverable output in £ only when the tenant has set a per-unit
     # rate; otherwise leave the £ fields null and report units only.
     rate = _unit_value(db, tenant)
     value_window = round(recoverable_window * rate) if rate else None
     value_year = round(recoverable_year * rate) if rate else None
+
+    # "Fix this first": the prize for closing JUST the biggest lever's gap.
+    # Closing one component from current -> target scales good output by
+    # target/current (same run time), so it's a real, isolated £/units figure.
+    lever_units_year = 0
+    if lever_key and biggest["current"] > 0:
+        lever_window = round(good * (biggest["target"] / biggest["current"] - 1))
+        lever_units_year = round(lever_window * 365 / WINDOW_DAYS)
+    lever_value_year = round(lever_units_year * rate) if (rate and lever_units_year) else None
 
     return {
         "has_data": True,
@@ -99,5 +118,9 @@ def build_recovery_summary(db, tenant: str) -> dict:
         "recoverable_value_window": value_window,
         "recoverable_value_per_year": value_year,
         "components": components,
-        "biggest_lever": biggest["key"] if biggest["gap_points"] > 0 else None,
+        "biggest_lever": lever_key,
+        "lever_label": biggest["label"] if lever_key else None,
+        "lever_action": LEVER_ACTIONS.get(lever_key) if lever_key else None,
+        "lever_recoverable_units_per_year": lever_units_year,
+        "lever_recoverable_value_per_year": lever_value_year,
     }

@@ -1,11 +1,9 @@
 from collections import defaultdict
 
-def parse_duration_to_minutes(value: str):
-    if not value:
-        return 0
-    text = str(value).lower()
-    digits = "".join(ch for ch in text if ch.isdigit())
-    return int(digits) if digits else 0
+# Was a local digit-concatenation parser that misread hour formats ("1 hr" -> 1
+# minute), understating downtime in the risk score. Use the shared correct one.
+from duration import parse_duration_to_minutes
+
 
 def classify_risk(score: int):
     if score >= 75:

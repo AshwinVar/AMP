@@ -37,6 +37,7 @@ import ProductionSnapshot from "../../components/ProductionSnapshot";
 import OeeSnapshot from "../../components/OeeSnapshot";
 import LossesSnapshot from "../../components/LossesSnapshot";
 import RecoverySnapshot from "../../components/RecoverySnapshot";
+import NextBestActionCard from "../../components/NextBestActionCard";
 import InventorySnapshot from "../../components/InventorySnapshot";
 import FlowSnapshot from "../../components/FlowSnapshot";
 import ShiftSnapshot from "../../components/ShiftSnapshot";
@@ -2016,6 +2017,10 @@ export default function DashboardPage() {
 
       <div className="mb-8">
         <FactoryPulse />
+      </div>
+
+      <div className="mb-8">
+        <NextBestActionCard onAct={() => setActiveView("escalations")} />
       </div>
 
       {/* Overview card groups — only the active tab's cards mount (lighter page,

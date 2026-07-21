@@ -11,6 +11,8 @@ import random
 import time
 from datetime import datetime, date, timedelta
 
+from sqlalchemy import func
+
 from dotenv import load_dotenv
 load_dotenv()
 
@@ -709,13 +711,28 @@ def tick_production(db):
     machine accumulates about one real day of planned minutes per day. (It used
     to write a full 480-minute shift EVERY 45-second tick — which pushed weekly
     "downtime minutes" past the number of minutes in a week and inflated cost
-    figures ~100x. The OEE ratios were always right; the magnitudes were not.)"""
+    figures ~100x. The OEE ratios were always right; the magnitudes were not.)
+
+    Physically self-limiting: a machine won't be given more than one real day of
+    planned minutes per calendar day. The cadence gate alone assumes a single
+    caller at a fixed tick rate — but long uptime (and any parallel caller) let a
+    machine's window creep past a physical week, which then annualised (x52) into
+    absurd recovery figures. This DB-state cap is shared by every caller, so the
+    7-day OEE window can hold at most a real week of production no matter what."""
     if random.random() > 0.25:
         return
     machines = db.query(models.Machine).filter(models.Machine.status == "Running").all()
     if not machines:
         return
     machine = random.choice(machines)
+    # A machine cannot physically run more than 24h in a day. If it already has a
+    # full day of planned minutes recorded today, don't pile on more.
+    since_midnight = datetime.combine(datetime.utcnow().date(), datetime.min.time())
+    planned_today = db.query(func.coalesce(func.sum(models.ProductionRecord.planned_minutes), 0)) \
+        .filter(models.ProductionRecord.machine_id == machine.id,
+                models.ProductionRecord.created_at >= since_midnight).scalar() or 0
+    if planned_today >= 24 * 60:
+        return
     planned = 15
     runtime = random.randint(12, 15)
     ideal_cycle = random.randint(25, 40)

@@ -90,6 +90,40 @@ def test_no_production_is_safe():
     print("PASS empty window returns safe empty summary")
 
 
+def test_physical_cap_is_noop_on_plausible_data():
+    # One real machine, one week of physically-possible production: nothing is
+    # scaled — the cap only ever trims the impossible.
+    recs = [_r(machine_id=1, planned_minutes=480, runtime_minutes=400,
+               ideal_cycle_time_seconds=30, total_count=700, good_count=690)]
+    out = _run(recs)
+    assert out["good_units_window"] == 690       # unchanged
+    assert out["recoverable_units_window"] == 125
+    print("PASS physical cap is a no-op on physically-plausible data")
+
+
+def test_physical_cap_tames_impossible_volume():
+    # 100 identical shift-records on ONE machine in a 7-day window = 48,000 planned
+    # minutes, but one machine can run at most 7*1440 = 10,080. Good output is
+    # scaled to physical capacity before annualising, so the figure can't explode.
+    recs = [_r(machine_id=1, planned_minutes=480, runtime_minutes=400,
+               ideal_cycle_time_seconds=30, total_count=700, good_count=690)
+            for _ in range(100)]
+    out = _run(recs)
+    raw_good = 100 * 690
+    ceiling = 1 * 7 * 24 * 60
+    expected = round(raw_good * ceiling / (100 * 480))
+    assert out["oee"] == 72, out["oee"]           # ratio is unaffected by the cap
+    assert out["good_units_window"] == expected < raw_good
+    # everything downstream derives from the capped good, bounded by a physical week
+    expected_window = round(expected * (85 / 72 - 1))
+    expected_year = round(expected_window * 365 / 7)
+    assert out["recoverable_units_window"] == expected_window
+    assert out["recoverable_units_per_year"] == expected_year
+    # and that's a fraction of the un-capped (100x) figure it would otherwise show
+    assert expected_year < round(raw_good * (85 / 72 - 1)) * 365 / 7 / 3
+    print(f"PASS physical cap tames impossible volume ({raw_good:,} -> {expected:,} good)")
+
+
 if __name__ == "__main__":
     test_recoverable_units_and_gap()
     test_component_gaps_and_biggest_lever()
@@ -97,4 +131,6 @@ if __name__ == "__main__":
     test_pound_value_when_rate_configured()
     test_no_pound_value_when_rate_unset()
     test_no_production_is_safe()
+    test_physical_cap_is_noop_on_plausible_data()
+    test_physical_cap_tames_impossible_volume()
     print("ALL RECOVERY READ-MODEL TESTS PASSED")

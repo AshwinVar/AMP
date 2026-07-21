@@ -44,6 +44,24 @@ def test_production_ticks_are_short_slices_at_gated_cadence():
     print(f"PASS short slices at gated cadence ({len(records)} records from 200 ticks)")
 
 
+def test_a_machine_cannot_exceed_a_physical_day_of_production():
+    """Hammer one machine with far more ticks than a day's cadence would allow;
+    the DB-state cap must keep its recorded planned minutes within a real day, so
+    the OEE window can't be inflated by long uptime or parallel callers."""
+    db = _fresh_session()
+    db.add(models.Machine(name="M1", status="Running", utilization=80, tenant_code="DEFAULT"))
+    db.commit()
+
+    # 4000 ticks (~0.25 gate => ~1000 attempts) far exceeds a day of 15-min slices.
+    for _ in range(4000):
+        tick_production(db)
+
+    planned_today = sum(r.planned_minutes for r in db.query(models.ProductionRecord).all())
+    assert planned_today <= 24 * 60, f"machine exceeded a physical day: {planned_today} min"
+    print(f"PASS one machine capped at a physical day ({planned_today} planned min recorded)")
+
+
 if __name__ == "__main__":
     test_production_ticks_are_short_slices_at_gated_cadence()
+    test_a_machine_cannot_exceed_a_physical_day_of_production()
     print("ALL SIM CALIBRATION TESTS PASSED")

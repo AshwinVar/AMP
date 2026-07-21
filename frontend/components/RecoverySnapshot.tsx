@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { apiGet } from "../lib/api";
+import { apiGet, apiPatch } from "../lib/api";
 
 // Mirrors the backend recovery read-model (ai/recovery.py build_recovery_summary).
 type Component = { key: string; label: string; current: number; target: number; gap_points: number };
@@ -13,6 +13,8 @@ type RecoverySummary = {
   at_world_class: boolean;
   recoverable_units_window: number;
   recoverable_units_per_year: number;
+  unit_value_gbp: number | null;
+  recoverable_value_per_year: number | null;
   components: Component[];
   biggest_lever: string | null;
 };
@@ -20,8 +22,11 @@ type RecoverySummary = {
 // The OEE recovery card: the gap to world-class and what closing it is worth in
 // good units. Self-contained — fetches its own summary and refreshes. Renders
 // nothing until there's production to measure.
-export default function RecoverySnapshot() {
+export default function RecoverySnapshot({ isAdmin = false }: { isAdmin?: boolean }) {
   const [s, setS] = useState<RecoverySummary | null>(null);
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState("");
+  const [saving, setSaving] = useState(false);
 
   const load = useCallback(async () => {
     try {
@@ -37,6 +42,22 @@ export default function RecoverySnapshot() {
     return () => clearInterval(id);
   }, [load]);
 
+  const saveRate = useCallback(async () => {
+    const trimmed = draft.trim();
+    const value = trimmed === "" ? null : Number(trimmed);
+    if (value !== null && (!Number.isFinite(value) || value < 0)) return; // ignore bad input
+    setSaving(true);
+    try {
+      await apiPatch("/tenant-config", { unit_value_gbp: value });
+      await load();
+      setEditing(false);
+    } catch {
+      // Non-admins (403) or a transient error — stay quiet, leave the card as is.
+    } finally {
+      setSaving(false);
+    }
+  }, [draft, load]);
+
   if (!s || !s.has_data) return null;
 
   return (
@@ -51,10 +72,23 @@ export default function RecoverySnapshot() {
           </p>
         </div>
         <div className="text-right">
-          <p className="text-3xl font-bold text-emerald-400 tabular-nums">
-            {s.at_world_class ? "0" : `+${s.recoverable_units_per_year.toLocaleString()}`}
-          </p>
-          <p className="text-[11px] text-slate-500">good units / yr upside</p>
+          {s.recoverable_value_per_year != null ? (
+            <>
+              <p className="text-3xl font-bold text-emerald-400 tabular-nums">
+                {s.at_world_class ? "£0" : `£${s.recoverable_value_per_year.toLocaleString()}`}
+              </p>
+              <p className="text-[11px] text-slate-500">
+                / yr upside{s.at_world_class ? "" : ` · +${s.recoverable_units_per_year.toLocaleString()} good units`}
+              </p>
+            </>
+          ) : (
+            <>
+              <p className="text-3xl font-bold text-emerald-400 tabular-nums">
+                {s.at_world_class ? "0" : `+${s.recoverable_units_per_year.toLocaleString()}`}
+              </p>
+              <p className="text-[11px] text-slate-500">good units / yr upside</p>
+            </>
+          )}
         </div>
       </div>
 
@@ -86,6 +120,52 @@ export default function RecoverySnapshot() {
           );
         })}
       </div>
+
+      {(s.unit_value_gbp != null || isAdmin) && (
+        <div className="mt-4 pt-3 border-t border-slate-800 flex items-center justify-between text-[11px] text-slate-500">
+          <span>
+            Unit value:{" "}
+            {s.unit_value_gbp != null ? (
+              <span className="text-slate-300 tabular-nums">£{s.unit_value_gbp.toLocaleString()} / good unit</span>
+            ) : (
+              <span className="text-slate-500">not set — showing units only</span>
+            )}
+          </span>
+          {isAdmin &&
+            (editing ? (
+              <span className="flex items-center gap-1">
+                <span className="text-slate-500">£</span>
+                <input
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  autoFocus
+                  value={draft}
+                  onChange={(e) => setDraft(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") saveRate();
+                    if (e.key === "Escape") setEditing(false);
+                  }}
+                  className="w-20 rounded bg-slate-800 border border-slate-700 px-2 py-0.5 text-slate-200 tabular-nums"
+                />
+                <button onClick={saveRate} disabled={saving} className="text-emerald-400 hover:text-emerald-300 disabled:opacity-50">
+                  {saving ? "…" : "save"}
+                </button>
+                <button onClick={() => setEditing(false)} className="text-slate-500 hover:text-slate-400">cancel</button>
+              </span>
+            ) : (
+              <button
+                onClick={() => {
+                  setDraft(s.unit_value_gbp != null ? String(s.unit_value_gbp) : "");
+                  setEditing(true);
+                }}
+                className="text-emerald-400 hover:text-emerald-300"
+              >
+                {s.unit_value_gbp != null ? "edit rate" : "set rate"}
+              </button>
+            ))}
+        </div>
+      )}
     </div>
   );
 }

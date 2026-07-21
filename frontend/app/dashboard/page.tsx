@@ -2041,7 +2041,7 @@ export default function DashboardPage() {
         <>
           <div className="mb-8"><OeeSnapshot /></div>
           <div className="mb-8"><LossesSnapshot /></div>
-          <div className="mb-8"><RecoverySnapshot /></div>
+          <div className="mb-8"><RecoverySnapshot isAdmin={isAdmin} /></div>
           <div className="mb-8"><ProductionSnapshot /></div>
           <div className="mb-8"><FlowSnapshot /></div>
           <div className="mb-8"><ShiftSnapshot /></div>

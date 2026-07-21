@@ -9,13 +9,14 @@ import time
 from jose import jwt
 
 import main
+import core_routes
 from auth import SECRET_KEY, ALGORITHM, ACCESS_TOKEN_EXPIRE_MINUTES
 
 
 def test_refresh_reissues_the_same_identity_with_fresh_expiry():
     user = {"sub": "tester", "role": "Supervisor", "tenant": "GMATS"}
     before = time.time()
-    out = main.refresh_token(current_user=user)
+    out = core_routes.refresh_token(current_user=user)
 
     assert out["token_type"] == "bearer"
     payload = jwt.decode(out["access_token"], SECRET_KEY, algorithms=[ALGORITHM])
@@ -28,7 +29,7 @@ def test_refresh_reissues_the_same_identity_with_fresh_expiry():
     assert abs(payload["exp"] - expected) < 120
 
     # a caller with no tenant claim defaults to DEFAULT
-    out2 = main.refresh_token(current_user={"sub": "x", "role": "Admin"})
+    out2 = core_routes.refresh_token(current_user={"sub": "x", "role": "Admin"})
     assert jwt.decode(out2["access_token"], SECRET_KEY, algorithms=[ALGORITHM])["tenant"] == "DEFAULT"
 
 

@@ -15,6 +15,7 @@ Run:  python backend/test_analytics_routes.py     (exit 0 = pass)
 import inspect
 
 import main
+import core_routes
 
 EXPECTED = {
     "/oee/summary",
@@ -50,12 +51,13 @@ def test_analytics_paths_owned_by_module():
 
 def test_analytics_summary_is_module_level_and_shared():
     import analytics_routes
+    import core_routes
     assert callable(getattr(analytics_routes, "analytics_summary", None)), \
-        "analytics_summary must be a module-level function (main's daily-summary.txt imports it)"
-    # main re-exports it and /reports/daily-summary.txt still calls it.
-    assert getattr(main, "analytics_summary", None) is analytics_routes.analytics_summary, \
-        "main must import the same analytics_summary it delegates daily-summary.txt to"
-    dsr = inspect.getsource(main.daily_summary_report)
+        "analytics_summary must be a module-level function (core_routes' daily-summary.txt imports it)"
+    # core_routes owns /reports/daily-summary.txt and imports the same function.
+    assert getattr(core_routes, "analytics_summary", None) is analytics_routes.analytics_summary, \
+        "core_routes must import the same analytics_summary it delegates daily-summary.txt to"
+    dsr = inspect.getsource(core_routes.daily_summary_report)
     assert "analytics_summary(" in dsr, "daily-summary.txt should still call analytics_summary"
     print("PASS analytics_summary is module-level, shared with main's daily-summary.txt")
 

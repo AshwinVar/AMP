@@ -39,13 +39,15 @@ def test_every_read_model_path_registered_once_from_the_module():
     print(f"PASS all {len(EXPECTED)} read-model paths registered once, from read_model_routes")
 
 
-def test_mutating_and_stateful_endpoints_stayed_in_main():
-    # These deliberately did NOT move: /briefing/escalate mutates (agent proposes
-    # an escalation), /platform/status reads main-local sim globals.
+def test_mutating_and_stateful_endpoints_owned_by_core():
+    # These are not read-model projections: /briefing/escalate mutates (an agent
+    # proposes an escalation) and /platform/status reports the sim heartbeat. They
+    # were never read_model_routes; they now live in core_routes, grouped with the
+    # other main stragglers.
     owners = {getattr(r, "path", ""): r.endpoint.__module__ for r in main.app.routes}
-    assert owners.get("/briefing/escalate") == "main"
-    assert owners.get("/platform/status") == "main"
-    print("PASS mutating / stateful endpoints stayed in main")
+    assert owners.get("/briefing/escalate") == "core_routes"
+    assert owners.get("/platform/status") == "core_routes"
+    print("PASS mutating / stateful endpoints owned by core_routes")
 
 
 def test_read_model_and_copilot_authenticated_at_router_level():
@@ -66,6 +68,6 @@ def test_read_model_and_copilot_authenticated_at_router_level():
 
 if __name__ == "__main__":
     test_every_read_model_path_registered_once_from_the_module()
-    test_mutating_and_stateful_endpoints_stayed_in_main()
+    test_mutating_and_stateful_endpoints_owned_by_core()
     test_read_model_and_copilot_authenticated_at_router_level()
     print("ALL READ-MODEL ROUTE TESTS PASSED")

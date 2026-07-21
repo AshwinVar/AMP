@@ -1,3 +1,4 @@
+import core_routes
 """Second-tenant onboarding tests.
 
 Proves the three onboarding pieces against an in-memory SQLite DB:
@@ -225,16 +226,16 @@ def test_admin_provisioning_and_password_change():
     try:
         # A guaranteed-wrong current password. (Deriving it as password[:-1]+"x"
         # was flaky: a token_urlsafe password ending in "x" matched the real one.)
-        main.change_password(_pw(creds["temporary_password"] + "-wrong", "new-password-1"), db=db, current_user=apex_admin)
+        core_routes.change_password(_pw(creds["temporary_password"] + "-wrong", "new-password-1"), db=db, current_user=apex_admin)
         assert False, "wrong current password should 401"
     except HTTPException as e:
         assert e.status_code == 401
     try:
-        main.change_password(_pw(creds["temporary_password"], "short"), db=db, current_user=apex_admin)
+        core_routes.change_password(_pw(creds["temporary_password"], "short"), db=db, current_user=apex_admin)
         assert False, "short password should 400"
     except HTTPException as e:
         assert e.status_code == 400
-    main.change_password(_pw(creds["temporary_password"], "rotated-pass-9"), db=db, current_user=apex_admin)
+    core_routes.change_password(_pw(creds["temporary_password"], "rotated-pass-9"), db=db, current_user=apex_admin)
     db.refresh(made)
     assert verify_password("rotated-pass-9", made.password)
     print("PASS admin provisioning + password rotation")
@@ -263,18 +264,18 @@ def test_cancelled_subscription_blocks_login():
     db.commit()
 
     try:
-        main.login(schemas.UserLogin(username="apex_admin", password="pw-apex-123"), db=db)
+        core_routes.login(schemas.UserLogin(username="apex_admin", password="pw-apex-123"), db=db)
         assert False, "cancelled tenant login should 403"
     except HTTPException as e:
         assert e.status_code == 403
 
     # registry-less tenant still signs in
-    assert main.login(schemas.UserLogin(username="ghost_admin", password="pw-ghost-12"), db=db)["access_token"]
+    assert core_routes.login(schemas.UserLogin(username="ghost_admin", password="pw-ghost-12"), db=db)["access_token"]
 
     # flip back to Active -> login works again
     db.query(models.CompanyTenant).first().subscription_status = "Active"
     db.commit()
-    assert main.login(schemas.UserLogin(username="apex_admin", password="pw-apex-123"), db=db)["tenant"] == "APEX"
+    assert core_routes.login(schemas.UserLogin(username="apex_admin", password="pw-apex-123"), db=db)["tenant"] == "APEX"
     print("PASS cancelled subscription blocks login (and only that)")
 
 
@@ -302,12 +303,12 @@ def test_trial_expiry_blocks_login():
     db.commit()
 
     try:
-        main.login(schemas.UserLogin(username="oldtrial_admin", password="pw-123456"), db=db)
+        core_routes.login(schemas.UserLogin(username="oldtrial_admin", password="pw-123456"), db=db)
         assert False, "expired trial should 403"
     except HTTPException as e:
         assert e.status_code == 403 and "Trial expired" in e.detail
-    assert main.login(schemas.UserLogin(username="newtrial_admin", password="pw-123456"), db=db)["access_token"]
-    assert main.login(schemas.UserLogin(username="oldactive_admin", password="pw-123456"), db=db)["access_token"]
+    assert core_routes.login(schemas.UserLogin(username="newtrial_admin", password="pw-123456"), db=db)["access_token"]
+    assert core_routes.login(schemas.UserLogin(username="oldactive_admin", password="pw-123456"), db=db)["access_token"]
 
     # days-left surface for the UI
     rows = {r.company_code: r for r in db.query(models.CompanyTenant).all()}
@@ -351,8 +352,8 @@ def test_sim_diagnostics_founder_only():
     only — the allowlist names tenants, which a client must not see."""
     import main
     db = _fresh_session()
-    founder_view = main.platform_status(db=db, current_user={"tenant": "DEFAULT", "role": "Admin"})
-    client_view = main.platform_status(db=db, current_user={"tenant": "APEX", "role": "Admin"})
+    founder_view = core_routes.platform_status(db=db, current_user={"tenant": "DEFAULT", "role": "Admin"})
+    client_view = core_routes.platform_status(db=db, current_user={"tenant": "APEX", "role": "Admin"})
     assert founder_view["sim"]["tenants"] == ["DEFAULT"]
     assert "tick_count" in founder_view["sim"]
     assert "sim" not in client_view

@@ -15,6 +15,7 @@ Guiding principles: incremental (strangler) evolution, never a rewrite; backward
 | [0007](0007-read-models-projections.md) | Read-models: projections that answer one question | Accepted |
 | [0008](0008-tenant-lifecycle-and-commercial-enforcement.md) | Tenant lifecycle & commercial enforcement | Accepted |
 | [0009](0009-modularize-main-route-modules.md) | Modularize main.py by domain (route modules) | Accepted |
+| [0010](0010-oee-money-story-unit-value.md) | The money story: one per-tenant £/good-unit rate | Accepted |
 
 **Recommended order:** 0001 first (smaller, proves the pattern; events carry `tenant_code`), then 0002.
 

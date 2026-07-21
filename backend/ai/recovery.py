@@ -10,7 +10,12 @@ production_records — auto-scoped to the tenant (ADR-0002), no storage; reuses 
 shared pooled OEE so it agrees with every other surface.
 """
 from ai.twin import _recent_production
-from analytics_engine import pooled_oee
+# World-class benchmarks + the shared "component to focus on" definition live in
+# analytics_engine (ADR-0010), so recovery's "biggest lever" and the OEE summary's
+# "biggest drag" are literally the same rule.
+from analytics_engine import (
+    pooled_oee, biggest_lever, WORLD_CLASS_OEE, WORLD_CLASS_COMPONENTS,
+)
 # The single per-tenant £ rate lives in tenancy (shared with the management
 # summary); aliased as _unit_value so the recovery tests can stub it.
 from tenancy import tenant_unit_value as _unit_value
@@ -18,9 +23,6 @@ from tenancy import tenant_unit_value as _unit_value
 name = "recovery"
 
 WINDOW_DAYS = 7
-WORLD_CLASS_OEE = 85
-# Classic world-class component benchmarks: 0.90 x 0.95 x ~0.99 ~= 0.85 OEE.
-WORLD_CLASS_COMPONENTS = {"availability": 90, "performance": 95, "quality": 99}
 
 # The one concrete move that closes each lever's gap — what the owner actually does.
 LEVER_ACTIONS = {
@@ -86,8 +88,10 @@ def build_recovery_summary(db, tenant: str) -> dict:
             "current": current, "target": target,
             "gap_points": max(0, target - current),
         })
-    biggest = max(components, key=lambda c: c["gap_points"])
-    lever_key = biggest["key"] if biggest["gap_points"] > 0 else None
+    # The one lever to fix first — shared definition (biggest gap to world-class),
+    # identical to the OEE summary's "biggest drag".
+    lever_key = biggest_lever(o)
+    biggest = next((c for c in components if c["key"] == lever_key), None)
 
     # Value the recoverable output in £ only when the tenant has set a per-unit
     # rate; otherwise leave the £ fields null and report units only.

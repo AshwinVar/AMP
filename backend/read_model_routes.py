@@ -125,6 +125,14 @@ def get_losses_summary(db: Session = Depends(_get_db), current_user: dict = Depe
     return ai.losses.build_losses_summary(db, request_tenant(current_user))
 
 
+@router.get("/recovery-summary")
+def get_recovery_summary(db: Session = Depends(_get_db), current_user: dict = Depends(get_current_user)):
+    # OEE recovery opportunity (ADR-0007): the gap to the world-class benchmark
+    # and what closing it is worth in recoverable good units (window + annualised),
+    # with the per-factor gap so the biggest lever is obvious.
+    return ai.recovery.build_recovery_summary(db, request_tenant(current_user))
+
+
 @router.get("/briefing")
 def get_briefing(db: Session = Depends(_get_db), current_user: dict = Depends(get_current_user)):
     # Morning briefing (ADR-0007): the "what needs attention right now" digest —

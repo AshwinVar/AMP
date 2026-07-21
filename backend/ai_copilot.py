@@ -273,7 +273,7 @@ def _ask_llm(system: str, user: str) -> str:
     return result
 
 
-router = APIRouter(prefix="/ai", tags=["AI Copilot"])
+router = APIRouter(prefix="/ai", tags=["AI Copilot"], dependencies=[Depends(get_current_user)])
 
 
 def get_db():

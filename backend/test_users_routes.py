@@ -38,7 +38,34 @@ def test_valid_roles_moved_with_module():
     print("PASS VALID_ROLES moved to users_routes and removed from main")
 
 
+def test_every_users_route_is_admin_gated_at_router_level():
+    # The Admin gate is hoisted onto the APIRouter (dependencies=[...]), so every
+    # /users route — current and future — must carry the require_roles checker.
+    users = [r for r in main.app.routes if getattr(r, "path", "").startswith("/users")]
+    assert users, "no /users routes registered"
+    for r in users:
+        names = [getattr(d.call, "__qualname__", "") for d in r.dependant.dependencies]
+        assert any("role_checker" in n for n in names), \
+            f"{r.path} {r.methods} lost the router-level Admin gate"
+    print(f"PASS all {len(users)} /users routes carry the router-level Admin gate")
+
+
+def test_admin_gate_rejects_non_admin():
+    import auth
+    from fastapi import HTTPException
+    checker = auth.require_roles(["Admin"])
+    try:
+        checker(current_user={"sub": "o", "role": "Operator"})
+        assert False, "non-Admin should be rejected by the users router gate"
+    except HTTPException as e:
+        assert e.status_code == 403
+    assert checker(current_user={"sub": "a", "role": "Admin"})["role"] == "Admin"
+    print("PASS the Admin gate rejects non-Admin (403) and passes Admin")
+
+
 if __name__ == "__main__":
     test_users_paths_owned_by_module()
     test_valid_roles_moved_with_module()
+    test_every_users_route_is_admin_gated_at_router_level()
+    test_admin_gate_rejects_non_admin()
     print("ALL USERS ROUTE TESTS PASSED")

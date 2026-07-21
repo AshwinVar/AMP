@@ -1,10 +1,12 @@
 """User-management routes — admin CRUD over workspace employees.
 
 Admin-only management of the users in a tenant workspace: add employee, list,
-change role, delete, and admin password reset. All endpoints are gated by
-require_roles(["Admin"]); new users are stamped with the request's tenant
-(request_tenant) and mutations are audit-logged (log_audit). Peeled out of
-main.py per ADR-0009.
+change role, delete, and admin password reset. The whole module is gated by one
+router-level dependency — require_roles(["Admin"]) on the APIRouter — so every
+endpoint (and any future one) requires Admin without repeating the check;
+handlers take current_user via get_current_user only for the value they use (new
+users are stamped with the request's tenant, mutations are audit-logged). Peeled
+out of main.py per ADR-0009.
 """
 from typing import List
 
@@ -14,7 +16,7 @@ from sqlalchemy.orm import Session
 
 import models
 import schemas
-from auth import require_roles
+from auth import get_current_user, require_roles
 from database import SessionLocal
 from platform_routes import log_audit
 from security import hash_password
@@ -32,14 +34,14 @@ def _get_db():
         db.close()
 
 
-router = APIRouter(prefix="/users", tags=["Users"])
+router = APIRouter(prefix="/users", tags=["Users"], dependencies=[Depends(require_roles(["Admin"]))])
 
 
 @router.post("", response_model=schemas.UserResponse)
 def create_employee(
     user: schemas.UserCreate,
     db: Session = Depends(_get_db),
-    current_user: dict = Depends(require_roles(["Admin"])),
+    current_user: dict = Depends(get_current_user),
 ):
     """Admin adds an employee into the current workspace's tenant. For a tenant
     Admin that's always their own company; for the founder it follows the
@@ -72,7 +74,7 @@ def create_employee(
 
 
 @router.get("", response_model=List[schemas.UserResponse])
-def list_users(db: Session = Depends(_get_db), current_user: dict = Depends(require_roles(["Admin"]))):
+def list_users(db: Session = Depends(_get_db), current_user: dict = Depends(get_current_user)):
     tenant = request_tenant(current_user)
     q = db.query(models.User)
     if tenant == "DEFAULT":
@@ -87,7 +89,7 @@ def update_user_role(
     user_id: int,
     payload: schemas.UserRoleUpdate,
     db: Session = Depends(_get_db),
-    current_user: dict = Depends(require_roles(["Admin"])),
+    current_user: dict = Depends(get_current_user),
 ):
     if payload.role not in VALID_ROLES:
         raise HTTPException(status_code=400, detail="Invalid role")
@@ -110,7 +112,7 @@ def update_user_role(
 def delete_user(
     user_id: int,
     db: Session = Depends(_get_db),
-    current_user: dict = Depends(require_roles(["Admin"])),
+    current_user: dict = Depends(get_current_user),
 ):
     user = db.query(models.User).filter(models.User.id == user_id).first()
 
@@ -135,7 +137,7 @@ def reset_user_password(
     user_id: int,
     payload: dict,
     db: Session = Depends(_get_db),
-    current_user: dict = Depends(require_roles(["Admin"])),
+    current_user: dict = Depends(get_current_user),
 ):
     """Admin resets an employee's password (within their own company)."""
     user = db.query(models.User).filter(models.User.id == user_id).first()

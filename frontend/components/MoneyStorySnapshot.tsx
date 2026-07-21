@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { apiGet } from "../lib/api";
+import UnitRateEditor from "./UnitRateEditor";
 
 // The money story: the OEE gap and downtime, both valued off the one per-tenant
 // £/good-unit rate. Reads the recovery read-model (upside) and the management
@@ -25,7 +26,7 @@ type Management = {
 const gbp = (n: number) => `£${Math.round(n).toLocaleString()}`;
 const units = (n: number) => Math.round(n).toLocaleString();
 
-export default function MoneyStorySnapshot() {
+export default function MoneyStorySnapshot({ isAdmin = false }: { isAdmin?: boolean }) {
   const [rec, setRec] = useState<Recovery | null>(null);
   const [mgmt, setMgmt] = useState<Management | null>(null);
 
@@ -60,7 +61,7 @@ export default function MoneyStorySnapshot() {
           ) : (
             <span className="text-slate-300">your unit value</span>
           )}
-          {priced ? "" : " — set it on the Overview recovery card to see £"}.
+          {priced ? "" : isAdmin ? " — set your rate below to see £" : " — ask an Admin to set your rate to see £"}.
         </p>
       </div>
 
@@ -92,9 +93,22 @@ export default function MoneyStorySnapshot() {
         </div>
       </div>
 
-      <p className="text-[11px] text-slate-500">
-        Both figures are units × the same £/good-unit — one rate drives the whole dashboard, and stays units-only until you set it.
-      </p>
+      <div className="flex items-center justify-between text-[11px] text-slate-500 gap-3 flex-wrap">
+        <span>
+          Both figures are units × the same £/good-unit — one rate drives the whole dashboard, and stays units-only until you set it.
+        </span>
+        <span className="flex items-center gap-2 whitespace-nowrap">
+          <span>
+            Unit value:{" "}
+            {priced ? (
+              <span className="text-slate-300 tabular-nums">£{rate.toLocaleString()}</span>
+            ) : (
+              <span className="text-slate-500">not set</span>
+            )}
+          </span>
+          <UnitRateEditor rate={rate} isAdmin={isAdmin} onSaved={load} />
+        </span>
+      </div>
     </section>
   );
 }

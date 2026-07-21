@@ -30,6 +30,25 @@ _EMPTY = {
     "recoverable_value_per_year": None, "components": [], "biggest_lever": None,
 }
 
+MINUTES_PER_DAY = 24 * 60
+
+
+def _physical_good(records, good: int, days: int) -> int:
+    """Good output capped at what the machines could physically make in the window.
+
+    We annualise the window x365/days, so the window's good count must reflect at
+    most a real week. A real tenant never exceeds this — a machine can't run more
+    than 24h/day — so this is a no-op on real data. It only tames a simulator that
+    piled more machine-minutes into the window than physically exist (long uptime,
+    parallel workers), which would otherwise annualise into an absurd figure."""
+    machines = len({getattr(r, "machine_id", None) for r in records
+                    if getattr(r, "machine_id", None) is not None}) or 1
+    ceiling = machines * days * MINUTES_PER_DAY          # planned minutes a plant can run
+    planned = sum((getattr(r, "planned_minutes", 0) or 0) for r in records)
+    if planned <= ceiling or planned <= 0:
+        return good
+    return round(good * ceiling / planned)
+
 
 def build_recovery_summary(db, tenant: str) -> dict:
     """The recovery opportunity over the last 7 days: gap to world-class OEE and
@@ -39,7 +58,10 @@ def build_recovery_summary(db, tenant: str) -> dict:
     if not o["has_data"] or o["oee"] <= 0:
         return dict(_EMPTY)
 
-    good = sum(r.good_count or 0 for r in records)
+    # Cap the window's good output at physical capacity before annualising, so a
+    # simulator that over-produced can't blow the per-year figure up (no-op on
+    # real data). OEE is a ratio of sums, so it's unaffected by this.
+    good = _physical_good(records, sum(r.good_count or 0 for r in records), WINDOW_DAYS)
     at_wc = o["oee"] >= WORLD_CLASS_OEE
 
     # First-order: with the same run time, good output scales with OEE. Extra good

@@ -183,7 +183,7 @@ agent_routes.register(app)
 saas_routes.register(app)
 
 # Register the costing endpoints — cost-record CRUD + costing analytics.
-costing_routes.register(app)
+app.include_router(costing_routes.router)
 
 # Register the machine & telemetry CRUD (ADR-0009) — machines, downtime, shifts,
 # production records, and the machine-event stream.
@@ -196,16 +196,16 @@ orders_routes.register(app)
 # Register the factory-ops CRUD (ADR-0009) — escalations, factory layout,
 # documents, maintenance tasks, notifications (+ their generators).
 factory_ops_routes.register(app)
-work_orders_routes.register(app)
-inventory_routes.register(app)
-quality_routes.register(app)
-production_planning_routes.register(app)
-industrial_iot_routes.register(app)
-operator_routes.register(app)
-users_routes.register(app)
+app.include_router(work_orders_routes.router)
+app.include_router(inventory_routes.router)
+app.include_router(quality_routes.router)
+app.include_router(production_planning_routes.router)
+app.include_router(industrial_iot_routes.router)
+app.include_router(operator_routes.router)
+app.include_router(users_routes.router)
 reports_routes.register(app)
 analytics_routes.register(app)
-recommendations_routes.register(app)
+app.include_router(recommendations_routes.router)
 
 # Register the AI Factory Copilot behind the platform (off until ANTHROPIC_API_KEY is set).
 ai.copilot.register(app)

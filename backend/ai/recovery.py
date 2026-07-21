@@ -9,9 +9,11 @@ world-class target so the biggest lever is obvious. A read-model over
 production_records — auto-scoped to the tenant (ADR-0002), no storage; reuses the
 shared pooled OEE so it agrees with every other surface.
 """
-import models
 from ai.twin import _recent_production
 from analytics_engine import pooled_oee
+# The single per-tenant £ rate lives in tenancy (shared with the management
+# summary); aliased as _unit_value so the recovery tests can stub it.
+from tenancy import tenant_unit_value as _unit_value
 
 name = "recovery"
 
@@ -27,13 +29,6 @@ _EMPTY = {
     "unit_value_gbp": None, "recoverable_value_window": None,
     "recoverable_value_per_year": None, "components": [], "biggest_lever": None,
 }
-
-
-def _unit_value(db, tenant: str):
-    """The tenant's configured £ per good unit (TenantConfig.unit_value_gbp), or
-    None if unset — in which case recovery reports units only, never a made-up £."""
-    c = db.query(models.TenantConfig).filter(models.TenantConfig.tenant_code == tenant).first()
-    return c.unit_value_gbp if c else None
 
 
 def build_recovery_summary(db, tenant: str) -> dict:

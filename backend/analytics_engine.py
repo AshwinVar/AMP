@@ -93,7 +93,7 @@ def build_oee_trends(records):
     return rows
 
 
-def build_management_summary(machines, downtime_logs, shifts, production_records):
+def build_management_summary(machines, downtime_logs, shifts, production_records, unit_value_gbp=None):
     reason_minutes = defaultdict(int)
     machine_minutes = defaultdict(int)
 
@@ -131,6 +131,18 @@ def build_management_summary(machines, downtime_logs, shifts, production_records
     actual_output = sum(shift.actual_output for shift in shifts)
     target_achievement = round((actual_output / target_output) * 100) if target_output else 0
 
+    # Value the downtime as lost OUTPUT: at the observed run-rate (good units per
+    # minute of run time), the downtime would have produced this many good units.
+    good = sum(r.good_count or 0 for r in production_records)
+    runtime = sum(r.runtime_minutes or 0 for r in production_records)
+    estimated_loss_units = round(total_downtime * (good / runtime)) if runtime else 0
+    if unit_value_gbp:
+        # Money = lost units x the tenant's configured £/good-unit.
+        estimated_loss_value = round(estimated_loss_units * unit_value_gbp)
+    else:
+        # No rate configured — fall back to the legacy £8/min downtime proxy.
+        estimated_loss_value = total_downtime * 8
+
     return {
         "avg_oee": avg_oee,
         "avg_availability": avg_availability,
@@ -143,7 +155,9 @@ def build_management_summary(machines, downtime_logs, shifts, production_records
         "target_output": target_output,
         "actual_output": actual_output,
         "target_achievement": target_achievement,
-        "estimated_loss_value": total_downtime * 8,
+        "estimated_loss_units": estimated_loss_units,
+        "unit_value_gbp": unit_value_gbp,
+        "estimated_loss_value": estimated_loss_value,
         "breakdown_count": len([machine for machine in machines if machine.status == "Breakdown"]),
         "machine_count": len(machines),
     }

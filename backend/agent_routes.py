@@ -8,7 +8,7 @@ approve/reject) advance an AgentAction under human oversight (ADR-0005).
 """
 from collections import Counter
 
-from fastapi import Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
 import ai
@@ -52,78 +52,89 @@ def _decide_agent_action(action_id, decision, db, current_user):
     return _agent_action_dict(action)
 
 
-def register(app):
-    @app.get("/agent-actions")
-    def list_agent_actions(status: str = None, db: Session = Depends(_get_db), current_user: dict = Depends(get_current_user)):
-        # Agent activity log + approval queue (ADR-0005), tenant-scoped.
-        tenant = request_tenant(current_user)
-        q = db.query(models.AgentAction).filter(models.AgentAction.tenant_code == tenant)
-        if status:
-            q = q.filter(models.AgentAction.status == status)
-        rows = q.order_by(models.AgentAction.created_at.desc()).limit(300).all()
-        return [_agent_action_dict(a) for a in rows]
+router = APIRouter()
 
-    @app.get("/agent-actions/stats")
-    def agent_action_stats(db: Session = Depends(_get_db), current_user: dict = Depends(get_current_user)):
-        # Agent oversight metrics (ADR-0005), tenant-scoped.
-        tenant = request_tenant(current_user)
-        rows = db.query(models.AgentAction).filter(models.AgentAction.tenant_code == tenant).all()
-        by_status = Counter(r.status for r in rows)
-        by_agent = Counter(r.agent for r in rows)
-        return {
-            "total": len(rows),
-            "proposed": by_status.get("Proposed", 0),
-            "approved": by_status.get("Approved", 0),
-            "rejected": by_status.get("Rejected", 0),
-            "auto_approved": sum(1 for r in rows if r.decided_by == "auto-policy"),
-            "by_agent": dict(by_agent),   # every agent that has acted (maintenance/quality/reorder/escalation/…)
-        }
 
-    @app.get("/agent-actions/impact")
-    def agent_action_impact(db: Session = Depends(_get_db), current_user: dict = Depends(get_current_user)):
-        # Agent Impact (ADR-0005): executive rollup of what the agent fleet has produced,
-        # how much ran autonomously, and what's still awaiting a human — tenant-scoped.
-        return ai.impact.build_impact(db, request_tenant(current_user))
+@router.get("/agent-actions")
+def list_agent_actions(status: str = None, db: Session = Depends(_get_db), current_user: dict = Depends(get_current_user)):
+    # Agent activity log + approval queue (ADR-0005), tenant-scoped.
+    tenant = request_tenant(current_user)
+    q = db.query(models.AgentAction).filter(models.AgentAction.tenant_code == tenant)
+    if status:
+        q = q.filter(models.AgentAction.status == status)
+    rows = q.order_by(models.AgentAction.created_at.desc()).limit(300).all()
+    return [_agent_action_dict(a) for a in rows]
 
-    @app.get("/agent-roster")
-    def agent_roster(db: Session = Depends(_get_db), current_user: dict = Depends(get_current_user)):
-        # Agent Roster (ADR-0004/0005): the AI workforce — each agent's role, autonomy,
-        # and live activity, tenant-scoped.
-        return ai.roster.build_roster(db, request_tenant(current_user))
 
-    @app.get("/agent-policy")
-    def get_agent_policy(db: Session = Depends(_get_db), current_user: dict = Depends(get_current_user)):
-        # Agent autonomy policy (ADR-0004/0005): which agents may act without a human,
-        # per-tenant, with the platform default as fallback.
-        return ai.roster.build_agent_policy(db, request_tenant(current_user))
+@router.get("/agent-actions/stats")
+def agent_action_stats(db: Session = Depends(_get_db), current_user: dict = Depends(get_current_user)):
+    # Agent oversight metrics (ADR-0005), tenant-scoped.
+    tenant = request_tenant(current_user)
+    rows = db.query(models.AgentAction).filter(models.AgentAction.tenant_code == tenant).all()
+    by_status = Counter(r.status for r in rows)
+    by_agent = Counter(r.agent for r in rows)
+    return {
+        "total": len(rows),
+        "proposed": by_status.get("Proposed", 0),
+        "approved": by_status.get("Approved", 0),
+        "rejected": by_status.get("Rejected", 0),
+        "auto_approved": sum(1 for r in rows if r.decided_by == "auto-policy"),
+        "by_agent": dict(by_agent),   # every agent that has acted (maintenance/quality/reorder/escalation/…)
+    }
 
-    @app.put("/agent-policy")
-    def update_agent_policy(payload: schemas.AgentPolicyUpdate, db: Session = Depends(_get_db),
-                            current_user: dict = Depends(require_roles(["Admin"]))):
-        # Changing which agents act autonomously is a trust decision — Admin only.
-        ai.agents.set_agent_policy(db, request_tenant(current_user), payload.auto_approve)
-        return ai.roster.build_agent_policy(db, request_tenant(current_user))
 
-    @app.get("/agent-roster/{agent_key}")
-    def agent_detail(agent_key: str, db: Session = Depends(_get_db), current_user: dict = Depends(get_current_user)):
-        # Agent detail (ADR-0004/0005): the single-agent cockpit — role, autonomy,
-        # decision tally with an approval rate, produced outputs, a 7-day activity
-        # series, and recent actions. 404 for an unknown agent.
-        detail = ai.roster.build_agent_detail(db, request_tenant(current_user), agent_key)
-        if detail is None:
-            raise HTTPException(status_code=404, detail="Unknown agent")
-        return detail
+@router.get("/agent-actions/impact")
+def agent_action_impact(db: Session = Depends(_get_db), current_user: dict = Depends(get_current_user)):
+    # Agent Impact (ADR-0005): executive rollup of what the agent fleet has produced,
+    # how much ran autonomously, and what's still awaiting a human — tenant-scoped.
+    return ai.impact.build_impact(db, request_tenant(current_user))
 
-    @app.get("/agent-actions/trend")
-    def agent_action_trend(db: Session = Depends(_get_db), current_user: dict = Depends(get_current_user)):
-        # Agent activity trend (ADR-0005/0007): last-7-days daily action counts for a
-        # sparkline of how busy the fleet has been, tenant-scoped.
-        return ai.trends.build_agent_trend(db, request_tenant(current_user))
 
-    @app.post("/agent-actions/{action_id}/approve")
-    def approve_agent_action(action_id: int, db: Session = Depends(_get_db), current_user: dict = Depends(require_roles(["Admin", "Supervisor"]))):
-        return _decide_agent_action(action_id, "approve", db, current_user)
+@router.get("/agent-roster")
+def agent_roster(db: Session = Depends(_get_db), current_user: dict = Depends(get_current_user)):
+    # Agent Roster (ADR-0004/0005): the AI workforce — each agent's role, autonomy,
+    # and live activity, tenant-scoped.
+    return ai.roster.build_roster(db, request_tenant(current_user))
 
-    @app.post("/agent-actions/{action_id}/reject")
-    def reject_agent_action(action_id: int, db: Session = Depends(_get_db), current_user: dict = Depends(require_roles(["Admin", "Supervisor"]))):
-        return _decide_agent_action(action_id, "reject", db, current_user)
+
+@router.get("/agent-policy")
+def get_agent_policy(db: Session = Depends(_get_db), current_user: dict = Depends(get_current_user)):
+    # Agent autonomy policy (ADR-0004/0005): which agents may act without a human,
+    # per-tenant, with the platform default as fallback.
+    return ai.roster.build_agent_policy(db, request_tenant(current_user))
+
+
+@router.put("/agent-policy")
+def update_agent_policy(payload: schemas.AgentPolicyUpdate, db: Session = Depends(_get_db),
+                        current_user: dict = Depends(require_roles(["Admin"]))):
+    # Changing which agents act autonomously is a trust decision — Admin only.
+    ai.agents.set_agent_policy(db, request_tenant(current_user), payload.auto_approve)
+    return ai.roster.build_agent_policy(db, request_tenant(current_user))
+
+
+@router.get("/agent-roster/{agent_key}")
+def agent_detail(agent_key: str, db: Session = Depends(_get_db), current_user: dict = Depends(get_current_user)):
+    # Agent detail (ADR-0004/0005): the single-agent cockpit — role, autonomy,
+    # decision tally with an approval rate, produced outputs, a 7-day activity
+    # series, and recent actions. 404 for an unknown agent.
+    detail = ai.roster.build_agent_detail(db, request_tenant(current_user), agent_key)
+    if detail is None:
+        raise HTTPException(status_code=404, detail="Unknown agent")
+    return detail
+
+
+@router.get("/agent-actions/trend")
+def agent_action_trend(db: Session = Depends(_get_db), current_user: dict = Depends(get_current_user)):
+    # Agent activity trend (ADR-0005/0007): last-7-days daily action counts for a
+    # sparkline of how busy the fleet has been, tenant-scoped.
+    return ai.trends.build_agent_trend(db, request_tenant(current_user))
+
+
+@router.post("/agent-actions/{action_id}/approve")
+def approve_agent_action(action_id: int, db: Session = Depends(_get_db), current_user: dict = Depends(require_roles(["Admin", "Supervisor"]))):
+    return _decide_agent_action(action_id, "approve", db, current_user)
+
+
+@router.post("/agent-actions/{action_id}/reject")
+def reject_agent_action(action_id: int, db: Session = Depends(_get_db), current_user: dict = Depends(require_roles(["Admin", "Supervisor"]))):
+    return _decide_agent_action(action_id, "reject", db, current_user)

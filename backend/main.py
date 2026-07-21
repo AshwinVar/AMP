@@ -172,30 +172,30 @@ platform_routes.register(app)
 
 # Register the read-model projection endpoints (ADR-0007) — the pillar summaries,
 # briefing, scorecard, twin, search, weekly report and rule-first copilot.
-read_model_routes.register(app)
+app.include_router(read_model_routes.router)
 
 # Register the agent oversight endpoints (ADR-0004/0005) — activity log + approval
 # queue, roster, autonomy policy, impact, trend, and human approve/reject.
-agent_routes.register(app)
+app.include_router(agent_routes.router)
 
 # Register the SaaS / tenant-lifecycle endpoints (ADR-0008) — the founder's
 # control plane: registry, onboarding, admin provisioning, plan/status, delete.
-saas_routes.register(app)
+app.include_router(saas_routes.router)
 
 # Register the costing endpoints — cost-record CRUD + costing analytics.
 app.include_router(costing_routes.router)
 
 # Register the machine & telemetry CRUD (ADR-0009) — machines, downtime, shifts,
 # production records, and the machine-event stream.
-machines_routes.register(app)
+app.include_router(machines_routes.router)
 
 # Register the orders & procurement CRUD (ADR-0009) — customer orders, suppliers,
 # purchase orders, their analytics, CSV export, and escalation generation.
-orders_routes.register(app)
+app.include_router(orders_routes.router)
 
 # Register the factory-ops CRUD (ADR-0009) — escalations, factory layout,
 # documents, maintenance tasks, notifications (+ their generators).
-factory_ops_routes.register(app)
+app.include_router(factory_ops_routes.router)
 app.include_router(work_orders_routes.router)
 app.include_router(inventory_routes.router)
 app.include_router(quality_routes.router)
@@ -204,7 +204,7 @@ app.include_router(industrial_iot_routes.router)
 app.include_router(operator_routes.router)
 app.include_router(users_routes.router)
 reports_routes.register(app)
-analytics_routes.register(app)
+app.include_router(analytics_routes.router)
 app.include_router(recommendations_routes.router)
 
 # Register the AI Factory Copilot behind the platform (off until ANTHROPIC_API_KEY is set).

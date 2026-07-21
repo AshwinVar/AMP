@@ -163,6 +163,24 @@ prefix there would change URLs or need splitting. Both changes were verified
 against a captured path+method baseline: **byte-for-byte identical, 237
 endpoints, zero URL drift**, not merely the same count.
 
-That closes the opportunistic polish too. `dependencies=` at the router level
-(e.g. hoisting `require_roles` off every handler in an admin-only module) remains
-available if a module ever wants it, but nothing pending calls for it.
+**Router-level dependencies where the gate is uniform.** `users_routes` was the
+one module where every endpoint carried the *same* auth gate — all five were
+`require_roles(["Admin"])` — so the gate moved onto the router once,
+`APIRouter(..., dependencies=[Depends(require_roles(["Admin"]))])` (#176). Now any
+endpoint added to that module inherits the Admin requirement structurally and
+can't ship ungated by omission. The handlers still receive `current_user` (they
+stamp the tenant and audit-log), but via `Depends(get_current_user)`; the router
+enforces the role, and FastAPI caches `get_current_user` so the token is decoded
+once. Behaviour is identical — verified by route introspection (all five `/users`
+routes still carry the `require_roles` checker) and by the gate rejecting a
+non-Admin (403) and passing an Admin, both locked in by guard tests.
+
+This is deliberately **not** applied elsewhere. The move is only safe when a
+module's gate is *uniform*: the rest mix roles by design — `saas_routes`, for
+instance, gates writes with Admin + a founder check but leaves the registry reads
+open to any authenticated user (`_registry_scope`), so a router-wide Admin
+dependency would change who can reach those reads. `read_model_routes` and
+`ai_copilot` are uniform but on `get_current_user` (authenticated, not admin), so
+they aren't admin-only. A router-level dependency is a per-module judgement, not a
+blanket pass. With this, the ADR-0009 programme is complete on every axis — size,
+shape, metadata, and auth-gating.

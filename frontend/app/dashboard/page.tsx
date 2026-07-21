@@ -29,6 +29,7 @@ import IndustrialConnectivity from "../../components/IndustrialConnectivity";
 import type { User } from "../../lib/types";
 import QualitySection from "../../components/QualitySection";
 import ExecutiveOeeSection from "../../components/ExecutiveOeeSection";
+import MoneyStorySnapshot from "../../components/MoneyStorySnapshot";
 import FactoryPulse from "../../components/FactoryPulse";
 import QualitySnapshot from "../../components/QualitySnapshot";
 import DowntimeSnapshot from "../../components/DowntimeSnapshot";
@@ -2624,7 +2625,10 @@ export default function DashboardPage() {
       ))}
 
       {renderSection("executive", (
-        <ExecutiveOeeSection data={executiveOee} />
+        <>
+          <ExecutiveOeeSection data={executiveOee} />
+          <MoneyStorySnapshot />
+        </>
       ))}
 
       {renderSection("digitaltwin", (

@@ -146,10 +146,10 @@ def tick_industrial(db):
         db.commit()
 
 
-router = APIRouter()
+router = APIRouter(prefix="/industrial", tags=["Industrial Adapters"])
 
 
-@router.get("/industrial/protocols")
+@router.get("/protocols")
 def industrial_protocols():
     """The supported protocol adapters — the connectivity surface AMP speaks."""
     return PROTOCOLS

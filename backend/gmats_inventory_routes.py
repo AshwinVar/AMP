@@ -43,7 +43,7 @@ def _guard_record(current_user, record_tenant):
         raise HTTPException(status_code=403, detail="This record belongs to another company")
 
 
-router = APIRouter(tags=["GMATS Inventory"])
+router = APIRouter(prefix="/gmats", tags=["GMATS Inventory"])
 
 
 def get_db():
@@ -81,14 +81,14 @@ def _item_dict(db, item):
 # ── Items / Stock ─────────────────────────────────────────────
 
 
-@router.get("/gmats/items")
+@router.get("/items")
 def gmats_items(tenant: str = "GMATS", db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
     tenant = _effective_tenant(current_user, tenant)
     rows = db.query(models.GmatsItem).filter(models.GmatsItem.tenant_code == tenant).order_by(models.GmatsItem.item_name).all()
     return [_item_dict(db, r) for r in rows]
 
 
-@router.get("/gmats/summary")
+@router.get("/summary")
 def gmats_summary(tenant: str = "GMATS", db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
     tenant = _effective_tenant(current_user, tenant)
     rows = db.query(models.GmatsItem).filter(models.GmatsItem.tenant_code == tenant).all()
@@ -108,7 +108,7 @@ def gmats_summary(tenant: str = "GMATS", db: Session = Depends(get_db), current_
     }
 
 
-@router.post("/gmats/items")
+@router.post("/items")
 def gmats_create_item(payload: dict, db: Session = Depends(get_db), current_user: dict = Depends(require_roles(["Admin", "Supervisor"]))):
     item = models.GmatsItem(
         tenant_code=_effective_tenant(current_user, payload.get("tenant")),
@@ -131,7 +131,7 @@ def gmats_create_item(payload: dict, db: Session = Depends(get_db), current_user
     return _item_dict(db, item)
 
 
-@router.patch("/gmats/items/{item_id}")
+@router.patch("/items/{item_id}")
 def gmats_update_item(item_id: int, payload: dict, db: Session = Depends(get_db), current_user: dict = Depends(require_roles(["Admin", "Supervisor"]))):
     item = db.query(models.GmatsItem).filter(models.GmatsItem.id == item_id).first()
     if not item:
@@ -147,7 +147,7 @@ def gmats_update_item(item_id: int, payload: dict, db: Session = Depends(get_db)
     return _item_dict(db, item)
 
 
-@router.post("/gmats/items/{item_id}/stock-in")
+@router.post("/items/{item_id}/stock-in")
 def gmats_stock_in(item_id: int, payload: dict, db: Session = Depends(get_db), current_user: dict = Depends(require_roles(["Admin", "Supervisor"]))):
     """Purchase entry / stock inward — increases physical stock."""
     item = db.query(models.GmatsItem).filter(models.GmatsItem.id == item_id).first()
@@ -166,7 +166,7 @@ def gmats_stock_in(item_id: int, payload: dict, db: Session = Depends(get_db), c
 # ── Aliases ───────────────────────────────────────────────────
 
 
-@router.post("/gmats/items/{item_id}/aliases")
+@router.post("/items/{item_id}/aliases")
 def gmats_add_alias(item_id: int, payload: dict, db: Session = Depends(get_db), current_user: dict = Depends(require_roles(["Admin", "Supervisor"]))):
     item = db.query(models.GmatsItem).filter(models.GmatsItem.id == item_id).first()
     if not item:
@@ -179,7 +179,7 @@ def gmats_add_alias(item_id: int, payload: dict, db: Session = Depends(get_db), 
     return _item_dict(db, item)
 
 
-@router.get("/gmats/resolve")
+@router.get("/resolve")
 def gmats_resolve(name: str, tenant: str = "GMATS", db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
     """Resolve any alias / code / name to the single master item — demonstrates the alias system."""
     tenant = _effective_tenant(current_user, tenant)
@@ -199,7 +199,7 @@ def gmats_resolve(name: str, tenant: str = "GMATS", db: Session = Depends(get_db
 # ── Proforma Invoice (reserve stock) ──────────────────────────
 
 
-@router.get("/gmats/proformas")
+@router.get("/proformas")
 def gmats_proformas(tenant: str = "GMATS", db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
     tenant = _effective_tenant(current_user, tenant)
     rows = db.query(models.GmatsProforma).filter(models.GmatsProforma.tenant_code == tenant).order_by(models.GmatsProforma.id.desc()).all()
@@ -220,7 +220,7 @@ def gmats_proformas(tenant: str = "GMATS", db: Session = Depends(get_db), curren
     return out
 
 
-@router.post("/gmats/proformas")
+@router.post("/proformas")
 def gmats_create_proforma(payload: dict, db: Session = Depends(get_db), current_user: dict = Depends(require_roles(["Admin", "Supervisor"]))):
     tenant = _effective_tenant(current_user, payload.get("tenant"))
     lines = payload.get("lines", [])
@@ -252,7 +252,7 @@ def gmats_create_proforma(payload: dict, db: Session = Depends(get_db), current_
     return {"id": p.id, "proforma_no": p.proforma_no}
 
 
-@router.patch("/gmats/proformas/{pid}/cancel")
+@router.patch("/proformas/{pid}/cancel")
 def gmats_cancel_proforma(pid: int, db: Session = Depends(get_db), current_user: dict = Depends(require_roles(["Admin", "Supervisor"]))):
     p = db.query(models.GmatsProforma).filter(models.GmatsProforma.id == pid).first()
     if not p or p.status != "Open":
@@ -270,7 +270,7 @@ def gmats_cancel_proforma(pid: int, db: Session = Depends(get_db), current_user:
 # ── Tax Invoice (final deduction) ─────────────────────────────
 
 
-@router.get("/gmats/invoices")
+@router.get("/invoices")
 def gmats_invoices(tenant: str = "GMATS", db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
     tenant = _effective_tenant(current_user, tenant)
     rows = db.query(models.GmatsInvoice).filter(models.GmatsInvoice.tenant_code == tenant).order_by(models.GmatsInvoice.id.desc()).all()
@@ -281,7 +281,7 @@ def gmats_invoices(tenant: str = "GMATS", db: Session = Depends(get_db), current
     ]
 
 
-@router.post("/gmats/proformas/{pid}/invoice")
+@router.post("/proformas/{pid}/invoice")
 def gmats_generate_invoice(pid: int, db: Session = Depends(get_db), current_user: dict = Depends(require_roles(["Admin", "Supervisor"]))):
     """Generate Tax Invoice from a proforma: deduct physical, clear the reservation."""
     p = db.query(models.GmatsProforma).filter(models.GmatsProforma.id == pid).first()
@@ -310,7 +310,7 @@ def gmats_generate_invoice(pid: int, db: Session = Depends(get_db), current_user
 # ── Material Issue Note (free spares with a machine) ──────────
 
 
-@router.get("/gmats/min")
+@router.get("/min")
 def gmats_min_list(tenant: str = "GMATS", db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
     tenant = _effective_tenant(current_user, tenant)
     rows = db.query(models.GmatsMIN).filter(models.GmatsMIN.tenant_code == tenant).order_by(models.GmatsMIN.id.desc()).all()
@@ -331,7 +331,7 @@ def gmats_min_list(tenant: str = "GMATS", db: Session = Depends(get_db), current
     return out
 
 
-@router.post("/gmats/min")
+@router.post("/min")
 def gmats_create_min(payload: dict, db: Session = Depends(get_db), current_user: dict = Depends(require_roles(["Admin", "Supervisor"]))):
     tenant = _effective_tenant(current_user, payload.get("tenant"))
     lines = payload.get("lines", [])
@@ -364,7 +364,7 @@ def gmats_create_min(payload: dict, db: Session = Depends(get_db), current_user:
 # ── Admin corrections (fix operator mistakes) ─────────────────
 
 
-@router.post("/gmats/items/{item_id}/correct")
+@router.post("/items/{item_id}/correct")
 def gmats_correct_item(item_id: int, payload: dict, db: Session = Depends(get_db), current_user: dict = Depends(require_roles(["Admin"]))):
     """Admin directly corrects an item's stock figures (e.g. a wrong stock-in)."""
     item = db.query(models.GmatsItem).filter(models.GmatsItem.id == item_id).first()
@@ -383,7 +383,7 @@ def gmats_correct_item(item_id: int, payload: dict, db: Session = Depends(get_db
     return _item_dict(db, item)
 
 
-@router.delete("/gmats/items/{item_id}")
+@router.delete("/items/{item_id}")
 def gmats_delete_item(item_id: int, db: Session = Depends(get_db), current_user: dict = Depends(require_roles(["Admin"]))):
     """Admin deletes an item (and its aliases) — e.g. a wrongly imported row."""
     item = db.query(models.GmatsItem).filter(models.GmatsItem.id == item_id).first()
@@ -396,7 +396,7 @@ def gmats_delete_item(item_id: int, db: Session = Depends(get_db), current_user:
     return {"ok": True}
 
 
-@router.delete("/gmats/invoices/{inv_id}")
+@router.delete("/invoices/{inv_id}")
 def gmats_void_invoice(inv_id: int, db: Session = Depends(get_db), current_user: dict = Depends(require_roles(["Admin"]))):
     """Admin voids a tax invoice: restores the deducted physical stock and cancels the proforma."""
     inv = db.query(models.GmatsInvoice).filter(models.GmatsInvoice.id == inv_id).first()
@@ -417,7 +417,7 @@ def gmats_void_invoice(inv_id: int, db: Session = Depends(get_db), current_user:
     return {"ok": True}
 
 
-@router.delete("/gmats/min/{min_id}")
+@router.delete("/min/{min_id}")
 def gmats_void_min(min_id: int, db: Session = Depends(get_db), current_user: dict = Depends(require_roles(["Admin"]))):
     """Admin voids a material issue note: restores the issued free-spare stock."""
     m = db.query(models.GmatsMIN).filter(models.GmatsMIN.id == min_id).first()
@@ -439,7 +439,7 @@ def gmats_void_min(min_id: int, db: Session = Depends(get_db), current_user: dic
 # ── CSV import (Tally / Excel) ────────────────────────────────
 
 
-@router.post("/gmats/import-csv")
+@router.post("/import-csv")
 async def gmats_import_csv(
     file: UploadFile = File(...),
     tenant: str = "GMATS",

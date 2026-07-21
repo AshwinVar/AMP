@@ -273,7 +273,7 @@ def _ask_llm(system: str, user: str) -> str:
     return result
 
 
-router = APIRouter(tags=["AI Copilot"])
+router = APIRouter(prefix="/ai", tags=["AI Copilot"])
 
 
 def get_db():
@@ -284,7 +284,7 @@ def get_db():
         db.close()
 
 
-@router.get("/ai/status")
+@router.get("/status")
 def ai_status(current_user: dict = Depends(get_current_user)):
     """Lets the UI show 'connect to enable' vs the live copilot."""
     result = {"enabled": _ai_enabled(), "provider": _provider() if _ai_enabled() else None,
@@ -296,7 +296,7 @@ def ai_status(current_user: dict = Depends(get_current_user)):
     return result
 
 
-@router.post("/ai/ask")
+@router.post("/ask")
 def ai_ask(payload: dict, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
     if not _ai_enabled():
         raise HTTPException(status_code=503, detail="AI copilot not connected. Set ANTHROPIC_API_KEY to enable.")
@@ -331,7 +331,7 @@ def ai_ask(payload: dict, db: Session = Depends(get_db), current_user: dict = De
     return {"answer": answer, "model": _current_model(), "source": "llm"}
 
 
-@router.post("/ai/report")
+@router.post("/report")
 def ai_report(db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
     if not _ai_enabled():
         raise HTTPException(status_code=503, detail="AI copilot not connected. Set ANTHROPIC_API_KEY to enable.")

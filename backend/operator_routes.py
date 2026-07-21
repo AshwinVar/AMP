@@ -25,15 +25,15 @@ def _get_db():
         db.close()
 
 
-router = APIRouter(tags=["Operator"])
+router = APIRouter(prefix="/operator", tags=["Operator"])
 
 
-@router.get("/operator/executions", response_model=List[schemas.OperatorJobExecutionResponse])
+@router.get("/executions", response_model=List[schemas.OperatorJobExecutionResponse])
 def get_operator_executions(db: Session = Depends(_get_db), current_user: dict = Depends(get_current_user)):
     return db.query(models.OperatorJobExecution).order_by(models.OperatorJobExecution.id.desc()).limit(500).all()
 
 
-@router.post("/operator/executions", response_model=schemas.OperatorJobExecutionResponse)
+@router.post("/executions", response_model=schemas.OperatorJobExecutionResponse)
 def create_operator_execution(execution: schemas.OperatorJobExecutionCreate, db: Session = Depends(_get_db), current_user: dict = Depends(require_roles(["Admin", "Supervisor", "Operator"]))):
     existing = db.query(models.OperatorJobExecution).filter(models.OperatorJobExecution.execution_no == execution.execution_no).first()
     if existing:
@@ -50,7 +50,7 @@ def create_operator_execution(execution: schemas.OperatorJobExecutionCreate, db:
     return row
 
 
-@router.patch("/operator/executions/{execution_id}", response_model=schemas.OperatorJobExecutionResponse)
+@router.patch("/executions/{execution_id}", response_model=schemas.OperatorJobExecutionResponse)
 def update_operator_execution(execution_id: int, payload: schemas.OperatorJobExecutionUpdate, db: Session = Depends(_get_db), current_user: dict = Depends(require_roles(["Admin", "Supervisor", "Operator"]))):
     row = db.query(models.OperatorJobExecution).filter(models.OperatorJobExecution.id == execution_id).first()
     if not row:
@@ -64,7 +64,7 @@ def update_operator_execution(execution_id: int, payload: schemas.OperatorJobExe
     return row
 
 
-@router.delete("/operator/executions/{execution_id}")
+@router.delete("/executions/{execution_id}")
 def delete_operator_execution(execution_id: int, db: Session = Depends(_get_db), current_user: dict = Depends(require_roles(["Admin"]))):
     row = db.query(models.OperatorJobExecution).filter(models.OperatorJobExecution.id == execution_id).first()
     if not row:

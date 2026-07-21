@@ -29,10 +29,10 @@ def _get_db():
         db.close()
 
 
-router = APIRouter(tags=["Inventory"])
+router = APIRouter(prefix="/inventory", tags=["Inventory"])
 
 
-@router.get("/inventory/items", response_model=List[schemas.InventoryItemResponse])
+@router.get("/items", response_model=List[schemas.InventoryItemResponse])
 def get_inventory_items(
     db: Session = Depends(_get_db),
     current_user: dict = Depends(get_current_user),
@@ -45,7 +45,7 @@ def get_inventory_items(
     )
 
 
-@router.post("/inventory/items", response_model=schemas.InventoryItemResponse)
+@router.post("/items", response_model=schemas.InventoryItemResponse)
 def create_inventory_item(
     item: schemas.InventoryItemCreate,
     db: Session = Depends(_get_db),
@@ -68,7 +68,7 @@ def create_inventory_item(
     return new_item
 
 
-@router.patch("/inventory/items/{item_id}", response_model=schemas.InventoryItemResponse)
+@router.patch("/items/{item_id}", response_model=schemas.InventoryItemResponse)
 def update_inventory_item(
     item_id: int,
     payload: schemas.InventoryItemUpdate,
@@ -95,7 +95,7 @@ def update_inventory_item(
     return item
 
 
-@router.delete("/inventory/items/{item_id}")
+@router.delete("/items/{item_id}")
 def delete_inventory_item(
     item_id: int,
     db: Session = Depends(_get_db),
@@ -116,7 +116,7 @@ def delete_inventory_item(
     return {"message": "Inventory item deleted successfully"}
 
 
-@router.get("/inventory/transactions", response_model=List[schemas.InventoryTransactionResponse])
+@router.get("/transactions", response_model=List[schemas.InventoryTransactionResponse])
 def get_inventory_transactions(
     db: Session = Depends(_get_db),
     current_user: dict = Depends(get_current_user),
@@ -129,7 +129,7 @@ def get_inventory_transactions(
     )
 
 
-@router.post("/inventory/transactions", response_model=schemas.InventoryTransactionResponse)
+@router.post("/transactions", response_model=schemas.InventoryTransactionResponse)
 def create_inventory_transaction(
     transaction: schemas.InventoryTransactionCreate,
     db: Session = Depends(_get_db),
@@ -195,7 +195,7 @@ def create_inventory_transaction(
     return new_transaction
 
 
-@router.post("/inventory/generate-low-stock-escalations")
+@router.post("/generate-low-stock-escalations")
 def generate_low_stock_escalations(
     db: Session = Depends(_get_db),
     current_user: dict = Depends(require_roles(["Admin", "Supervisor"])),

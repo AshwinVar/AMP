@@ -30,15 +30,15 @@ def _get_db():
         db.close()
 
 
-router = APIRouter(tags=["Work Orders"])
+router = APIRouter(prefix="/work-orders", tags=["Work Orders"])
 
 
-@router.get("/work-orders", response_model=List[schemas.WorkOrderResponse])
+@router.get("", response_model=List[schemas.WorkOrderResponse])
 def get_work_orders(db: Session = Depends(_get_db), current_user: dict = Depends(get_current_user)):
     return db.query(models.WorkOrder).order_by(models.WorkOrder.id.desc()).limit(200).all()
 
 
-@router.post("/work-orders", response_model=schemas.WorkOrderResponse)
+@router.post("", response_model=schemas.WorkOrderResponse)
 def create_work_order(
     work_order: schemas.WorkOrderCreate,
     db: Session = Depends(_get_db),
@@ -61,7 +61,7 @@ def create_work_order(
 # consume it without importing this module.
 
 
-@router.patch("/work-orders/{work_order_id}", response_model=schemas.WorkOrderResponse)
+@router.patch("/{work_order_id}", response_model=schemas.WorkOrderResponse)
 def update_work_order(
     work_order_id: int,
     payload: schemas.WorkOrderUpdate,
@@ -102,7 +102,7 @@ def update_work_order(
     return work_order
 
 
-@router.delete("/work-orders/{work_order_id}")
+@router.delete("/{work_order_id}")
 def delete_work_order(
     work_order_id: int,
     db: Session = Depends(_get_db),

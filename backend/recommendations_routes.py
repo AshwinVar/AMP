@@ -29,15 +29,15 @@ def _get_db():
         db.close()
 
 
-router = APIRouter(tags=["AI Recommendations"])
+router = APIRouter(prefix="/ai", tags=["AI Recommendations"])
 
 
-@router.get("/ai/recommendations", response_model=List[schemas.AIRecommendationResponse])
+@router.get("/recommendations", response_model=List[schemas.AIRecommendationResponse])
 def get_ai_recommendations(db: Session = Depends(_get_db), current_user: dict = Depends(get_current_user)):
     return db.query(models.AIRecommendation).order_by(models.AIRecommendation.id.desc()).limit(300).all()
 
 
-@router.patch("/ai/recommendations/{recommendation_id}", response_model=schemas.AIRecommendationResponse)
+@router.patch("/recommendations/{recommendation_id}", response_model=schemas.AIRecommendationResponse)
 def update_ai_recommendation(recommendation_id: int, payload: schemas.AIRecommendationUpdate, db: Session = Depends(_get_db), current_user: dict = Depends(require_roles(["Admin", "Supervisor", "Operator"]))):
     row = db.query(models.AIRecommendation).filter(models.AIRecommendation.id == recommendation_id).first()
     if not row:
@@ -49,7 +49,7 @@ def update_ai_recommendation(recommendation_id: int, payload: schemas.AIRecommen
     return row
 
 
-@router.post("/ai/generate-recommendations")
+@router.post("/generate-recommendations")
 def generate_ai_recommendations(db: Session = Depends(_get_db), current_user: dict = Depends(require_roles(["Admin", "Supervisor"]))):
     machines = db.query(models.Machine).all()
     downtime_logs = db.query(models.DowntimeLog).all()

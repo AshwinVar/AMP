@@ -2627,7 +2627,7 @@ export default function DashboardPage() {
       {renderSection("executive", (
         <>
           <ExecutiveOeeSection data={executiveOee} />
-          <MoneyStorySnapshot />
+          <MoneyStorySnapshot isAdmin={isAdmin} />
         </>
       ))}
 

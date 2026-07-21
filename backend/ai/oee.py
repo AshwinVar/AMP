@@ -11,13 +11,13 @@ adds no storage.
 from datetime import datetime, timedelta
 
 import models
+from analytics_engine import WORLD_CLASS_OEE, biggest_lever
 from ai.twin import _oee_from_records, _oee_by_machine, _recent_production
 
 name = "oee"
 
 WINDOW_DAYS = 7
-WORLD_CLASS = 85  # the classic world-class OEE benchmark
-_COMPONENTS = ("availability", "performance", "quality")
+WORLD_CLASS = WORLD_CLASS_OEE  # the classic world-class OEE benchmark (shared)
 
 
 def _daily_oee(records, days: int) -> list:
@@ -61,8 +61,11 @@ def build_oee_summary(db, tenant: str) -> dict:
     by_line = [{"line": ln, **_oee_from_records(recs)} for ln, recs in sorted(line_recs.items())]
 
     # Which of the three levers is holding the plant back — the story a manager
-    # wants first ("we're losing OEE to Performance, not Quality").
-    drag = min(_COMPONENTS, key=lambda c: plant[c]) if plant["has_data"] else None
+    # wants first ("we're losing OEE to Performance, not Quality"). The component
+    # furthest below its OWN world-class target (shared with the recovery
+    # read-model's "biggest lever" so the two cards never disagree), not the
+    # lowest raw component — Availability at 90% is already at target.
+    drag = biggest_lever(plant) if plant["has_data"] else None
 
     return {
         "days": WINDOW_DAYS,

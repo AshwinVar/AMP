@@ -70,7 +70,27 @@ def test_plant_oee_pools_machines_and_ranks_worst_first():
     assert s["machines"][0]["line"] in ("SMT", "IC")
 
 
+def test_biggest_drag_is_gap_to_world_class_not_lowest_raw():
+    # The live-demo case: Availability is the LOWEST raw component but sits AT its
+    # 90% target, while Performance is 4 points short of 95. "Biggest drag" must be
+    # the gap to world-class (Performance) — matching the recovery card's "biggest
+    # lever" — not the lowest raw number (which would wrongly say Availability).
+    db = _fresh_session()
+    db.add(models.Machine(id=1, name="M1", status="Running", utilization=90, line="SMT"))
+    db.add(models.ProductionRecord(machine_id=1, planned_minutes=1000, runtime_minutes=900,
+                                   ideal_cycle_time_seconds=49, total_count=1000,
+                                   good_count=990, rejected_count=10))
+    db.commit()
+    s = oee.build_oee_summary(db, "DEFAULT")
+    assert s["plant"]["availability"] == 90      # lowest raw component...
+    assert s["plant"]["performance"] == 91       # ...but this one carries the gap
+    assert s["plant"]["quality"] == 99
+    assert s["biggest_drag"] == "performance"
+    print("PASS biggest drag is the gap to world-class, not the lowest raw component")
+
+
 if __name__ == "__main__":
     test_empty_plant_reports_no_data()
     test_plant_oee_pools_machines_and_ranks_worst_first()
+    test_biggest_drag_is_gap_to_world_class_not_lowest_raw()
     print("OEE OK: plant-level OEE pooled from production; biggest-drag component; machines ranked worst-first")

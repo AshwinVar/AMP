@@ -7,6 +7,27 @@ import models
 # call sites (recommendations_routes) keep working; single source of truth.
 from duration import parse_duration_to_minutes
 
+# World-class OEE benchmarks — the single source of truth (ADR-0010). The plant
+# target and the three component targets: 0.90 x 0.95 x ~0.99 ~= 0.85 OEE.
+WORLD_CLASS_OEE = 85
+WORLD_CLASS_COMPONENTS = {"availability": 90, "performance": 95, "quality": 99}
+
+
+def biggest_lever(components: dict):
+    """The one OEE component to focus on: the one furthest below its OWN
+    world-class target, so closing its gap buys the most. `components` maps
+    availability/performance/quality -> current %. Returns the component key, or
+    None if every component is already at/above target.
+
+    This is the single definition of 'the component to focus on', shared by the
+    OEE summary's 'biggest drag' and the recovery read-model's 'biggest lever' so
+    the dashboard never names two different levers on the same page. Note it is
+    NOT the lowest raw component — Availability at 90% is AT target (no gap),
+    while Performance at 91% is 4 points short of its 95% target."""
+    gaps = {c: WORLD_CLASS_COMPONENTS[c] - components.get(c, 0) for c in WORLD_CLASS_COMPONENTS}
+    key = max(gaps, key=gaps.get)
+    return key if gaps[key] > 0 else None
+
 
 def calculate_oee_from_record(record):
     availability = record.runtime_minutes / record.planned_minutes if record.planned_minutes else 0

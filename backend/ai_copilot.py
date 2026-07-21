@@ -28,7 +28,7 @@ dependency), so the copilot never affects the deploy build.
 """
 import os
 
-from fastapi import Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
 import models
@@ -273,82 +273,87 @@ def _ask_llm(system: str, user: str) -> str:
     return result
 
 
-def register(app):
-    def get_db():
-        db = SessionLocal()
-        try:
-            yield db
-        finally:
-            db.close()
+router = APIRouter()
 
-    @app.get("/ai/status")
-    def ai_status(current_user: dict = Depends(get_current_user)):
-        """Lets the UI show 'connect to enable' vs the live copilot."""
-        result = {"enabled": _ai_enabled(), "provider": _provider() if _ai_enabled() else None,
-                  "model": _current_model() if _ai_enabled() else None}
-        # The last LLM failure is founder-only: error strings can carry
-        # upstream details a client workspace shouldn't see.
-        if current_user.get("tenant", "DEFAULT") == "DEFAULT":
-            result["last_error"] = _LAST_LLM_ERROR
-        return result
 
-    @app.post("/ai/ask")
-    def ai_ask(payload: dict, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
-        if not _ai_enabled():
-            raise HTTPException(status_code=503, detail="AI copilot not connected. Set ANTHROPIC_API_KEY to enable.")
-        question = (payload.get("question") or "").strip()
-        if not question:
-            raise HTTPException(status_code=400, detail="Ask a question.")
-        tenant = current_user.get("tenant", "DEFAULT")
-        context = _build_factory_context(db, tenant)
-        system = (
-            "You are AMP Copilot, a no-nonsense assistant for a factory manager at an Indian SME "
-            "manufacturer. Answer using ONLY the factory data provided. If the data doesn't contain the "
-            "answer, say so plainly. Be concise and practical — give shop-floor advice a supervisor can act on. "
-            "When asked 'why', do a short root-cause analysis from the data."
-        )
-        try:
-            answer = _ask_llm(system, f"Factory data:\n{context}\n\nQuestion: {question}")
-        except Exception as e:
-            # Graceful degradation: an LLM failure (no credits, rate limit,
-            # outage) must never surface a raw API error in a customer's
-            # copilot. Answer from the rule-based assistant instead, honestly
-            # labelled — the factory data is all local, so this always works.
-            print(f"[AI COPILOT] LLM failed, answering from rules: {e}")
-            import ai
-            fallback = ai.assistant.answer(db, tenant, question)
-            return {
-                "answer": fallback.get("answer", "I couldn't reach the AI model just now — try again shortly."),
-                "view": fallback.get("view"),
-                "model": None,
-                "source": "rules",
-                "note": "AI model temporarily unavailable — answered from live factory data.",
-            }
-        return {"answer": answer, "model": _current_model(), "source": "llm"}
+def get_db():
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
 
-    @app.post("/ai/report")
-    def ai_report(db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
-        if not _ai_enabled():
-            raise HTTPException(status_code=503, detail="AI copilot not connected. Set ANTHROPIC_API_KEY to enable.")
-        tenant = current_user.get("tenant", "DEFAULT")
-        context = _build_factory_context(db, tenant)
-        system = (
-            "You are AMP Copilot. Write a brief daily management report for a factory manager from the data. "
-            "Use short sections with these headings: Summary, Machine status, Key issues, Recommended actions. "
-            "Be specific and concise — no fluff."
-        )
-        try:
-            report = _ask_llm(system, f"Factory data:\n{context}\n\nWrite today's report.")
-        except Exception as e:
-            # Same graceful degradation as /ai/ask: fall back to the
-            # rule-composed weekly report rather than erroring.
-            print(f"[AI COPILOT] LLM failed, reporting from rules: {e}")
-            import ai
-            built = ai.report.build_weekly_report(db, tenant)
-            return {
-                "report": built.get("markdown") or built.get("report") or "Report unavailable right now.",
-                "model": None,
-                "source": "rules",
-                "note": "AI model temporarily unavailable — composed from live factory data.",
-            }
-        return {"report": report, "model": _current_model(), "source": "llm"}
+
+@router.get("/ai/status")
+def ai_status(current_user: dict = Depends(get_current_user)):
+    """Lets the UI show 'connect to enable' vs the live copilot."""
+    result = {"enabled": _ai_enabled(), "provider": _provider() if _ai_enabled() else None,
+              "model": _current_model() if _ai_enabled() else None}
+    # The last LLM failure is founder-only: error strings can carry
+    # upstream details a client workspace shouldn't see.
+    if current_user.get("tenant", "DEFAULT") == "DEFAULT":
+        result["last_error"] = _LAST_LLM_ERROR
+    return result
+
+
+@router.post("/ai/ask")
+def ai_ask(payload: dict, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
+    if not _ai_enabled():
+        raise HTTPException(status_code=503, detail="AI copilot not connected. Set ANTHROPIC_API_KEY to enable.")
+    question = (payload.get("question") or "").strip()
+    if not question:
+        raise HTTPException(status_code=400, detail="Ask a question.")
+    tenant = current_user.get("tenant", "DEFAULT")
+    context = _build_factory_context(db, tenant)
+    system = (
+        "You are AMP Copilot, a no-nonsense assistant for a factory manager at an Indian SME "
+        "manufacturer. Answer using ONLY the factory data provided. If the data doesn't contain the "
+        "answer, say so plainly. Be concise and practical — give shop-floor advice a supervisor can act on. "
+        "When asked 'why', do a short root-cause analysis from the data."
+    )
+    try:
+        answer = _ask_llm(system, f"Factory data:\n{context}\n\nQuestion: {question}")
+    except Exception as e:
+        # Graceful degradation: an LLM failure (no credits, rate limit,
+        # outage) must never surface a raw API error in a customer's
+        # copilot. Answer from the rule-based assistant instead, honestly
+        # labelled — the factory data is all local, so this always works.
+        print(f"[AI COPILOT] LLM failed, answering from rules: {e}")
+        import ai
+        fallback = ai.assistant.answer(db, tenant, question)
+        return {
+            "answer": fallback.get("answer", "I couldn't reach the AI model just now — try again shortly."),
+            "view": fallback.get("view"),
+            "model": None,
+            "source": "rules",
+            "note": "AI model temporarily unavailable — answered from live factory data.",
+        }
+    return {"answer": answer, "model": _current_model(), "source": "llm"}
+
+
+@router.post("/ai/report")
+def ai_report(db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
+    if not _ai_enabled():
+        raise HTTPException(status_code=503, detail="AI copilot not connected. Set ANTHROPIC_API_KEY to enable.")
+    tenant = current_user.get("tenant", "DEFAULT")
+    context = _build_factory_context(db, tenant)
+    system = (
+        "You are AMP Copilot. Write a brief daily management report for a factory manager from the data. "
+        "Use short sections with these headings: Summary, Machine status, Key issues, Recommended actions. "
+        "Be specific and concise — no fluff."
+    )
+    try:
+        report = _ask_llm(system, f"Factory data:\n{context}\n\nWrite today's report.")
+    except Exception as e:
+        # Same graceful degradation as /ai/ask: fall back to the
+        # rule-composed weekly report rather than erroring.
+        print(f"[AI COPILOT] LLM failed, reporting from rules: {e}")
+        import ai
+        built = ai.report.build_weekly_report(db, tenant)
+        return {
+            "report": built.get("markdown") or built.get("report") or "Report unavailable right now.",
+            "model": None,
+            "source": "rules",
+            "note": "AI model temporarily unavailable — composed from live factory data.",
+        }
+    return {"report": report, "model": _current_model(), "source": "llm"}

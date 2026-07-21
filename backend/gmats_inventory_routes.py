@@ -18,7 +18,7 @@ import io
 import re
 from datetime import datetime
 
-from fastapi import Depends, File, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from sqlalchemy.orm import Session
 
 import models
@@ -43,446 +43,468 @@ def _guard_record(current_user, record_tenant):
         raise HTTPException(status_code=403, detail="This record belongs to another company")
 
 
-def register(app):
-    def get_db():
-        db = SessionLocal()
-        try:
-            yield db
-        finally:
-            db.close()
+router = APIRouter()
 
-    def _item_dict(db, item):
-        aliases = [
-            a.alias_name
-            for a in db.query(models.GmatsAlias).filter(models.GmatsAlias.item_id == item.id).all()
-        ]
+
+def get_db():
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
+
+
+def _item_dict(db, item):
+    aliases = [
+        a.alias_name
+        for a in db.query(models.GmatsAlias).filter(models.GmatsAlias.item_id == item.id).all()
+    ]
+    available = item.physical_stock - item.reserved_stock
+    return {
+        "id": item.id,
+        "tenant_code": item.tenant_code,
+        "item_code": item.item_code,
+        "item_name": item.item_name,
+        "category": item.category,
+        "unit": item.unit,
+        "physical_stock": item.physical_stock,
+        "reserved_stock": item.reserved_stock,
+        "available_stock": available,
+        "reorder_level": item.reorder_level,
+        "purchase_rate": item.purchase_rate,
+        "location": item.location,
+        "supplier": item.supplier,
+        "aliases": aliases,
+        "reorder_needed": available <= item.reorder_level,
+    }
+
+# ── Items / Stock ─────────────────────────────────────────────
+
+
+@router.get("/gmats/items")
+def gmats_items(tenant: str = "GMATS", db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
+    tenant = _effective_tenant(current_user, tenant)
+    rows = db.query(models.GmatsItem).filter(models.GmatsItem.tenant_code == tenant).order_by(models.GmatsItem.item_name).all()
+    return [_item_dict(db, r) for r in rows]
+
+
+@router.get("/gmats/summary")
+def gmats_summary(tenant: str = "GMATS", db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
+    tenant = _effective_tenant(current_user, tenant)
+    rows = db.query(models.GmatsItem).filter(models.GmatsItem.tenant_code == tenant).all()
+    physical = sum(r.physical_stock for r in rows)
+    reserved = sum(r.reserved_stock for r in rows)
+    reorder_needed = sum(1 for r in rows if (r.physical_stock - r.reserved_stock) <= r.reorder_level)
+    open_proformas = db.query(models.GmatsProforma).filter(
+        models.GmatsProforma.tenant_code == tenant, models.GmatsProforma.status == "Open"
+    ).count()
+    return {
+        "items": len(rows),
+        "total_physical": physical,
+        "total_reserved": reserved,
+        "total_available": physical - reserved,
+        "reorder_needed": reorder_needed,
+        "open_proformas": open_proformas,
+    }
+
+
+@router.post("/gmats/items")
+def gmats_create_item(payload: dict, db: Session = Depends(get_db), current_user: dict = Depends(require_roles(["Admin", "Supervisor"]))):
+    item = models.GmatsItem(
+        tenant_code=_effective_tenant(current_user, payload.get("tenant")),
+        item_code=payload["item_code"],
+        item_name=payload["item_name"],
+        category=payload.get("category", "General"),
+        unit=payload.get("unit", "Nos"),
+        physical_stock=int(payload.get("physical_stock", 0)),
+        reserved_stock=0,
+        reorder_level=int(payload.get("reorder_level", 0)),
+        location=payload.get("location", ""),
+        purchase_rate=int(payload.get("purchase_rate", 0)),
+        supplier=payload.get("supplier", ""),
+    )
+    db.add(item); db.commit(); db.refresh(item)
+    for alias in payload.get("aliases", []):
+        if alias.strip():
+            db.add(models.GmatsAlias(tenant_code=item.tenant_code, item_id=item.id, alias_name=alias.strip()))
+    db.commit()
+    return _item_dict(db, item)
+
+
+@router.patch("/gmats/items/{item_id}")
+def gmats_update_item(item_id: int, payload: dict, db: Session = Depends(get_db), current_user: dict = Depends(require_roles(["Admin", "Supervisor"]))):
+    item = db.query(models.GmatsItem).filter(models.GmatsItem.id == item_id).first()
+    if not item:
+        raise HTTPException(status_code=404, detail="Item not found")
+    _guard_record(current_user, item.tenant_code)
+    if "reorder_level" in payload:
+        item.reorder_level = int(payload["reorder_level"])
+    if "purchase_rate" in payload:
+        item.purchase_rate = int(payload["purchase_rate"])
+    if "location" in payload:
+        item.location = payload["location"]
+    db.commit()
+    return _item_dict(db, item)
+
+
+@router.post("/gmats/items/{item_id}/stock-in")
+def gmats_stock_in(item_id: int, payload: dict, db: Session = Depends(get_db), current_user: dict = Depends(require_roles(["Admin", "Supervisor"]))):
+    """Purchase entry / stock inward — increases physical stock."""
+    item = db.query(models.GmatsItem).filter(models.GmatsItem.id == item_id).first()
+    if not item:
+        raise HTTPException(status_code=404, detail="Item not found")
+    _guard_record(current_user, item.tenant_code)
+    qty = int(payload["qty"])
+    if qty <= 0:
+        raise HTTPException(status_code=400, detail="Quantity must be positive")
+    item.physical_stock += qty
+    if payload.get("purchase_rate"):
+        item.purchase_rate = int(payload["purchase_rate"])
+    db.commit()
+    return _item_dict(db, item)
+
+# ── Aliases ───────────────────────────────────────────────────
+
+
+@router.post("/gmats/items/{item_id}/aliases")
+def gmats_add_alias(item_id: int, payload: dict, db: Session = Depends(get_db), current_user: dict = Depends(require_roles(["Admin", "Supervisor"]))):
+    item = db.query(models.GmatsItem).filter(models.GmatsItem.id == item_id).first()
+    if not item:
+        raise HTTPException(status_code=404, detail="Item not found")
+    _guard_record(current_user, item.tenant_code)
+    name = payload["alias_name"].strip()
+    if name:
+        db.add(models.GmatsAlias(tenant_code=item.tenant_code, item_id=item.id, alias_name=name))
+        db.commit()
+    return _item_dict(db, item)
+
+
+@router.get("/gmats/resolve")
+def gmats_resolve(name: str, tenant: str = "GMATS", db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
+    """Resolve any alias / code / name to the single master item — demonstrates the alias system."""
+    tenant = _effective_tenant(current_user, tenant)
+    q = name.strip().lower()
+    items = db.query(models.GmatsItem).filter(models.GmatsItem.tenant_code == tenant).all()
+    for it in items:
+        if it.item_code.lower() == q or it.item_name.lower() == q:
+            return {"matched": True, "via": "master", "item": _item_dict(db, it)}
+    alias = db.query(models.GmatsAlias).filter(models.GmatsAlias.tenant_code == tenant).all()
+    for a in alias:
+        if a.alias_name.lower() == q:
+            it = db.query(models.GmatsItem).filter(models.GmatsItem.id == a.item_id).first()
+            if it:
+                return {"matched": True, "via": f"alias '{a.alias_name}'", "item": _item_dict(db, it)}
+    return {"matched": False, "via": None, "item": None}
+
+# ── Proforma Invoice (reserve stock) ──────────────────────────
+
+
+@router.get("/gmats/proformas")
+def gmats_proformas(tenant: str = "GMATS", db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
+    tenant = _effective_tenant(current_user, tenant)
+    rows = db.query(models.GmatsProforma).filter(models.GmatsProforma.tenant_code == tenant).order_by(models.GmatsProforma.id.desc()).all()
+    items = {i.id: i for i in db.query(models.GmatsItem).all()}
+    out = []
+    for p in rows:
+        lines = db.query(models.GmatsProformaLine).filter(models.GmatsProformaLine.proforma_id == p.id).all()
+        out.append({
+            "id": p.id, "proforma_no": p.proforma_no, "customer_name": p.customer_name,
+            "status": p.status, "created_at": p.created_at,
+            "lines": [
+                {"item_id": l.item_id,
+                 "item_name": items[l.item_id].item_name if l.item_id in items else "",
+                 "qty": l.qty}
+                for l in lines
+            ],
+        })
+    return out
+
+
+@router.post("/gmats/proformas")
+def gmats_create_proforma(payload: dict, db: Session = Depends(get_db), current_user: dict = Depends(require_roles(["Admin", "Supervisor"]))):
+    tenant = _effective_tenant(current_user, payload.get("tenant"))
+    lines = payload.get("lines", [])
+    if not lines:
+        raise HTTPException(status_code=400, detail="At least one line item required")
+    # validate availability first
+    for line in lines:
+        item = db.query(models.GmatsItem).filter(models.GmatsItem.id == int(line["item_id"])).first()
+        if not item:
+            raise HTTPException(status_code=404, detail="Item not found")
         available = item.physical_stock - item.reserved_stock
-        return {
-            "id": item.id,
-            "tenant_code": item.tenant_code,
-            "item_code": item.item_code,
-            "item_name": item.item_name,
-            "category": item.category,
-            "unit": item.unit,
-            "physical_stock": item.physical_stock,
-            "reserved_stock": item.reserved_stock,
-            "available_stock": available,
-            "reorder_level": item.reorder_level,
-            "purchase_rate": item.purchase_rate,
-            "location": item.location,
-            "supplier": item.supplier,
-            "aliases": aliases,
-            "reorder_needed": available <= item.reorder_level,
-        }
+        qty = int(line["qty"])
+        if qty > available:
+            raise HTTPException(status_code=400, detail=f"Cannot reserve {qty} {item.unit} of {item.item_name}: only {available} available")
+    count = db.query(models.GmatsProforma).filter(models.GmatsProforma.tenant_code == tenant).count()
+    p = models.GmatsProforma(
+        tenant_code=tenant,
+        proforma_no=f"PI-{1000 + count + 1}",
+        customer_name=payload["customer_name"],
+        status="Open",
+    )
+    db.add(p); db.commit(); db.refresh(p)
+    for line in lines:
+        item = db.query(models.GmatsItem).filter(models.GmatsItem.id == int(line["item_id"])).first()
+        qty = int(line["qty"])
+        item.reserved_stock += qty               # RESERVE — physical unchanged
+        db.add(models.GmatsProformaLine(proforma_id=p.id, item_id=item.id, qty=qty))
+    db.commit()
+    return {"id": p.id, "proforma_no": p.proforma_no}
 
-    # ── Items / Stock ─────────────────────────────────────────────
 
-    @app.get("/gmats/items")
-    def gmats_items(tenant: str = "GMATS", db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
-        tenant = _effective_tenant(current_user, tenant)
-        rows = db.query(models.GmatsItem).filter(models.GmatsItem.tenant_code == tenant).order_by(models.GmatsItem.item_name).all()
-        return [_item_dict(db, r) for r in rows]
+@router.patch("/gmats/proformas/{pid}/cancel")
+def gmats_cancel_proforma(pid: int, db: Session = Depends(get_db), current_user: dict = Depends(require_roles(["Admin", "Supervisor"]))):
+    p = db.query(models.GmatsProforma).filter(models.GmatsProforma.id == pid).first()
+    if not p or p.status != "Open":
+        raise HTTPException(status_code=400, detail="Only open proformas can be cancelled")
+    _guard_record(current_user, p.tenant_code)
+    lines = db.query(models.GmatsProformaLine).filter(models.GmatsProformaLine.proforma_id == pid).all()
+    for l in lines:
+        item = db.query(models.GmatsItem).filter(models.GmatsItem.id == l.item_id).first()
+        if item:
+            item.reserved_stock = max(0, item.reserved_stock - l.qty)   # release reservation
+    p.status = "Cancelled"
+    db.commit()
+    return {"ok": True}
 
-    @app.get("/gmats/summary")
-    def gmats_summary(tenant: str = "GMATS", db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
-        tenant = _effective_tenant(current_user, tenant)
-        rows = db.query(models.GmatsItem).filter(models.GmatsItem.tenant_code == tenant).all()
-        physical = sum(r.physical_stock for r in rows)
-        reserved = sum(r.reserved_stock for r in rows)
-        reorder_needed = sum(1 for r in rows if (r.physical_stock - r.reserved_stock) <= r.reorder_level)
-        open_proformas = db.query(models.GmatsProforma).filter(
-            models.GmatsProforma.tenant_code == tenant, models.GmatsProforma.status == "Open"
-        ).count()
-        return {
-            "items": len(rows),
-            "total_physical": physical,
-            "total_reserved": reserved,
-            "total_available": physical - reserved,
-            "reorder_needed": reorder_needed,
-            "open_proformas": open_proformas,
-        }
+# ── Tax Invoice (final deduction) ─────────────────────────────
 
-    @app.post("/gmats/items")
-    def gmats_create_item(payload: dict, db: Session = Depends(get_db), current_user: dict = Depends(require_roles(["Admin", "Supervisor"]))):
-        item = models.GmatsItem(
-            tenant_code=_effective_tenant(current_user, payload.get("tenant")),
-            item_code=payload["item_code"],
-            item_name=payload["item_name"],
-            category=payload.get("category", "General"),
-            unit=payload.get("unit", "Nos"),
-            physical_stock=int(payload.get("physical_stock", 0)),
-            reserved_stock=0,
-            reorder_level=int(payload.get("reorder_level", 0)),
-            location=payload.get("location", ""),
-            purchase_rate=int(payload.get("purchase_rate", 0)),
-            supplier=payload.get("supplier", ""),
-        )
-        db.add(item); db.commit(); db.refresh(item)
-        for alias in payload.get("aliases", []):
-            if alias.strip():
-                db.add(models.GmatsAlias(tenant_code=item.tenant_code, item_id=item.id, alias_name=alias.strip()))
-        db.commit()
-        return _item_dict(db, item)
 
-    @app.patch("/gmats/items/{item_id}")
-    def gmats_update_item(item_id: int, payload: dict, db: Session = Depends(get_db), current_user: dict = Depends(require_roles(["Admin", "Supervisor"]))):
-        item = db.query(models.GmatsItem).filter(models.GmatsItem.id == item_id).first()
+@router.get("/gmats/invoices")
+def gmats_invoices(tenant: str = "GMATS", db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
+    tenant = _effective_tenant(current_user, tenant)
+    rows = db.query(models.GmatsInvoice).filter(models.GmatsInvoice.tenant_code == tenant).order_by(models.GmatsInvoice.id.desc()).all()
+    return [
+        {"id": v.id, "invoice_no": v.invoice_no, "proforma_id": v.proforma_id,
+         "customer_name": v.customer_name, "status": v.status, "created_at": v.created_at}
+        for v in rows
+    ]
+
+
+@router.post("/gmats/proformas/{pid}/invoice")
+def gmats_generate_invoice(pid: int, db: Session = Depends(get_db), current_user: dict = Depends(require_roles(["Admin", "Supervisor"]))):
+    """Generate Tax Invoice from a proforma: deduct physical, clear the reservation."""
+    p = db.query(models.GmatsProforma).filter(models.GmatsProforma.id == pid).first()
+    if not p or p.status != "Open":
+        raise HTTPException(status_code=400, detail="Only open proformas can be invoiced")
+    _guard_record(current_user, p.tenant_code)
+    lines = db.query(models.GmatsProformaLine).filter(models.GmatsProformaLine.proforma_id == pid).all()
+    for l in lines:
+        item = db.query(models.GmatsItem).filter(models.GmatsItem.id == l.item_id).first()
+        if item:
+            item.physical_stock = max(0, item.physical_stock - l.qty)   # DEDUCT physical
+            item.reserved_stock = max(0, item.reserved_stock - l.qty)   # clear reservation
+    count = db.query(models.GmatsInvoice).filter(models.GmatsInvoice.tenant_code == p.tenant_code).count()
+    inv = models.GmatsInvoice(
+        tenant_code=p.tenant_code,
+        invoice_no=f"INV-{7000 + count + 1}",
+        proforma_id=p.id,
+        customer_name=p.customer_name,
+        status="Generated",
+    )
+    db.add(inv)
+    p.status = "Invoiced"
+    db.commit()
+    return {"id": inv.id, "invoice_no": inv.invoice_no}
+
+# ── Material Issue Note (free spares with a machine) ──────────
+
+
+@router.get("/gmats/min")
+def gmats_min_list(tenant: str = "GMATS", db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
+    tenant = _effective_tenant(current_user, tenant)
+    rows = db.query(models.GmatsMIN).filter(models.GmatsMIN.tenant_code == tenant).order_by(models.GmatsMIN.id.desc()).all()
+    items = {i.id: i for i in db.query(models.GmatsItem).all()}
+    out = []
+    for m in rows:
+        lines = db.query(models.GmatsMINLine).filter(models.GmatsMINLine.min_id == m.id).all()
+        out.append({
+            "id": m.id, "min_no": m.min_no, "customer_name": m.customer_name,
+            "machine_ref": m.machine_ref, "status": m.status, "created_at": m.created_at,
+            "lines": [
+                {"item_id": l.item_id,
+                 "item_name": items[l.item_id].item_name if l.item_id in items else "",
+                 "qty": l.qty}
+                for l in lines
+            ],
+        })
+    return out
+
+
+@router.post("/gmats/min")
+def gmats_create_min(payload: dict, db: Session = Depends(get_db), current_user: dict = Depends(require_roles(["Admin", "Supervisor"]))):
+    tenant = _effective_tenant(current_user, payload.get("tenant"))
+    lines = payload.get("lines", [])
+    if not lines:
+        raise HTTPException(status_code=400, detail="At least one spare line required")
+    for line in lines:
+        item = db.query(models.GmatsItem).filter(models.GmatsItem.id == int(line["item_id"])).first()
         if not item:
             raise HTTPException(status_code=404, detail="Item not found")
-        _guard_record(current_user, item.tenant_code)
-        if "reorder_level" in payload:
-            item.reorder_level = int(payload["reorder_level"])
-        if "purchase_rate" in payload:
-            item.purchase_rate = int(payload["purchase_rate"])
-        if "location" in payload:
-            item.location = payload["location"]
-        db.commit()
-        return _item_dict(db, item)
+        qty = int(line["qty"])
+        if qty > item.physical_stock:
+            raise HTTPException(status_code=400, detail=f"Cannot issue {qty} {item.unit} of {item.item_name}: only {item.physical_stock} physical")
+    count = db.query(models.GmatsMIN).filter(models.GmatsMIN.tenant_code == tenant).count()
+    m = models.GmatsMIN(
+        tenant_code=tenant,
+        min_no=f"MIN-{4000 + count + 1}",
+        customer_name=payload["customer_name"],
+        machine_ref=payload.get("machine_ref", ""),
+        status="Issued",
+    )
+    db.add(m); db.commit(); db.refresh(m)
+    for line in lines:
+        item = db.query(models.GmatsItem).filter(models.GmatsItem.id == int(line["item_id"])).first()
+        qty = int(line["qty"])
+        item.physical_stock = max(0, item.physical_stock - qty)   # deduct even though not billed
+        db.add(models.GmatsMINLine(min_id=m.id, item_id=item.id, qty=qty))
+    db.commit()
+    return {"id": m.id, "min_no": m.min_no}
 
-    @app.post("/gmats/items/{item_id}/stock-in")
-    def gmats_stock_in(item_id: int, payload: dict, db: Session = Depends(get_db), current_user: dict = Depends(require_roles(["Admin", "Supervisor"]))):
-        """Purchase entry / stock inward — increases physical stock."""
-        item = db.query(models.GmatsItem).filter(models.GmatsItem.id == item_id).first()
-        if not item:
-            raise HTTPException(status_code=404, detail="Item not found")
-        _guard_record(current_user, item.tenant_code)
-        qty = int(payload["qty"])
-        if qty <= 0:
-            raise HTTPException(status_code=400, detail="Quantity must be positive")
-        item.physical_stock += qty
-        if payload.get("purchase_rate"):
-            item.purchase_rate = int(payload["purchase_rate"])
-        db.commit()
-        return _item_dict(db, item)
+# ── Admin corrections (fix operator mistakes) ─────────────────
 
-    # ── Aliases ───────────────────────────────────────────────────
 
-    @app.post("/gmats/items/{item_id}/aliases")
-    def gmats_add_alias(item_id: int, payload: dict, db: Session = Depends(get_db), current_user: dict = Depends(require_roles(["Admin", "Supervisor"]))):
-        item = db.query(models.GmatsItem).filter(models.GmatsItem.id == item_id).first()
-        if not item:
-            raise HTTPException(status_code=404, detail="Item not found")
-        _guard_record(current_user, item.tenant_code)
-        name = payload["alias_name"].strip()
-        if name:
-            db.add(models.GmatsAlias(tenant_code=item.tenant_code, item_id=item.id, alias_name=name))
-            db.commit()
-        return _item_dict(db, item)
+@router.post("/gmats/items/{item_id}/correct")
+def gmats_correct_item(item_id: int, payload: dict, db: Session = Depends(get_db), current_user: dict = Depends(require_roles(["Admin"]))):
+    """Admin directly corrects an item's stock figures (e.g. a wrong stock-in)."""
+    item = db.query(models.GmatsItem).filter(models.GmatsItem.id == item_id).first()
+    if not item:
+        raise HTTPException(status_code=404, detail="Item not found")
+    _guard_record(current_user, item.tenant_code)
+    if "physical_stock" in payload:
+        item.physical_stock = max(0, int(payload["physical_stock"]))
+    if "reserved_stock" in payload:
+        item.reserved_stock = max(0, int(payload["reserved_stock"]))
+    if "reorder_level" in payload:
+        item.reorder_level = int(payload["reorder_level"])
+    if "purchase_rate" in payload:
+        item.purchase_rate = int(payload["purchase_rate"])
+    db.commit()
+    return _item_dict(db, item)
 
-    @app.get("/gmats/resolve")
-    def gmats_resolve(name: str, tenant: str = "GMATS", db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
-        """Resolve any alias / code / name to the single master item — demonstrates the alias system."""
-        tenant = _effective_tenant(current_user, tenant)
-        q = name.strip().lower()
-        items = db.query(models.GmatsItem).filter(models.GmatsItem.tenant_code == tenant).all()
-        for it in items:
-            if it.item_code.lower() == q or it.item_name.lower() == q:
-                return {"matched": True, "via": "master", "item": _item_dict(db, it)}
-        alias = db.query(models.GmatsAlias).filter(models.GmatsAlias.tenant_code == tenant).all()
-        for a in alias:
-            if a.alias_name.lower() == q:
-                it = db.query(models.GmatsItem).filter(models.GmatsItem.id == a.item_id).first()
-                if it:
-                    return {"matched": True, "via": f"alias '{a.alias_name}'", "item": _item_dict(db, it)}
-        return {"matched": False, "via": None, "item": None}
 
-    # ── Proforma Invoice (reserve stock) ──────────────────────────
+@router.delete("/gmats/items/{item_id}")
+def gmats_delete_item(item_id: int, db: Session = Depends(get_db), current_user: dict = Depends(require_roles(["Admin"]))):
+    """Admin deletes an item (and its aliases) — e.g. a wrongly imported row."""
+    item = db.query(models.GmatsItem).filter(models.GmatsItem.id == item_id).first()
+    if not item:
+        raise HTTPException(status_code=404, detail="Item not found")
+    _guard_record(current_user, item.tenant_code)
+    db.query(models.GmatsAlias).filter(models.GmatsAlias.item_id == item_id).delete()
+    db.delete(item)
+    db.commit()
+    return {"ok": True}
 
-    @app.get("/gmats/proformas")
-    def gmats_proformas(tenant: str = "GMATS", db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
-        tenant = _effective_tenant(current_user, tenant)
-        rows = db.query(models.GmatsProforma).filter(models.GmatsProforma.tenant_code == tenant).order_by(models.GmatsProforma.id.desc()).all()
-        items = {i.id: i for i in db.query(models.GmatsItem).all()}
-        out = []
-        for p in rows:
-            lines = db.query(models.GmatsProformaLine).filter(models.GmatsProformaLine.proforma_id == p.id).all()
-            out.append({
-                "id": p.id, "proforma_no": p.proforma_no, "customer_name": p.customer_name,
-                "status": p.status, "created_at": p.created_at,
-                "lines": [
-                    {"item_id": l.item_id,
-                     "item_name": items[l.item_id].item_name if l.item_id in items else "",
-                     "qty": l.qty}
-                    for l in lines
-                ],
-            })
-        return out
 
-    @app.post("/gmats/proformas")
-    def gmats_create_proforma(payload: dict, db: Session = Depends(get_db), current_user: dict = Depends(require_roles(["Admin", "Supervisor"]))):
-        tenant = _effective_tenant(current_user, payload.get("tenant"))
-        lines = payload.get("lines", [])
-        if not lines:
-            raise HTTPException(status_code=400, detail="At least one line item required")
-        # validate availability first
-        for line in lines:
-            item = db.query(models.GmatsItem).filter(models.GmatsItem.id == int(line["item_id"])).first()
-            if not item:
-                raise HTTPException(status_code=404, detail="Item not found")
-            available = item.physical_stock - item.reserved_stock
-            qty = int(line["qty"])
-            if qty > available:
-                raise HTTPException(status_code=400, detail=f"Cannot reserve {qty} {item.unit} of {item.item_name}: only {available} available")
-        count = db.query(models.GmatsProforma).filter(models.GmatsProforma.tenant_code == tenant).count()
-        p = models.GmatsProforma(
-            tenant_code=tenant,
-            proforma_no=f"PI-{1000 + count + 1}",
-            customer_name=payload["customer_name"],
-            status="Open",
-        )
-        db.add(p); db.commit(); db.refresh(p)
-        for line in lines:
-            item = db.query(models.GmatsItem).filter(models.GmatsItem.id == int(line["item_id"])).first()
-            qty = int(line["qty"])
-            item.reserved_stock += qty               # RESERVE — physical unchanged
-            db.add(models.GmatsProformaLine(proforma_id=p.id, item_id=item.id, qty=qty))
-        db.commit()
-        return {"id": p.id, "proforma_no": p.proforma_no}
-
-    @app.patch("/gmats/proformas/{pid}/cancel")
-    def gmats_cancel_proforma(pid: int, db: Session = Depends(get_db), current_user: dict = Depends(require_roles(["Admin", "Supervisor"]))):
-        p = db.query(models.GmatsProforma).filter(models.GmatsProforma.id == pid).first()
-        if not p or p.status != "Open":
-            raise HTTPException(status_code=400, detail="Only open proformas can be cancelled")
-        _guard_record(current_user, p.tenant_code)
-        lines = db.query(models.GmatsProformaLine).filter(models.GmatsProformaLine.proforma_id == pid).all()
+@router.delete("/gmats/invoices/{inv_id}")
+def gmats_void_invoice(inv_id: int, db: Session = Depends(get_db), current_user: dict = Depends(require_roles(["Admin"]))):
+    """Admin voids a tax invoice: restores the deducted physical stock and cancels the proforma."""
+    inv = db.query(models.GmatsInvoice).filter(models.GmatsInvoice.id == inv_id).first()
+    if not inv:
+        raise HTTPException(status_code=404, detail="Invoice not found")
+    _guard_record(current_user, inv.tenant_code)
+    if inv.proforma_id:
+        lines = db.query(models.GmatsProformaLine).filter(models.GmatsProformaLine.proforma_id == inv.proforma_id).all()
         for l in lines:
             item = db.query(models.GmatsItem).filter(models.GmatsItem.id == l.item_id).first()
             if item:
-                item.reserved_stock = max(0, item.reserved_stock - l.qty)   # release reservation
-        p.status = "Cancelled"
-        db.commit()
-        return {"ok": True}
+                item.physical_stock += l.qty            # restore what the invoice deducted
+        p = db.query(models.GmatsProforma).filter(models.GmatsProforma.id == inv.proforma_id).first()
+        if p:
+            p.status = "Cancelled"
+    db.delete(inv)
+    db.commit()
+    return {"ok": True}
 
-    # ── Tax Invoice (final deduction) ─────────────────────────────
 
-    @app.get("/gmats/invoices")
-    def gmats_invoices(tenant: str = "GMATS", db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
-        tenant = _effective_tenant(current_user, tenant)
-        rows = db.query(models.GmatsInvoice).filter(models.GmatsInvoice.tenant_code == tenant).order_by(models.GmatsInvoice.id.desc()).all()
-        return [
-            {"id": v.id, "invoice_no": v.invoice_no, "proforma_id": v.proforma_id,
-             "customer_name": v.customer_name, "status": v.status, "created_at": v.created_at}
-            for v in rows
-        ]
+@router.delete("/gmats/min/{min_id}")
+def gmats_void_min(min_id: int, db: Session = Depends(get_db), current_user: dict = Depends(require_roles(["Admin"]))):
+    """Admin voids a material issue note: restores the issued free-spare stock."""
+    m = db.query(models.GmatsMIN).filter(models.GmatsMIN.id == min_id).first()
+    if not m:
+        raise HTTPException(status_code=404, detail="MIN not found")
+    _guard_record(current_user, m.tenant_code)
+    lines = db.query(models.GmatsMINLine).filter(models.GmatsMINLine.min_id == min_id).all()
+    for l in lines:
+        item = db.query(models.GmatsItem).filter(models.GmatsItem.id == l.item_id).first()
+        if item:
+            item.physical_stock += l.qty                # restore the issued spares
+    db.flush()
+    # Delete children before the parent explicitly (no relationship() to order the flush).
+    db.query(models.GmatsMINLine).filter(models.GmatsMINLine.min_id == min_id).delete(synchronize_session=False)
+    db.query(models.GmatsMIN).filter(models.GmatsMIN.id == min_id).delete(synchronize_session=False)
+    db.commit()
+    return {"ok": True}
 
-    @app.post("/gmats/proformas/{pid}/invoice")
-    def gmats_generate_invoice(pid: int, db: Session = Depends(get_db), current_user: dict = Depends(require_roles(["Admin", "Supervisor"]))):
-        """Generate Tax Invoice from a proforma: deduct physical, clear the reservation."""
-        p = db.query(models.GmatsProforma).filter(models.GmatsProforma.id == pid).first()
-        if not p or p.status != "Open":
-            raise HTTPException(status_code=400, detail="Only open proformas can be invoiced")
-        _guard_record(current_user, p.tenant_code)
-        lines = db.query(models.GmatsProformaLine).filter(models.GmatsProformaLine.proforma_id == pid).all()
-        for l in lines:
-            item = db.query(models.GmatsItem).filter(models.GmatsItem.id == l.item_id).first()
-            if item:
-                item.physical_stock = max(0, item.physical_stock - l.qty)   # DEDUCT physical
-                item.reserved_stock = max(0, item.reserved_stock - l.qty)   # clear reservation
-        count = db.query(models.GmatsInvoice).filter(models.GmatsInvoice.tenant_code == p.tenant_code).count()
-        inv = models.GmatsInvoice(
-            tenant_code=p.tenant_code,
-            invoice_no=f"INV-{7000 + count + 1}",
-            proforma_id=p.id,
-            customer_name=p.customer_name,
-            status="Generated",
-        )
-        db.add(inv)
-        p.status = "Invoiced"
-        db.commit()
-        return {"id": inv.id, "invoice_no": inv.invoice_no}
+# ── CSV import (Tally / Excel) ────────────────────────────────
 
-    # ── Material Issue Note (free spares with a machine) ──────────
 
-    @app.get("/gmats/min")
-    def gmats_min_list(tenant: str = "GMATS", db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
-        tenant = _effective_tenant(current_user, tenant)
-        rows = db.query(models.GmatsMIN).filter(models.GmatsMIN.tenant_code == tenant).order_by(models.GmatsMIN.id.desc()).all()
-        items = {i.id: i for i in db.query(models.GmatsItem).all()}
-        out = []
-        for m in rows:
-            lines = db.query(models.GmatsMINLine).filter(models.GmatsMINLine.min_id == m.id).all()
-            out.append({
-                "id": m.id, "min_no": m.min_no, "customer_name": m.customer_name,
-                "machine_ref": m.machine_ref, "status": m.status, "created_at": m.created_at,
-                "lines": [
-                    {"item_id": l.item_id,
-                     "item_name": items[l.item_id].item_name if l.item_id in items else "",
-                     "qty": l.qty}
-                    for l in lines
-                ],
-            })
-        return out
-
-    @app.post("/gmats/min")
-    def gmats_create_min(payload: dict, db: Session = Depends(get_db), current_user: dict = Depends(require_roles(["Admin", "Supervisor"]))):
-        tenant = _effective_tenant(current_user, payload.get("tenant"))
-        lines = payload.get("lines", [])
-        if not lines:
-            raise HTTPException(status_code=400, detail="At least one spare line required")
-        for line in lines:
-            item = db.query(models.GmatsItem).filter(models.GmatsItem.id == int(line["item_id"])).first()
-            if not item:
-                raise HTTPException(status_code=404, detail="Item not found")
-            qty = int(line["qty"])
-            if qty > item.physical_stock:
-                raise HTTPException(status_code=400, detail=f"Cannot issue {qty} {item.unit} of {item.item_name}: only {item.physical_stock} physical")
-        count = db.query(models.GmatsMIN).filter(models.GmatsMIN.tenant_code == tenant).count()
-        m = models.GmatsMIN(
-            tenant_code=tenant,
-            min_no=f"MIN-{4000 + count + 1}",
-            customer_name=payload["customer_name"],
-            machine_ref=payload.get("machine_ref", ""),
-            status="Issued",
-        )
-        db.add(m); db.commit(); db.refresh(m)
-        for line in lines:
-            item = db.query(models.GmatsItem).filter(models.GmatsItem.id == int(line["item_id"])).first()
-            qty = int(line["qty"])
-            item.physical_stock = max(0, item.physical_stock - qty)   # deduct even though not billed
-            db.add(models.GmatsMINLine(min_id=m.id, item_id=item.id, qty=qty))
-        db.commit()
-        return {"id": m.id, "min_no": m.min_no}
-
-    # ── Admin corrections (fix operator mistakes) ─────────────────
-
-    @app.post("/gmats/items/{item_id}/correct")
-    def gmats_correct_item(item_id: int, payload: dict, db: Session = Depends(get_db), current_user: dict = Depends(require_roles(["Admin"]))):
-        """Admin directly corrects an item's stock figures (e.g. a wrong stock-in)."""
-        item = db.query(models.GmatsItem).filter(models.GmatsItem.id == item_id).first()
-        if not item:
-            raise HTTPException(status_code=404, detail="Item not found")
-        _guard_record(current_user, item.tenant_code)
-        if "physical_stock" in payload:
-            item.physical_stock = max(0, int(payload["physical_stock"]))
-        if "reserved_stock" in payload:
-            item.reserved_stock = max(0, int(payload["reserved_stock"]))
-        if "reorder_level" in payload:
-            item.reorder_level = int(payload["reorder_level"])
-        if "purchase_rate" in payload:
-            item.purchase_rate = int(payload["purchase_rate"])
-        db.commit()
-        return _item_dict(db, item)
-
-    @app.delete("/gmats/items/{item_id}")
-    def gmats_delete_item(item_id: int, db: Session = Depends(get_db), current_user: dict = Depends(require_roles(["Admin"]))):
-        """Admin deletes an item (and its aliases) — e.g. a wrongly imported row."""
-        item = db.query(models.GmatsItem).filter(models.GmatsItem.id == item_id).first()
-        if not item:
-            raise HTTPException(status_code=404, detail="Item not found")
-        _guard_record(current_user, item.tenant_code)
-        db.query(models.GmatsAlias).filter(models.GmatsAlias.item_id == item_id).delete()
-        db.delete(item)
-        db.commit()
-        return {"ok": True}
-
-    @app.delete("/gmats/invoices/{inv_id}")
-    def gmats_void_invoice(inv_id: int, db: Session = Depends(get_db), current_user: dict = Depends(require_roles(["Admin"]))):
-        """Admin voids a tax invoice: restores the deducted physical stock and cancels the proforma."""
-        inv = db.query(models.GmatsInvoice).filter(models.GmatsInvoice.id == inv_id).first()
-        if not inv:
-            raise HTTPException(status_code=404, detail="Invoice not found")
-        _guard_record(current_user, inv.tenant_code)
-        if inv.proforma_id:
-            lines = db.query(models.GmatsProformaLine).filter(models.GmatsProformaLine.proforma_id == inv.proforma_id).all()
-            for l in lines:
-                item = db.query(models.GmatsItem).filter(models.GmatsItem.id == l.item_id).first()
-                if item:
-                    item.physical_stock += l.qty            # restore what the invoice deducted
-            p = db.query(models.GmatsProforma).filter(models.GmatsProforma.id == inv.proforma_id).first()
-            if p:
-                p.status = "Cancelled"
-        db.delete(inv)
-        db.commit()
-        return {"ok": True}
-
-    @app.delete("/gmats/min/{min_id}")
-    def gmats_void_min(min_id: int, db: Session = Depends(get_db), current_user: dict = Depends(require_roles(["Admin"]))):
-        """Admin voids a material issue note: restores the issued free-spare stock."""
-        m = db.query(models.GmatsMIN).filter(models.GmatsMIN.id == min_id).first()
-        if not m:
-            raise HTTPException(status_code=404, detail="MIN not found")
-        _guard_record(current_user, m.tenant_code)
-        lines = db.query(models.GmatsMINLine).filter(models.GmatsMINLine.min_id == min_id).all()
-        for l in lines:
-            item = db.query(models.GmatsItem).filter(models.GmatsItem.id == l.item_id).first()
-            if item:
-                item.physical_stock += l.qty                # restore the issued spares
-        db.flush()
-        # Delete children before the parent explicitly (no relationship() to order the flush).
-        db.query(models.GmatsMINLine).filter(models.GmatsMINLine.min_id == min_id).delete(synchronize_session=False)
-        db.query(models.GmatsMIN).filter(models.GmatsMIN.id == min_id).delete(synchronize_session=False)
-        db.commit()
-        return {"ok": True}
-
-    # ── CSV import (Tally / Excel) ────────────────────────────────
-
-    @app.post("/gmats/import-csv")
-    async def gmats_import_csv(
-        file: UploadFile = File(...),
-        tenant: str = "GMATS",
-        db: Session = Depends(get_db),
-        current_user: dict = Depends(require_roles(["Admin"])),
-    ):
-        tenant = _effective_tenant(current_user, tenant)
-        content = await file.read()
-        text = content.decode("utf-8-sig")
-        reader = csv_lib.DictReader(io.StringIO(text))
-        created = updated = skipped = 0
-        errors = []
-        for i, row in enumerate(reader, start=2):
-            try:
-                code = (row.get("item_code") or row.get("Item Code") or "").strip()
-                name = (row.get("item_name") or row.get("Item Name") or "").strip()
-                if not code or not name:
-                    skipped += 1
-                    continue
-                category = (row.get("category") or row.get("Category") or "General").strip()
-                unit = (row.get("unit") or row.get("Unit") or "Nos").strip()
-                physical = int(float((row.get("physical_stock") or row.get("Opening Stock") or row.get("Stock") or "0").strip() or 0))
-                reorder = int(float((row.get("reorder_level") or row.get("Reorder Level") or "0").strip() or 0))
-                rate = int(float((row.get("purchase_rate") or row.get("Rate") or "0").strip() or 0))
-                supplier = (row.get("supplier") or row.get("Supplier") or "").strip()
-                location = (row.get("location") or row.get("Location") or "").strip()
-                aliases_raw = (row.get("aliases") or row.get("Aliases") or "").strip()
-                existing = db.query(models.GmatsItem).filter(
-                    models.GmatsItem.tenant_code == tenant, models.GmatsItem.item_code == code
-                ).first()
-                if existing:
-                    existing.item_name = name
-                    existing.category = category
-                    existing.unit = unit
-                    existing.physical_stock = physical
-                    existing.reorder_level = reorder
-                    if rate:
-                        existing.purchase_rate = rate
-                    if supplier:
-                        existing.supplier = supplier
-                    if location:
-                        existing.location = location
-                    target = existing
-                    updated += 1
-                else:
-                    target = models.GmatsItem(
-                        tenant_code=tenant, item_code=code, item_name=name, category=category,
-                        unit=unit, physical_stock=physical, reserved_stock=0, reorder_level=reorder,
-                        purchase_rate=rate, location=location, supplier=supplier,
-                    )
-                    db.add(target); db.commit(); db.refresh(target)
-                    created += 1
-                if aliases_raw:
-                    for a in re.split(r"[;,|]", aliases_raw):
-                        a = a.strip()
-                        if a and not db.query(models.GmatsAlias).filter(
-                            models.GmatsAlias.tenant_code == tenant,
-                            models.GmatsAlias.item_id == target.id,
-                            models.GmatsAlias.alias_name == a,
-                        ).first():
-                            db.add(models.GmatsAlias(tenant_code=tenant, item_id=target.id, alias_name=a))
-            except Exception as e:
-                errors.append(f"Row {i}: {str(e)}")
-        db.commit()
-        return {"created": created, "updated": updated, "skipped": skipped, "errors": errors[:10]}
+@router.post("/gmats/import-csv")
+async def gmats_import_csv(
+    file: UploadFile = File(...),
+    tenant: str = "GMATS",
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(require_roles(["Admin"])),
+):
+    tenant = _effective_tenant(current_user, tenant)
+    content = await file.read()
+    text = content.decode("utf-8-sig")
+    reader = csv_lib.DictReader(io.StringIO(text))
+    created = updated = skipped = 0
+    errors = []
+    for i, row in enumerate(reader, start=2):
+        try:
+            code = (row.get("item_code") or row.get("Item Code") or "").strip()
+            name = (row.get("item_name") or row.get("Item Name") or "").strip()
+            if not code or not name:
+                skipped += 1
+                continue
+            category = (row.get("category") or row.get("Category") or "General").strip()
+            unit = (row.get("unit") or row.get("Unit") or "Nos").strip()
+            physical = int(float((row.get("physical_stock") or row.get("Opening Stock") or row.get("Stock") or "0").strip() or 0))
+            reorder = int(float((row.get("reorder_level") or row.get("Reorder Level") or "0").strip() or 0))
+            rate = int(float((row.get("purchase_rate") or row.get("Rate") or "0").strip() or 0))
+            supplier = (row.get("supplier") or row.get("Supplier") or "").strip()
+            location = (row.get("location") or row.get("Location") or "").strip()
+            aliases_raw = (row.get("aliases") or row.get("Aliases") or "").strip()
+            existing = db.query(models.GmatsItem).filter(
+                models.GmatsItem.tenant_code == tenant, models.GmatsItem.item_code == code
+            ).first()
+            if existing:
+                existing.item_name = name
+                existing.category = category
+                existing.unit = unit
+                existing.physical_stock = physical
+                existing.reorder_level = reorder
+                if rate:
+                    existing.purchase_rate = rate
+                if supplier:
+                    existing.supplier = supplier
+                if location:
+                    existing.location = location
+                target = existing
+                updated += 1
+            else:
+                target = models.GmatsItem(
+                    tenant_code=tenant, item_code=code, item_name=name, category=category,
+                    unit=unit, physical_stock=physical, reserved_stock=0, reorder_level=reorder,
+                    purchase_rate=rate, location=location, supplier=supplier,
+                )
+                db.add(target); db.commit(); db.refresh(target)
+                created += 1
+            if aliases_raw:
+                for a in re.split(r"[;,|]", aliases_raw):
+                    a = a.strip()
+                    if a and not db.query(models.GmatsAlias).filter(
+                        models.GmatsAlias.tenant_code == tenant,
+                        models.GmatsAlias.item_id == target.id,
+                        models.GmatsAlias.alias_name == a,
+                    ).first():
+                        db.add(models.GmatsAlias(tenant_code=tenant, item_id=target.id, alias_name=a))
+        except Exception as e:
+            errors.append(f"Row {i}: {str(e)}")
+    db.commit()
+    return {"created": created, "updated": updated, "skipped": skipped, "errors": errors[:10]}
 
 
 # ─────────────────────────────────────────────────────────────────

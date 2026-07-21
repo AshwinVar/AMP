@@ -17,6 +17,7 @@ is unchanged.
 import random
 
 import models
+from fastapi import APIRouter
 
 # The supported protocols. `library` is the Python package an edge agent would
 # use to implement the real driver; `port` is the protocol's standard TCP port.
@@ -145,8 +146,10 @@ def tick_industrial(db):
         db.commit()
 
 
-def register(app):
-    @app.get("/industrial/protocols")
-    def industrial_protocols():
-        """The supported protocol adapters — the connectivity surface AMP speaks."""
-        return PROTOCOLS
+router = APIRouter()
+
+
+@router.get("/industrial/protocols")
+def industrial_protocols():
+    """The supported protocol adapters — the connectivity surface AMP speaks."""
+    return PROTOCOLS

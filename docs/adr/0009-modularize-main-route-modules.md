@@ -64,13 +64,19 @@ both.
   `analytics_routes` and re-imported by `main` — a route module may export a
   symbol back to `main`, the mirror of `main` importing `log_audit` from
   `platform_routes`.
-- **Leave the genuinely stateful core in main.** Endpoints that read main-local
-  globals (`/platform/status` reads the sim heartbeat) or don't fit a clean domain
-  (`/ops-trends`, `/briefing/escalate`) stay. `/reports/daily-summary.txt` and
-  `/escalations/from-smart-alerts` also stay — not because of an import barrier any
-  more (both now import their compute from the shared engine / `analytics_routes`)
-  but because they're small intelligence stragglers with no cohesive module of
-  their own; moving them would trade one arbitrary home for another.
+- **Group the leftovers behind one router rather than leaving them on `app`.**
+  The endpoints that fit no domain — auth/bootstrap, `/platform/status`, `/bom`,
+  and the intelligence stragglers (`/ops-trends`, `/briefing/escalate`,
+  `/reports/daily-summary.txt`, `/escalations/from-smart-alerts`) — were the last
+  routes defined directly on `app` in `main.py`. They now live behind `core_routes`
+  (an `APIRouter` tagged "Core"), so `main.py` owns **no HTTP route at all** — it
+  assembles the app and keeps only the lifecycle bits (the sim loop, the startup
+  event, the `/ws/live` websocket). The one blocker was that `/platform/status`
+  reads the sim heartbeat the loop mutates via `global` (which doesn't cross module
+  boundaries), so that state moved to a shared `sim_state` leaf module the loop
+  writes and the endpoint reads; `CLIENT_TENANTS` moved to `tenancy` for the same
+  reason. Grouping — not scattering — is the rule: these belong together as "core",
+  not spread into domain modules where each would be an arbitrary fit.
 
 ## Consequences
 
@@ -98,11 +104,12 @@ both.
   (#166), dropping the live route count 238 → 237.
 - Safe to do *because* CI now runs the full suite (#139): a botched relocation
   fails the boot check and the guard tests, in CI, before merge.
-- What's left in `main.py` is the irreducible core: auth/bootstrap (`/login`,
-  `/register`, `/me`, `/auth/*`), the sim-stateful `/platform/status` +
-  `/ops-trends`, `/bom`, and the three intelligence stragglers
-  (`/briefing/escalate`, `/escalations/from-smart-alerts`,
-  `/reports/daily-summary.txt`) that share main's request-time compute.
+- `main.py` defines **no HTTP route** any more: the irreducible core — auth/bootstrap
+  (`/login`, `/register`, `/me`, `/auth/*`), `/platform/status`, `/bom`, and the
+  intelligence stragglers (`/ops-trends`, `/briefing/escalate`,
+  `/escalations/from-smart-alerts`, `/reports/daily-summary.txt`) — is grouped
+  behind `core_routes` (#181). `main.py` fell to ~419 lines and now just assembles
+  the app and owns the lifecycle (sim loop, startup, `/ws/live` websocket).
 
 **Negative / accepted**
 - Two handler-placement conventions coexist (module-level vs nested). The rule
@@ -134,10 +141,12 @@ quality, planning, industrial-IoT, operator, users, reporting, and finally the
 (relocate `generate_alerts` / `calculate_fallback_oee` / `parse_duration_to_minutes`
 to `analytics_engine` and hoist `analytics_summary` to module level, #164/#165,
 after the `calculate_oee_from_record` dedup in #162) rather than a plain route
-move. `main.py` finished at **706 lines / 12 endpoints** — the irreducible core
-(auth/bootstrap, the sim-stateful `/platform/status` + `/ops-trends`, `/bom`, and
-three intelligence stragglers) that is expected to stay in `main.py`
-indefinitely.
+move. That left `main.py` at 706 lines / 12 endpoints — the irreducible core
+(auth/bootstrap, `/platform/status`, `/bom`, the intelligence stragglers) — which
+was then itself grouped behind `core_routes` (#181, after #180 moved the sim
+heartbeat to `sim_state` and `CLIENT_TENANTS` to `tenancy`). `main.py` now defines
+**no HTTP route at all** (~419 lines): every endpoint lives in a router, and main
+just assembles the app and owns the lifecycle (sim loop, startup, `/ws/live`).
 
 **The shape migration is also done.** With every domain separated and
 guard-tested, the `register(app)` modules were converted to FastAPI `APIRouter`s

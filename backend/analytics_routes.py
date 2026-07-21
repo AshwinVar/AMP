@@ -31,6 +31,7 @@ from analytics_engine import (
     calculate_oee_from_record,
     generate_alerts,
     parse_duration_to_minutes,
+    pooled_oee,
 )
 from auth import get_current_user, require_roles
 from database import SessionLocal
@@ -58,17 +59,14 @@ def analytics_summary(db: Session = Depends(_get_db), current_user: dict = Depen
     avg_utilization = round(sum(m.utilization for m in machines) / len(machines)) if machines else 0
     total_downtime_minutes = sum(parse_duration_to_minutes(log.duration) for log in logs)
 
-    avg_oee = 0
-    avg_availability = 0
-    avg_performance = 0
-    avg_quality = 0
-    if records:
-        oee_rows = [calculate_oee_from_record(record) for record in records]
-        avg_oee = round(sum(row["oee"] for row in oee_rows) / len(oee_rows))
-        avg_availability = round(sum(row["availability"] for row in oee_rows) / len(oee_rows))
-        avg_performance = round(sum(row["performance"] for row in oee_rows) / len(oee_rows))
-        avg_quality = round(sum(row["quality"] for row in oee_rows) / len(oee_rows))
-    elif machines:
+    # Plant OEE pooled across records (ratio of sums), consistent with every other
+    # surface; fall back to a utilization estimate only before any production exists.
+    pooled = pooled_oee(records)
+    avg_oee = pooled["oee"]
+    avg_availability = pooled["availability"]
+    avg_performance = pooled["performance"]
+    avg_quality = pooled["quality"]
+    if not records and machines:
         avg_oee = round(sum(calculate_fallback_oee(m.utilization) for m in machines) / len(machines))
 
     avg_shift_efficiency = (

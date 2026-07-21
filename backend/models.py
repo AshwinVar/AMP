@@ -1,6 +1,6 @@
 import os
 from datetime import datetime
-from sqlalchemy import Column, Integer, String, ForeignKey, DateTime, Date, Text
+from sqlalchemy import Column, Integer, String, ForeignKey, DateTime, Date, Text, Float
 from sqlalchemy.orm import relationship
 
 from database import Base
@@ -415,6 +415,10 @@ class TenantConfig(Base):
     brand_logo_url = Column(String, nullable=True)
     subscription_status = Column(String, default="trial")       # trial / active / past_due / cancelled
     trial_ends_at = Column(DateTime, nullable=True)
+    # £ of margin (or contribution) per good unit — set per tenant so the recovery
+    # read-model can value the OEE gap in money. NULL = unset (report units only,
+    # never a made-up figure).
+    unit_value_gbp = Column(Float, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
 
 

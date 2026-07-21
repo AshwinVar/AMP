@@ -12,14 +12,16 @@ from types import SimpleNamespace
 import ai.recovery as rec
 
 
-def _run(records):
-    # build_recovery_summary calls the module-level _recent_production; stub it.
-    original = rec._recent_production
+def _run(records, rate=None):
+    # build_recovery_summary calls module-level _recent_production and _unit_value;
+    # stub both so no DB is needed (rate=None means the tenant hasn't configured one).
+    orig_prod, orig_val = rec._recent_production, rec._unit_value
     rec._recent_production = lambda db, days=7: records
+    rec._unit_value = lambda db, tenant: rate
     try:
         return rec.build_recovery_summary(db=None, tenant="DEFAULT")
     finally:
-        rec._recent_production = original
+        rec._recent_production, rec._unit_value = orig_prod, orig_val
 
 
 def _r(**kw):
@@ -59,6 +61,28 @@ def test_at_world_class_has_no_recoverable_units():
     print("PASS at/above world-class -> zero gap, zero recoverable, no lever")
 
 
+def test_pound_value_when_rate_configured():
+    # 6518 recoverable units/yr at £4.50/unit -> £29,331/yr.
+    recs = [_r(planned_minutes=480, runtime_minutes=400, ideal_cycle_time_seconds=30,
+               total_count=700, good_count=690)]
+    out = _run(recs, rate=4.50)
+    assert out["unit_value_gbp"] == 4.50
+    assert out["recoverable_value_per_year"] == 29331
+    assert out["recoverable_value_window"] == round(out["recoverable_units_window"] * 4.50)
+    print("PASS £ recovery value is computed when a per-unit rate is set")
+
+
+def test_no_pound_value_when_rate_unset():
+    # No configured rate -> report units only, never a made-up £ figure.
+    recs = [_r(planned_minutes=480, runtime_minutes=400, ideal_cycle_time_seconds=30,
+               total_count=700, good_count=690)]
+    out = _run(recs, rate=None)
+    assert out["unit_value_gbp"] is None
+    assert out["recoverable_value_window"] is None and out["recoverable_value_per_year"] is None
+    assert out["recoverable_units_per_year"] > 0  # units still reported
+    print("PASS £ fields stay null when no rate is configured (units still shown)")
+
+
 def test_no_production_is_safe():
     out = _run([])
     assert out["has_data"] is False and out["recoverable_units_per_year"] == 0
@@ -70,5 +94,7 @@ if __name__ == "__main__":
     test_recoverable_units_and_gap()
     test_component_gaps_and_biggest_lever()
     test_at_world_class_has_no_recoverable_units()
+    test_pound_value_when_rate_configured()
+    test_no_pound_value_when_rate_unset()
     test_no_production_is_safe()
     print("ALL RECOVERY READ-MODEL TESTS PASSED")

@@ -123,6 +123,7 @@ def _ensure_index(table: str, column: str):
 _ensure_user_tenant_column()
 _ensure_column("machines", "line", "ALTER TABLE machines ADD COLUMN line VARCHAR DEFAULT ''")
 _ensure_column("work_orders", "material_state", "ALTER TABLE work_orders ADD COLUMN material_state VARCHAR DEFAULT 'RAW'")
+_ensure_column("tenant_configs", "unit_value_gbp", "ALTER TABLE tenant_configs ADD COLUMN unit_value_gbp FLOAT")
 # The windowed read-models filter these by created_at in SQL — index them so the
 # window stays fast as the tables grow.
 _ensure_index("production_records", "created_at")

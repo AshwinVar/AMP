@@ -91,6 +91,7 @@ def _config_dict(c):
         "brand_logo_url": c.brand_logo_url,
         "subscription_status": c.subscription_status,
         "trial_ends_at": c.trial_ends_at,
+        "unit_value_gbp": c.unit_value_gbp,
     }
 
 
@@ -176,6 +177,20 @@ def update_tenant_config(payload: dict, db: Session = Depends(get_db),
     for f in ("brand_name", "brand_color", "brand_logo_url"):
         if f in payload:
             setattr(c, f, payload[f])
+    # £ per good unit — a tenant Admin sets their own margin so the recovery
+    # read-model can value the OEE gap. null/"" clears it (back to units-only).
+    if "unit_value_gbp" in payload:
+        raw = payload["unit_value_gbp"]
+        if raw is None or raw == "":
+            c.unit_value_gbp = None
+        else:
+            try:
+                val = float(raw)
+            except (TypeError, ValueError):
+                raise HTTPException(status_code=400, detail="unit_value_gbp must be a number")
+            if val < 0:
+                raise HTTPException(status_code=400, detail="unit_value_gbp must be >= 0")
+            c.unit_value_gbp = val
     if is_platform_owner:
         for f in ("plan", "subscription_status"):
             if f in payload:

@@ -9,6 +9,7 @@ world-class target so the biggest lever is obvious. A read-model over
 production_records — auto-scoped to the tenant (ADR-0002), no storage; reuses the
 shared pooled OEE so it agrees with every other surface.
 """
+import models
 from ai.twin import _recent_production
 from analytics_engine import pooled_oee
 
@@ -23,8 +24,16 @@ _EMPTY = {
     "has_data": False, "oee": 0, "world_class": WORLD_CLASS_OEE, "gap_points": 0,
     "at_world_class": False, "good_units_window": 0, "window_days": WINDOW_DAYS,
     "recoverable_units_window": 0, "recoverable_units_per_year": 0,
-    "components": [], "biggest_lever": None,
+    "unit_value_gbp": None, "recoverable_value_window": None,
+    "recoverable_value_per_year": None, "components": [], "biggest_lever": None,
 }
+
+
+def _unit_value(db, tenant: str):
+    """The tenant's configured £ per good unit (TenantConfig.unit_value_gbp), or
+    None if unset — in which case recovery reports units only, never a made-up £."""
+    c = db.query(models.TenantConfig).filter(models.TenantConfig.tenant_code == tenant).first()
+    return c.unit_value_gbp if c else None
 
 
 def build_recovery_summary(db, tenant: str) -> dict:
@@ -53,6 +62,12 @@ def build_recovery_summary(db, tenant: str) -> dict:
         })
     biggest = max(components, key=lambda c: c["gap_points"])
 
+    # Value the recoverable output in £ only when the tenant has set a per-unit
+    # rate; otherwise leave the £ fields null and report units only.
+    rate = _unit_value(db, tenant)
+    value_window = round(recoverable_window * rate) if rate else None
+    value_year = round(recoverable_year * rate) if rate else None
+
     return {
         "has_data": True,
         "oee": o["oee"],
@@ -63,6 +78,9 @@ def build_recovery_summary(db, tenant: str) -> dict:
         "window_days": WINDOW_DAYS,
         "recoverable_units_window": recoverable_window,
         "recoverable_units_per_year": recoverable_year,
+        "unit_value_gbp": rate,
+        "recoverable_value_window": value_window,
+        "recoverable_value_per_year": value_year,
         "components": components,
         "biggest_lever": biggest["key"] if biggest["gap_points"] > 0 else None,
     }

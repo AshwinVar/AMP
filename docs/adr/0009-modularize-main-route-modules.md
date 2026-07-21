@@ -151,5 +151,18 @@ nested-vs-module-level split entirely. The lone survivor is `ai.copilot`, a thin
 `register(app)` *coordinator* (feature-flag entry point) that holds no routes of
 its own and simply includes `ai_copilot.router` — correct as-is.
 
-There is no obvious next axis. Routers could later grow prefixes/tags/`dependencies`
-if the API surface warrants it, but that's opportunistic polish, not pending debt.
+**Router metadata followed.** Every router now carries an OpenAPI `tags=[...]`
+domain label (#173), so `/docs` groups endpoints by domain (22 groups). The ten
+modules whose routes all share one root also gained an `APIRouter(prefix=...)`
+with the root declared once instead of on every decorator (#174) — work-orders,
+inventory, quality, operator, users, reports, gmats, industrial-adapters, and the
+two `/ai` modules (recommendations, ai_copilot); collection endpoints became
+`@router.<verb>("")` so the URL is unchanged. Multi-root modules (machines,
+orders, analytics, factory_ops, read_model, …) keep explicit paths + a tag — a
+prefix there would change URLs or need splitting. Both changes were verified
+against a captured path+method baseline: **byte-for-byte identical, 237
+endpoints, zero URL drift**, not merely the same count.
+
+That closes the opportunistic polish too. `dependencies=` at the router level
+(e.g. hoisting `require_roles` off every handler in an admin-only module) remains
+available if a module ever wants it, but nothing pending calls for it.

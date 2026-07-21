@@ -100,6 +100,22 @@ def test_build_management_summary():
     print("PASS build_management_summary rolls up downtime, loss, worst machine, OEE")
 
 
+def test_management_summary_uses_pooled_not_averaged_oee():
+    # A tiny perfect run + a large poor run. Averaging per-record OEE would give
+    # (100 + 20) / 2 = 60; pooling (ratio of sums) weights by volume and gives 21.
+    # This pins the standardised pooled aggregation.
+    recs = [
+        _rec(planned_minutes=10, runtime_minutes=10, ideal_cycle_time_seconds=60,
+             total_count=10, good_count=10),
+        _rec(planned_minutes=1000, runtime_minutes=500, ideal_cycle_time_seconds=30,
+             total_count=500, good_count=400),
+    ]
+    s = ae.build_management_summary([], [], [], recs)
+    assert s["avg_oee"] == ae.pooled_oee(recs)["oee"], s["avg_oee"]
+    assert s["avg_oee"] == 21 and s["avg_oee"] != 60, s["avg_oee"]
+    print("PASS build_management_summary pools OEE (volume-weighted), not averages")
+
+
 def test_build_management_summary_empty_is_safe():
     s = ae.build_management_summary([], [], [], [])
     assert s["top_loss_reason"] == "No data" and s["worst_machine"] == "No data"
@@ -141,6 +157,7 @@ if __name__ == "__main__":
     test_build_shift_kpis()
     test_build_oee_trends_indexes_and_names_machines()
     test_build_management_summary()
+    test_management_summary_uses_pooled_not_averaged_oee()
     test_build_management_summary_empty_is_safe()
     test_build_smart_alerts_severity_and_dedup()
     test_calculate_fallback_oee_monotonic()

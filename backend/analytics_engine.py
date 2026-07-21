@@ -28,6 +28,33 @@ def calculate_oee_from_record(record):
     }
 
 
+def pooled_oee(records) -> dict:
+    """Aggregate OEE across many records by POOLING — sum the inputs, then compute
+    each component once (ratio of sums, so a machine is weighted by its volume/
+    time). This is the sound way to combine OEE and the single method every
+    surface uses: averaging per-record OEE (mean of ratios) over- or under-weights
+    small runs and can disagree page-to-page. Each component is clamped to [0, 1].
+
+    (calculate_oee_from_record above stays the per-record view — used for alert
+    thresholds on a single machine's latest run, where pooling makes no sense.)
+    """
+    planned = sum(r.planned_minutes or 0 for r in records)
+    runtime = sum(r.runtime_minutes or 0 for r in records)
+    total = sum(r.total_count or 0 for r in records)
+    good = sum(r.good_count or 0 for r in records)
+    ideal_s = sum((r.ideal_cycle_time_seconds or 0) * (r.total_count or 0) for r in records)
+    a = min(runtime / planned, 1.0) if planned else 0.0
+    p = min(ideal_s / (runtime * 60), 1.0) if runtime else 0.0
+    q = min(good / total, 1.0) if total else 0.0
+    return {
+        "oee": round(a * p * q * 100),
+        "availability": round(a * 100),
+        "performance": round(p * 100),
+        "quality": round(q * 100),
+        "has_data": len(records) > 0,
+    }
+
+
 def build_shift_kpis(shifts):
     rows = []
 
@@ -92,17 +119,13 @@ def build_management_summary(machines, downtime_logs, shifts, production_records
             worst_machine = machine.name
             break
 
-    avg_oee = 0
-    avg_availability = 0
-    avg_performance = 0
-    avg_quality = 0
-
-    if production_records:
-        oee_rows = [calculate_oee_from_record(record) for record in production_records]
-        avg_oee = round(sum(row["oee"] for row in oee_rows) / len(oee_rows))
-        avg_availability = round(sum(row["availability"] for row in oee_rows) / len(oee_rows))
-        avg_performance = round(sum(row["performance"] for row in oee_rows) / len(oee_rows))
-        avg_quality = round(sum(row["quality"] for row in oee_rows) / len(oee_rows))
+    # Plant OEE is pooled across the window's records (ratio of sums), consistent
+    # with the Executive-OEE card and every other surface.
+    pooled = pooled_oee(production_records)
+    avg_oee = pooled["oee"]
+    avg_availability = pooled["availability"]
+    avg_performance = pooled["performance"]
+    avg_quality = pooled["quality"]
 
     target_output = sum(shift.target_output for shift in shifts)
     actual_output = sum(shift.actual_output for shift in shifts)

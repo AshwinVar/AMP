@@ -11,6 +11,10 @@ from collections import Counter
 from datetime import datetime, timedelta
 
 import models
+# Pooled OEE (ratio of sums) is the single source of truth in analytics_engine,
+# shared with build_management_summary / analytics_summary so every surface agrees.
+# Re-exported under the name the pillar modules (oee, losses, scorecard) import.
+from analytics_engine import pooled_oee as _oee_from_records
 from ai import prediction
 
 name = "twin"
@@ -24,26 +28,6 @@ def _band(health: int) -> str:
     if health >= 35:
         return "At risk"
     return "Critical"
-
-
-def _oee_from_records(records) -> dict:
-    """OEE = Availability x Performance x Quality over a machine's production
-    records. Each component is clamped to [0, 1] then returned as a percentage."""
-    planned = sum(r.planned_minutes or 0 for r in records)
-    runtime = sum(r.runtime_minutes or 0 for r in records)
-    total = sum(r.total_count or 0 for r in records)
-    good = sum(r.good_count or 0 for r in records)
-    ideal_s = sum((r.ideal_cycle_time_seconds or 0) * (r.total_count or 0) for r in records)
-    a = min(runtime / planned, 1.0) if planned else 0.0
-    p = min(ideal_s / (runtime * 60), 1.0) if runtime else 0.0
-    q = min(good / total, 1.0) if total else 0.0
-    return {
-        "oee": round(a * p * q * 100),
-        "availability": round(a * 100),
-        "performance": round(p * 100),
-        "quality": round(q * 100),
-        "has_data": len(records) > 0,
-    }
 
 
 def _recent_production(db, machine_id=None, days: int = 7):

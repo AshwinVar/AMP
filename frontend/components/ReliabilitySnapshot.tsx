@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { apiGet } from "../lib/api";
+import MachineReliabilityDrawer from "./MachineReliabilityDrawer";
 
 // Mirrors the backend reliability read-model (ai/reliability.py build_reliability_summary).
 type ByMachine = {
@@ -37,8 +38,9 @@ const mttr = (m: number) => (m >= 60 ? `${(m / 60).toFixed(1)}h` : `${Math.round
 // least-reliable machines, the reliability bottleneck, and where the repair
 // hours go. Self-contained: fetches its own summary and refreshes, so it drops
 // onto any screen. Renders nothing until there are machines to track.
-export default function ReliabilitySnapshot({ onOpen }: { onOpen?: (viewKey: string) => void }) {
+export default function ReliabilitySnapshot({ onOpen: _onOpen }: { onOpen?: (viewKey: string) => void }) {
   const [d, setD] = useState<ReliabilitySummary | null>(null);
+  const [selected, setSelected] = useState<{ id: number; name: string } | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -120,18 +122,16 @@ export default function ReliabilitySnapshot({ onOpen }: { onOpen?: (viewKey: str
                     <span className={`tabular-nums shrink-0 ${availColor(m.availability)}`}>{m.availability}%</span>
                   </>
                 );
-                return onOpen ? (
+                return (
                   <button
                     key={m.machine_id}
                     type="button"
-                    onClick={() => onOpen("machines")}
-                    title="Open machine detail"
+                    onClick={() => setSelected({ id: m.machine_id, name: m.name })}
+                    title="Open reliability drill-down"
                     className={`${cls} w-full hover:border-slate-600 hover:bg-slate-800/60 transition focus:outline-none focus:ring-2 focus:ring-slate-600`}
                   >
                     {inner}
                   </button>
-                ) : (
-                  <div key={m.machine_id} className={cls}>{inner}</div>
                 );
               })}
             </div>

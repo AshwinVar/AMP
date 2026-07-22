@@ -94,8 +94,84 @@ def test_reliability_is_empty_safe_and_windows_out_old_failures():
     assert empty["availability"] == 100.0
 
 
+def _task(db, machine_id, task_no, priority="High", status="Open", planned_days=0, completed=False):
+    from datetime import date
+    planned = date.today() + timedelta(days=planned_days)
+    db.add(models.MaintenanceTask(
+        task_no=task_no, machine_id=machine_id, task_type="Repair", priority=priority,
+        assigned_to="tech", planned_date=planned,
+        completed_date=(date.today() if completed else None), status=status,
+    ))
+
+
+def test_machine_reliability_drilldown_reconciles_with_summary_row():
+    db = _fresh_session()
+    _machine(db, 1, "SMT-Reflow-01", "SMT")
+    _machine(db, 2, "IC-Test-01", "IC")
+    _log(db, 1, "120 min", "Jam", days_ago=2)
+    _log(db, 1, "120 min", "Breakdown", days_ago=5)
+    _log(db, 1, "60 min", "Jam", days_ago=9)
+    _log(db, 2, "30 min", "Calibration", days_ago=1)   # a different machine's failure must not bleed in
+    # An open, overdue maintenance task on machine 1, plus a completed one (excluded).
+    _task(db, 1, "MT-001", priority="Critical", status="In Progress", planned_days=-3)
+    _task(db, 1, "MT-002", priority="Low", status="Open", planned_days=5)
+    _task(db, 1, "MT-003", status="Completed", planned_days=-1, completed=True)
+    _task(db, 2, "MT-099", status="Open", planned_days=1)   # other machine's task must not bleed in
+    db.commit()
+
+    d = reliability.build_machine_reliability(db, "DEFAULT", 1)
+    assert d["found"] is True and d["name"] == "SMT-Reflow-01" and d["line"] == "SMT"
+    # Reconciles with the summary's per-machine row for the same window.
+    summ = {m["name"]: m for m in reliability.build_reliability_summary(db, "DEFAULT")["by_machine"]}["SMT-Reflow-01"]
+    assert d["failures"] == summ["failures"] == 3
+    assert d["repair_minutes"] == summ["repair_minutes"] == 300
+    assert d["mttr_minutes"] == summ["mttr_minutes"] == 100.0
+    assert d["mtbf_hours"] == summ["mtbf_hours"] == 238.3
+    assert d["availability"] == summ["availability"] == 99.3
+
+    # Per-machine failure-mode Pareto: Jam (180) leads Breakdown (120); no Calibration.
+    modes = {m["reason"]: m for m in d["top_modes"]}
+    assert d["top_modes"][0]["reason"] == "Jam" and modes["Jam"]["minutes"] == 180
+    assert "Calibration" not in modes
+
+    # Daily timeline spans the window and totals to the machine's failures/minutes.
+    assert len(d["daily"]) == reliability.WINDOW_DAYS
+    assert sum(x["failures"] for x in d["daily"]) == 3
+    assert sum(x["minutes"] for x in d["daily"]) == 300
+
+    # Open maintenance tasks: only machine 1's open ones, overdue-first, completed excluded.
+    assert d["open_task_count"] == 2 and d["overdue_task_count"] == 1
+    assert [t["task_no"] for t in d["open_tasks"]] == ["MT-001", "MT-002"]
+    assert d["open_tasks"][0]["overdue"] is True and d["open_tasks"][1]["overdue"] is False
+
+    # Recent stoppages: newest first, this machine only.
+    assert len(d["recent"]) == 3
+    assert d["recent"][0]["reason"] == "Jam" and d["recent"][0]["minutes"] == 120
+
+
+def test_machine_reliability_drilldown_handles_missing_and_clean_machines():
+    db = _fresh_session()
+    _machine(db, 1, "SMT-Printer-01", "SMT")   # exists, never failed
+    db.commit()
+
+    clean = reliability.build_machine_reliability(db, "DEFAULT", 1)
+    assert clean["found"] is True and clean["failures"] == 0
+    assert clean["mtbf_hours"] is None and clean["availability"] == 100.0
+    assert clean["top_modes"] == [] and clean["recent"] == []
+    assert clean["open_task_count"] == 0 and clean["overdue_task_count"] == 0
+    assert len(clean["daily"]) == reliability.WINDOW_DAYS
+
+    missing = reliability.build_machine_reliability(db, "DEFAULT", 999)
+    assert missing["found"] is False and missing["name"] == "#999"
+    assert missing["failures"] == 0 and missing["availability"] == 100.0
+    assert missing["status"] is None
+
+
 if __name__ == "__main__":
     test_reliability_computes_mtbf_mttr_and_ranks_worst_first()
     test_reliability_is_empty_safe_and_windows_out_old_failures()
+    test_machine_reliability_drilldown_reconciles_with_summary_row()
+    test_machine_reliability_drilldown_handles_missing_and_clean_machines()
     print("RELIABILITY OK: MTBF/MTTR/availability per machine; least-reliable-first ranking; "
-          "bottleneck named; failure-mode Pareto by repair time; 30-day window; empty-safe")
+          "bottleneck named; failure-mode Pareto by repair time; 30-day window; empty-safe; "
+          "machine drill-down reconciles with summary row + open-task/timeline/recent context")

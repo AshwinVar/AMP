@@ -230,6 +230,14 @@ def get_reliability_summary(db: Session = Depends(_get_db), current_user: dict =
     return ai.reliability.build_reliability_summary(db, request_tenant(current_user))
 
 
+@router.get("/machine-reliability")
+def get_machine_reliability(machine_id: int, db: Session = Depends(_get_db), current_user: dict = Depends(get_current_user)):
+    # Reliability drill-down (ADR-0007): for one machine — its 30-day failures,
+    # MTTR / MTBF / availability, its failure-mode Pareto, a daily stoppage
+    # timeline, the open maintenance tasks working it, and recent stoppages.
+    return ai.reliability.build_machine_reliability(db, request_tenant(current_user), machine_id)
+
+
 @router.get("/connectivity-summary")
 def get_connectivity_summary(db: Session = Depends(_get_db), current_user: dict = Depends(get_current_user)):
     # Edge connectivity (ADR-0007): is the OT edge alive? The headline

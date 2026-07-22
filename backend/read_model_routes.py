@@ -147,6 +147,13 @@ def get_delivery_summary(db: Session = Depends(_get_db), current_user: dict = De
     return ai.delivery.build_delivery_summary(db, request_tenant(current_user))
 
 
+@router.get("/supply-summary")
+def get_supply_summary(db: Session = Depends(_get_db), current_user: dict = Depends(get_current_user)):
+    # Inbound supply outlook (ADR-0007): per-supplier received / on-track /
+    # at-risk / late PO states, unit receipt rate, and the inbound POs to chase.
+    return ai.supply.build_supply_summary(db, request_tenant(current_user))
+
+
 @router.get("/cost-summary")
 def get_cost_summary(db: Session = Depends(_get_db), current_user: dict = Depends(get_current_user)):
     # Cost of losses (ADR-0007): downtime + scrap priced at standard rates, and

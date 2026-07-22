@@ -129,9 +129,117 @@ def test_connectivity_all_fresh_scores_100():
     assert r["needs_attention"] is None
 
 
+def test_connection_detail_explains_a_silent_machine():
+    # A machine that has gone quiet: its state, the silence measured against its
+    # own cadence, the tags that dropped, the offline device, the unreported work
+    # order, and the blind spots that follow from all of it.
+    db = _fresh_session()
+    _machine(db, 1, "IC-Test-01", "IC")
+    # Reported utilisation every 5 minutes, then stopped 45 minutes ago.
+    for mins in (45, 50, 55, 60):
+        _telemetry(db, 1, minutes_ago=mins, signal_name="utilization")
+    # A second tag that died much earlier — partial blindness within the window.
+    for mins in (300, 305, 310):
+        _telemetry(db, 1, minutes_ago=mins, signal_name="temperature")
+    _device(db, "DEV-9", "IC Test PLC", status="Offline", protocol="OPC-UA", linked=1)
+    db.add(models.WorkOrder(work_order_no="WO-500", part_number="P-1", batch_number="B-1",
+                            machine_id=1, target_quantity=100, actual_quantity=20, status="In Progress"))
+    db.commit()
+    dev = db.query(models.IndustrialDevice).filter_by(device_code="DEV-9").first()
+    _signal(db, dev.id, "Good", minutes_ago=50)
+    _signal(db, dev.id, "Bad", minutes_ago=55)
+    db.commit()
+
+    r = connectivity.build_connection_detail(db, "DEFAULT", 1)
+
+    assert r["found"] is True and r["name"] == "IC-Test-01" and r["line"] == "IC"
+    # Stale: last read 45 min ago, past the 15-minute freshness window.
+    assert r["state"] == "stale"
+    assert 44 <= r["last_signal_minutes"] <= 47
+    assert r["signals"] == 7
+
+    # Cadence is the MEDIAN gap (5 min), so the 4h hole between the two tags
+    # doesn't redefine "normal"; the silence is ~9x overdue.
+    assert r["cadence_minutes"] == 5.0
+    assert r["overdue_multiple"] is not None and r["overdue_multiple"] >= 8
+
+    # Per-tag: temperature dropped (5h quiet against its own 5-min cadence),
+    # utilization is also overdue — both flagged, worst (longest silent) first.
+    tags = {s["signal_name"]: s for s in r["by_signal"]}
+    assert tags["temperature"]["dropped"] is True and tags["temperature"]["reads"] == 3
+    assert tags["temperature"]["cadence_minutes"] == 5.0
+    assert r["by_signal"][0]["signal_name"] == "temperature"   # longest silence leads
+    assert r["dropped_signals"] == 2
+
+    # The device wired to it, and its read quality (1 good of 2).
+    assert r["linked"] is True and len(r["devices"]) == 1
+    assert r["devices"][0]["device_code"] == "DEV-9" and r["devices"][0]["online"] is False
+    assert r["devices"][0]["signals"] == 2 and r["devices"][0]["bad_signals"] == 1
+    assert r["signal_quality"]["good_rate"] == 50.0
+
+    # What the silence costs: the open job going unreported.
+    assert r["open_work_orders"]["count"] == 1
+    assert r["open_work_orders"]["orders"][0]["work_order_no"] == "WO-500"
+
+    # Blind spots name the offline device, the stopped telemetry, the unreported
+    # work order, the dropped tags and the suspect reads.
+    msgs = " ".join(b["message"] for b in r["blind_spots"])
+    assert "offline" in msgs and "IC Test PLC" in msgs
+    assert "Telemetry has stopped" in msgs and "unverified" in msgs
+    assert "open work order" in msgs
+    assert "partial blindness" in msgs and "bad quality" in msgs
+    assert r["blind_spots"][0]["severity"] == "high"
+
+    # The raw evidence, newest first.
+    assert len(r["recent"]) == 7 and r["recent"][0]["signal_name"] == "utilization"
+
+
+def test_connection_detail_flags_a_dark_uninstrumented_machine():
+    # Never reported, no device linked: dark, and the two structural blind spots.
+    db = _fresh_session()
+    _machine(db, 7, "SMT-AOI-01")
+    db.commit()
+    r = connectivity.build_connection_detail(db, "DEFAULT", 7)
+    assert r["found"] is True and r["state"] == "dark"
+    assert r["signals"] == 0 and r["by_signal"] == [] and r["recent"] == []
+    assert r["cadence_minutes"] is None and r["overdue_multiple"] is None
+    assert r["linked"] is False and r["devices"] == []
+    msgs = " ".join(b["message"] for b in r["blind_spots"])
+    assert "No edge device is registered" in msgs and "Never reported telemetry" in msgs
+
+
+def test_connection_detail_is_clean_for_a_healthy_machine():
+    db = _fresh_session()
+    _machine(db, 2, "SMT-Reflow-01")
+    _telemetry(db, 2, minutes_ago=1)
+    _telemetry(db, 2, minutes_ago=6)
+    _device(db, "DEV-3", "Reflow PLC", status="Online", linked=2)
+    db.commit()
+    dev = db.query(models.IndustrialDevice).filter_by(device_code="DEV-3").first()
+    _signal(db, dev.id, "Good", minutes_ago=2)
+    db.commit()
+
+    r = connectivity.build_connection_detail(db, "DEFAULT", 2)
+    assert r["state"] == "fresh" and r["dropped_signals"] == 0
+    assert r["signal_quality"]["good_rate"] == 100.0
+    assert r["blind_spots"] == []
+
+
+def test_connection_detail_handles_a_machine_that_is_not_there():
+    r = connectivity.build_connection_detail(_fresh_session(), "DEFAULT", 999)
+    assert r["found"] is False and r["machine_id"] == 999 and r["name"] is None
+    assert r["blind_spots"] == [] and r["devices"] == [] and r["by_signal"] == []
+    assert r["open_work_orders"] == {"count": 0, "orders": []}
+
+
 if __name__ == "__main__":
     test_connectivity_classifies_fresh_stale_dark_and_scores()
     test_connectivity_is_empty_safe()
     test_connectivity_all_fresh_scores_100()
+    test_connection_detail_explains_a_silent_machine()
+    test_connection_detail_flags_a_dark_uninstrumented_machine()
+    test_connection_detail_is_clean_for_a_healthy_machine()
+    test_connection_detail_handles_a_machine_that_is_not_there()
     print("CONNECTIVITY OK: fresh/stale/dark classification; connectivity score; device online rate; "
-          "signal good-quality rate; instrumentation coverage; worst-first chase list; empty-safe")
+          "signal good-quality rate; instrumentation coverage; worst-first chase list; empty-safe; "
+          "drill-down cadence/overdue, dropped tags, linked devices, unreported work orders, blind spots")

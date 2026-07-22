@@ -256,6 +256,16 @@ def get_connectivity_summary(db: Session = Depends(_get_db), current_user: dict 
     return ai.connectivity.build_connectivity_summary(db, request_tenant(current_user))
 
 
+@router.get("/connectivity-machine")
+def get_connectivity_machine(machine_id: int, db: Session = Depends(_get_db), current_user: dict = Depends(get_current_user)):
+    # Edge-connection drill-down (ADR-0007): for one machine — its connection
+    # state and last signal, its normal reporting cadence and how far past it the
+    # silence has run, a per-tag breakdown (which signals dropped), the edge
+    # devices wired to it, read quality, the open work orders going unreported
+    # while it is quiet, and the ranked blind spots.
+    return ai.connectivity.build_connection_detail(db, request_tenant(current_user), machine_id)
+
+
 @router.get("/compliance-summary")
 def get_compliance_summary(db: Session = Depends(_get_db), current_user: dict = Depends(get_current_user)):
     # Compliance document summary (ADR-0007): review load — overdue / due-soon /

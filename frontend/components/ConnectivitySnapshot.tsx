@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { apiGet } from "../lib/api";
+import ConnectionDrawer from "./ConnectionDrawer";
 
 // Mirrors the backend connectivity read-model (ai/connectivity.py build_connectivity_summary).
 type ByMachine = {
@@ -62,9 +63,12 @@ function ago(mins: number | null) {
 // connectivity score, how many machines are fresh / stale / dark, the device
 // online and signal-quality rates, and the silent connections to chase.
 // Self-contained: fetches its own summary and refreshes. Renders nothing until
-// there are machines to track.
+// there are machines to track. Each machine (and the connection to fix first)
+// opens the drill-down drawer; the offline devices jump to the connectivity
+// console, where the estate is managed.
 export default function ConnectivitySnapshot({ onOpen }: { onOpen?: (viewKey: string) => void }) {
   const [d, setD] = useState<ConnectivitySummary | null>(null);
+  const [machineId, setMachineId] = useState<number | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -118,7 +122,12 @@ export default function ConnectivitySnapshot({ onOpen }: { onOpen?: (viewKey: st
       </div>
 
       {d.needs_attention && (
-        <div className="mt-4 rounded-lg border border-slate-800 border-l-2 border-l-red-500/70 bg-slate-900/40 px-3 py-2">
+        <button
+          type="button"
+          onClick={() => setMachineId(d.needs_attention!.machine_id)}
+          title={`${d.needs_attention.name} — click for connection detail`}
+          className="mt-4 w-full text-left rounded-lg border border-slate-800 border-l-2 border-l-red-500/70 bg-slate-900/40 px-3 py-2 hover:border-slate-600 hover:bg-slate-800/60 transition focus:outline-none focus:ring-2 focus:ring-slate-600"
+        >
           <p className="text-[11px] uppercase tracking-wide text-slate-500">Fix this connection first</p>
           <p className="text-sm text-slate-200 mt-0.5">
             <span className="font-medium">{d.needs_attention.name}</span>
@@ -127,7 +136,7 @@ export default function ConnectivitySnapshot({ onOpen }: { onOpen?: (viewKey: st
               {!d.needs_attention.linked ? " · no device linked" : ""}
             </span>
           </p>
-        </div>
+        </button>
       )}
 
       <div className="mt-5 grid grid-cols-1 md:grid-cols-2 gap-6">
@@ -137,9 +146,14 @@ export default function ConnectivitySnapshot({ onOpen }: { onOpen?: (viewKey: st
           <div className="space-y-2">
             {d.by_machine.map((m) => {
               const st = STATE_STYLE[m.state];
-              const cls = "flex items-center justify-between rounded-lg border border-slate-800 px-3 py-2 text-sm";
-              const inner = (
-                <>
+              return (
+                <button
+                  key={m.machine_id}
+                  type="button"
+                  onClick={() => setMachineId(m.machine_id)}
+                  title={`${m.name} — click for connection detail`}
+                  className="w-full flex items-center justify-between rounded-lg border border-slate-800 px-3 py-2 text-sm hover:border-slate-600 hover:bg-slate-800/60 transition focus:outline-none focus:ring-2 focus:ring-slate-600"
+                >
                   <div className="min-w-0 flex-1 text-left flex items-center gap-2">
                     <span className={`h-2 w-2 shrink-0 rounded-full ${st.dot}`} />
                     <div className="min-w-0">
@@ -150,20 +164,7 @@ export default function ConnectivitySnapshot({ onOpen }: { onOpen?: (viewKey: st
                     </div>
                   </div>
                   <span className={`tabular-nums shrink-0 text-[11px] uppercase ${st.text}`}>{st.label}</span>
-                </>
-              );
-              return onOpen ? (
-                <button
-                  key={m.machine_id}
-                  type="button"
-                  onClick={() => onOpen("connectivity")}
-                  title="Open connectivity"
-                  className={`${cls} w-full hover:border-slate-600 hover:bg-slate-800/60 transition focus:outline-none focus:ring-2 focus:ring-slate-600`}
-                >
-                  {inner}
                 </button>
-              ) : (
-                <div key={m.machine_id} className={cls}>{inner}</div>
               );
             })}
           </div>
@@ -188,21 +189,41 @@ export default function ConnectivitySnapshot({ onOpen }: { onOpen?: (viewKey: st
             <p className="text-emerald-400 text-sm">Every registered device is online.</p>
           ) : (
             <div className="space-y-2">
-              {d.offline_devices.map((dev) => (
-                <div key={dev.device_code} className="flex items-center justify-between rounded-lg border border-slate-800 px-3 py-2 text-sm">
-                  <div className="min-w-0 flex-1 text-left">
-                    <p className="text-slate-200 font-medium truncate">{dev.device_name}</p>
-                    <p className="text-[11px] text-slate-500 truncate">
-                      {dev.device_type} · {dev.protocol}{dev.linked_machine ? ` · ${dev.linked_machine}` : ""}
-                    </p>
-                  </div>
-                  <span className="tabular-nums shrink-0 text-[11px] uppercase text-red-400">{dev.status}</span>
-                </div>
-              ))}
+              {d.offline_devices.map((dev) => {
+                const cls = "flex items-center justify-between rounded-lg border border-slate-800 px-3 py-2 text-sm";
+                const inner = (
+                  <>
+                    <div className="min-w-0 flex-1 text-left">
+                      <p className="text-slate-200 font-medium truncate">{dev.device_name}</p>
+                      <p className="text-[11px] text-slate-500 truncate">
+                        {dev.device_type} · {dev.protocol}{dev.linked_machine ? ` · ${dev.linked_machine}` : ""}
+                      </p>
+                    </div>
+                    <span className="tabular-nums shrink-0 text-[11px] uppercase text-red-400">{dev.status}</span>
+                  </>
+                );
+                return onOpen ? (
+                  <button
+                    key={dev.device_code}
+                    type="button"
+                    onClick={() => onOpen("connectivity")}
+                    title="Open the connectivity console"
+                    className={`${cls} w-full hover:border-slate-600 hover:bg-slate-800/60 transition focus:outline-none focus:ring-2 focus:ring-slate-600`}
+                  >
+                    {inner}
+                  </button>
+                ) : (
+                  <div key={dev.device_code} className={cls}>{inner}</div>
+                );
+              })}
             </div>
           )}
         </div>
       </div>
+
+      {machineId !== null && (
+        <ConnectionDrawer machineId={machineId} onClose={() => setMachineId(null)} />
+      )}
     </div>
   );
 }

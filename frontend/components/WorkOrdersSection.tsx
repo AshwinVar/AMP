@@ -1,3 +1,7 @@
+"use client";
+
+import { useState } from "react";
+import WorkOrderTraceDrawer from "./WorkOrderTraceDrawer";
 import type { WorkOrder, WorkOrderAnalytics } from "../lib/phase9-types";
 
 type Machine = {
@@ -66,6 +70,9 @@ export default function WorkOrdersSection({
   deleteWorkOrder?: (id: number) => void;
   getMachineName: (id: number) => string;
 }) {
+  // The work order whose traceability drawer is open, if any.
+  const [traced, setTraced] = useState<string | null>(null);
+
   return (
     <section className="mt-8 space-y-6">
       <div>
@@ -257,6 +264,13 @@ export default function WorkOrdersSection({
                       >
                         Delete
                       </button>
+                      {/* Genealogy for this job — plans, materials, quality, stoppages. */}
+                      <button
+                        onClick={() => setTraced(wo.work_order_no)}
+                        className="ml-2 text-sky-300 border border-sky-500/40 rounded-lg px-3 py-1 hover:bg-sky-500/10"
+                      >
+                        Trace
+                      </button>
                     </td>
                   </tr>
                 );
@@ -273,6 +287,8 @@ export default function WorkOrdersSection({
           </table>
         </div>
       </div>
+
+      {traced && <WorkOrderTraceDrawer workOrderNo={traced} onClose={() => setTraced(null)} />}
     </section>
   );
 }

@@ -195,6 +195,16 @@ def get_schedule_summary(db: Session = Depends(_get_db), current_user: dict = De
     return ai.schedule.build_schedule_adherence(db, request_tenant(current_user))
 
 
+@router.get("/work-order-trace")
+def get_work_order_trace(work_order_no: str, db: Session = Depends(_get_db),
+                         current_user: dict = Depends(get_current_user)):
+    # Work-order traceability (ADR-0007): one job's genealogy — the plans it ran
+    # under, the materials issued against it and goods received from it, what
+    # quality found, the downtime on its machine while it was live, a merged
+    # timeline, and the gaps where the record is silent.
+    return ai.trace.build_work_order_trace(db, request_tenant(current_user), work_order_no)
+
+
 @router.get("/cost-summary")
 def get_cost_summary(db: Session = Depends(_get_db), current_user: dict = Depends(get_current_user)):
     # Cost of losses (ADR-0007): downtime + scrap priced at standard rates, and

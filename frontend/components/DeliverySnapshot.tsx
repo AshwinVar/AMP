@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { apiGet, API_URL, getAuthHeaders } from "../lib/api";
+import CustomerDrawer from "./CustomerDrawer";
 
 // Mirrors the backend delivery read-model (ai/delivery.py build_delivery_summary).
 type ByCustomer = {
@@ -44,6 +45,7 @@ const dueLabel = (o: ChaseOrder) =>
 // there are orders.
 export default function DeliverySnapshot({ onOpen }: { onOpen?: (viewKey: string) => void }) {
   const [d, setD] = useState<DeliverySummary | null>(null);
+  const [customer, setCustomer] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -143,7 +145,13 @@ export default function DeliverySnapshot({ onOpen }: { onOpen?: (viewKey: string
           <p className="text-xs text-slate-500 mb-2">By customer</p>
           <div className="space-y-2">
             {d.by_customer.map((c) => (
-              <div key={c.customer} className="rounded-lg border border-slate-800 px-3 py-2">
+              <button
+                key={c.customer}
+                type="button"
+                onClick={() => setCustomer(c.customer)}
+                title={`${c.customer} — click for detail`}
+                className="w-full rounded-lg border border-slate-800 px-3 py-2 text-left hover:border-slate-600 hover:bg-slate-800/60 transition focus:outline-none focus:ring-2 focus:ring-slate-600"
+              >
                 <div className="flex items-center justify-between text-sm">
                   <span className="text-slate-200 font-medium">{c.customer}</span>
                   <span className={`tabular-nums ${fulfillColor(c.fulfillment_rate)}`}>{c.fulfillment_rate}%</span>
@@ -154,7 +162,7 @@ export default function DeliverySnapshot({ onOpen }: { onOpen?: (viewKey: string
                   {c.at_risk > 0 && <span className="text-amber-400/80">{c.at_risk} at risk</span>}
                   {c.late > 0 && <span className="text-red-400/80">{c.late} late</span>}
                 </div>
-              </div>
+              </button>
             ))}
           </div>
         </div>
@@ -202,6 +210,8 @@ export default function DeliverySnapshot({ onOpen }: { onOpen?: (viewKey: string
           )}
         </div>
       </div>
+
+      {customer && <CustomerDrawer customer={customer} onClose={() => setCustomer(null)} />}
     </div>
   );
 }

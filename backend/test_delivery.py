@@ -74,7 +74,51 @@ def test_delivery_classifies_orders_and_rolls_up_by_customer():
     assert empty["on_track_rate"] == 0 and empty["units_at_risk"] == 0 and empty["units_remaining"] == 0
 
 
+def test_customer_detail_scopes_and_scores_one_customer():
+    db = _fresh_session()
+    db.add_all([
+        # Bugatti: one delivered-in-full, one overdue-and-short, one at-risk.
+        _order("BUG-1", "Bugatti", 100, 100, 5),    # delivered
+        _order("BUG-2", "Bugatti", 100, 20, -2),    # late (80 units still owed)
+        _order("BUG-3", "Bugatti", 100, 0, 2),      # at_risk (due in 2 days)
+        # Mercedes' order must not bleed into Bugatti's drill-down.
+        _order("MER-9", "Mercedes", 100, 0, 1),
+    ])
+    db.commit()
+
+    d = delivery.build_customer_detail(db, "DEFAULT", "Bugatti")
+    assert d["customer"] == "Bugatti"
+    assert d["total"] == 3                                  # MER-9 (Mercedes) excluded
+    assert d["delivered"] == 1 and d["late"] == 1 and d["at_risk"] == 1 and d["on_track"] == 0
+    # unit fulfillment: 120 of 300 ordered = 40%
+    assert d["fulfillment_rate"] == 40
+    # reliability: of the due orders (1 delivered + 1 late), 1 delivered in full = 50%
+    assert d["reliability_rate"] == 50
+    assert d["overdue_units"] == 80                         # 100 - 20 on the late order
+    # chase list: late (BUG-2) first, then at-risk (BUG-3); delivered excluded
+    assert [o["order_no"] for o in d["chase"]] == ["BUG-2", "BUG-3"]
+    # upcoming: BUG-3 (due in 2 days, undelivered) lands; delivered/overdue don't
+    assert len(d["upcoming"]) == 7 and sum(u["orders"] for u in d["upcoming"]) == 1
+    # recent lists all three orders, each with its state
+    assert len(d["recent"]) == 3
+    assert {r["order_no"] for r in d["recent"]} == {"BUG-1", "BUG-2", "BUG-3"}
+
+
+def test_customer_detail_is_empty_safe_for_unknown_customer():
+    db = _fresh_session()
+    db.add(_order("BUG-1", "Bugatti", 100, 100, 5))
+    db.commit()
+    d = delivery.build_customer_detail(db, "DEFAULT", "Nonexistent")
+    assert d["total"] == 0
+    assert d["fulfillment_rate"] == 0 and d["reliability_rate"] == 0   # no divide-by-zero
+    assert d["chase"] == [] and d["recent"] == []
+
+
 if __name__ == "__main__":
     test_delivery_classifies_orders_and_rolls_up_by_customer()
+    test_customer_detail_scopes_and_scores_one_customer()
+    test_customer_detail_is_empty_safe_for_unknown_customer()
     print("DELIVERY OK: orders classified delivered/on-track/at-risk/late; unit fulfillment; "
-          "per-customer rollup (worst first); chase list (late then at-risk); empty-safe")
+          "per-customer rollup (worst first); chase list (late then at-risk); empty-safe; "
+          "customer drill-down scopes to one customer (fulfillment, reliability, overdue "
+          "units, chase, upcoming, recent) and is empty-safe")

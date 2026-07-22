@@ -2020,7 +2020,14 @@ export default function DashboardPage() {
       </div>
 
       <div className="mb-8">
-        <NextBestActionCard onAct={() => setActiveView("escalations")} />
+        <NextBestActionCard
+          onRaised={(id) => {
+            if (id) setFocusedEscalationId(id);
+            setActiveView("escalations");
+            fetchAll();
+            window.scrollTo({ top: 0, behavior: "smooth" });
+          }}
+        />
       </div>
 
       {/* Overview card groups — only the active tab's cards mount (lighter page,

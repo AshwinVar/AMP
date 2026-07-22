@@ -16,7 +16,10 @@ type ChaseOrder = {
 type DeliverySummary = {
   total: number;
   delivered: number; on_track: number; at_risk: number; late: number;
+  on_track_rate: number;
   fulfillment_rate: number;
+  units_ordered: number; units_dispatched: number; units_remaining: number;
+  units_at_risk: number;
   by_customer: ByCustomer[];
   at_risk_orders: ChaseOrder[];
   upcoming: { date: string; orders: number }[];
@@ -89,6 +92,7 @@ export default function DeliverySnapshot({ onOpen }: { onOpen?: (viewKey: string
           <h3 className="text-xs font-semibold uppercase tracking-wide text-slate-300">Order delivery · outlook</h3>
           <p className="text-slate-400 text-sm mt-1">
             {d.total} order{d.total !== 1 ? "s" : ""} · {d.at_risk + d.late} need attention
+            {d.units_at_risk > 0 ? ` · ${d.units_at_risk.toLocaleString()} units at risk` : ""}
           </p>
           <button
             type="button"
@@ -101,6 +105,9 @@ export default function DeliverySnapshot({ onOpen }: { onOpen?: (viewKey: string
         <div className="text-right">
           <p className={`text-3xl font-bold ${fulfillColor(d.fulfillment_rate)}`}>{d.fulfillment_rate}%</p>
           <p className="text-[11px] text-slate-500">units fulfilled</p>
+          <p className="text-[11px] text-slate-500 mt-1">
+            <span className={fulfillColor(d.on_track_rate)}>{d.on_track_rate}%</span> on track
+          </p>
         </div>
       </div>
 

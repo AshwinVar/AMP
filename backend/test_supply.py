@@ -103,7 +103,10 @@ def test_supplier_detail_scopes_and_scores_one_supplier():
     assert d["received"] == 1 and d["late"] == 1 and d["at_risk"] == 1 and d["on_track"] == 0
     # unit receipt: 120 of 300 ordered = 40%
     assert d["receipt_rate"] == 40
-    # reliability: of the due POs (1 received + 1 late), 1 delivered in full = 50%
+    # reliability: of the due POs (1 received + 1 late), 1 delivered in full = 50%.
+    # This is COMPLETION, not punctuality — purchase_orders carries no receipt
+    # timestamp, so a PO received long after its expected date still counts as
+    # received. Nothing may present this as an "on time" rate.
     assert d["reliability_rate"] == 50
     assert d["overdue_units"] == 80                         # 100 - 20 on the late PO
     # chase list: late (PO-2) first, then at-risk (PO-3); received excluded

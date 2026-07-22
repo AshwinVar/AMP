@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { apiGet } from "../lib/api";
+import SupplierDrawer from "./SupplierDrawer";
 
 // Mirrors the backend supply read-model (ai/supply.py build_supply_summary).
 type BySupplier = {
@@ -42,6 +43,7 @@ const dueLabel = (o: ChasePo) =>
 // there are purchase orders.
 export default function SupplySnapshot({ onOpen }: { onOpen?: (viewKey: string) => void }) {
   const [d, setD] = useState<SupplySummary | null>(null);
+  const [supplier, setSupplier] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -115,7 +117,13 @@ export default function SupplySnapshot({ onOpen }: { onOpen?: (viewKey: string) 
           <p className="text-xs text-slate-500 mb-2">By supplier</p>
           <div className="space-y-2">
             {d.by_supplier.map((s) => (
-              <div key={s.supplier} className="rounded-lg border border-slate-800 px-3 py-2">
+              <button
+                key={s.supplier}
+                type="button"
+                onClick={() => setSupplier(s.supplier)}
+                title={`${s.supplier} — click for detail`}
+                className="w-full rounded-lg border border-slate-800 px-3 py-2 text-left hover:border-slate-600 hover:bg-slate-800/60 transition focus:outline-none focus:ring-2 focus:ring-slate-600"
+              >
                 <div className="flex items-center justify-between text-sm">
                   <span className="text-slate-200 font-medium">{s.supplier}</span>
                   <span className={`tabular-nums ${receiptColor(s.receipt_rate)}`}>{s.receipt_rate}%</span>
@@ -126,7 +134,7 @@ export default function SupplySnapshot({ onOpen }: { onOpen?: (viewKey: string) 
                   {s.at_risk > 0 && <span className="text-amber-400/80">{s.at_risk} at risk</span>}
                   {s.late > 0 && <span className="text-red-400/80">{s.late} late</span>}
                 </div>
-              </div>
+              </button>
             ))}
           </div>
         </div>
@@ -174,6 +182,8 @@ export default function SupplySnapshot({ onOpen }: { onOpen?: (viewKey: string) 
           )}
         </div>
       </div>
+
+      {supplier && <SupplierDrawer supplier={supplier} onClose={() => setSupplier(null)} />}
     </div>
   );
 }

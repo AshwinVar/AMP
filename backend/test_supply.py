@@ -83,9 +83,56 @@ def test_supply_honours_overdue_status_and_is_empty_safe():
     assert empty["total"] == 0 and empty["receipt_rate"] == 0 and empty["chase"] == []
 
 
+def test_supplier_detail_scopes_and_scores_one_supplier():
+    db = _fresh_session()
+    _supplier(db, 1, "Indium")
+    _supplier(db, 2, "Kester")
+    db.add_all([
+        # Indium: one received-in-full, one overdue-and-short, one at-risk.
+        _po("PO-1", 1, 100, 100, 5),    # received
+        _po("PO-2", 1, 100, 20, -2),    # late (80 units still owed)
+        _po("PO-3", 1, 100, 0, 2),      # at_risk (due in 2 days)
+        # Kester's PO must not bleed into Indium's drill-down.
+        _po("PO-9", 2, 100, 0, 1),
+    ])
+    db.commit()
+
+    d = supply.build_supplier_detail(db, "DEFAULT", "Indium")
+    assert d["supplier"] == "Indium"
+    assert d["total"] == 3                                  # PO-9 (Kester) excluded
+    assert d["received"] == 1 and d["late"] == 1 and d["at_risk"] == 1 and d["on_track"] == 0
+    # unit receipt: 120 of 300 ordered = 40%
+    assert d["receipt_rate"] == 40
+    # reliability: of the due POs (1 received + 1 late), 1 delivered in full = 50%
+    assert d["reliability_rate"] == 50
+    assert d["overdue_units"] == 80                         # 100 - 20 on the late PO
+    # chase list: late (PO-2) first, then at-risk (PO-3); received excluded
+    assert [o["po_no"] for o in d["chase"]] == ["PO-2", "PO-3"]
+    # upcoming: PO-3 (due in 2 days, unreceived) lands; received/overdue don't
+    assert len(d["upcoming"]) == 7 and sum(u["pos"] for u in d["upcoming"]) == 1
+    # recent lists all three POs, each with its state
+    assert len(d["recent"]) == 3
+    assert {r["po_no"] for r in d["recent"]} == {"PO-1", "PO-2", "PO-3"}
+
+
+def test_supplier_detail_is_empty_safe_for_unknown_supplier():
+    db = _fresh_session()
+    _supplier(db, 1, "Indium")
+    db.add(_po("PO-1", 1, 100, 100, 5))
+    db.commit()
+    d = supply.build_supplier_detail(db, "DEFAULT", "Nonexistent")
+    assert d["total"] == 0
+    assert d["receipt_rate"] == 0 and d["reliability_rate"] == 0   # no divide-by-zero
+    assert d["chase"] == [] and d["recent"] == []
+    assert d["category"] is None and d["supplier_status"] is None
+
+
 if __name__ == "__main__":
     test_supply_classifies_pos_and_rolls_up_by_supplier()
     test_supply_honours_overdue_status_and_is_empty_safe()
+    test_supplier_detail_scopes_and_scores_one_supplier()
+    test_supplier_detail_is_empty_safe_for_unknown_supplier()
     print("SUPPLY OK: POs classified received/on-track/at-risk/late; unit receipt rate; "
           "per-supplier rollup (worst first); chase list (late then at-risk); "
-          "overdue-status wins; empty-safe")
+          "overdue-status wins; empty-safe; supplier drill-down scopes to one supplier "
+          "(receipt rate, reliability, overdue units, chase, upcoming, recent) and is empty-safe")

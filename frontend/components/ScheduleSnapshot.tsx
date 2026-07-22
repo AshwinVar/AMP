@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { apiGet } from "../lib/api";
+import ShiftAdherenceDrawer from "./ShiftAdherenceDrawer";
 
 // Mirrors the backend schedule read-model (ai/schedule.py build_schedule_adherence).
 type ByShift = {
@@ -52,6 +53,8 @@ const ageLabel = (c: ChasePlan) =>
 // there are production plans.
 export default function ScheduleSnapshot({ onOpen }: { onOpen?: (viewKey: string) => void }) {
   const [d, setD] = useState<ScheduleSummary | null>(null);
+  // Which shift the drill-down drawer is open on (null = closed).
+  const [openShift, setOpenShift] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -138,6 +141,37 @@ export default function ScheduleSnapshot({ onOpen }: { onOpen?: (viewKey: string
         </div>
       )}
 
+      {/* by shift — worst first; each row drills into that shift */}
+      {d.by_shift.length > 0 && (
+        <div className="mt-5">
+          <p className="text-xs text-slate-500 mb-2">By shift · click to drill in</p>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+            {d.by_shift.map((s) => (
+              <button
+                key={s.shift}
+                type="button"
+                onClick={() => setOpenShift(s.shift)}
+                title={`Why is ${s.shift} at ${s.attainment_rate}%?`}
+                className="rounded-lg border border-slate-800 px-3 py-2 text-left hover:border-slate-600 hover:bg-slate-800/60 transition focus:outline-none focus:ring-2 focus:ring-slate-600"
+              >
+                <div className="flex items-center justify-between text-sm">
+                  <span className="text-slate-200 font-medium truncate">{s.shift}</span>
+                  <span className={`tabular-nums shrink-0 ${attainColor(s.attainment_rate)}`}>
+                    {s.attainment_rate}%
+                  </span>
+                </div>
+                <div className="mt-1 flex flex-wrap gap-x-3 gap-y-0.5 text-[11px] text-slate-500">
+                  <span>{s.plans} plan{s.plans !== 1 ? "s" : ""}</span>
+                  {s.met > 0 && <span className="text-emerald-400/80">{s.met} met</span>}
+                  {s.behind > 0 && <span className="text-amber-400/80">{s.behind} behind</span>}
+                  {s.missed > 0 && <span className="text-red-400/80">{s.missed} missed</span>}
+                </div>
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
       <div className="mt-5 grid grid-cols-1 md:grid-cols-2 gap-6">
         {/* by machine */}
         <div>
@@ -204,6 +238,8 @@ export default function ScheduleSnapshot({ onOpen }: { onOpen?: (viewKey: string
           )}
         </div>
       </div>
+
+      {openShift && <ShiftAdherenceDrawer shift={openShift} onClose={() => setOpenShift(null)} />}
     </div>
   );
 }

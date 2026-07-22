@@ -18,7 +18,8 @@ EXPECTED = {
     "/cost-summary", "/handover", "/scorecard", "/twin-overlay",
     "/maintenance-summary", "/compliance-summary", "/search", "/weekly-report",
     "/copilot/ask", "/copilot/digest", "/recovery-summary", "/reliability-summary",
-    "/schedule-summary", "/coverage-summary", "/inventory-part", "/reliability-machine",
+    "/schedule-summary", "/schedule-shift", "/coverage-summary", "/inventory-part",
+    "/reliability-machine",
     "/connectivity-summary", "/connectivity-machine", "/work-order-trace",
     "/maintenance-execution",
 }

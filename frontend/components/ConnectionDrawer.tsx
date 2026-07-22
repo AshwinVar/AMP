@@ -38,6 +38,7 @@ type ConnectionDetail = {
   overdue_multiple: number | null;
   by_signal: Tag[];
   dropped_signals: number;
+  signal_tags: number;
   devices: Device[];
   linked: boolean;
   signal_quality: { total: number; good: number; bad: number; good_rate: number };
@@ -173,7 +174,7 @@ export default function ConnectionDrawer({
                 </div>
                 <div className="rounded-lg border border-slate-800 bg-slate-900/40 px-3 py-2 text-center">
                   <p className={`text-xl font-bold ${detail.dropped_signals ? "text-orange-300" : "text-slate-200"}`}>
-                    {detail.dropped_signals}/{detail.by_signal.length}
+                    {detail.dropped_signals}/{detail.signal_tags}
                   </p>
                   <p className="text-[11px] text-slate-500">tags dropped</p>
                 </div>

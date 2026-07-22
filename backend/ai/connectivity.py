@@ -270,7 +270,7 @@ def build_connection_detail(db, tenant: str, machine_id: int) -> dict:
             "stale_after_minutes": STALE_AFTER_MINUTES, "lookback_hours": LOOKBACK_HOURS,
             "state": "dark", "last_signal_at": None, "last_signal_minutes": None,
             "signals": 0, "cadence_minutes": None, "overdue_multiple": None,
-            "by_signal": [], "dropped_signals": 0,
+            "by_signal": [], "dropped_signals": 0, "signal_tags": 0,
             "devices": [], "linked": False,
             "signal_quality": {"total": 0, "good": 0, "bad": 0, "good_rate": 100.0},
             "open_work_orders": {"count": 0, "orders": []},
@@ -424,6 +424,7 @@ def build_connection_detail(db, tenant: str, machine_id: int) -> dict:
         "overdue_multiple": overdue,
         "by_signal": by_signal[:TOP_N],
         "dropped_signals": len(dropped),
+        "signal_tags": len(by_signal),   # total tags (pre-truncation) — the honest denominator
         "devices": device_rows,
         "linked": bool(devices),
         "signal_quality": {

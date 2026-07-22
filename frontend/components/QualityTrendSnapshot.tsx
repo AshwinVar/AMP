@@ -26,6 +26,7 @@ type QualityTrend = {
   drift_threshold_pts: number;
   series: Point[];
   drifting: Mover[];
+  drifting_count: number;
   improving: Mover[];
   unscored_machines: number;
   defect_movers: DefectMover[];
@@ -72,8 +73,12 @@ export default function QualityTrendSnapshot() {
 
   if (!d || d.current.inspected + d.prior.inspected === 0) return null;
 
-  // Bars are scaled against the worst day so a flat-but-nonzero week still reads.
-  const peak = Math.max(...d.series.map((s) => s.fail_rate), 1);
+  // The real worst-day fail rate, shown as the label (never floored — a floor is a
+  // rendering guard, not a measurement, so it must not leak into the number).
+  const truePeak = Math.max(...d.series.map((s) => s.fail_rate), 0);
+  // Bars are scaled against the worst day; floor only the DIVISOR so a sub-1% week
+  // still reads without inventing a peak.
+  const scale = Math.max(truePeak, 0.1);
 
   return (
     <div className="rounded-2xl border border-slate-800 bg-slate-900/60 p-6">
@@ -118,8 +123,8 @@ export default function QualityTrendSnapshot() {
           <p className="text-[11px] text-slate-500">units failing vs last week</p>
         </div>
         <div className="rounded-lg border border-slate-800 bg-slate-900/40 px-3 py-2 text-center">
-          <p className={`text-xl font-bold ${d.drifting.length > 0 ? "text-amber-400" : "text-slate-100"}`}>
-            {d.drifting.length}
+          <p className={`text-xl font-bold ${d.drifting_count > 0 ? "text-amber-400" : "text-slate-100"}`}>
+            {d.drifting_count}
           </p>
           <p className="text-[11px] text-slate-500">machines drifting</p>
         </div>
@@ -129,7 +134,7 @@ export default function QualityTrendSnapshot() {
       <div className="mt-5">
         <div className="flex items-center justify-between text-xs">
           <span className="text-slate-500">Daily fail rate</span>
-          <span className="text-slate-500">peak {peak}%</span>
+          <span className="text-slate-500">peak {truePeak}%</span>
         </div>
         <div className="mt-1.5 flex h-16 items-end gap-1">
           {d.series.map((s, idx) => (
@@ -142,7 +147,7 @@ export default function QualityTrendSnapshot() {
               <div className="flex h-full flex-col justify-end">
                 <div
                   className={idx < d.half_days ? "bg-slate-600" : "bg-sky-500/80"}
-                  style={{ height: `${Math.round((s.fail_rate / peak) * 100)}%`, minHeight: s.inspected > 0 ? 2 : 0 }}
+                  style={{ height: `${Math.round((s.fail_rate / scale) * 100)}%`, minHeight: s.inspected > 0 ? 2 : 0 }}
                 />
               </div>
             </div>

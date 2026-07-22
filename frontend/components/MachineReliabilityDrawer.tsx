@@ -211,7 +211,7 @@ export default function MachineReliabilityDrawer({
                       <div
                         key={w.week_start}
                         className="flex-1 rounded-sm bg-red-500/60"
-                        style={{ height: `${Math.max(4, Math.round((w.failures / weekPeak) * 100))}%` }}
+                        style={{ height: `${w.failures === 0 ? 0 : Math.max(4, Math.round((w.failures / weekPeak) * 100))}%` }}
                         title={`Week of ${w.week_start}: ${w.failures} failure(s), ${minsLabel(w.minutes)} down`}
                       />
                     ))}
@@ -237,7 +237,7 @@ export default function MachineReliabilityDrawer({
                         <div className="mt-1 h-1.5 rounded-full bg-slate-800">
                           <div
                             className="h-1.5 rounded-full bg-amber-500/70"
-                            style={{ width: `${Math.max(4, Math.round((m.minutes / modePeak) * 100))}%` }}
+                            style={{ width: `${m.minutes === 0 ? 0 : Math.max(4, Math.round((m.minutes / modePeak) * 100))}%` }}
                           />
                         </div>
                       </div>

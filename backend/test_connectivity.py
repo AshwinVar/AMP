@@ -170,6 +170,9 @@ def test_connection_detail_explains_a_silent_machine():
     assert tags["temperature"]["cadence_minutes"] == 5.0
     assert r["by_signal"][0]["signal_name"] == "temperature"   # longest silence leads
     assert r["dropped_signals"] == 2
+    # signal_tags is the TRUE total (pre-truncation) so the drawer's "dropped/total"
+    # can never read an impossible ratio; dropped can't exceed it.
+    assert r["signal_tags"] == len(r["by_signal"]) and r["dropped_signals"] <= r["signal_tags"]
 
     # The device wired to it, and its read quality (1 good of 2).
     assert r["linked"] is True and len(r["devices"]) == 1

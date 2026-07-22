@@ -190,11 +190,14 @@ export default function ShiftAdherenceDrawer({
                       >
                         <div
                           className="flex-1 rounded-sm bg-slate-600/60"
-                          style={{ height: `${Math.max(3, Math.round((x.planned / dailyPeak) * 100))}%` }}
+                          style={{ height: `${x.planned === 0 ? 0 : Math.max(3, Math.round((x.planned / dailyPeak) * 100))}%` }}
                         />
                         <div
-                          className={`flex-1 rounded-sm ${x.attainment_rate >= 95 ? "bg-emerald-500/70" : x.attainment_rate >= 70 ? "bg-amber-400/70" : "bg-red-500/70"}`}
-                          style={{ height: `${Math.max(3, Math.round((x.actual / dailyPeak) * 100))}%` }}
+                          className={`flex-1 rounded-sm ${
+                            x.planned === 0 ? "bg-slate-700/40"   /* nothing planned that day — not a miss */
+                            : x.attainment_rate >= 95 ? "bg-emerald-500/70"
+                            : x.attainment_rate >= 70 ? "bg-amber-400/70" : "bg-red-500/70"}`}
+                          style={{ height: `${x.actual === 0 ? 0 : Math.max(3, Math.round((x.actual / dailyPeak) * 100))}%` }}
                         />
                       </div>
                     ))}

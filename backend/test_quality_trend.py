@@ -66,6 +66,9 @@ def test_worsening_week_is_measured_priced_and_blamed():
     assert not d["thin_sample"]
 
     assert [m["name"] for m in d["drifting"]] == ["SMT-Reflow-01"], d["drifting"]
+    # drifting_count is the true total (drifting itself is a capped display list),
+    # so the KPI can't understate the count once there are more than TOP_N movers.
+    assert d["drifting_count"] == len(d["drifting"]) == 1
     worst = d["drifting"][0]
     assert worst["prior_fail_rate"] == 2.0 and worst["fail_rate"] == 10.0, worst
     assert worst["delta_pts"] == 8.0, worst

@@ -58,6 +58,24 @@ def _window_logs(db, start):
     ]
 
 
+def _fleet_stats(failures, repair_minutes, machine_count):
+    """Fleet-level MTBF / MTTR / availability from the per-machine rollups — the
+    one definition shared by the summary and the drill-down's fleet baseline, so
+    the two never disagree and the drill-down needn't recompute the whole summary."""
+    window_minutes = WINDOW_DAYS * 24 * 60
+    total_failures = sum(failures.values())
+    total_repair = sum(repair_minutes.values())
+    fleet_calendar = window_minutes * machine_count
+    fleet_operating = max(0, fleet_calendar - total_repair)
+    return {
+        "total_failures": total_failures,
+        "total_repair": total_repair,
+        "mttr": round(total_repair / total_failures, 1) if total_failures else 0.0,
+        "mtbf": _mtbf_hours(fleet_operating, total_failures),
+        "availability": round(fleet_operating / fleet_calendar * 100, 1) if fleet_calendar else 100.0,
+    }
+
+
 def _rank_rows(db, logs):
     """Per-machine reliability rows over the window, least reliable first — the
     ranking shared by the fleet summary and the single-machine drill-down, so
@@ -118,39 +136,28 @@ def build_reliability_summary(db, tenant: str) -> dict:
     auto-scoped (ADR-0002). Empty-safe: zeros, no divide-by-zero."""
     now = datetime.utcnow()
     start = now - timedelta(days=WINDOW_DAYS)
-    window_minutes = WINDOW_DAYS * 24 * 60
 
     logs = _window_logs(db, start)
-    machines = db.query(models.Machine).all()
+    # _rank_rows already loads the machines (one row per machine), so len(rows) is
+    # the machine count — no need for a second db.query(Machine).all() here.
     rows, failures, repair_minutes = _rank_rows(db, logs)
-
-    total_failures = sum(failures.values())
-    total_repair = sum(repair_minutes.values())
-    # Fleet operating time = every machine's calendar span less its own repair time.
-    fleet_calendar = window_minutes * len(machines)
-    fleet_operating = max(0, fleet_calendar - total_repair)
-
-    fleet_mttr = round(total_repair / total_failures, 1) if total_failures else 0.0
-    fleet_mtbf = _mtbf_hours(fleet_operating, total_failures)
-    fleet_availability = round(fleet_operating / fleet_calendar * 100, 1) if fleet_calendar else 100.0
+    stats = _fleet_stats(failures, repair_minutes, len(rows))
 
     # The reliability bottleneck: the machine actually pulling the fleet down.
     bottleneck = rows[0] if rows and rows[0]["failures"] > 0 else None
 
-    # Failure-mode Pareto by repair time — where the maintenance hours go.
-    top_modes = _mode_pareto(logs)
-
     return {
         "days": WINDOW_DAYS,
-        "machines_tracked": len(machines),
-        "total_failures": total_failures,
-        "total_repair_minutes": total_repair,
-        "mttr_minutes": fleet_mttr,
-        "mtbf_hours": fleet_mtbf,
-        "availability": fleet_availability,
+        "machines_tracked": len(rows),
+        "total_failures": stats["total_failures"],
+        "total_repair_minutes": stats["total_repair"],
+        "mttr_minutes": stats["mttr"],
+        "mtbf_hours": stats["mtbf"],
+        "availability": stats["availability"],
         "by_machine": rows[:TOP_N],
         "bottleneck": bottleneck,
-        "top_modes": top_modes,
+        # Failure-mode Pareto by repair time — where the maintenance hours go.
+        "top_modes": _mode_pareto(logs),
     }
 
 
@@ -168,8 +175,11 @@ def build_machine_reliability(db, tenant: str, machine_id: int) -> dict:
 
     machine = db.query(models.Machine).filter(models.Machine.id == machine_id).first()
     logs = _window_logs(db, start)
-    rows, _, _ = _rank_rows(db, logs)
-    fleet = build_reliability_summary(db, tenant)
+    rows, failures, repair_minutes = _rank_rows(db, logs)
+    # Fleet baseline from the rows we already have — the same numbers the summary
+    # returns, without recomputing the whole summary (which would repeat the
+    # downtime scan, the machine load and the ranking).
+    fleet = _fleet_stats(failures, repair_minutes, len(rows))
 
     row = next((r for r in rows if r["machine_id"] == machine_id), None)
     if machine is None or row is None:
@@ -178,8 +188,8 @@ def build_machine_reliability(db, tenant: str, machine_id: int) -> dict:
             "status": None, "days": WINDOW_DAYS,
             "failures": 0, "repair_minutes": 0, "mttr_minutes": 0.0,
             "mtbf_hours": None, "availability": 100.0,
-            "rank": None, "machines_tracked": fleet["machines_tracked"],
-            "fleet_mttr_minutes": fleet["mttr_minutes"],
+            "rank": None, "machines_tracked": len(rows),
+            "fleet_mttr_minutes": fleet["mttr"],
             "fleet_availability": fleet["availability"],
             "top_modes": [], "weekly": [], "trend": "steady",
             "recent_failures": 0, "prior_failures": 0,
@@ -256,8 +266,8 @@ def build_machine_reliability(db, tenant: str, machine_id: int) -> dict:
         "mtbf_hours": row["mtbf_hours"],
         "availability": row["availability"],
         "rank": rank,
-        "machines_tracked": fleet["machines_tracked"],
-        "fleet_mttr_minutes": fleet["mttr_minutes"],
+        "machines_tracked": len(rows),
+        "fleet_mttr_minutes": fleet["mttr"],
         "fleet_availability": fleet["availability"],
         "top_modes": _mode_pareto(mine),
         "weekly": weekly,

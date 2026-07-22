@@ -10,6 +10,8 @@ chasing. A read-model over customer_orders — auto-scoped to the tenant
 """
 from datetime import datetime, timedelta
 
+from sqlalchemy import or_
+
 import models
 
 name = "delivery"
@@ -131,9 +133,17 @@ def build_customer_detail(db, tenant: str, customer: str) -> dict:
     recent orders. A read-model over customer_orders (auto-scoped, ADR-0002);
     adds no storage. Returns a zeroed shape when the customer has no orders."""
     today = datetime.utcnow().date()
-    # The summary keys per-customer by name; "—" catches orders with no name.
-    orders = [o for o in db.query(models.CustomerOrder).all()
-              if (o.customer_name or "—") == customer]
+    # The summary keys per-customer by name; filter to this customer in SQL rather
+    # than scanning the whole order book in Python. "—" is the no-name bucket
+    # (customer_name null or blank), matched with the same coalesce in SQL.
+    if customer == "—":
+        orders = (db.query(models.CustomerOrder)
+                  .filter(or_(models.CustomerOrder.customer_name.is_(None),
+                              models.CustomerOrder.customer_name == "",
+                              models.CustomerOrder.customer_name == "—")).all())
+    else:
+        orders = (db.query(models.CustomerOrder)
+                  .filter(models.CustomerOrder.customer_name == customer).all())
 
     totals = {"delivered": 0, "on_track": 0, "at_risk": 0, "late": 0}
     ordered_units = dispatched_units = overdue_units = 0

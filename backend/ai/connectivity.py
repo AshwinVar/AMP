@@ -23,13 +23,17 @@ silent, and what do I go and fix?
 A pure read-model over machines + iot_telemetry + industrial_devices +
 industrial_signals (+ work_orders in the drill-down), auto-scoped to the tenant
 (ADR-0002); it adds no storage.
-Freshness math runs on real ORM datetimes (never a SQL aggregate that SQLite
-would hand back as a string): a distinct-ids probe finds the ever-reported set,
-a bounded lookback window supplies the most-recent timestamp per machine.
+Freshness math runs on real datetimes: a per-machine GROUP BY over the lookback
+window supplies each machine's most-recent timestamp and in-window signal count
+(SQLAlchemy hands back func.max on a DateTime column as a datetime, not a string),
+and a DARK-vs-STALE probe bounded to just the machines with no in-window signal
+avoids a DISTINCT over the whole, ever-growing telemetry history on every poll.
 """
 from collections import Counter, defaultdict
 from datetime import datetime, timedelta
 from statistics import median
+
+from sqlalchemy import func
 
 import models
 
@@ -103,23 +107,28 @@ def build_connectivity_summary(db, tenant: str) -> dict:
     names = {m.id: m.name for m in machines}
     line_of = {m.id: (m.line or "") for m in machines}
 
-    # Machines that have EVER reported telemetry — distinguishes DARK (never seen)
-    # from STALE (seen once, gone quiet). Cheap: distinct ids, no row transfer.
-    ever = {
-        mid for (mid,) in db.query(models.IoTTelemetry.machine_id).distinct().all()
-        if mid is not None
-    }
+    # Most-recent signal + in-window signal count per machine, aggregated in SQL
+    # (one row per machine) rather than hydrating every telemetry row in the window
+    # on each 30s poll. func.max on a DateTime column comes back as a real datetime,
+    # so the freshness math still runs on datetimes, not SQL strings.
+    agg = (db.query(models.IoTTelemetry.machine_id,
+                    func.max(models.IoTTelemetry.created_at),
+                    func.count())
+           .filter(models.IoTTelemetry.created_at >= window_start,
+                   models.IoTTelemetry.machine_id.isnot(None))
+           .group_by(models.IoTTelemetry.machine_id).all())
+    last_seen = {mid: last for mid, last, _ in agg}
+    signal_count = {mid: cnt for mid, _, cnt in agg}
 
-    # Most-recent signal + in-window signal count per machine, from real datetimes.
-    recent = db.query(models.IoTTelemetry).filter(models.IoTTelemetry.created_at >= window_start).all()
-    last_seen: dict = {}
-    signal_count: Counter = Counter()
-    for t in recent:
-        if t.machine_id is None or not t.created_at:
-            continue
-        signal_count[t.machine_id] += 1
-        if t.machine_id not in last_seen or t.created_at > last_seen[t.machine_id]:
-            last_seen[t.machine_id] = t.created_at
+    # DARK vs STALE only matters for machines with NO in-window signal — probe just
+    # those ids for any historical telemetry, instead of a DISTINCT over the whole
+    # (unbounded, ever-growing) telemetry history on every poll.
+    candidates = [m.id for m in machines if m.id not in last_seen]
+    ever = set()
+    if candidates:
+        ever = {mid for (mid,) in
+                db.query(models.IoTTelemetry.machine_id)
+                .filter(models.IoTTelemetry.machine_id.in_(candidates)).distinct().all()}
 
     # Devices: the registered edge estate. Linked machines = instrumentation coverage.
     devices = db.query(models.IndustrialDevice).all()

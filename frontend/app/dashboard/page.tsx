@@ -36,6 +36,7 @@ import DowntimeSnapshot from "../../components/DowntimeSnapshot";
 import ReliabilitySnapshot from "../../components/ReliabilitySnapshot";
 import ConnectivitySnapshot from "../../components/ConnectivitySnapshot";
 import ProductionSnapshot from "../../components/ProductionSnapshot";
+import ScheduleSnapshot from "../../components/ScheduleSnapshot";
 import OeeSnapshot from "../../components/OeeSnapshot";
 import LossesSnapshot from "../../components/LossesSnapshot";
 import RecoverySnapshot from "../../components/RecoverySnapshot";
@@ -2059,6 +2060,14 @@ export default function DashboardPage() {
           <div className="mb-8"><LossesSnapshot /></div>
           <div className="mb-8"><RecoverySnapshot isAdmin={isAdmin} /></div>
           <div className="mb-8"><ProductionSnapshot /></div>
+          <div className="mb-8">
+            <ScheduleSnapshot
+              onOpen={(view) => {
+                setActiveView(view);
+                window.scrollTo({ top: 0, behavior: "smooth" });
+              }}
+            />
+          </div>
           <div className="mb-8"><FlowSnapshot /></div>
           <div className="mb-8"><ShiftSnapshot /></div>
         </>

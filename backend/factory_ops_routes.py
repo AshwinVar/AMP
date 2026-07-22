@@ -460,14 +460,17 @@ def generate_oee_recovery_escalation(
 ):
     """Raise (or surface) one escalation for the biggest OEE-recovery lever — the
     component furthest from world-class — carrying the £ prize for closing it and
-    the concrete move. This is what the overview's "fix this first" CTA fires, so
-    the insight becomes a tracked action. Idempotent: while an unresolved one
-    exists it's returned rather than duplicated. A no-op when the plant is already
-    at world-class (nothing to recover)."""
+    the concrete move, pointed at the worst machine on that lever so triage has a
+    starting place. This is what the overview's "fix this first" CTA fires, so the
+    insight becomes a tracked action. Idempotent: while an unresolved one exists
+    it's returned rather than duplicated. A no-op when the plant is already at
+    world-class (nothing to recover)."""
     from ai.recovery import build_recovery_summary
+    from ai.oee import build_oee_summary
     from tenancy import request_tenant
 
-    rec = build_recovery_summary(db, request_tenant(current_user))
+    tenant = request_tenant(current_user)
+    rec = build_recovery_summary(db, tenant)
     if not rec["has_data"] or rec["at_world_class"] or not rec["biggest_lever"]:
         return {"created": 0, "escalation_id": None}
 
@@ -487,12 +490,22 @@ def generate_oee_recovery_escalation(
         prize = f"{rec['lever_recoverable_units_per_year']:,} good units/yr"
     comp = next((c for c in rec["components"] if c["key"] == rec["biggest_lever"]), None)
     gap = f" ({comp['current']}% -> {comp['target']}% world-class)" if comp else ""
+
+    # The plant lever is pooled; point the escalation at the machine where that
+    # component bites hardest, so there's a concrete place to start. Plant-level
+    # (no machine) if nothing has production data.
+    lever_key = rec["biggest_lever"]
+    scored = [m for m in build_oee_summary(db, tenant)["machines"] if m.get("has_data")]
+    worst = min(scored, key=lambda m: m.get(lever_key, 100)) if scored else None
+    start = f" Start on {worst['name']} ({worst[lever_key]}% {lever_key})." if worst else ""
+
     notes = (f"{lever} is the biggest lever{gap}. Closing this gap alone is worth "
-             f"{prize}. {rec['lever_action']}")
+             f"{prize}. {rec['lever_action']}{start}")
 
     escalation = models.Escalation(
-        machine_id=None, title=title, severity="High", owner="Operations",
-        department="Production", status="Open", source="OEE Recovery", notes=notes,
+        machine_id=worst["machine_id"] if worst else None, title=title, severity="High",
+        owner="Operations", department="Production", status="Open",
+        source="OEE Recovery", notes=notes,
     )
     db.add(escalation)
     db.commit()

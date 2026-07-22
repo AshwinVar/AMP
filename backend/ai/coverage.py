@@ -57,6 +57,9 @@ def _state(stock: int, days_of_cover):
 _STATE_RANK = {"out": 0, "critical": 1, "watch": 2, "ok": 3}
 
 
+MAX_FORECAST_DAYS = 3650   # 10 years — past this a dated stockout is meaningless
+
+
 def _days_of_cover(stock: int, daily_burn: float):
     """Stock / burn, rounded — the one definition shared by the summary and the
     part drill-down. None when there's stock but nothing is consuming it."""
@@ -65,6 +68,18 @@ def _days_of_cover(stock: int, daily_burn: float):
     if daily_burn > 0:
         return round(stock / daily_burn, 1)
     return None                                      # stock but no recent consumption
+
+
+def _stockout_date(today, days_of_cover):
+    """The projected stockout date, or None when there isn't a meaningful one.
+
+    A barely-moving part with healthy stock computes centuries of cover (one unit
+    issued in the window against thousands on hand). Adding that to a date raises
+    OverflowError — a 500 on the endpoint — and the date would be meaningless
+    anyway, so anything past the forecast horizon reads as 'no dated stockout'."""
+    if days_of_cover is None or days_of_cover > MAX_FORECAST_DAYS:
+        return None
+    return today + timedelta(days=int(days_of_cover))
 
 
 def build_coverage_summary(db, tenant: str) -> dict:
@@ -97,9 +112,8 @@ def build_coverage_summary(db, tenant: str) -> dict:
         # Only surface items with a real runway risk (out / critical / watch) in
         # the reorder list; healthy and dormant items are just tallied.
         if state != "ok":
-            stockout_date = None
-            if days_of_cover is not None:
-                stockout_date = (today + timedelta(days=int(days_of_cover))).isoformat()
+            projected = _stockout_date(today, days_of_cover)
+            stockout_date = projected.isoformat() if projected else None
             rows.append({
                 "item_code": i.item_code,
                 "item_name": i.item_name,
@@ -191,7 +205,7 @@ def build_part_runway(db, tenant: str, item_code: str) -> dict:
     daily_burn = consumed / WINDOW_DAYS
     days_of_cover = _days_of_cover(stock, daily_burn)
     state = _state(stock, days_of_cover)
-    stockout = today + timedelta(days=int(days_of_cover)) if days_of_cover is not None else None
+    stockout = _stockout_date(today, days_of_cover)
 
     # What's on order for this part, and does it land before we run dry? POs are
     # matched by item_id; ai.supply owns the receipt-state definition.

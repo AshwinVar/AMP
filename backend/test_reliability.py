@@ -31,6 +31,28 @@ def _log(db, machine_id, duration, reason="Breakdown", days_ago=1):
     ))
 
 
+def test_hour_format_durations_are_parsed_as_hours_not_leading_digits():
+    """The seeded factory and operator/MQTT input write hour formats ("2 hrs 15
+    min"). A leading-digit regex read those as 2 MINUTES, understating MTTR ~60x
+    and inverting the least-reliable ranking. Every fixture elsewhere in this file
+    is minute-format, which is exactly why CI stayed green on the bug."""
+    db = _fresh_session()
+    _machine(db, 1, "Packaging-01")
+    _machine(db, 2, "CNC-01")
+    _log(db, 1, "2 hrs 15 min", "Mechanical Failure", days_ago=3)   # 135 min
+    _log(db, 2, "45 min", "Tooling Change", days_ago=3)             #  45 min
+    db.commit()
+
+    s = reliability.build_reliability_summary(db, "DEFAULT")
+    by = {m["name"]: m for m in s["by_machine"]}
+    assert by["Packaging-01"]["repair_minutes"] == 135, by["Packaging-01"]["repair_minutes"]
+    assert by["CNC-01"]["repair_minutes"] == 45
+    # the 135-min mechanical failure must outrank the 45-min tooling change
+    assert s["top_modes"][0]["reason"] == "Mechanical Failure"
+    assert s["top_modes"][0]["minutes"] == 135
+    print("PASS hour-format downtime parses as hours (135, not 2) and ranks correctly")
+
+
 def test_reliability_computes_mtbf_mttr_and_ranks_worst_first():
     db = _fresh_session()
     _machine(db, 1, "SMT-Reflow-01", "SMT")
@@ -174,6 +196,7 @@ def test_machine_drilldown_handles_clean_and_unknown_machines():
 
 
 if __name__ == "__main__":
+    test_hour_format_durations_are_parsed_as_hours_not_leading_digits()
     test_reliability_computes_mtbf_mttr_and_ranks_worst_first()
     test_reliability_is_empty_safe_and_windows_out_old_failures()
     test_machine_drilldown_reads_one_machine_against_the_fleet()

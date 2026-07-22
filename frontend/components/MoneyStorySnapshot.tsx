@@ -15,6 +15,12 @@ type Recovery = {
   unit_value_gbp: number | null;
   recoverable_units_per_year: number;
   recoverable_value_per_year: number | null;
+  oee_trend: "improving" | "worsening" | "flat" | "new";
+  oee_points_delta: number | null;
+  biggest_lever: string | null;
+  lever_label: string | null;
+  lever_recoverable_value_per_year: number | null;
+  lever_recoverable_units_per_year: number;
 };
 type Management = {
   total_downtime_minutes: number;
@@ -25,6 +31,16 @@ type Management = {
 
 const gbp = (n: number) => `£${Math.round(n).toLocaleString()}`;
 const units = (n: number) => Math.round(n).toLocaleString();
+
+// Week-over-week OEE direction — hidden until there's a prior week ("new").
+function trendBadge(trend: Recovery["oee_trend"], delta: number | null) {
+  if (trend === "new" || delta == null) return null;
+  const cls =
+    trend === "improving" ? "text-emerald-400" : trend === "worsening" ? "text-red-400" : "text-slate-400";
+  const arrow = trend === "improving" ? "↑" : trend === "worsening" ? "↓" : "→";
+  const label = trend === "flat" ? "flat WoW" : `${arrow} ${Math.abs(delta)} pts WoW`;
+  return <span className={`ml-2 text-[11px] font-semibold ${cls}`}>{label}</span>;
+}
 
 export default function MoneyStorySnapshot({ isAdmin = false }: { isAdmin?: boolean }) {
   const [rec, setRec] = useState<Recovery | null>(null);
@@ -89,9 +105,22 @@ export default function MoneyStorySnapshot({ isAdmin = false }: { isAdmin?: bool
             {rec.gap_points === 0
               ? `at or above the ${rec.world_class}% world-class benchmark`
               : `closing OEE ${rec.oee}% → ${rec.world_class}% ≈ ${units(rec.recoverable_units_per_year)} more good units / yr`}
+            {trendBadge(rec.oee_trend, rec.oee_points_delta)}
           </p>
         </div>
       </div>
+
+      {rec.biggest_lever && (
+        <p className="text-sm text-slate-400">
+          <span className="font-semibold text-amber-300">Fix this first:</span> {rec.lever_label} —{" "}
+          <span className="tabular-nums text-slate-200">
+            {rec.lever_recoverable_value_per_year != null
+              ? `${gbp(rec.lever_recoverable_value_per_year)} / yr`
+              : `+${units(rec.lever_recoverable_units_per_year)} units / yr`}
+          </span>{" "}
+          by closing this gap alone.
+        </p>
+      )}
 
       <div className="flex items-center justify-between text-[11px] text-slate-500 gap-3 flex-wrap">
         <span>

@@ -8,4 +8,4 @@ predictions, recommendations and insights — rule-first, LLM-optional, per-tena
 Concrete engines (today: rule-based) live behind these services, so a scorer can
 become an ML model or an LLM later without any consumer changing.
 """
-from ai import base, prediction, recommendations, copilot, insights, twin, impact, pulse, roster, trends, downtime, quality, production, oee, inventory, flow, shift, losses, recovery, briefing, delivery, cost, handover, scorecard, maintenance, report, assistant, platform_status, compliance, search, supply  # noqa: F401  (re-export the platform surface)
+from ai import base, prediction, recommendations, copilot, insights, twin, impact, pulse, roster, trends, downtime, quality, production, oee, inventory, flow, shift, losses, recovery, briefing, delivery, cost, handover, scorecard, maintenance, report, assistant, platform_status, compliance, search, supply, reliability  # noqa: F401  (re-export the platform surface)

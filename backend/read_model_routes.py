@@ -240,6 +240,15 @@ def get_maintenance_summary(db: Session = Depends(_get_db), current_user: dict =
     return ai.maintenance.build_maintenance_summary(db, request_tenant(current_user))
 
 
+@router.get("/maintenance-execution")
+def get_maintenance_execution(db: Session = Depends(_get_db), current_user: dict = Depends(get_current_user)):
+    # Maintenance execution / PM compliance (ADR-0007): over 30 days — the share
+    # of completed maintenance that landed on plan, how late the rest ran, the
+    # planned-vs-reactive mix, the overdue backlog with aging, a worst-first
+    # per-machine breakdown, and the overdue tasks to chase.
+    return ai.maintenance.build_maintenance_execution(db, request_tenant(current_user))
+
+
 @router.get("/reliability-summary")
 def get_reliability_summary(db: Session = Depends(_get_db), current_user: dict = Depends(get_current_user)):
     # Machine reliability (ADR-0007): fleet MTBF / MTTR / availability over 30 days

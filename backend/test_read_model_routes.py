@@ -20,6 +20,7 @@ EXPECTED = {
     "/copilot/ask", "/copilot/digest", "/recovery-summary", "/reliability-summary",
     "/schedule-summary", "/coverage-summary", "/inventory-part", "/reliability-machine",
     "/connectivity-summary", "/connectivity-machine", "/work-order-trace",
+    "/maintenance-execution",
 }
 
 

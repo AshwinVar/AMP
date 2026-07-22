@@ -449,16 +449,24 @@ def _maintenance(db):
     task_types = ["Preventive", "Corrective", "Predictive", "Lubrication", "Calibration"]
     spares     = ["Bearing SKF 6205", "O-Ring Kit", "Spindle Belt", "Filter Element", ""]
     for i, machine in enumerate(machines * 2):
+        status  = random.choice(["Open", "In Progress", "Completed", "Open"])
+        planned = today + timedelta(days=random.randint(-5, 10))
+        # Completing a task through the API stamps completed_date (factory_ops);
+        # seeded history must carry one too, or PM compliance has nothing to time.
+        # A -2..+4 day spread gives a realistic mix of on-plan and slipped work.
+        completed = (min(planned + timedelta(days=random.randint(-2, 4)), today)
+                     if status == "Completed" else None)
         db.add(models.MaintenanceTask(
             task_no=f"MAINT-{8000 + i}",
             machine_id=machine.id,
             task_type=task_types[i % len(task_types)],
             priority=random.choice(["High", "Medium", "Medium", "Low"]),
             assigned_to="Maintenance Team",
-            planned_date=today + timedelta(days=random.randint(-5, 10)),
+            planned_date=planned,
+            completed_date=completed,
             downtime_minutes=random.randint(0, 120),
             spare_parts_used=spares[i % len(spares)],
-            status=random.choice(["Open", "In Progress", "Completed", "Open"]),
+            status=status,
         ))
     db.commit()
     print("[SEED] Maintenance Tasks")

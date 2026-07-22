@@ -132,6 +132,15 @@ _ensure_index("cost_records", "created_at")
 _ensure_index("quality_inspections", "created_at")
 _ensure_index("shift_data", "created_at")
 _ensure_index("machine_events", "created_at")   # risk-window scans (ai/prediction)
+# The edge-connectivity and inventory read-models poll these on a ~30s refresh and
+# grow fastest of all — iot_telemetry every sim tick, inventory_transactions every
+# issue/receipt — yet were unindexed. Index the columns they filter/group by so the
+# poll stays a range scan, not a full-table scan.
+_ensure_index("iot_telemetry", "created_at")        # connectivity freshness window
+_ensure_index("iot_telemetry", "machine_id")        # per-machine + DARK-vs-STALE probe
+_ensure_index("inventory_transactions", "created_at")  # coverage burn-rate window
+_ensure_index("inventory_transactions", "item_id")     # per-item burn / part-runway drill-down
+_ensure_index("production_plans", "plan_date")      # schedule-adherence window (now filtered in SQL)
 tenancy.ensure_tenant_columns(engine)  # ADR-0002: tenant_code on core tables
 tenancy.install_scoping()              # ADR-0002: auto-enforce tenant scoping
 

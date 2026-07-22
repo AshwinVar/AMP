@@ -74,6 +74,14 @@ def get_quality_summary(db: Session = Depends(_get_db), current_user: dict = Dep
     return ai.quality.build_quality_summary(db, request_tenant(current_user))
 
 
+@router.get("/quality-trend")
+def get_quality_trend(db: Session = Depends(_get_db), current_user: dict = Depends(get_current_user)):
+    # Quality trend (ADR-0007): this week's fail rate against last week's on the
+    # same basis — the direction, the units the swing costs, and the machines and
+    # defect categories that moved it.
+    return ai.quality.build_quality_trend(db, request_tenant(current_user))
+
+
 @router.get("/quality-defect")
 def get_quality_defect(category: str, db: Session = Depends(_get_db), current_user: dict = Depends(get_current_user)):
     # Defect drill-down (ADR-0007): for one defect category — units failed

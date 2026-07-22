@@ -197,6 +197,15 @@ def get_reliability_summary(db: Session = Depends(_get_db), current_user: dict =
     return ai.reliability.build_reliability_summary(db, request_tenant(current_user))
 
 
+@router.get("/connectivity-summary")
+def get_connectivity_summary(db: Session = Depends(_get_db), current_user: dict = Depends(get_current_user)):
+    # Edge connectivity (ADR-0007): is the OT edge alive? The headline
+    # connectivity score (% of machines reporting fresh telemetry), per-state
+    # counts (fresh / stale / dark), device online + signal good-quality rates,
+    # instrumentation coverage, and a worst-first chase list of silent machines.
+    return ai.connectivity.build_connectivity_summary(db, request_tenant(current_user))
+
+
 @router.get("/compliance-summary")
 def get_compliance_summary(db: Session = Depends(_get_db), current_user: dict = Depends(get_current_user)):
     # Compliance document summary (ADR-0007): review load — overdue / due-soon /

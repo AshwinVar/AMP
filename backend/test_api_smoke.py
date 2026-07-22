@@ -29,6 +29,7 @@ READ_ENDPOINTS = [
     "/production-summary", "/inventory-summary", "/flow-summary", "/shift-summary",
     "/delivery-summary", "/cost-summary", "/handover", "/scorecard", "/briefing",
     "/maintenance-summary", "/twin-overlay", "/weekly-report",
+    "/reliability-summary",
 ]
 
 

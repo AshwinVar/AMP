@@ -189,6 +189,14 @@ def get_maintenance_summary(db: Session = Depends(_get_db), current_user: dict =
     return ai.maintenance.build_maintenance_summary(db, request_tenant(current_user))
 
 
+@router.get("/reliability-summary")
+def get_reliability_summary(db: Session = Depends(_get_db), current_user: dict = Depends(get_current_user)):
+    # Machine reliability (ADR-0007): fleet MTBF / MTTR / availability over 30 days
+    # from downtime, a least-reliable-first per-machine breakdown, the reliability
+    # bottleneck, and the failure-mode Pareto by repair time.
+    return ai.reliability.build_reliability_summary(db, request_tenant(current_user))
+
+
 @router.get("/compliance-summary")
 def get_compliance_summary(db: Session = Depends(_get_db), current_user: dict = Depends(get_current_user)):
     # Compliance document summary (ADR-0007): review load — overdue / due-soon /

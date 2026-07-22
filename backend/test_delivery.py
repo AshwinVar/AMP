@@ -46,6 +46,12 @@ def test_delivery_classifies_orders_and_rolls_up_by_customer():
     assert s["delivered"] == 2 and s["late"] == 1 and s["at_risk"] == 1 and s["on_track"] == 1
     # unit fulfillment: dispatched 270 of 500 ordered = 54%
     assert s["fulfillment_rate"] == 54
+    # on-track rate: 2 delivered + 1 on-track of 5 orders = 60%
+    assert s["on_track_rate"] == 60
+    # unit totals: 500 ordered, 270 dispatched, 230 remaining
+    assert s["units_ordered"] == 500 and s["units_dispatched"] == 270 and s["units_remaining"] == 230
+    # units at risk: undelivered on the late (BUG-2: 80) + at-risk (MER-1: 100) orders
+    assert s["units_at_risk"] == 180
 
     by = {c["customer"]: c for c in s["by_customer"]}
     assert by["Bugatti"]["orders"] == 2 and by["Bugatti"]["delivered"] == 1 and by["Bugatti"]["late"] == 1
@@ -65,6 +71,7 @@ def test_delivery_classifies_orders_and_rolls_up_by_customer():
     # empty order book -> zeros, no divide-by-zero
     empty = delivery.build_delivery_summary(_fresh_session(), "DEFAULT")
     assert empty["total"] == 0 and empty["fulfillment_rate"] == 0 and empty["at_risk_orders"] == []
+    assert empty["on_track_rate"] == 0 and empty["units_at_risk"] == 0 and empty["units_remaining"] == 0
 
 
 if __name__ == "__main__":

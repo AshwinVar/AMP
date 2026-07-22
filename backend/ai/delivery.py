@@ -51,7 +51,7 @@ def build_delivery_summary(db, tenant: str) -> dict:
     orders = db.query(models.CustomerOrder).all()
 
     totals = {"delivered": 0, "on_track": 0, "at_risk": 0, "late": 0}
-    ordered_units = dispatched_units = 0
+    ordered_units = dispatched_units = units_at_risk = 0
     per_customer: dict = {}
     at_risk_orders = []
 
@@ -74,6 +74,7 @@ def build_delivery_summary(db, tenant: str) -> dict:
         c["dispatched"] += dispatched
 
         if state in ("late", "at_risk"):
+            units_at_risk += max(0, ordered - dispatched)   # undelivered units that may miss their date
             at_risk_orders.append({
                 "order_no": o.order_no,
                 "customer": o.customer_name,
@@ -108,7 +109,15 @@ def build_delivery_summary(db, tenant: str) -> dict:
         "on_track": totals["on_track"],
         "at_risk": totals["at_risk"],
         "late": totals["late"],
+        # Share of the order book that's not late or at-risk — the headline "are we
+        # keeping our promises?" number.
+        "on_track_rate": _pct(totals["delivered"] + totals["on_track"], len(orders)),
         "fulfillment_rate": _pct(dispatched_units, ordered_units),
+        "units_ordered": ordered_units,
+        "units_dispatched": dispatched_units,
+        "units_remaining": max(0, ordered_units - dispatched_units),
+        # The volume actually in jeopardy — undelivered units on late/at-risk orders.
+        "units_at_risk": units_at_risk,
         "by_customer": by_customer,
         "at_risk_orders": at_risk_orders[:TOP_N],
         "upcoming": upcoming,

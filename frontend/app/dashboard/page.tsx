@@ -43,6 +43,7 @@ import FlowSnapshot from "../../components/FlowSnapshot";
 import ShiftSnapshot from "../../components/ShiftSnapshot";
 import BriefingSnapshot from "../../components/BriefingSnapshot";
 import DeliverySnapshot from "../../components/DeliverySnapshot";
+import SupplySnapshot from "../../components/SupplySnapshot";
 import CostSnapshot from "../../components/CostSnapshot";
 import HandoverSnapshot from "../../components/HandoverSnapshot";
 import ScorecardStrip from "../../components/ScorecardStrip";
@@ -2103,6 +2104,14 @@ export default function DashboardPage() {
             />
           </div>
           <div className="mb-8"><InventorySnapshot /></div>
+          <div className="mb-8">
+            <SupplySnapshot
+              onOpen={(view) => {
+                setActiveView(view);
+                window.scrollTo({ top: 0, behavior: "smooth" });
+              }}
+            />
+          </div>
         </>
       )}
 

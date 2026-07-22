@@ -112,6 +112,14 @@ def get_coverage_summary(db: Session = Depends(_get_db), current_user: dict = De
     return ai.coverage.build_coverage_summary(db, request_tenant(current_user))
 
 
+@router.get("/inventory-part")
+def get_inventory_part(item_code: str, db: Session = Depends(_get_db), current_user: dict = Depends(get_current_user)):
+    # Part runway drill-down (ADR-0007): for one stocked part — the burn rate and
+    # days of cover behind its summary row, the daily in/out movement, the open
+    # POs on order and whether the earliest lands before the projected stockout.
+    return ai.coverage.build_part_runway(db, request_tenant(current_user), item_code)
+
+
 @router.get("/flow-summary")
 def get_flow_summary(db: Session = Depends(_get_db), current_user: dict = Depends(get_current_user)):
     # WIP flow (ADR-0007): work orders grouped by material state —

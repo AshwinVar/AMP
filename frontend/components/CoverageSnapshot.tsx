@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { apiGet } from "../lib/api";
+import PartRunwayDrawer from "./PartRunwayDrawer";
 
 // Mirrors the backend days-of-cover read-model (ai/coverage.py build_coverage_summary).
 type CoverageItem = {
@@ -55,9 +56,11 @@ function fmtDate(iso: string | null) {
 // run dry, at the rate we're actually consuming them (not just below a static
 // reorder line). Self-contained: fetches its own summary and refreshes, so it
 // drops onto any screen without prop-drilling. Renders nothing when nothing is
-// on track to run out.
+// on track to run out. Each row opens the part drill-down: why it's running out
+// and whether what's on order lands in time.
 export default function CoverageSnapshot() {
   const [cov, setCov] = useState<CoverageSummary | null>(null);
+  const [part, setPart] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -106,10 +109,12 @@ export default function CoverageSnapshot() {
             : Math.max(4, Math.min(100, Math.round(((i.days_of_cover ?? 0) / horizon) * 100)));
           const dateStr = fmtDate(i.stockout_date);
           return (
-            <div
+            <button
               key={i.item_code}
-              className="flex items-center gap-3"
-              title={`${i.item_name} (${i.item_code}) · ${i.current_stock} ${i.unit} · burning ${i.daily_burn}/day${i.supplier ? ` · ${i.supplier}` : ""}`}
+              type="button"
+              onClick={() => setPart(i.item_code)}
+              className="flex w-full items-center gap-3 rounded-lg px-1 py-0.5 text-left hover:bg-slate-800/50 transition"
+              title={`${i.item_name} (${i.item_code}) · ${i.current_stock} ${i.unit} · burning ${i.daily_burn}/day${i.supplier ? ` · ${i.supplier}` : ""} — open part detail`}
             >
               <span className="w-28 shrink-0 text-sm text-slate-300 truncate">{i.item_name}</span>
               <span className={`shrink-0 rounded border px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide ${stateChip[i.state]}`}>
@@ -122,10 +127,11 @@ export default function CoverageSnapshot() {
                 {coverLabel(i)}
                 {dateStr && i.state !== "out" && <span className="text-slate-600"> · {dateStr}</span>}
               </span>
-            </div>
+            </button>
           );
         })}
       </div>
+      {part && <PartRunwayDrawer itemCode={part} onClose={() => setPart(null)} />}
     </div>
   );
 }

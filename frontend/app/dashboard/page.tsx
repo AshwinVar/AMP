@@ -34,6 +34,7 @@ import FactoryPulse from "../../components/FactoryPulse";
 import QualitySnapshot from "../../components/QualitySnapshot";
 import DowntimeSnapshot from "../../components/DowntimeSnapshot";
 import ReliabilitySnapshot from "../../components/ReliabilitySnapshot";
+import ConnectivitySnapshot from "../../components/ConnectivitySnapshot";
 import ProductionSnapshot from "../../components/ProductionSnapshot";
 import OeeSnapshot from "../../components/OeeSnapshot";
 import LossesSnapshot from "../../components/LossesSnapshot";
@@ -2069,6 +2070,14 @@ export default function DashboardPage() {
           <div className="mb-8"><DowntimeSnapshot /></div>
           <div className="mb-8">
             <ReliabilitySnapshot
+              onOpen={(view) => {
+                setActiveView(view);
+                window.scrollTo({ top: 0, behavior: "smooth" });
+              }}
+            />
+          </div>
+          <div className="mb-8">
+            <ConnectivitySnapshot
               onOpen={(view) => {
                 setActiveView(view);
                 window.scrollTo({ top: 0, behavior: "smooth" });

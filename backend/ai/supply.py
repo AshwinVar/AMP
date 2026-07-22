@@ -136,11 +136,20 @@ def build_supplier_detail(db, tenant: str, supplier: str) -> dict:
     today = datetime.utcnow().date()
     suppliers = db.query(models.Supplier).all()
     name_by_id = {s.id: s.supplier_name for s in suppliers}
-    # A PO belongs to this supplier when its supplier row's name matches (the
-    # summary keys per-supplier by name); "—" catches POs whose row is missing.
-    pos = [p for p in db.query(models.PurchaseOrder).all()
-           if name_by_id.get(p.supplier_id, "—") == supplier]
     meta = next((s for s in suppliers if s.supplier_name == supplier), None)
+
+    # A PO belongs to this supplier when its supplier row's name matches (the summary
+    # keys per-supplier by name). Filter to the matching supplier ids in SQL instead
+    # of loading the whole, ever-growing PO table and matching names in Python. Only
+    # the "—" orphan bucket (POs with a missing supplier row) has no id to match, and
+    # falls back to a Python scan — a rare path over few rows.
+    matching_ids = [sid for sid, nm in name_by_id.items() if nm == supplier]
+    if matching_ids:
+        pos = (db.query(models.PurchaseOrder)
+               .filter(models.PurchaseOrder.supplier_id.in_(matching_ids)).all())
+    else:
+        pos = [p for p in db.query(models.PurchaseOrder).all()
+               if name_by_id.get(p.supplier_id, "—") == supplier]
 
     totals = {"received": 0, "on_track": 0, "at_risk": 0, "late": 0}
     ordered_units = received_units = overdue_units = 0

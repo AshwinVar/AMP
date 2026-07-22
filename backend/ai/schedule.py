@@ -52,8 +52,12 @@ def build_schedule_adherence(db, tenant: str) -> dict:
     work_orders are auto-scoped (ADR-0002)."""
     today = datetime.utcnow().date()
     window = [today - timedelta(days=i) for i in range(WINDOW_DAYS - 1, -1, -1)]
-    window_set = set(window)
-    plans = [p for p in db.query(models.ProductionPlan).all() if p.plan_date in window_set]
+    # Window in SQL — production_plans grows continuously, so filtering the whole
+    # table in Python re-scans it on every 30s poll. The window is contiguous days
+    # from window[0] to today, so a >= / <= range is exactly `plan_date in window`.
+    plans = (db.query(models.ProductionPlan)
+             .filter(models.ProductionPlan.plan_date >= window[0],
+                     models.ProductionPlan.plan_date <= today).all())
 
     machine_names = {m.id: m.name for m in db.query(models.Machine).all()}
     wo_numbers = {w.id: w.work_order_no for w in db.query(models.WorkOrder).all()}
@@ -186,8 +190,10 @@ def build_shift_adherence(db, tenant: str, shift: str) -> dict:
     storage. Returns found: false when the shift has no plans in the window."""
     today = datetime.utcnow().date()
     window = [today - timedelta(days=i) for i in range(WINDOW_DAYS - 1, -1, -1)]
-    window_set = set(window)
-    all_plans = [p for p in db.query(models.ProductionPlan).all() if p.plan_date in window_set]
+    # Window in SQL (see build_schedule_adherence) — no full-table scan per poll.
+    all_plans = (db.query(models.ProductionPlan)
+                 .filter(models.ProductionPlan.plan_date >= window[0],
+                         models.ProductionPlan.plan_date <= today).all())
     plans = [p for p in all_plans if (p.shift_name or "—") == shift]
 
     machine_names = {m.id: m.name for m in db.query(models.Machine).all()}

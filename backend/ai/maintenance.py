@@ -17,6 +17,8 @@ we do about it.
 from collections import Counter, defaultdict
 from datetime import datetime, timedelta
 
+from sqlalchemy import and_, or_
+
 import models
 
 name = "maintenance"
@@ -118,7 +120,17 @@ def build_maintenance_execution(db, tenant: str) -> dict:
     ``undated_completions`` rather than silently scored as on-time."""
     today = datetime.utcnow().date()
     cutoff = today - timedelta(days=EXECUTION_WINDOW_DAYS - 1)
-    all_tasks = db.query(models.MaintenanceTask).all()
+    # Only the tasks this read-model actually uses, bounded in SQL so the endless
+    # pile of old completed tasks isn't re-scanned on every 30s poll: completions
+    # dated inside the window (or undated, reported separately) plus the whole open
+    # backlog (any age). Old *dated* completions fall out of both the window set
+    # and the undated set, so excluding them changes no number here.
+    all_tasks = (db.query(models.MaintenanceTask).filter(or_(
+        and_(models.MaintenanceTask.status == "Completed",
+             or_(models.MaintenanceTask.completed_date >= cutoff,
+                 models.MaintenanceTask.completed_date.is_(None))),
+        models.MaintenanceTask.status.in_(OPEN_STATUSES),
+    )).all())
     names = {m.id: m.name for m in db.query(models.Machine).all()}
 
     completed = [t for t in all_tasks if t.status == "Completed"]

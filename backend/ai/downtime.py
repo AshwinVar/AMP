@@ -6,31 +6,21 @@ reasons (a Pareto), the machines losing the most time, and a day-by-day series.
 A read-model over downtime_logs — auto-scoped to the tenant by the query layer
 (ADR-0002) in a request context; it adds no storage.
 """
-import re
 from collections import Counter
 from datetime import datetime, timedelta
 
 import models
+# The one correct free-text duration parser ("2 hrs 15 min" -> 135), aliased so the
+# call sites read unchanged — a local leading-digit regex read hour formats as minutes.
+from duration import parse_duration_to_minutes as _duration_minutes
 
 name = "downtime"
 
 WINDOW_DAYS = 7
 TOP_N = 5
 
-_DIGITS = re.compile(r"\d+")
-
-
 def _norm_reason(d) -> str:
     return (d.reason or "Unknown").strip() or "Unknown"
-
-
-def _duration_minutes(duration) -> int:
-    """Downtime durations are free-text strings ("120 min"); pull the leading
-    number so the drill-down can total minutes lost. Unparseable -> 0."""
-    if not duration:
-        return 0
-    m = _DIGITS.search(str(duration))
-    return int(m.group()) if m else 0
 
 
 def build_downtime_summary(db, tenant: str) -> dict:

@@ -40,6 +40,26 @@ def _txn(item_id, ttype, qty, days_ago):
         created_at=datetime.utcnow() - timedelta(days=days_ago))
 
 
+def test_barely_moving_part_does_not_overflow_the_stockout_date():
+    """A big pile of a slow-moving part computes centuries of cover. Adding that to
+    a date raised OverflowError -> a 500 on both the summary and the part
+    drill-down. Past the forecast horizon there is simply no dated stockout."""
+    db = _fresh_session()
+    db.add(_item("SLOW-1", 5_000_000))          # huge stock...
+    db.commit()
+    item = db.query(models.InventoryItem).first()
+    db.add(_txn(item.id, "issue", 1, 3))        # ...one unit issued in the window
+    db.commit()
+
+    coverage.build_coverage_summary(db, "DEFAULT")               # must not raise
+
+    part = coverage.build_part_runway(db, "DEFAULT", "SLOW-1")   # must not raise
+    assert part["current_stock"] == 5_000_000
+    assert part["days_of_cover"] > 3650          # centuries of cover...
+    assert part["stockout_date"] is None         # ...so no meaningful dated stockout
+    print("PASS a barely-moving part yields no dated stockout instead of overflowing")
+
+
 def test_coverage_forecasts_stockout_and_ranks_soonest_first():
     db = _fresh_session()
     db.add_all([
@@ -214,6 +234,7 @@ def test_part_runway_is_healthy_and_missing_safe():
 
 
 if __name__ == "__main__":
+    test_barely_moving_part_does_not_overflow_the_stockout_date()
     test_coverage_forecasts_stockout_and_ranks_soonest_first()
     test_stock_with_no_recent_consumption_is_not_a_runway_risk()
     test_part_runway_reconciles_with_the_summary_row()

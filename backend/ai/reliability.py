@@ -24,11 +24,15 @@ needing a shift calendar we don't have. A longer window than the downtime card's
 KPIs read against the fleet, its own failure modes, a weekly trend, the failures
 themselves, and the maintenance already booked against it.
 """
-import re
 from collections import Counter
 from datetime import datetime, timedelta
 
 import models
+# The one correct free-text duration parser ("2 hrs 15 min" -> 135). Aliased so the
+# call sites below read unchanged. A local leading-digit regex used to live here and
+# read every hour-format stoppage as minutes, which understated MTTR ~60x and
+# inverted the least-reliable ranking.
+from duration import parse_duration_to_minutes as _duration_minutes
 from ai.maintenance import OPEN_STATUSES, PRIORITY_ORDER
 
 name = "reliability"
@@ -36,17 +40,6 @@ name = "reliability"
 WINDOW_DAYS = 30
 WEEKS = 4          # weekly trend buckets in the machine drill-down
 TOP_N = 8
-_DIGITS = re.compile(r"\d+")
-
-
-def _duration_minutes(duration) -> int:
-    """Downtime durations are free-text ("120 min"); pull the leading number so
-    repair time totals. Unparseable / empty -> 0."""
-    if not duration:
-        return 0
-    m = _DIGITS.search(str(duration))
-    return int(m.group()) if m else 0
-
 
 def _mtbf_hours(operating_minutes: float, failures: int):
     """Mean operating time between failures, in hours. Undefined (None) with no

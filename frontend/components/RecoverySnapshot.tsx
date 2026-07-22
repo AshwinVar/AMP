@@ -18,7 +18,21 @@ type RecoverySummary = {
   recoverable_value_per_year: number | null;
   components: Component[];
   biggest_lever: string | null;
+  oee_trend: "improving" | "worsening" | "flat" | "new";
+  prior_oee: number | null;
+  oee_points_delta: number | null;
 };
+
+// Week-over-week OEE direction — is the plant closing the gap? Hidden until
+// there's a prior week to compare against ("new").
+function TrendBadge({ trend, delta }: { trend: RecoverySummary["oee_trend"]; delta: number | null }) {
+  if (trend === "new" || delta == null) return null;
+  const cls =
+    trend === "improving" ? "text-emerald-400" : trend === "worsening" ? "text-red-400" : "text-slate-400";
+  const arrow = trend === "improving" ? "↑" : trend === "worsening" ? "↓" : "→";
+  const label = trend === "flat" ? "flat vs last week" : `${arrow} ${Math.abs(delta)} pts vs last week`;
+  return <span className={`ml-2 text-[11px] font-semibold ${cls}`}>{label}</span>;
+}
 
 // The OEE recovery card: the gap to world-class and what closing it is worth in
 // good units. Self-contained — fetches its own summary and refreshes. Renders
@@ -51,6 +65,7 @@ export default function RecoverySnapshot({ isAdmin = false }: { isAdmin?: boolea
             {s.at_world_class
               ? `OEE ${s.oee}% — at or above the ${s.world_class}% world-class benchmark`
               : `OEE ${s.oee}% vs ${s.world_class}% world-class — closing the ${s.gap_points}-pt gap is worth more good output`}
+            <TrendBadge trend={s.oee_trend} delta={s.oee_points_delta} />
           </p>
         </div>
         <div className="text-right">

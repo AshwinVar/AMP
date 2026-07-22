@@ -9,6 +9,9 @@ world-class target so the biggest lever is obvious. A read-model over
 production_records — auto-scoped to the tenant (ADR-0002), no storage; reuses the
 shared pooled OEE so it agrees with every other surface.
 """
+from datetime import datetime, timedelta
+
+import models
 from ai.twin import _recent_production
 # World-class benchmarks + the shared "component to focus on" definition live in
 # analytics_engine (ADR-0010), so recovery's "biggest lever" and the OEE summary's
@@ -39,9 +42,24 @@ _EMPTY = {
     "recoverable_value_per_year": None, "components": [], "biggest_lever": None,
     "lever_label": None, "lever_action": None,
     "lever_recoverable_units_per_year": 0, "lever_recoverable_value_per_year": None,
+    "oee_trend": "new", "prior_oee": None, "oee_points_delta": None,
 }
 
 MINUTES_PER_DAY = 24 * 60
+TREND_POINTS = 2   # OEE move (points) below which week-over-week reads "flat"
+
+
+def _prior_production(db, days: int = WINDOW_DAYS):
+    """Production in the window BEFORE the current one (days..2*days ago) — last
+    week — so the opportunity can be trended. Auto-scoped like every query here
+    (ADR-0002)."""
+    today = datetime.utcnow().date()
+    start = datetime.combine(today - timedelta(days=2 * days - 1), datetime.min.time())
+    end = datetime.combine(today - timedelta(days=days - 1), datetime.min.time())
+    return (db.query(models.ProductionRecord)
+            .filter(models.ProductionRecord.created_at >= start,
+                    models.ProductionRecord.created_at < end)
+            .all())
 
 
 def _physical_good(records, good: int, days: int) -> int:
@@ -108,6 +126,17 @@ def build_recovery_summary(db, tenant: str) -> dict:
         lever_units_year = round(lever_window * 365 / WINDOW_DAYS)
     lever_value_year = round(lever_units_year * rate) if (rate and lever_units_year) else None
 
+    # Trend: is the plant closing the gap? Compare this window's OEE to last
+    # week's. "new" until there's a prior week to compare against.
+    po = pooled_oee(_prior_production(db, days=WINDOW_DAYS))
+    if po["has_data"] and po["oee"] > 0:
+        prior_oee = po["oee"]
+        delta = o["oee"] - prior_oee
+        oee_trend = ("improving" if delta >= TREND_POINTS
+                     else "worsening" if delta <= -TREND_POINTS else "flat")
+    else:
+        prior_oee, delta, oee_trend = None, None, "new"
+
     return {
         "has_data": True,
         "oee": o["oee"],
@@ -127,4 +156,7 @@ def build_recovery_summary(db, tenant: str) -> dict:
         "lever_action": LEVER_ACTIONS.get(lever_key) if lever_key else None,
         "lever_recoverable_units_per_year": lever_units_year,
         "lever_recoverable_value_per_year": lever_value_year,
+        "oee_trend": oee_trend,
+        "prior_oee": prior_oee,
+        "oee_points_delta": delta,
     }

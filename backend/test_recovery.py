@@ -12,16 +12,18 @@ from types import SimpleNamespace
 import ai.recovery as rec
 
 
-def _run(records, rate=None):
-    # build_recovery_summary calls module-level _recent_production and _unit_value;
-    # stub both so no DB is needed (rate=None means the tenant hasn't configured one).
-    orig_prod, orig_val = rec._recent_production, rec._unit_value
+def _run(records, rate=None, prior=None):
+    # build_recovery_summary calls module-level _recent_production, _prior_production
+    # and _unit_value; stub all three so no DB is needed (rate=None means the tenant
+    # hasn't configured one; prior=None means no prior week -> trend "new").
+    orig_prod, orig_prior, orig_val = rec._recent_production, rec._prior_production, rec._unit_value
     rec._recent_production = lambda db, days=7: records
+    rec._prior_production = lambda db, days=7: (prior or [])
     rec._unit_value = lambda db, tenant: rate
     try:
         return rec.build_recovery_summary(db=None, tenant="DEFAULT")
     finally:
-        rec._recent_production, rec._unit_value = orig_prod, orig_val
+        rec._recent_production, rec._prior_production, rec._unit_value = orig_prod, orig_prior, orig_val
 
 
 def _r(**kw):
@@ -111,6 +113,27 @@ def test_no_pound_value_when_rate_unset():
     print("PASS £ fields stay null when no rate is configured (units still shown)")
 
 
+def test_oee_trend_improving_vs_prior_week():
+    # This week OEE 72; last week was lower -> the plant is closing the gap.
+    cur = [_r(machine_id=1, planned_minutes=480, runtime_minutes=400,
+              ideal_cycle_time_seconds=30, total_count=700, good_count=690)]
+    prior = [_r(machine_id=1, planned_minutes=480, runtime_minutes=300,
+                ideal_cycle_time_seconds=60, total_count=300, good_count=280)]
+    out = _run(cur, prior=prior)
+    assert out["oee_trend"] == "improving"
+    assert out["prior_oee"] is not None and out["prior_oee"] < out["oee"]
+    assert out["oee_points_delta"] == out["oee"] - out["prior_oee"] > 0
+    print("PASS OEE trend reads 'improving' when this week beats last week")
+
+
+def test_oee_trend_new_when_no_prior_week():
+    out = _run([_r(machine_id=1, planned_minutes=480, runtime_minutes=400,
+                   ideal_cycle_time_seconds=30, total_count=700, good_count=690)])
+    assert out["oee_trend"] == "new"
+    assert out["prior_oee"] is None and out["oee_points_delta"] is None
+    print("PASS OEE trend is 'new' when there is no prior week to compare")
+
+
 def test_no_production_is_safe():
     out = _run([])
     assert out["has_data"] is False and out["recoverable_units_per_year"] == 0
@@ -160,6 +183,8 @@ if __name__ == "__main__":
     test_at_world_class_has_no_recoverable_units()
     test_pound_value_when_rate_configured()
     test_no_pound_value_when_rate_unset()
+    test_oee_trend_improving_vs_prior_week()
+    test_oee_trend_new_when_no_prior_week()
     test_no_production_is_safe()
     test_physical_cap_is_noop_on_plausible_data()
     test_physical_cap_tames_impossible_volume()

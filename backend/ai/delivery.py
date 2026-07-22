@@ -122,3 +122,87 @@ def build_delivery_summary(db, tenant: str) -> dict:
         "at_risk_orders": at_risk_orders[:TOP_N],
         "upcoming": upcoming,
     }
+
+
+def build_customer_detail(db, tenant: str, customer: str) -> dict:
+    """Drill-down for a single customer (by name, as keyed in the summary): its
+    unit fulfillment and delivery reliability, the state mix across its orders,
+    the due load for the next 7 days, the orders to chase (late first), and its
+    recent orders. A read-model over customer_orders (auto-scoped, ADR-0002);
+    adds no storage. Returns a zeroed shape when the customer has no orders."""
+    today = datetime.utcnow().date()
+    # The summary keys per-customer by name; "—" catches orders with no name.
+    orders = [o for o in db.query(models.CustomerOrder).all()
+              if (o.customer_name or "—") == customer]
+
+    totals = {"delivered": 0, "on_track": 0, "at_risk": 0, "late": 0}
+    ordered_units = dispatched_units = overdue_units = 0
+    chase = []
+    for o in orders:
+        state = _state(o, today)
+        totals[state] += 1
+        ordered = o.order_quantity or 0
+        dispatched = o.dispatched_quantity or 0
+        ordered_units += ordered
+        dispatched_units += dispatched
+        if state == "late":
+            overdue_units += max(0, ordered - dispatched)   # units still owed on overdue orders
+        if state in ("late", "at_risk"):
+            due = o.due_date
+            chase.append({
+                "order_no": o.order_no,
+                "product": o.product_name,
+                "due_date": due.isoformat() if due else None,
+                "order_quantity": ordered,
+                "dispatched_quantity": dispatched,
+                "state": state,
+                "days_to_due": (due - today).days if due else None,
+            })
+
+    # chase list: late (most overdue) first, then at-risk (soonest due)
+    chase.sort(key=lambda o: (0 if o["state"] == "late" else 1,
+                              o["days_to_due"] if o["days_to_due"] is not None else 9999))
+
+    # Upcoming due load for this customer: not-yet-delivered orders due on each
+    # of the next 7 days.
+    upcoming_days = [today + timedelta(days=i) for i in range(7)]
+    due_set = set(upcoming_days)
+    due_count = {d: 0 for d in upcoming_days}
+    for o in orders:
+        if o.due_date in due_set and _state(o, today) != "delivered":
+            due_count[o.due_date] += 1
+    upcoming = [{"date": d.isoformat(), "orders": due_count[d]} for d in upcoming_days]
+
+    # Reliability: of the orders already due (delivered in full, or overdue and
+    # still short), the share delivered in full — the "can I count on delivering
+    # for them?" number. On-track / at-risk orders aren't due yet, so they're
+    # held out.
+    resolved = totals["delivered"] + totals["late"]
+
+    # Recent orders (newest first) for context, with each order's current state.
+    recent = sorted(orders, key=lambda o: (o.created_at or datetime.min, o.id), reverse=True)[:10]
+    recent_orders = [{
+        "order_no": o.order_no,
+        "product": o.product_name,
+        "order_quantity": o.order_quantity or 0,
+        "dispatched_quantity": o.dispatched_quantity or 0,
+        "due_date": o.due_date.isoformat() if o.due_date else None,
+        "state": _state(o, today),
+    } for o in recent]
+
+    return {
+        "customer": customer,
+        "total": len(orders),
+        "delivered": totals["delivered"],
+        "on_track": totals["on_track"],
+        "at_risk": totals["at_risk"],
+        "late": totals["late"],
+        "fulfillment_rate": _pct(dispatched_units, ordered_units),
+        "reliability_rate": _pct(totals["delivered"], resolved),
+        "ordered_units": ordered_units,
+        "dispatched_units": dispatched_units,
+        "overdue_units": overdue_units,
+        "chase": chase[:TOP_N],
+        "upcoming": upcoming,
+        "recent": recent_orders,
+    }

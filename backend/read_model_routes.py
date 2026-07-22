@@ -155,6 +155,14 @@ def get_delivery_summary(db: Session = Depends(_get_db), current_user: dict = De
     return ai.delivery.build_delivery_summary(db, request_tenant(current_user))
 
 
+@router.get("/delivery-customer")
+def get_delivery_customer(customer: str, db: Session = Depends(_get_db), current_user: dict = Depends(get_current_user)):
+    # Customer drill-down (ADR-0007): for one customer — unit fulfillment and
+    # delivery reliability, the order state mix, a due timeline, the orders to
+    # chase, and its recent orders.
+    return ai.delivery.build_customer_detail(db, request_tenant(current_user), customer)
+
+
 @router.get("/supply-summary")
 def get_supply_summary(db: Session = Depends(_get_db), current_user: dict = Depends(get_current_user)):
     # Inbound supply outlook (ADR-0007): per-supplier received / on-track /

@@ -154,6 +154,15 @@ def get_supply_summary(db: Session = Depends(_get_db), current_user: dict = Depe
     return ai.supply.build_supply_summary(db, request_tenant(current_user))
 
 
+@router.get("/schedule-summary")
+def get_schedule_summary(db: Session = Depends(_get_db), current_user: dict = Depends(get_current_user)):
+    # Schedule adherence (ADR-0007): are we hitting the production plan? Plant-wide
+    # met / on-track / behind / missed plan states, a pooled attainment rate over
+    # the plans due so far, per-shift and per-machine breakdowns (worst first), a
+    # daily planned-vs-actual series, today's scheduled load, and the plans to chase.
+    return ai.schedule.build_schedule_adherence(db, request_tenant(current_user))
+
+
 @router.get("/cost-summary")
 def get_cost_summary(db: Session = Depends(_get_db), current_user: dict = Depends(get_current_user)):
     # Cost of losses (ADR-0007): downtime + scrap priced at standard rates, and

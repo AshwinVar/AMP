@@ -42,6 +42,7 @@ import LossesSnapshot from "../../components/LossesSnapshot";
 import RecoverySnapshot from "../../components/RecoverySnapshot";
 import NextBestActionCard from "../../components/NextBestActionCard";
 import InventorySnapshot from "../../components/InventorySnapshot";
+import CoverageSnapshot from "../../components/CoverageSnapshot";
 import FlowSnapshot from "../../components/FlowSnapshot";
 import ShiftSnapshot from "../../components/ShiftSnapshot";
 import BriefingSnapshot from "../../components/BriefingSnapshot";
@@ -2131,6 +2132,7 @@ export default function DashboardPage() {
             />
           </div>
           <div className="mb-8"><InventorySnapshot /></div>
+          <div className="mb-8"><CoverageSnapshot /></div>
           <div className="mb-8">
             <SupplySnapshot
               onOpen={(view) => {

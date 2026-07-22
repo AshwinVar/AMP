@@ -104,6 +104,14 @@ def get_inventory_summary(db: Session = Depends(_get_db), current_user: dict = D
     return ai.inventory.build_inventory_summary(db, request_tenant(current_user))
 
 
+@router.get("/coverage-summary")
+def get_coverage_summary(db: Session = Depends(_get_db), current_user: dict = Depends(get_current_user)):
+    # Days-of-cover (ADR-0007): rate-based stockout forecast — recent consumption
+    # turns stock into days of runway, ranking the items that run dry soonest
+    # (predictive, complements the reorder-level snapshot in /inventory-summary).
+    return ai.coverage.build_coverage_summary(db, request_tenant(current_user))
+
+
 @router.get("/flow-summary")
 def get_flow_summary(db: Session = Depends(_get_db), current_user: dict = Depends(get_current_user)):
     # WIP flow (ADR-0007): work orders grouped by material state —

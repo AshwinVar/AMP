@@ -2078,14 +2078,7 @@ export default function DashboardPage() {
         <>
           <div className="mb-8"><QualitySnapshot /></div>
           <div className="mb-8"><DowntimeSnapshot /></div>
-          <div className="mb-8">
-            <ReliabilitySnapshot
-              onOpen={(view) => {
-                setActiveView(view);
-                window.scrollTo({ top: 0, behavior: "smooth" });
-              }}
-            />
-          </div>
+          <div className="mb-8"><ReliabilitySnapshot /></div>
           <div className="mb-8">
             <ConnectivitySnapshot
               onOpen={(view) => {

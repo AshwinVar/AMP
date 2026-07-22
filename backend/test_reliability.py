@@ -94,8 +94,90 @@ def test_reliability_is_empty_safe_and_windows_out_old_failures():
     assert empty["availability"] == 100.0
 
 
+def _task(db, task_no, machine_id, days_out, priority="High", status="Open", task_type="PM"):
+    db.add(models.MaintenanceTask(
+        task_no=task_no, machine_id=machine_id, task_type=task_type, priority=priority,
+        assigned_to="Tech A", status=status,
+        planned_date=(datetime.utcnow() + timedelta(days=days_out)).date(),
+    ))
+
+
+def test_machine_drilldown_reads_one_machine_against_the_fleet():
+    db = _fresh_session()
+    _machine(db, 1, "SMT-Reflow-01", "SMT")
+    _machine(db, 2, "IC-Test-01", "IC")
+    # Machine 1: worsening — one failure 25 days ago, three in the last fortnight.
+    _log(db, 1, "60 min", "Breakdown", days_ago=25)
+    _log(db, 1, "120 min", "Jam", days_ago=10)
+    _log(db, 1, "120 min", "Jam", days_ago=4)
+    _log(db, 1, "60 min", "Breakdown", days_ago=2)
+    _log(db, 2, "30 min", "Calibration", days_ago=1)
+    # Booked work: one overdue PM, one upcoming, one already done (excluded).
+    _task(db, "MT-1", 1, days_out=-3, priority="Critical")
+    _task(db, "MT-2", 1, days_out=5)
+    _task(db, "MT-3", 1, days_out=-9, status="Completed")
+    _task(db, "MT-4", 2, days_out=2)
+    db.commit()
+
+    d = reliability.build_machine_reliability(db, "DEFAULT", 1)
+    assert d["found"] is True
+    assert d["name"] == "SMT-Reflow-01" and d["line"] == "SMT"
+    assert d["failures"] == 4 and d["repair_minutes"] == 360
+    assert d["mttr_minutes"] == 90.0                 # 360 / 4
+    # Same numbers the fleet ranking uses — worst machine ranks 1 of 2.
+    assert d["rank"] == 1 and d["machines_tracked"] == 2
+    assert d["fleet_mttr_minutes"] == reliability.build_reliability_summary(db, "DEFAULT")["mttr_minutes"]
+
+    # Its own failure modes only — machine 2's Calibration must not leak in.
+    modes = {m["reason"]: m for m in d["top_modes"]}
+    assert set(modes) == {"Jam", "Breakdown"}
+    assert modes["Jam"]["minutes"] == 240 and modes["Jam"]["count"] == 2
+
+    # Direction of travel: 3 failures this fortnight vs 1 in the previous one.
+    assert d["recent_failures"] == 3 and d["prior_failures"] == 1
+    assert d["trend"] == "worsening"
+
+    # Weekly buckets run oldest -> newest and cover the last 4 whole weeks.
+    assert len(d["weekly"]) == 4
+    assert [w["failures"] for w in d["weekly"]] == [1, 0, 1, 2]   # 25d / — / 10d / 4d+2d ago
+
+    # Failure log is newest-first and carries the parsed repair minutes.
+    assert [f["minutes"] for f in d["failures_log"]] == [60, 120, 120, 60]
+    assert d["failures_log"][0]["reason"] == "Breakdown"
+    assert d["hours_since_last_failure"] is not None
+
+    # Open maintenance for this machine only, overdue first; Completed excluded.
+    m = d["maintenance"]
+    assert m["open"] == 2 and m["overdue"] == 1
+    assert [t["task_no"] for t in m["tasks"]] == ["MT-1", "MT-2"]
+    assert m["tasks"][0]["overdue"] is True
+
+
+def test_machine_drilldown_handles_clean_and_unknown_machines():
+    db = _fresh_session()
+    _machine(db, 1, "SMT-Printer-01")
+    db.commit()
+
+    clean = reliability.build_machine_reliability(db, "DEFAULT", 1)
+    assert clean["found"] is True
+    assert clean["failures"] == 0 and clean["mtbf_hours"] is None
+    assert clean["availability"] == 100.0 and clean["trend"] == "steady"
+    assert clean["hours_since_last_failure"] is None and clean["overdue_vs_mtbf"] is False
+    assert clean["top_modes"] == [] and clean["failures_log"] == []
+    assert clean["maintenance"]["open"] == 0
+
+    # A machine id that isn't in the tenant: a zeroed shape, never a crash.
+    missing = reliability.build_machine_reliability(db, "DEFAULT", 999)
+    assert missing["found"] is False and missing["name"] is None
+    assert missing["failures"] == 0 and missing["rank"] is None
+    assert missing["machines_tracked"] == 1
+
+
 if __name__ == "__main__":
     test_reliability_computes_mtbf_mttr_and_ranks_worst_first()
     test_reliability_is_empty_safe_and_windows_out_old_failures()
+    test_machine_drilldown_reads_one_machine_against_the_fleet()
+    test_machine_drilldown_handles_clean_and_unknown_machines()
     print("RELIABILITY OK: MTBF/MTTR/availability per machine; least-reliable-first ranking; "
-          "bottleneck named; failure-mode Pareto by repair time; 30-day window; empty-safe")
+          "bottleneck named; failure-mode Pareto by repair time; 30-day window; empty-safe; "
+          "machine drill-down (rank vs fleet, own modes, weekly trend, booked maintenance)")

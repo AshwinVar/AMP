@@ -19,16 +19,22 @@ calendar span less the machine's own repair minutes, which keeps MTBF and
 availability internally consistent (availability = MTBF / (MTBF + MTTR)) without
 needing a shift calendar we don't have. A longer window than the downtime card's
 (30 days) — reliability is a slow-moving, monthly metric.
+
+``build_machine_reliability`` drills into one machine from that ranking: the same
+KPIs read against the fleet, its own failure modes, a weekly trend, the failures
+themselves, and the maintenance already booked against it.
 """
 import re
 from collections import Counter
 from datetime import datetime, timedelta
 
 import models
+from ai.maintenance import OPEN_STATUSES, PRIORITY_ORDER
 
 name = "reliability"
 
 WINDOW_DAYS = 30
+WEEKS = 4          # weekly trend buckets in the machine drill-down
 TOP_N = 8
 _DIGITS = re.compile(r"\d+")
 
@@ -50,22 +56,21 @@ def _mtbf_hours(operating_minutes: float, failures: int):
     return round(operating_minutes / failures / 60, 1)
 
 
-def build_reliability_summary(db, tenant: str) -> dict:
-    """Fleet reliability over the last 30 days: fleet MTBF / MTTR / availability,
-    a per-machine breakdown (least reliable first), the reliability bottleneck,
-    and the failure-mode Pareto by repair time. downtime_logs and machines are
-    auto-scoped (ADR-0002). Empty-safe: zeros, no divide-by-zero."""
-    now = datetime.utcnow()
-    start = now - timedelta(days=WINDOW_DAYS)
-    window_minutes = WINDOW_DAYS * 24 * 60
-
-    logs = [
+def _window_logs(db, start):
+    """Downtime records inside the window. Filtered in SQL and again in Python so
+    rows with a NULL created_at can't slip through."""
+    return [
         d for d in db.query(models.DowntimeLog).filter(models.DowntimeLog.created_at >= start).all()
         if d.created_at and d.created_at >= start
     ]
+
+
+def _rank_rows(db, logs):
+    """Per-machine reliability rows over the window, least reliable first — the
+    ranking shared by the fleet summary and the single-machine drill-down, so
+    both agree on who is worst. Returns (rows, failures, repair_minutes)."""
+    window_minutes = WINDOW_DAYS * 24 * 60
     machines = db.query(models.Machine).all()
-    names = {m.id: m.name for m in machines}
-    line_of = {m.id: (m.line or "") for m in machines}
 
     # Roll failures + repair minutes up per machine.
     failures: Counter = Counter()
@@ -84,8 +89,8 @@ def build_reliability_summary(db, tenant: str) -> dict:
         availability = round(operating / window_minutes * 100, 1) if window_minutes else 0.0
         rows.append({
             "machine_id": m.id,
-            "name": names.get(m.id, f"#{m.id}"),
-            "line": line_of.get(m.id, ""),
+            "name": m.name,
+            "line": m.line or "",
             "failures": f,
             "repair_minutes": repair,
             "mttr_minutes": round(repair / f, 1) if f else 0.0,
@@ -96,6 +101,35 @@ def build_reliability_summary(db, tenant: str) -> dict:
     # Least reliable first: most failures, then longest total downtime, then lowest
     # availability. Machines with no failures (perfectly reliable) sink to the end.
     rows.sort(key=lambda r: (-r["failures"], -r["repair_minutes"], r["availability"]))
+    return rows, failures, repair_minutes
+
+
+def _mode_pareto(logs) -> list:
+    """Failure modes ranked by repair time — where the maintenance hours go."""
+    mode_minutes: Counter = Counter()
+    mode_count: Counter = Counter()
+    for d in logs:
+        reason = (d.reason or "Unknown").strip() or "Unknown"
+        mode_minutes[reason] += _duration_minutes(d.duration)
+        mode_count[reason] += 1
+    return [
+        {"reason": r, "count": mode_count[r], "minutes": mins}
+        for r, mins in mode_minutes.most_common(TOP_N)
+    ]
+
+
+def build_reliability_summary(db, tenant: str) -> dict:
+    """Fleet reliability over the last 30 days: fleet MTBF / MTTR / availability,
+    a per-machine breakdown (least reliable first), the reliability bottleneck,
+    and the failure-mode Pareto by repair time. downtime_logs and machines are
+    auto-scoped (ADR-0002). Empty-safe: zeros, no divide-by-zero."""
+    now = datetime.utcnow()
+    start = now - timedelta(days=WINDOW_DAYS)
+    window_minutes = WINDOW_DAYS * 24 * 60
+
+    logs = _window_logs(db, start)
+    machines = db.query(models.Machine).all()
+    rows, failures, repair_minutes = _rank_rows(db, logs)
 
     total_failures = sum(failures.values())
     total_repair = sum(repair_minutes.values())
@@ -111,16 +145,7 @@ def build_reliability_summary(db, tenant: str) -> dict:
     bottleneck = rows[0] if rows and rows[0]["failures"] > 0 else None
 
     # Failure-mode Pareto by repair time — where the maintenance hours go.
-    mode_minutes: Counter = Counter()
-    mode_count: Counter = Counter()
-    for d in logs:
-        reason = (d.reason or "Unknown").strip() or "Unknown"
-        mode_minutes[reason] += _duration_minutes(d.duration)
-        mode_count[reason] += 1
-    top_modes = [
-        {"reason": r, "count": mode_count[r], "minutes": mins}
-        for r, mins in mode_minutes.most_common(TOP_N)
-    ]
+    top_modes = _mode_pareto(logs)
 
     return {
         "days": WINDOW_DAYS,
@@ -133,4 +158,125 @@ def build_reliability_summary(db, tenant: str) -> dict:
         "by_machine": rows[:TOP_N],
         "bottleneck": bottleneck,
         "top_modes": top_modes,
+    }
+
+
+def build_machine_reliability(db, tenant: str, machine_id: int) -> dict:
+    """Drill-down for one machine: its 30-day MTBF / MTTR / availability against
+    the fleet, where it ranks, its own failure-mode Pareto, a weekly failure
+    trend (is it getting worse?), the failures themselves, and the maintenance
+    already scheduled against it — so "this machine is the bottleneck" turns into
+    "and here is what's booked to fix it". Composes downtime_logs + machines +
+    maintenance_tasks (auto-scoped, ADR-0002); adds no storage. Returns
+    ``found: False`` with a zeroed shape when the machine isn't in the tenant."""
+    now = datetime.utcnow()
+    start = now - timedelta(days=WINDOW_DAYS)
+    today = now.date()
+
+    machine = db.query(models.Machine).filter(models.Machine.id == machine_id).first()
+    logs = _window_logs(db, start)
+    rows, _, _ = _rank_rows(db, logs)
+    fleet = build_reliability_summary(db, tenant)
+
+    row = next((r for r in rows if r["machine_id"] == machine_id), None)
+    if machine is None or row is None:
+        return {
+            "found": False, "machine_id": machine_id, "name": None, "line": "",
+            "status": None, "days": WINDOW_DAYS,
+            "failures": 0, "repair_minutes": 0, "mttr_minutes": 0.0,
+            "mtbf_hours": None, "availability": 100.0,
+            "rank": None, "machines_tracked": fleet["machines_tracked"],
+            "fleet_mttr_minutes": fleet["mttr_minutes"],
+            "fleet_availability": fleet["availability"],
+            "top_modes": [], "weekly": [], "trend": "steady",
+            "recent_failures": 0, "prior_failures": 0,
+            "hours_since_last_failure": None, "overdue_vs_mtbf": False,
+            "failures_log": [], "maintenance": {"open": 0, "overdue": 0, "tasks": []},
+        }
+
+    mine = [d for d in logs if d.machine_id == machine_id]
+
+    # Rank among the fleet on the shared least-reliable-first ordering (1 = worst).
+    rank = next(i for i, r in enumerate(rows, start=1) if r["machine_id"] == machine_id)
+
+    # Weekly failure trend over the last 4 whole weeks (28 of the 30 days) — the
+    # sparkline that says "getting worse" faster than any single number.
+    weekly = []
+    for w in range(WEEKS - 1, -1, -1):
+        w_start = now - timedelta(days=7 * (w + 1))
+        w_end = now - timedelta(days=7 * w)
+        bucket = [d for d in mine if w_start <= d.created_at < w_end]
+        weekly.append({
+            "week_start": w_start.date().isoformat(),
+            "failures": len(bucket),
+            "minutes": sum(_duration_minutes(d.duration) for d in bucket),
+        })
+
+    # Direction of travel: this half of the window against the previous half.
+    half = now - timedelta(days=WINDOW_DAYS / 2)
+    recent_failures = sum(1 for d in mine if d.created_at >= half)
+    prior_failures = len(mine) - recent_failures
+    trend = ("worsening" if recent_failures > prior_failures
+             else "improving" if recent_failures < prior_failures else "steady")
+
+    # Time since the last stoppage, read against MTBF: past its own mean interval
+    # is the machine that is statistically due to stop again.
+    last = max((d.created_at for d in mine), default=None)
+    hours_since = round((now - last).total_seconds() / 3600, 1) if last else None
+    overdue_vs_mtbf = bool(
+        hours_since is not None and row["mtbf_hours"] and hours_since > row["mtbf_hours"]
+    )
+
+    failures_log = [{
+        "reason": (d.reason or "Unknown").strip() or "Unknown",
+        "minutes": _duration_minutes(d.duration),
+        "notes": d.notes,
+        "at": d.created_at.isoformat(),
+    } for d in sorted(mine, key=lambda d: d.created_at, reverse=True)[:TOP_N]]
+
+    # What's already booked against it — open maintenance, overdue first.
+    tasks = (db.query(models.MaintenanceTask)
+             .filter(models.MaintenanceTask.machine_id == machine_id,
+                     models.MaintenanceTask.status.in_(OPEN_STATUSES)).all())
+    tasks.sort(key=lambda t: (0 if (t.planned_date and t.planned_date < today) else 1,
+                              PRIORITY_ORDER.get(t.priority, 2),
+                              t.planned_date or today))
+    task_rows = [{
+        "task_no": t.task_no,
+        "task_type": t.task_type,
+        "priority": t.priority or "Medium",
+        "status": t.status,
+        "planned_date": t.planned_date.isoformat() if t.planned_date else None,
+        "overdue": bool(t.planned_date and t.planned_date < today),
+    } for t in tasks[:TOP_N]]
+
+    return {
+        "found": True,
+        "machine_id": machine_id,
+        "name": row["name"],
+        "line": row["line"],
+        "status": machine.status,
+        "days": WINDOW_DAYS,
+        "failures": row["failures"],
+        "repair_minutes": row["repair_minutes"],
+        "mttr_minutes": row["mttr_minutes"],
+        "mtbf_hours": row["mtbf_hours"],
+        "availability": row["availability"],
+        "rank": rank,
+        "machines_tracked": fleet["machines_tracked"],
+        "fleet_mttr_minutes": fleet["mttr_minutes"],
+        "fleet_availability": fleet["availability"],
+        "top_modes": _mode_pareto(mine),
+        "weekly": weekly,
+        "trend": trend,
+        "recent_failures": recent_failures,
+        "prior_failures": prior_failures,
+        "hours_since_last_failure": hours_since,
+        "overdue_vs_mtbf": overdue_vs_mtbf,
+        "failures_log": failures_log,
+        "maintenance": {
+            "open": len(tasks),
+            "overdue": sum(1 for t in tasks if t.planned_date and t.planned_date < today),
+            "tasks": task_rows,
+        },
     }

@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { apiGet } from "../lib/api";
+import MachineReliabilityDrawer from "./MachineReliabilityDrawer";
 
 // Mirrors the backend reliability read-model (ai/reliability.py build_reliability_summary).
 type ByMachine = {
@@ -36,9 +37,11 @@ const mttr = (m: number) => (m >= 60 ? `${(m / 60).toFixed(1)}h` : `${Math.round
 // A glanceable reliability read-out — fleet availability, MTBF and MTTR, the
 // least-reliable machines, the reliability bottleneck, and where the repair
 // hours go. Self-contained: fetches its own summary and refreshes, so it drops
-// onto any screen. Renders nothing until there are machines to track.
-export default function ReliabilitySnapshot({ onOpen }: { onOpen?: (viewKey: string) => void }) {
+// onto any screen. Renders nothing until there are machines to track. The
+// bottleneck and each machine open the reliability drill-down.
+export default function ReliabilitySnapshot() {
   const [d, setD] = useState<ReliabilitySummary | null>(null);
+  const [machineId, setMachineId] = useState<number | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -90,13 +93,18 @@ export default function ReliabilitySnapshot({ onOpen }: { onOpen?: (viewKey: str
       </div>
 
       {d.bottleneck && (
-        <div className="mt-4 rounded-lg border border-slate-800 border-l-2 border-l-red-500/70 bg-slate-900/40 px-3 py-2">
+        <button
+          type="button"
+          onClick={() => setMachineId(d.bottleneck!.machine_id)}
+          title={`${d.bottleneck.name} — click for reliability detail`}
+          className="mt-4 w-full text-left rounded-lg border border-slate-800 border-l-2 border-l-red-500/70 bg-slate-900/40 px-3 py-2 hover:border-slate-600 hover:bg-slate-800/60 transition focus:outline-none focus:ring-2 focus:ring-slate-600"
+        >
           <p className="text-[11px] uppercase tracking-wide text-slate-500">Reliability bottleneck</p>
           <p className="text-sm text-slate-200 mt-0.5">
             <span className="font-medium">{d.bottleneck.name}</span>
             <span className="text-slate-500"> · {d.bottleneck.failures} failure{d.bottleneck.failures !== 1 ? "s" : ""} · MTBF {mtbf(d.bottleneck.mtbf_hours)} · MTTR {mttr(d.bottleneck.mttr_minutes)}</span>
           </p>
-        </div>
+        </button>
       )}
 
       <div className="mt-5 grid grid-cols-1 md:grid-cols-2 gap-6">
@@ -107,33 +115,23 @@ export default function ReliabilitySnapshot({ onOpen }: { onOpen?: (viewKey: str
             <p className="text-emerald-400 text-sm">No failures in {d.days} days — fleet running clean.</p>
           ) : (
             <div className="space-y-2">
-              {d.by_machine.filter((m) => m.failures > 0).map((m) => {
-                const cls = "flex items-center justify-between rounded-lg border border-slate-800 px-3 py-2 text-sm";
-                const inner = (
-                  <>
-                    <div className="min-w-0 flex-1 text-left">
-                      <p className="text-slate-200 font-medium truncate">{m.name}</p>
-                      <p className="text-[11px] text-slate-500">
-                        {m.failures} failure{m.failures !== 1 ? "s" : ""} · MTBF {mtbf(m.mtbf_hours)} · MTTR {mttr(m.mttr_minutes)}
-                      </p>
-                    </div>
-                    <span className={`tabular-nums shrink-0 ${availColor(m.availability)}`}>{m.availability}%</span>
-                  </>
-                );
-                return onOpen ? (
-                  <button
-                    key={m.machine_id}
-                    type="button"
-                    onClick={() => onOpen("machines")}
-                    title="Open machine detail"
-                    className={`${cls} w-full hover:border-slate-600 hover:bg-slate-800/60 transition focus:outline-none focus:ring-2 focus:ring-slate-600`}
-                  >
-                    {inner}
-                  </button>
-                ) : (
-                  <div key={m.machine_id} className={cls}>{inner}</div>
-                );
-              })}
+              {d.by_machine.filter((m) => m.failures > 0).map((m) => (
+                <button
+                  key={m.machine_id}
+                  type="button"
+                  onClick={() => setMachineId(m.machine_id)}
+                  title={`${m.name} — click for reliability detail`}
+                  className="w-full flex items-center justify-between rounded-lg border border-slate-800 px-3 py-2 text-sm hover:border-slate-600 hover:bg-slate-800/60 transition focus:outline-none focus:ring-2 focus:ring-slate-600"
+                >
+                  <div className="min-w-0 flex-1 text-left">
+                    <p className="text-slate-200 font-medium truncate">{m.name}</p>
+                    <p className="text-[11px] text-slate-500">
+                      {m.failures} failure{m.failures !== 1 ? "s" : ""} · MTBF {mtbf(m.mtbf_hours)} · MTTR {mttr(m.mttr_minutes)}
+                    </p>
+                  </div>
+                  <span className={`tabular-nums shrink-0 ${availColor(m.availability)}`}>{m.availability}%</span>
+                </button>
+              ))}
             </div>
           )}
         </div>
@@ -163,6 +161,10 @@ export default function ReliabilitySnapshot({ onOpen }: { onOpen?: (viewKey: str
           )}
         </div>
       </div>
+
+      {machineId !== null && (
+        <MachineReliabilityDrawer machineId={machineId} onClose={() => setMachineId(null)} />
+      )}
     </div>
   );
 }

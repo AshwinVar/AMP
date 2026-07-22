@@ -76,13 +76,18 @@ export default function CoverageSnapshot() {
     return () => clearInterval(id);
   }, [load]);
 
-  if (!cov || cov.items.length === 0) return null;
-
   // Scale each runway bar against the widest window we surface (watch horizon),
   // so shorter runways read as visibly emptier. "out" always shows empty.
-  const horizon = cov.critical_days * 3;
+  const horizon = cov ? cov.critical_days * 3 : 0;
 
+  // Mount the drawer OUTSIDE the card's data guard: `items` only holds at-risk
+  // rows, so a 30s poll that clears them would otherwise unmount a drawer the user
+  // is mid-read on. Its selected part lives in this component, so it must outlive
+  // the card.
   return (
+    <>
+      {part && <PartRunwayDrawer itemCode={part} onClose={() => setPart(null)} />}
+      {cov && cov.items.length > 0 && (
     <div className="rounded-2xl border border-slate-800 bg-slate-900/60 p-6">
       <div className="flex items-start justify-between flex-wrap gap-2">
         <div>
@@ -131,7 +136,8 @@ export default function CoverageSnapshot() {
           );
         })}
       </div>
-      {part && <PartRunwayDrawer itemCode={part} onClose={() => setPart(null)} />}
     </div>
+      )}
+    </>
   );
 }

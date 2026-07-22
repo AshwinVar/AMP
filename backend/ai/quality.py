@@ -260,7 +260,9 @@ def build_quality_trend(db, tenant: str) -> dict:
             "inspected": a["current"]["inspected"], "failed": a["current"]["failed"],
         })
     movers.sort(key=lambda m: m["delta_pts"], reverse=True)
-    drifting = [m for m in movers if m["delta_pts"] >= DRIFT_PTS][:TOP_N]
+    all_drifting = [m for m in movers if m["delta_pts"] >= DRIFT_PTS]
+    drifting = all_drifting[:TOP_N]          # capped display list
+    drifting_count = len(all_drifting)       # true count (drifting is a page, not a total)
     improving = [m for m in reversed(movers) if m["delta_pts"] <= -DRIFT_PTS][:TOP_N]
     # Machines that moved but whose volume was too thin in one half to score —
     # named, not silently dropped, so the card can say what it could not judge.
@@ -309,6 +311,7 @@ def build_quality_trend(db, tenant: str) -> dict:
         "drift_threshold_pts": DRIFT_PTS,
         "series": series,
         "drifting": drifting,
+        "drifting_count": drifting_count,
         "improving": improving,
         "unscored_machines": unscored,
         "defect_movers": defects[:TOP_N],

@@ -92,7 +92,7 @@ export default function ConnectivitySnapshot({ onOpen }: { onOpen?: (viewKey: st
         <div>
           <h3 className="text-xs font-semibold uppercase tracking-wide text-slate-300">Edge connectivity</h3>
           <p className="text-slate-400 text-sm mt-1">
-            {d.reporting} of {d.machines_tracked} machine{d.machines_tracked !== 1 ? "s" : ""} reporting · fresh &lt; {d.stale_after_minutes}m
+            {d.fresh} of {d.machines_tracked} machine{d.machines_tracked !== 1 ? "s" : ""} fresh (&lt; {d.stale_after_minutes}m) · {d.stale} stale · {d.dark} dark
           </p>
         </div>
         <div className="text-right">

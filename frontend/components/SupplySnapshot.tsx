@@ -103,7 +103,7 @@ export default function SupplySnapshot({ onOpen }: { onOpen?: (viewKey: string) 
               <div
                 key={u.date}
                 className="flex-1 rounded-sm bg-sky-500/60"
-                style={{ height: `${Math.max(4, Math.round((u.pos / upcomingPeak) * 100))}%` }}
+                style={{ height: `${u.pos === 0 ? 0 : Math.max(4, Math.round((u.pos / upcomingPeak) * 100))}%` }}
                 title={`${u.date}: ${u.pos} due`}
               />
             ))}

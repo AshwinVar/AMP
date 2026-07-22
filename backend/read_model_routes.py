@@ -154,6 +154,14 @@ def get_supply_summary(db: Session = Depends(_get_db), current_user: dict = Depe
     return ai.supply.build_supply_summary(db, request_tenant(current_user))
 
 
+@router.get("/supply-supplier")
+def get_supply_supplier(supplier: str, db: Session = Depends(_get_db), current_user: dict = Depends(get_current_user)):
+    # Supplier drill-down (ADR-0007): for one supplier — unit receipt rate and
+    # delivery reliability, the PO state mix, an inbound timeline, the POs to
+    # chase, and its recent POs.
+    return ai.supply.build_supplier_detail(db, request_tenant(current_user), supplier)
+
+
 @router.get("/schedule-summary")
 def get_schedule_summary(db: Session = Depends(_get_db), current_user: dict = Depends(get_current_user)):
     # Schedule adherence (ADR-0007): are we hitting the production plan? Plant-wide

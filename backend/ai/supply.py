@@ -125,3 +125,94 @@ def build_supply_summary(db, tenant: str) -> dict:
         "chase": chase[:TOP_N],
         "upcoming": upcoming,
     }
+
+
+def build_supplier_detail(db, tenant: str, supplier: str) -> dict:
+    """Drill-down for a single supplier (by name, as keyed in the summary): its
+    unit receipt rate and delivery reliability, the state mix across its POs, an
+    inbound timeline for the next 7 days, the POs to chase (late first), and its
+    recent POs. Composes purchase_orders + suppliers (auto-scoped, ADR-0002);
+    adds no storage. Returns a zeroed shape when the supplier has no POs."""
+    today = datetime.utcnow().date()
+    suppliers = db.query(models.Supplier).all()
+    name_by_id = {s.id: s.supplier_name for s in suppliers}
+    # A PO belongs to this supplier when its supplier row's name matches (the
+    # summary keys per-supplier by name); "—" catches POs whose row is missing.
+    pos = [p for p in db.query(models.PurchaseOrder).all()
+           if name_by_id.get(p.supplier_id, "—") == supplier]
+    meta = next((s for s in suppliers if s.supplier_name == supplier), None)
+
+    totals = {"received": 0, "on_track": 0, "at_risk": 0, "late": 0}
+    ordered_units = received_units = overdue_units = 0
+    chase = []
+    for p in pos:
+        state = _state(p, today)
+        totals[state] += 1
+        ordered = p.order_quantity or 0
+        received = p.received_quantity or 0
+        ordered_units += ordered
+        received_units += received
+        if state == "late":
+            overdue_units += max(0, ordered - received)   # units still owed on overdue POs
+        if state in ("late", "at_risk"):
+            due = p.expected_delivery_date
+            chase.append({
+                "po_no": p.po_no,
+                "item_name": p.item_name,
+                "expected_delivery_date": due.isoformat() if due else None,
+                "order_quantity": ordered,
+                "received_quantity": received,
+                "unit": p.unit,
+                "state": state,
+                "days_to_due": (due - today).days if due else None,
+            })
+
+    # chase list: late (most overdue) first, then at-risk (soonest due)
+    chase.sort(key=lambda o: (0 if o["state"] == "late" else 1,
+                              o["days_to_due"] if o["days_to_due"] is not None else 9999))
+
+    # Upcoming inbound load for this supplier: not-yet-received POs due on each
+    # of the next 7 days.
+    upcoming_days = [today + timedelta(days=i) for i in range(7)]
+    due_set = set(upcoming_days)
+    due_count = {d: 0 for d in upcoming_days}
+    for p in pos:
+        if p.expected_delivery_date in due_set and _state(p, today) != "received":
+            due_count[p.expected_delivery_date] += 1
+    upcoming = [{"date": d.isoformat(), "pos": due_count[d]} for d in upcoming_days]
+
+    # Reliability: of the POs already due (delivered in full, or overdue and
+    # still short), the share delivered in full — the "can I count on them?"
+    # number. On-track / at-risk POs aren't due yet, so they're held out.
+    resolved = totals["received"] + totals["late"]
+
+    # Recent POs (newest first) for context, with each PO's current state.
+    recent = sorted(pos, key=lambda p: (p.created_at or datetime.min, p.id), reverse=True)[:10]
+    recent_pos = [{
+        "po_no": p.po_no,
+        "item_name": p.item_name,
+        "order_quantity": p.order_quantity or 0,
+        "received_quantity": p.received_quantity or 0,
+        "unit": p.unit,
+        "expected_delivery_date": p.expected_delivery_date.isoformat() if p.expected_delivery_date else None,
+        "state": _state(p, today),
+    } for p in recent]
+
+    return {
+        "supplier": supplier,
+        "category": meta.category if meta else None,
+        "supplier_status": meta.status if meta else None,
+        "total": len(pos),
+        "received": totals["received"],
+        "on_track": totals["on_track"],
+        "at_risk": totals["at_risk"],
+        "late": totals["late"],
+        "receipt_rate": _pct(received_units, ordered_units),
+        "reliability_rate": _pct(totals["received"], resolved),
+        "ordered_units": ordered_units,
+        "received_units": received_units,
+        "overdue_units": overdue_units,
+        "chase": chase[:TOP_N],
+        "upcoming": upcoming,
+        "recent": recent_pos,
+    }

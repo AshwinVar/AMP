@@ -99,9 +99,70 @@ def test_schedule_shortfall_ordering_and_empty_safe():
     assert empty["today"]["attainment_rate"] == 0
 
 
+def test_shift_drilldown_reads_against_the_plant():
+    db = _fresh_session()
+    _machine(db, 1, "SMT-01")
+    _machine(db, 2, "IC-01")
+    db.add_all([
+        # Night shift: the shift under the lens — 100 of 300 due-so-far = 33%
+        _plan("N-1", 1, 100, 0, -2, shift="Night"),    # missed  (SMT-01)
+        _plan("N-2", 1, 100, 40, -1, shift="Night"),   # behind  (SMT-01)
+        _plan("N-3", 2, 100, 60, -1, shift="Night"),   # behind  (IC-01)
+        _plan("N-4", 2, 100, 10, 0, shift="Night"),    # on_track (today — out of the rate)
+        # Day shift: healthy, 200 of 200 = 100%
+        _plan("D-1", 1, 100, 100, -1, shift="Day"),
+        _plan("D-2", 2, 100, 100, -1, shift="Day"),
+    ])
+    db.commit()
+
+    s = schedule.build_shift_adherence(db, "DEFAULT", "Night")
+    assert s["found"] is True and s["shift"] == "Night"
+    assert s["total"] == 4
+    assert s["missed"] == 1 and s["behind"] == 2 and s["on_track"] == 1 and s["met"] == 0
+
+    # rate is pooled over this shift's plans due so far (N-1..N-3): 100 of 300
+    assert s["planned_units"] == 300 and s["actual_units"] == 100
+    assert s["attainment_rate"] == 33 and s["shortfall_units"] == 200
+    # plant baseline spans every shift's due plans: 300 of 500 = 60%
+    assert s["plant_attainment_rate"] == 60 and s["vs_plant"] == 33 - 60
+    # worst-first ranking among the two shifts puts Night (a missed plan) first
+    assert s["rank"] == 1 and s["shifts"] == 2
+
+    # machines inside the shift, worst first: SMT-01 carries the missed plan
+    assert [m["machine"] for m in s["by_machine"]] == ["SMT-01", "IC-01"]
+    assert s["worst_machine"]["machine"] == "SMT-01"
+    assert s["by_machine"][0]["shortfall"] == 160   # (100-0) + (100-40)
+
+    # chase: missed first, then behind by biggest shortfall; Day's plans excluded
+    assert [c["plan_no"] for c in s["chase"]] == ["N-1", "N-2", "N-3"]
+    assert s["chase"][0]["state"] == "missed" and s["chase"][0]["shortfall"] == 100
+
+    assert len(s["daily"]) == 7
+    # the daily series carries only this shift's units (Day's 200 stay out)
+    assert sum(d["planned"] for d in s["daily"]) == 400
+
+
+def test_shift_drilldown_unknown_shift_is_empty_safe():
+    db = _fresh_session()
+    _machine(db, 1, "SMT-01")
+    db.add(_plan("D-1", 1, 100, 100, -1, shift="Day"))
+    db.commit()
+
+    s = schedule.build_shift_adherence(db, "DEFAULT", "Twilight")
+    assert s["found"] is False and s["total"] == 0
+    assert s["attainment_rate"] == 0 and s["shortfall_units"] == 0
+    assert s["rank"] is None and s["by_machine"] == [] and s["worst_machine"] is None
+    assert s["chase"] == [] and len(s["daily"]) == 7
+    # the plant baseline still reads, so the drawer can show "vs plant" honestly
+    assert s["plant_attainment_rate"] == 100
+
+
 if __name__ == "__main__":
     test_schedule_classifies_plans_and_rolls_up()
     test_schedule_shortfall_ordering_and_empty_safe()
+    test_shift_drilldown_reads_against_the_plant()
+    test_shift_drilldown_unknown_shift_is_empty_safe()
     print("SCHEDULE OK: plans classified met/on-track/behind/missed; pooled attainment "
           "over plans due so far; per-shift + per-machine rollup (worst first); chase "
-          "list (missed then behind, biggest shortfall); today's load; empty-safe")
+          "list (missed then behind, biggest shortfall); today's load; shift drill-down "
+          "(vs plant, rank, machines inside the shift, chase); empty-safe")

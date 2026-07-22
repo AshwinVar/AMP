@@ -203,6 +203,14 @@ def get_schedule_summary(db: Session = Depends(_get_db), current_user: dict = De
     return ai.schedule.build_schedule_adherence(db, request_tenant(current_user))
 
 
+@router.get("/schedule-shift")
+def get_schedule_shift(shift: str, db: Session = Depends(_get_db), current_user: dict = Depends(get_current_user)):
+    # Shift drill-down (ADR-0007): for one shift — its attainment against the
+    # plant and its rank among the shifts, its state mix, a daily planned-vs-actual
+    # series, the machines inside the shift losing the plan, and the plans to chase.
+    return ai.schedule.build_shift_adherence(db, request_tenant(current_user), shift)
+
+
 @router.get("/work-order-trace")
 def get_work_order_trace(work_order_no: str, db: Session = Depends(_get_db),
                          current_user: dict = Depends(get_current_user)):

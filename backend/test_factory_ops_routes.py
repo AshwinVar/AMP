@@ -10,7 +10,7 @@ Run:  python backend/test_factory_ops_routes.py     (exit 0 = pass)
 import main
 
 EXPECTED = {
-    "/escalations", "/escalations/{escalation_id}",
+    "/escalations", "/escalations/{escalation_id}", "/escalations/generate-oee-recovery",
     "/factory-layout/nodes", "/factory-layout/nodes/{node_id}", "/factory-layout/auto-generate",
     "/documents", "/documents/{document_id}", "/documents/generate-review-escalations",
     "/maintenance/tasks", "/maintenance/tasks/{task_id}", "/maintenance/generate-overdue-escalations",

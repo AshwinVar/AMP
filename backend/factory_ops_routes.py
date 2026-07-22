@@ -453,6 +453,53 @@ def generate_maintenance_overdue_escalations(
     return {"created": created}
 
 
+@router.post("/escalations/generate-oee-recovery")
+def generate_oee_recovery_escalation(
+    db: Session = Depends(_get_db),
+    current_user: dict = Depends(require_roles(["Admin", "Supervisor", "Operator"])),
+):
+    """Raise (or surface) one escalation for the biggest OEE-recovery lever — the
+    component furthest from world-class — carrying the £ prize for closing it and
+    the concrete move. This is what the overview's "fix this first" CTA fires, so
+    the insight becomes a tracked action. Idempotent: while an unresolved one
+    exists it's returned rather than duplicated. A no-op when the plant is already
+    at world-class (nothing to recover)."""
+    from ai.recovery import build_recovery_summary
+    from tenancy import request_tenant
+
+    rec = build_recovery_summary(db, request_tenant(current_user))
+    if not rec["has_data"] or rec["at_world_class"] or not rec["biggest_lever"]:
+        return {"created": 0, "escalation_id": None}
+
+    lever = rec["lever_label"]
+    title = f"OEE recovery: close the {lever} gap"
+    existing = (
+        db.query(models.Escalation)
+        .filter(models.Escalation.title == title, models.Escalation.status != "Resolved")
+        .first()
+    )
+    if existing:
+        return {"created": 0, "escalation_id": existing.id}
+
+    if rec["lever_recoverable_value_per_year"] is not None:
+        prize = f"£{rec['lever_recoverable_value_per_year']:,}/yr"
+    else:
+        prize = f"{rec['lever_recoverable_units_per_year']:,} good units/yr"
+    comp = next((c for c in rec["components"] if c["key"] == rec["biggest_lever"]), None)
+    gap = f" ({comp['current']}% -> {comp['target']}% world-class)" if comp else ""
+    notes = (f"{lever} is the biggest lever{gap}. Closing this gap alone is worth "
+             f"{prize}. {rec['lever_action']}")
+
+    escalation = models.Escalation(
+        machine_id=None, title=title, severity="High", owner="Operations",
+        department="Production", status="Open", source="OEE Recovery", notes=notes,
+    )
+    db.add(escalation)
+    db.commit()
+    db.refresh(escalation)
+    return {"created": 1, "escalation_id": escalation.id}
+
+
 @router.get("/notifications", response_model=List[schemas.NotificationResponse])
 def get_notifications(db: Session = Depends(_get_db), current_user: dict = Depends(get_current_user)):
     return db.query(models.Notification).order_by(models.Notification.id.desc()).limit(500).all()

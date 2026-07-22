@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { apiGet } from "../lib/api";
+import { apiGet, apiPost } from "../lib/api";
 
 // Mirrors the recovery read-model's "fix this first" fields (ai/recovery.py).
 type Component = { key: string; label: string; current: number; target: number; gap_points: number };
@@ -24,11 +24,15 @@ type RecoverySummary = {
 // names it, prices closing just its gap, and routes the owner to act. Self-
 // contained; renders nothing until there's a gap worth fixing.
 export default function NextBestActionCard({
-  onAct,
+  onRaised,
 }: {
-  onAct?: () => void;
+  // Called after the CTA raises (or surfaces) the recovery escalation, with its
+  // id so the caller can focus it in the Escalation Center. id is null if it
+  // couldn't be created (e.g. the viewer lacks permission) — still route there.
+  onRaised?: (escalationId: number | null) => void;
 }) {
   const [s, setS] = useState<RecoverySummary | null>(null);
+  const [raising, setRaising] = useState(false);
 
   const load = useCallback(async () => {
     try {
@@ -37,6 +41,21 @@ export default function NextBestActionCard({
       // A glanceable card — stay quiet on error rather than break the page.
     }
   }, []);
+
+  const raise = useCallback(async () => {
+    setRaising(true);
+    try {
+      const res = await apiPost<{ created: number; escalation_id: number | null }>(
+        "/escalations/generate-oee-recovery",
+        {},
+      );
+      onRaised?.(res.escalation_id ?? null);
+    } catch {
+      onRaised?.(null); // couldn't create — still take them to the Escalation Center
+    } finally {
+      setRaising(false);
+    }
+  }, [onRaised]);
 
   useEffect(() => {
     load();
@@ -81,14 +100,15 @@ export default function NextBestActionCard({
         </div>
       </div>
 
-      {onAct && (
+      {onRaised && (
         <div className="mt-5">
           <button
             type="button"
-            onClick={onAct}
-            className="rounded-lg bg-amber-500/90 hover:bg-amber-400 text-slate-900 font-semibold px-4 py-2 text-sm transition"
+            onClick={raise}
+            disabled={raising}
+            className="rounded-lg bg-amber-500/90 hover:bg-amber-400 disabled:opacity-60 text-slate-900 font-semibold px-4 py-2 text-sm transition"
           >
-            Raise an escalation →
+            {raising ? "Raising…" : "Raise an escalation →"}
           </button>
         </div>
       )}

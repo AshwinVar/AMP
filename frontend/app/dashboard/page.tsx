@@ -32,6 +32,7 @@ import ExecutiveOeeSection from "../../components/ExecutiveOeeSection";
 import MoneyStorySnapshot from "../../components/MoneyStorySnapshot";
 import FactoryPulse from "../../components/FactoryPulse";
 import QualitySnapshot from "../../components/QualitySnapshot";
+import QualityTrendSnapshot from "../../components/QualityTrendSnapshot";
 import DowntimeSnapshot from "../../components/DowntimeSnapshot";
 import ReliabilitySnapshot from "../../components/ReliabilitySnapshot";
 import ConnectivitySnapshot from "../../components/ConnectivitySnapshot";
@@ -2078,6 +2079,7 @@ export default function DashboardPage() {
       {overviewTab === "qualitymaint" && (
         <>
           <div className="mb-8"><QualitySnapshot /></div>
+          <div className="mb-8"><QualityTrendSnapshot /></div>
           <div className="mb-8"><DowntimeSnapshot /></div>
           <div className="mb-8"><ReliabilitySnapshot /></div>
           <div className="mb-8">

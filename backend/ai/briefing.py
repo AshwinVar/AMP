@@ -12,7 +12,7 @@ auto-scoped to the tenant by the query layer (ADR-0002); it adds no storage.
 """
 import models
 from ai.oee import build_oee_summary
-from ai.losses import build_losses_summary
+from ai.recovery import build_recovery_summary
 from ai.downtime import build_downtime_summary
 from ai.quality import build_quality_summary
 from ai.flow import build_flow_summary
@@ -62,7 +62,6 @@ def build_briefing(db, tenant: str) -> dict:
             "headline": "No production data yet.", "alerts": [], "wins": [],
         }
 
-    losses = build_losses_summary(db, tenant)
     downtime = build_downtime_summary(db, tenant)
     quality = build_quality_summary(db, tenant)
     flow = build_flow_summary(db, tenant)
@@ -147,15 +146,24 @@ def build_briefing(db, tenant: str) -> dict:
             "module": "documents",
         })
 
-    # 3. Biggest OEE loss lever (availability / performance / quality).
-    if losses["has_data"] and losses["biggest"]:
-        big = next((l for l in losses["losses"] if l["key"] == losses["biggest"]), None)
-        if big and big["points"] > 0:
-            alerts.append({
-                "key": "oee_loss", "severity": "medium",
-                "title": f"{big['label']} is the biggest OEE loss — {big['points']} pts",
-                "detail": big["detail"], "module": "oee",
-            })
+    # 3. The biggest OEE lever — the component furthest from world-class and what
+    # closing it is worth. The same "fix this first" signal as the overview card
+    # (both use the shared gap-to-world-class definition), so the briefing and the
+    # money story never name different levers. Fires only when there's a real gap
+    # to close; a world-class plant shows no lever here (it's a win instead).
+    recovery = build_recovery_summary(db, tenant)
+    if recovery["has_data"] and recovery["biggest_lever"]:
+        if recovery["lever_recoverable_value_per_year"] is not None:
+            worth = f"£{recovery['lever_recoverable_value_per_year']:,}/yr to recover"
+        else:
+            worth = f"{recovery['lever_recoverable_units_per_year']:,} good units/yr to recover"
+        comp = next((c for c in recovery["components"] if c["key"] == recovery["biggest_lever"]), None)
+        detail = f"{comp['current']}% → {comp['target']}% world-class" if comp else recovery["lever_action"]
+        alerts.append({
+            "key": "oee_loss", "severity": "medium",
+            "title": f"{recovery['lever_label']} is the biggest OEE lever — {worth}",
+            "detail": detail, "module": "oee",
+        })
 
     # 4. Quality — fail rate above threshold.
     if quality["inspections"] > 0 and quality["fail_rate"] >= FAIL_RATE_ALERT:

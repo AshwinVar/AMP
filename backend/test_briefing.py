@@ -54,6 +54,11 @@ def test_briefing_ranks_alerts_and_surfaces_wins():
     # the down-machine alert names the machine
     md = next(a for a in b["alerts"] if a["key"] == "machines_down")
     assert "SMT-Reflow-01" in md["detail"]
+    # the OEE alert uses the world-class-gap "biggest lever" framing (matching the
+    # overview's "fix this first"), not the old points-lost-from-100 loss framing
+    oee_alert = next(a for a in b["alerts"] if a["key"] == "oee_loss")
+    assert "biggest OEE lever" in oee_alert["title"] and "to recover" in oee_alert["title"]
+    assert "world-class" in oee_alert["detail"]
     # headline mentions OEE and the attention count
     assert "OEE" in b["headline"] and "attention" in b["headline"]
 

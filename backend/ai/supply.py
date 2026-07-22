@@ -184,6 +184,11 @@ def build_supplier_detail(db, tenant: str, supplier: str) -> dict:
     # Reliability: of the POs already due (delivered in full, or overdue and
     # still short), the share delivered in full — the "can I count on them?"
     # number. On-track / at-risk POs aren't due yet, so they're held out.
+    # NOTE ON SEMANTICS: this is a COMPLETION rate, not a punctuality one. It asks
+    # "of the POs that have reached their expected date, how many are no longer
+    # outstanding?" A PO received three weeks late still counts as received.
+    # purchase_orders has no receipt timestamp (only expected_delivery_date), so a
+    # true on-time-delivery rate is not computable — don't label this "on time".
     resolved = totals["received"] + totals["late"]
 
     # Recent POs (newest first) for context, with each PO's current state.

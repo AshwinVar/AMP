@@ -132,7 +132,7 @@ export default function CustomerDrawer({ customer, onClose }: { customer: string
                 <div className="rounded-2xl bg-slate-900 border border-slate-800 p-5">
                   <p className={`text-3xl font-bold ${rateColor(detail.reliability_rate)}`}>{detail.reliability_rate}%</p>
                   <p className="text-xs text-slate-500 mt-1">
-                    delivered on time · of orders already due
+                    delivered · of orders already due
                   </p>
                 </div>
               </div>

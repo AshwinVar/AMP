@@ -177,6 +177,11 @@ def build_customer_detail(db, tenant: str, customer: str) -> dict:
     # still short), the share delivered in full — the "can I count on delivering
     # for them?" number. On-track / at-risk orders aren't due yet, so they're
     # held out.
+    # NOTE ON SEMANTICS: a COMPLETION rate, not a punctuality one — "of the orders
+    # that have reached their due date, how many are no longer outstanding?" An
+    # order delivered three weeks late still counts as delivered. customer_orders
+    # has no dispatch timestamp (only due_date), so a true on-time-delivery rate is
+    # not computable — don't label this "on time".
     resolved = totals["delivered"] + totals["late"]
 
     # Recent orders (newest first) for context, with each order's current state.

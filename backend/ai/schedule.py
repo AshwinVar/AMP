@@ -79,8 +79,13 @@ def build_schedule_adherence(db, tenant: str) -> dict:
         if p.plan_date is not None:
             per_day_planned[p.plan_date] += planned
             per_day_actual[p.plan_date] += actual
-        # Headline attainment is over plans already due (before today) only.
-        if p.plan_date is not None and p.plan_date < today:
+        # Headline attainment is over plans already due (before today) only. The
+        # per-shift / per-machine rates below MUST use this same basis, or the
+        # breakdown contradicts the headline it sits under: a plan due today or
+        # later has actual=0 simply because it hasn't run yet, which would drag
+        # every row down while the headline stayed high.
+        is_due = p.plan_date is not None and p.plan_date < today
+        if is_due:
             due_planned += planned
             due_actual += actual
 
@@ -88,23 +93,29 @@ def build_schedule_adherence(db, tenant: str) -> dict:
         s = per_shift.setdefault(shift, {
             "shift": shift, "plans": 0,
             "met": 0, "on_track": 0, "behind": 0, "missed": 0,
-            "planned": 0, "actual": 0,
+            "planned": 0, "actual": 0, "due_planned": 0, "due_actual": 0,
         })
         s["plans"] += 1
         s[state] += 1
         s["planned"] += planned
         s["actual"] += actual
+        if is_due:
+            s["due_planned"] += planned
+            s["due_actual"] += actual
 
         mname = machine_names.get(p.machine_id, "—")
         m = per_machine.setdefault(p.machine_id, {
             "machine_id": p.machine_id, "machine": mname, "plans": 0,
             "met": 0, "on_track": 0, "behind": 0, "missed": 0,
-            "planned": 0, "actual": 0,
+            "planned": 0, "actual": 0, "due_planned": 0, "due_actual": 0,
         })
         m["plans"] += 1
         m[state] += 1
         m["planned"] += planned
         m["actual"] += actual
+        if is_due:
+            m["due_planned"] += planned
+            m["due_actual"] += actual
 
         if state in ("behind", "missed"):
             chase.append({
@@ -121,10 +132,11 @@ def build_schedule_adherence(db, tenant: str) -> dict:
                 "days_ago": (today - p.plan_date).days if p.plan_date else None,
             })
 
-    by_shift = [{**s, "attainment_rate": _pct(s["actual"], s["planned"])} for s in per_shift.values()]
+    # Rates over plans already due — the same basis as the headline above.
+    by_shift = [{**s, "attainment_rate": _pct(s["due_actual"], s["due_planned"])} for s in per_shift.values()]
     by_shift.sort(key=lambda s: (s["missed"], s["behind"], -s["attainment_rate"]), reverse=True)
 
-    by_machine = [{**m, "attainment_rate": _pct(m["actual"], m["planned"])} for m in per_machine.values()]
+    by_machine = [{**m, "attainment_rate": _pct(m["due_actual"], m["due_planned"])} for m in per_machine.values()]
     by_machine.sort(key=lambda m: (m["missed"], m["behind"], -m["attainment_rate"]), reverse=True)
 
     daily = [{

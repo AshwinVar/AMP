@@ -137,7 +137,7 @@ export default function SupplierDrawer({ supplier, onClose }: { supplier: string
                 <div className="rounded-2xl bg-slate-900 border border-slate-800 p-5">
                   <p className={`text-3xl font-bold ${rateColor(detail.reliability_rate)}`}>{detail.reliability_rate}%</p>
                   <p className="text-xs text-slate-500 mt-1">
-                    delivered on time · of POs already due
+                    received · of POs already due
                   </p>
                 </div>
               </div>

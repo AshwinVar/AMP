@@ -67,6 +67,18 @@ def test_schedule_classifies_plans_and_rolls_up():
     by_shift = {x["shift"]: x for x in s["by_shift"]}
     assert by_shift["Day"]["plans"] == 3 and by_shift["Night"]["plans"] == 2
 
+    # The breakdown rates must use the SAME due-only basis as the headline, or the
+    # card contradicts its own drill-down (today's P-4 has actual=0 only because it
+    # hasn't run yet, and must not drag the Day shift down).
+    # Day due = P-1 (100/100) + P-3 (100/40) -> 140/200 = 70%; Night = 0/200 = 0%.
+    assert by_shift["Day"]["attainment_rate"] == 70
+    assert by_shift["Night"]["attainment_rate"] == 0
+    # ...and the parts must reconcile to the whole.
+    assert sum(x["due_planned"] for x in s["by_shift"]) == s["planned_units"]
+    assert sum(x["due_actual"] for x in s["by_shift"]) == s["actual_units"]
+    assert sum(m["due_planned"] for m in s["by_machine"]) == s["planned_units"]
+    assert by_machine["SMT-01"]["attainment_rate"] == 50 and by_machine["IC-01"]["attainment_rate"] == 20
+
     # chase list: missed first (P-2), then behind (P-3); met/on-track excluded
     chase = s["chase"]
     assert [c["plan_no"] for c in chase] == ["P-2", "P-3"]

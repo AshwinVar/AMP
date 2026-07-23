@@ -162,6 +162,29 @@ def test_trace_flags_a_shortfall_explained_by_downtime():
     assert "unverified" not in msgs and "no record of what" not in msgs
 
 
+def test_closed_job_with_no_planned_end_bounds_downtime_at_its_last_footprint():
+    """Every work order raised through the API has planned_end NULL. A FINISHED such
+    job must bound its downtime window by its own last footprint (here its last
+    inspection), not `now` — otherwise a stoppage logged long after it closed is
+    falsely blamed on it, corrupting events, minutes, the timeline and the gaps."""
+    db = _fresh_session()
+    _machine(db, 1, "SMT-01")
+    _wo(db, "WO-500", 1, target=100, actual=100, status="Completed", hours_ago=48)  # planned_end None
+    db.commit()
+    wo = db.query(models.WorkOrder).filter_by(work_order_no="WO-500").first()
+    _inspection(db, "QI-9", wo.id, 1, inspected=100, passed=100, failed=0, hours_ago=30)  # last footprint
+    _downtime(db, 1, "Feeder jam", "1 hr", hours_ago=40)        # during the job -> attributed
+    _downtime(db, 1, "Later breakdown", "2 hrs", hours_ago=2)   # after it closed -> must NOT attribute
+    db.commit()
+
+    t = trace.build_work_order_trace(db, "DEFAULT", "WO-500")
+    assert t["downtime"]["events"] == 1, t["downtime"]
+    assert t["downtime"]["rows"][0]["reason"] == "Feeder jam"
+    assert t["downtime"]["minutes"] == 60          # only the 1 hr, not the later 2 hrs (120)
+    assert all(e["kind"] != "downtime" or "Later breakdown" not in e["label"] for e in t["timeline"])
+    print("PASS a finished job with no planned_end bounds downtime at its last footprint")
+
+
 def test_trace_names_an_untraceable_batch():
     # Units booked as made with no inspection and no material issued: the two
     # gaps that break traceability outright.
@@ -217,6 +240,7 @@ def test_trace_handles_a_work_order_that_is_not_there():
 if __name__ == "__main__":
     test_trace_composes_the_full_record_of_one_job()
     test_trace_flags_a_shortfall_explained_by_downtime()
+    test_closed_job_with_no_planned_end_bounds_downtime_at_its_last_footprint()
     test_trace_names_an_untraceable_batch()
     test_trace_flags_scrap_late_running_and_uncategorised_failures()
     test_trace_handles_a_work_order_that_is_not_there()

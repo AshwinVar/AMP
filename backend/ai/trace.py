@@ -140,7 +140,12 @@ def build_work_order_trace(db, tenant: str, work_order_no: str) -> dict:
     # into the transaction reference — that string *is* the genealogy link.
     txns = (db.query(models.InventoryTransaction)
             .filter(models.InventoryTransaction.reference == wo.work_order_no).all())
-    items = {it.id: it for it in db.query(models.InventoryItem).all()}
+    # Resolve only the parts this job actually touched, not the whole item master
+    # (which runs to thousands of SKUs in a real plant).
+    item_ids = {t.item_id for t in txns if t.item_id is not None}
+    items = ({it.id: it for it in
+              db.query(models.InventoryItem).filter(models.InventoryItem.id.in_(item_ids)).all()}
+             if item_ids else {})
     per_item: dict = defaultdict(lambda: {"consumed": 0, "received": 0, "movements": 0, "last": None})
     for t in txns:
         agg = per_item[t.item_id]
@@ -171,9 +176,23 @@ def build_work_order_trace(db, tenant: str, work_order_no: str) -> dict:
 
     # --- Interrupted: downtime on this machine while the job was live -----
     # The job's live window: from when it was booked (or planned to start) until
-    # it closed out — an open job runs to now.
+    # it closed out.
     started = wo.planned_start or wo.created_at
-    ended = wo.planned_end if (closed and wo.planned_end) else now
+    if not closed:
+        ended = now                       # still running — downtime up to now is on this job
+    elif wo.planned_end:
+        ended = wo.planned_end
+    else:
+        # A finished job with no planned_end — the NORM, since every work order raised
+        # through the API defaults planned_end NULL (only the seeder sets it). Bound
+        # the window by the job's OWN last footprint (latest inspection, material
+        # movement or plan day), never `now`: otherwise every downtime logged after the
+        # job finished is swept up and falsely blamed on a job that was already closed.
+        footprints = [i.created_at for i in insp if i.created_at]
+        footprints += [t.created_at for t in txns if t.created_at]
+        footprints += [datetime.combine(p.plan_date, datetime.max.time())
+                       for p in plans if p.plan_date]
+        ended = max(footprints) if footprints else started
     downtime_rows = []
     if wo.machine_id is not None and started is not None:
         logs = (db.query(models.DowntimeLog)

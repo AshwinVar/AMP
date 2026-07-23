@@ -5,7 +5,7 @@ do it once (idempotent), and be wired to the maintenance-relevant events.
 
 Run:  python backend/test_agents.py     (exit 0 = pass)
 """
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
@@ -204,6 +204,35 @@ def test_escalation_agent_proposes_after_repeated_downtime():
     assert db.query(models.Escalation).filter_by(source="Escalation agent").count() == 1
 
 
+def test_escalation_agent_ignores_stale_downtime_outside_the_window():
+    """Downtime from years ago shouldn't keep a machine permanently eligible to
+    escalate on its next breakdown — only downtime inside ESCALATION_WINDOW_DAYS
+    counts toward "repeated" (the same lifetime-accumulation trap ai.prediction's
+    RISK_WINDOW_DAYS avoids)."""
+    db = _fresh_session()
+    db.add(models.Machine(id=1, name="PRESS-01", status="Running", utilization=60))
+    old = datetime.utcnow() - timedelta(days=agents.ESCALATION_WINDOW_DAYS + 10)
+    for _ in range(3):   # 3 old events cross the raw threshold, but they're stale
+        db.add(models.DowntimeLog(machine_id=1, reason="Old fault", duration="30 min", created_at=old))
+    db.commit()
+
+    def down():
+        return DowntimeStarted(tenant_code="DEFAULT", machine_id=1, reason="Breakdown", duration="30 min")
+
+    agents.escalate_on_repeated_downtime(down(), db)   # only 3 stale events on record -> below threshold
+    db.commit()
+    assert db.query(models.Escalation).filter_by(source="Escalation agent").count() == 0
+
+    # three recent events cross the threshold on their own, ignoring the stale ones
+    for _ in range(3):
+        db.add(models.DowntimeLog(machine_id=1, reason="Breakdown", duration="30 min"))
+    db.commit()
+    agents.escalate_on_repeated_downtime(down(), db)
+    db.commit()
+    escs = db.query(models.Escalation).filter_by(source="Escalation agent").all()
+    assert len(escs) == 1 and f"in {agents.ESCALATION_WINDOW_DAYS}d" in escs[0].title
+
+
 def test_escalation_agent_escalates_top_briefing_alert():
     db = _fresh_session()
     # A down machine (a high-severity briefing alert) plus production so the
@@ -319,6 +348,7 @@ if __name__ == "__main__":
     test_reorder_agent_drafts_po_on_low_stock_idempotently()
     test_quality_agent_proposes_inspection_on_high_fail_rate()
     test_escalation_agent_proposes_after_repeated_downtime()
+    test_escalation_agent_ignores_stale_downtime_outside_the_window()
     test_escalation_agent_escalates_top_briefing_alert()
     test_yield_agent_proposes_on_low_yield()
     test_approve_and_reject_agent_actions()
@@ -328,4 +358,5 @@ if __name__ == "__main__":
     test_register_wires_agents_to_the_stream()
     print("AGENT OK: 5 agents propose; reorder auto-approves, others wait + notify; approve/reject; idempotent; "
           "per-tenant autonomy policy (saved wins, env fallback); wired; "
+          "repeated-downtime escalation ignores stale downtime outside its window; "
           "escalation acts proactively on the briefing's top alert (deduped)")

@@ -28,6 +28,11 @@ QUALITY_TASK_TYPE = "Quality (auto)"
 AUTO_PO_PREFIX = "AUTO-PO"
 # Downtime events on a machine before the Escalation agent raises an escalation.
 ESCALATION_THRESHOLD = 3
+# Only downtime inside this window counts toward "repeated" — otherwise a machine
+# that broke down 3 times years ago would stay permanently eligible to escalate,
+# the same lifetime-accumulation trap ai.prediction's RISK_WINDOW_DAYS avoids.
+# 30 days matches ai.reliability's own breakdown-frequency (MTBF) window.
+ESCALATION_WINDOW_DAYS = 30
 # Yield agent: propose an investigation when a machine's recent good-rate falls
 # below YIELD_MIN_RATE (%) across at least YIELD_MIN_UNITS produced.
 YIELD_TASK_TYPE = "Yield (auto)"
@@ -259,22 +264,30 @@ def _open_agent_escalation_exists(db, machine_id) -> bool:
 
 
 def escalate_on_repeated_downtime(event: DowntimeStarted, db) -> None:
-    """Escalation agent: after repeated downtime on a machine, propose an escalation."""
+    """Escalation agent: after repeated downtime on a machine within the last
+    ESCALATION_WINDOW_DAYS days, propose an escalation. Downtime older than the
+    window doesn't count toward "repeated" — a machine's ancient breakdown
+    history shouldn't keep it permanently eligible to escalate."""
     if event.machine_id is None:
         return
-    count = db.query(models.DowntimeLog).filter(models.DowntimeLog.machine_id == event.machine_id).count()
+    cutoff = datetime.utcnow() - timedelta(days=ESCALATION_WINDOW_DAYS)
+    count = (db.query(models.DowntimeLog)
+             .filter(models.DowntimeLog.machine_id == event.machine_id,
+                     models.DowntimeLog.created_at >= cutoff)
+             .count())
     if count < ESCALATION_THRESHOLD or _open_agent_escalation_exists(db, event.machine_id):
         return
     esc = models.Escalation(
         tenant_code=event.tenant_code,
         machine_id=event.machine_id,
-        title=f"Repeated downtime on machine #{event.machine_id} ({count} events)",
+        title=f"Repeated downtime on machine #{event.machine_id} ({count} events in {ESCALATION_WINDOW_DAYS}d)",
         severity="High",
         owner="Maintenance Lead",
         department="Maintenance",
         status="Proposed",
         source="Escalation agent",
-        notes=f"Proposed by the Escalation agent after {count} downtime events. Latest: {event.reason}.",
+        notes=(f"Proposed by the Escalation agent after {count} downtime events in the last "
+               f"{ESCALATION_WINDOW_DAYS} days. Latest: {event.reason}."),
     )
     db.add(esc)
     db.flush()

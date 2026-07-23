@@ -13,7 +13,7 @@ from analytics_engine import oee_direction
 from ai.oee import build_oee_summary
 from ai.production import build_production_summary
 from ai.delivery import build_delivery_summary
-from ai.cost import build_cost_summary, DOWNTIME_COST_PER_MIN, SCRAP_COST_PER_UNIT
+from ai.cost import build_cost_summary, downtime_minutes, DOWNTIME_COST_PER_MIN, SCRAP_COST_PER_UNIT
 from ai.twin import _oee_from_records
 
 name = "scorecard"
@@ -37,10 +37,10 @@ def _period_kpis(records) -> dict:
     prior periods compare like-for-like."""
     total = sum(r.total_count or 0 for r in records)
     good = sum(r.good_count or 0 for r in records)
-    planned = sum(r.planned_minutes or 0 for r in records)
-    runtime = sum(r.runtime_minutes or 0 for r in records)
     rejected = sum(r.rejected_count or 0 for r in records)
-    downtime_min = max(0, planned - runtime)
+    # Same per-record downtime basis as the live cost card, so the current period
+    # (from build_cost_summary) and this prior period compare like-for-like.
+    downtime_min = downtime_minutes(records)
     return {
         "has": bool(records),
         "oee": _oee_from_records(records)["oee"],

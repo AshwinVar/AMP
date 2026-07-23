@@ -5,9 +5,9 @@ open tasks + pending agent actions), worst health first, tenant-scoped.
 
 Run:  python backend/test_twin.py     (exit 0 = pass)
 """
-from datetime import datetime
+from datetime import datetime, timedelta
 
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, event
 from sqlalchemy.orm import sessionmaker
 
 import models
@@ -19,6 +19,62 @@ def _fresh_session():
     engine = create_engine("sqlite://", connect_args={"check_same_thread": False})
     Base.metadata.create_all(bind=engine)
     return sessionmaker(bind=engine)()
+
+
+def _session_capturing_sql():
+    """A session that records every SQL statement it emits, so a test can prove a
+    query was bounded in SQL rather than loaded whole and filtered in Python."""
+    engine = create_engine("sqlite://", connect_args={"check_same_thread": False})
+    Base.metadata.create_all(bind=engine)
+    stmts: list = []
+
+    @event.listens_for(engine, "before_cursor_execute")
+    def _cap(conn, cursor, statement, params, context, executemany):
+        stmts.append(statement)
+
+    return sessionmaker(bind=engine)(), stmts
+
+
+def _norm(sql: str) -> str:
+    return " ".join(sql.lower().split())
+
+
+def test_cockpit_drilldowns_are_windowed_in_sql_not_loaded_whole():
+    # The cockpit's 7-day downtime and production trends must bound the window in
+    # SQL — loading a machine's entire (growing) history to draw a 7-row sparkline
+    # is the anti-pattern. A 400-day-old row must never be loaded, not merely
+    # dropped in Python afterward.
+    db, stmts = _session_capturing_sql()
+    now = datetime.utcnow()
+    old = now - timedelta(days=400)                       # far outside the 7-day window
+    db.add(models.Machine(id=1, name="M1", status="Running", utilization=80))
+    db.add(models.ProductionRecord(machine_id=1, planned_minutes=480, runtime_minutes=440,
+                                   ideal_cycle_time_seconds=30, total_count=100, good_count=90,
+                                   rejected_count=10, created_at=now))
+    db.add(models.DowntimeLog(machine_id=1, reason="Wear", duration="30 min", created_at=now))
+    # ancient rows that must NOT be scanned to build a 7-day view
+    db.add(models.ProductionRecord(machine_id=1, planned_minutes=480, runtime_minutes=100,
+                                   ideal_cycle_time_seconds=30, total_count=999, good_count=999,
+                                   rejected_count=0, created_at=old))
+    db.add(models.DowntimeLog(machine_id=1, reason="Ancient", duration="999 min", created_at=old))
+    db.commit()
+
+    stmts.clear()
+    prod = twin._machine_production(db, 1)
+    dt = twin._downtime_trend(db, 1)
+
+    # correctness: the 400-day-old rows are excluded from the 7-day view
+    assert prod["good"] == 90 and prod["total"] == 100 and prod["good_rate"] == 90   # ancient 999s not counted
+    assert len(prod["daily"]) == 7
+    assert sum(d["count"] for d in dt) == 1 and len(dt) == 7                          # only today's downtime
+
+    # the fix: each drill-down SELECT carries a created_at lower bound (bounded in
+    # SQL), so the ancient rows are never loaded. Without the bound this fails.
+    prod_selects = [s for s in stmts if "from production_records" in _norm(s)]
+    dt_selects = [s for s in stmts if "from downtime_logs" in _norm(s)]
+    assert prod_selects and all("created_at >=" in _norm(s) for s in prod_selects), prod_selects
+    assert dt_selects and all("created_at >=" in _norm(s) for s in dt_selects), dt_selects
+    print("PASS cockpit downtime/production drill-downs are windowed in SQL (ancient rows never loaded)")
 
 
 def test_twin_composes_health_and_is_tenant_scoped():
@@ -96,4 +152,5 @@ def test_machine_detail_composes_cockpit_and_scopes_actions():
 if __name__ == "__main__":
     test_twin_composes_health_and_is_tenant_scoped()
     test_machine_detail_composes_cockpit_and_scopes_actions()
+    test_cockpit_drilldowns_are_windowed_in_sql_not_loaded_whole()
     print("TWIN OK: health twin + single-machine cockpit (risk factors, timeline, open actions); worst first; tenant-scoped")

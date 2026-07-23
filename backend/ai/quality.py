@@ -227,11 +227,18 @@ def build_quality_trend(db, tenant: str) -> dict:
     def _half(key):
         a = halves[key]
         return {"inspections": a["inspections"], "inspected": a["inspected"], "failed": a["failed"],
-                "fail_rate": _rate1(a["failed"], a["inspected"])}
+                # Displayed level uses the SAME integer rounding as build_quality_summary's
+                # fail_rate — it's the identical 7-day plant number, and this card sits
+                # right beside that one, so they must not show 4% vs 3.5%.
+                "fail_rate": _pct(a["failed"], a["inspected"])}
 
     current, prior = _half("current"), _half("prior")
     comparable = current["inspected"] > 0 and prior["inspected"] > 0
-    delta_pts = round(current["fail_rate"] - prior["fail_rate"], 1) if comparable else None
+    # Movement is measured on the UNROUNDED rates so a sub-one-point drift isn't lost
+    # to the integer rounding of the displayed levels above.
+    cur_exact = _rate1(halves["current"]["failed"], halves["current"]["inspected"])
+    pri_exact = _rate1(halves["prior"]["failed"], halves["prior"]["inspected"])
+    delta_pts = round(cur_exact - pri_exact, 1) if comparable else None
 
     if delta_pts is None:
         direction = "unknown"

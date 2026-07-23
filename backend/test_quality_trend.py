@@ -44,6 +44,25 @@ def _machines(db):
     ])
 
 
+def test_summary_and_trend_show_one_agreed_plant_fail_rate():
+    """The summary card (integer _pct) and the trend card sit back-to-back on the
+    qualitymaint tab and render the SAME 7-day plant fail rate — they must not show
+    two different values (this used to read e.g. 4% next to 3.7%). The delta still
+    uses full precision, so real week-over-week movement isn't rounded away."""
+    db = _fresh_session()
+    _machines(db)
+    db.add_all([
+        _insp(1, 2, 1000, 37),   # this week: 37/1000 = 3.7% raw (level rounds to 4)
+        _insp(1, 9, 1000, 20),   # last week: 2.0% — so the movement is real
+    ])
+    db.commit()
+    summary = quality.build_quality_summary(db, "DEFAULT")
+    trend = quality.build_quality_trend(db, "DEFAULT")
+    assert summary["fail_rate"] == trend["current"]["fail_rate"] == 4     # one agreed level
+    assert trend["delta_pts"] == 1.7                                      # 3.7 - 2.0, not 4 - 2
+    print("PASS summary and trend agree on the plant fail rate; delta keeps precision")
+
+
 def test_worsening_week_is_measured_priced_and_blamed():
     db = _fresh_session()
     _machines(db)
@@ -176,6 +195,7 @@ def test_empty_plant_is_shaped_not_crashed():
 
 
 if __name__ == "__main__":
+    test_summary_and_trend_show_one_agreed_plant_fail_rate()
     test_worsening_week_is_measured_priced_and_blamed()
     test_improving_and_steady_weeks_read_good()
     test_thin_sample_is_reported_not_condemned()

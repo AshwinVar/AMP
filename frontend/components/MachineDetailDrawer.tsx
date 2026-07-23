@@ -307,9 +307,9 @@ export default function MachineDetailDrawer({
 
             {/* Quality */}
             <div>
-              <h3 className="text-sm font-semibold text-slate-300 uppercase tracking-wide">Quality</h3>
+              <h3 className="text-sm font-semibold text-slate-300 uppercase tracking-wide">Quality · last 7 days</h3>
               {detail.quality.inspections === 0 ? (
-                <p className="text-slate-500 text-sm mt-2">No inspections for this machine.</p>
+                <p className="text-slate-500 text-sm mt-2">No inspections for this machine in the last 7 days.</p>
               ) : (
                 <div className="mt-2">
                   <div className="flex items-end gap-3">

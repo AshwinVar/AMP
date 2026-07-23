@@ -208,9 +208,21 @@ def _machine_production(db, machine_id, days: int = 7):
     }
 
 
-def _machine_quality(db, machine_id):
-    """This machine's quality across its inspections: yield, fail rate, defects."""
-    insp = db.query(models.QualityInspection).filter(models.QualityInspection.machine_id == machine_id).all()
+def _machine_quality(db, machine_id, days: int = 7):
+    """This machine's quality over the SAME window as the rest of the cockpit:
+    yield, fail rate and top defects for the last `days`.
+
+    Windowed deliberately, for two reasons. Honesty: the cockpit's OEE panel is
+    explicitly "last 7 days" and its Quality bar is that week's quality, so a
+    LIFETIME fail rate rendered beside it could flatly contradict it (a 99%
+    Quality bar sitting above a 12% fail rate earned a year ago). Every other
+    cockpit panel — downtime_7d, production_7d — is the same 7 days, so one basis
+    for the whole card. And it bounds the query: quality_inspections grows, and
+    created_at is indexed."""
+    cutoff = datetime.combine(datetime.utcnow().date() - timedelta(days=days - 1), datetime.min.time())
+    insp = (db.query(models.QualityInspection)
+            .filter(models.QualityInspection.machine_id == machine_id,
+                    models.QualityInspection.created_at >= cutoff).all())
     inspected = sum(i.inspected_quantity or 0 for i in insp)
     failed = sum(i.failed_quantity or 0 for i in insp)
     defects: Counter = Counter()

@@ -132,7 +132,27 @@ def test_estimated_loss_value_uses_unit_rate_when_given():
     assert priced["estimated_loss_units"] == 207
     assert priced["estimated_loss_value"] == round(207 * 4.50)   # lost units x tenant rate
     assert priced["unit_value_gbp"] == 4.50
-    print("PASS estimated_loss_value = lost units x rate (falls back to £8/min when unset)")
+
+    # A configured rate of 0 is a real £0 margin -> £0, NOT the £8/min proxy. Using
+    # truthiness (`if unit_value_gbp`) fabricated 120*8 = £960 for a £0 tenant.
+    zero = ae.build_management_summary(machines, downtime, shifts, recs, unit_value_gbp=0)
+    assert zero["estimated_loss_units"] == 207
+    assert zero["estimated_loss_value"] == 0                # 207 lost units x £0, not 120*8
+    assert zero["unit_value_gbp"] == 0
+    print("PASS estimated_loss_value = lost units x rate; £0 rate -> £0 (not the £8/min proxy)")
+
+
+def test_oee_direction_is_one_shared_definition_with_a_dead_band():
+    """The single week-over-week OEE direction (shared by the recovery trend badge
+    and the scorecard OEE delta). A sub-dead-band move is 'flat' so it can't read
+    'down'/red on one exec surface and 'flat' on the other."""
+    assert ae.OEE_TREND_DEAD_BAND == 2
+    assert ae.oee_direction(69, 70) == "flat"     # -1: inside the dead-band
+    assert ae.oee_direction(71, 70) == "flat"     # +1: inside the dead-band
+    assert ae.oee_direction(68, 70) == "down"     # -2: at the edge -> moving
+    assert ae.oee_direction(72, 70) == "up"       # +2: at the edge -> moving
+    assert ae.oee_direction(70, None) is None     # no prior week
+    print("PASS oee_direction: one shared WoW definition with a single dead-band")
 
 
 def test_build_management_summary_empty_is_safe():
@@ -178,6 +198,7 @@ if __name__ == "__main__":
     test_build_management_summary()
     test_management_summary_uses_pooled_not_averaged_oee()
     test_estimated_loss_value_uses_unit_rate_when_given()
+    test_oee_direction_is_one_shared_definition_with_a_dead_band()
     test_build_management_summary_empty_is_safe()
     test_build_smart_alerts_severity_and_dedup()
     test_calculate_fallback_oee_monotonic()

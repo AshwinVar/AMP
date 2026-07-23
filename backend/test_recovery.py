@@ -113,6 +113,19 @@ def test_no_pound_value_when_rate_unset():
     print("PASS £ fields stay null when no rate is configured (units still shown)")
 
 
+def test_zero_rate_yields_zero_pounds_not_null():
+    # A configured rate of 0 is a real £0 margin (rate is SET), so the £ fields are
+    # 0, not null. Using truthiness (`if rate`) treated 0 like unset and showed
+    # units-only, diverging from build_management_summary — both now agree on £0.
+    recs = [_r(machine_id=1, planned_minutes=480, runtime_minutes=400,
+               ideal_cycle_time_seconds=30, total_count=700, good_count=690)]
+    out = _run(recs, rate=0)
+    assert out["unit_value_gbp"] == 0
+    assert out["recoverable_value_window"] == 0 and out["recoverable_value_per_year"] == 0
+    assert out["lever_recoverable_value_per_year"] == 0
+    print("PASS a configured £0 rate yields £0 (not null): rate is set, margin is zero")
+
+
 def test_oee_trend_improving_vs_prior_week():
     # This week OEE 72; last week was lower -> the plant is closing the gap.
     cur = [_r(machine_id=1, planned_minutes=480, runtime_minutes=400,
@@ -183,6 +196,7 @@ if __name__ == "__main__":
     test_at_world_class_has_no_recoverable_units()
     test_pound_value_when_rate_configured()
     test_no_pound_value_when_rate_unset()
+    test_zero_rate_yields_zero_pounds_not_null()
     test_oee_trend_improving_vs_prior_week()
     test_oee_trend_new_when_no_prior_week()
     test_no_production_is_safe()

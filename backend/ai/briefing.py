@@ -212,8 +212,12 @@ def build_briefing(db, tenant: str) -> dict:
         wins.append({"title": f"{flow['finished']} order{_plural(flow['finished'])} finished",
                      "detail": f"{flow['wip']} still in progress"})
 
+    # This is the WITHIN-week slope (first third vs last third of the window), a
+    # different measure from the recovery card's week-over-week trend — qualify it
+    # "this week" so a rising-intra-week / down-vs-last-week plant doesn't read as a
+    # bare contradiction across the two surfaces.
     trend = _trend(oee["daily"])
-    headline = (f"Plant OEE {plant['oee']}% ({trend}) · "
+    headline = (f"Plant OEE {plant['oee']}% ({trend} this week) · "
                 f"{len(alerts)} thing{_plural(len(alerts))} need attention")
 
     return {

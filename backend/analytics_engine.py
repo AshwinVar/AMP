@@ -29,6 +29,23 @@ def biggest_lever(components: dict):
     return key if gaps[key] > 0 else None
 
 
+# A week-over-week OEE move smaller than this (points) reads as "flat" — one
+# dead-band so a small move can't be "flat" on one exec-home surface and "down"
+# on another.
+OEE_TREND_DEAD_BAND = 2
+
+
+def oee_direction(current, prior, dead_band=OEE_TREND_DEAD_BAND):
+    """Week-over-week OEE direction: 'up' / 'down' / 'flat', or None with no prior
+    week. The single definition of "which way is OEE going week on week", shared by
+    the recovery card's trend badge and the scorecard's OEE delta, so the same
+    weekly pair can't be labelled 'flat' on one and 'down' (red) on another."""
+    if prior is None:
+        return None
+    d = current - prior
+    return "up" if d >= dead_band else "down" if d <= -dead_band else "flat"
+
+
 def calculate_oee_from_record(record):
     availability = record.runtime_minutes / record.planned_minutes if record.planned_minutes else 0
     runtime_seconds = record.runtime_minutes * 60
@@ -157,11 +174,14 @@ def build_management_summary(machines, downtime_logs, shifts, production_records
     good = sum(r.good_count or 0 for r in production_records)
     runtime = sum(r.runtime_minutes or 0 for r in production_records)
     estimated_loss_units = round(total_downtime * (good / runtime)) if runtime else 0
-    if unit_value_gbp:
-        # Money = lost units x the tenant's configured £/good-unit.
+    if unit_value_gbp is not None:
+        # Money = lost units x the tenant's configured £/good-unit. A configured
+        # rate of 0 is a real £0 margin, so it yields £0 — NOT the legacy proxy
+        # below (`is not None`, not truthiness): fabricating a downtime-loss £ for
+        # a tenant whose rate is explicitly zero is the exact thing ADR-0010 bans.
         estimated_loss_value = round(estimated_loss_units * unit_value_gbp)
     else:
-        # No rate configured — fall back to the legacy £8/min downtime proxy.
+        # No rate configured (None) — fall back to the legacy £8/min downtime proxy.
         estimated_loss_value = total_downtime * 8
 
     return {

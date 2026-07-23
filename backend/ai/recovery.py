@@ -17,7 +17,7 @@ from ai.twin import _recent_production
 # analytics_engine (ADR-0010), so recovery's "biggest lever" and the OEE summary's
 # "biggest drag" are literally the same rule.
 from analytics_engine import (
-    pooled_oee, biggest_lever, WORLD_CLASS_OEE, WORLD_CLASS_COMPONENTS,
+    pooled_oee, biggest_lever, oee_direction, WORLD_CLASS_OEE, WORLD_CLASS_COMPONENTS,
 )
 # The single per-tenant £ rate lives in tenancy (shared with the management
 # summary); aliased as _unit_value so the recovery tests can stub it.
@@ -46,7 +46,6 @@ _EMPTY = {
 }
 
 MINUTES_PER_DAY = 24 * 60
-TREND_POINTS = 2   # OEE move (points) below which week-over-week reads "flat"
 
 
 def _prior_production(db, days: int = WINDOW_DAYS):
@@ -111,11 +110,13 @@ def build_recovery_summary(db, tenant: str) -> dict:
     lever_key = biggest_lever(o)
     biggest = next((c for c in components if c["key"] == lever_key), None)
 
-    # Value the recoverable output in £ only when the tenant has set a per-unit
-    # rate; otherwise leave the £ fields null and report units only.
+    # Value the recoverable output in £ only when the tenant has SET a per-unit
+    # rate (None = unset -> units only). A configured rate of 0 is a real £0 margin,
+    # so it yields £0, matching build_management_summary — `is not None`, not
+    # truthiness, so the two money surfaces agree on a £0 rate.
     rate = _unit_value(db, tenant)
-    value_window = round(recoverable_window * rate) if rate else None
-    value_year = round(recoverable_year * rate) if rate else None
+    value_window = round(recoverable_window * rate) if rate is not None else None
+    value_year = round(recoverable_year * rate) if rate is not None else None
 
     # "Fix this first": the prize for closing JUST the biggest lever's gap.
     # Closing one component from current -> target scales good output by
@@ -124,16 +125,17 @@ def build_recovery_summary(db, tenant: str) -> dict:
     if lever_key and biggest["current"] > 0:
         lever_window = round(good * (biggest["target"] / biggest["current"] - 1))
         lever_units_year = round(lever_window * 365 / WINDOW_DAYS)
-    lever_value_year = round(lever_units_year * rate) if (rate and lever_units_year) else None
+    lever_value_year = round(lever_units_year * rate) if (rate is not None and lever_units_year) else None
 
     # Trend: is the plant closing the gap? Compare this window's OEE to last
-    # week's. "new" until there's a prior week to compare against.
+    # week's, via the shared week-over-week direction (one dead-band, so this badge
+    # and the scorecard's OEE delta can't disagree). "new" until there's a prior week.
     po = pooled_oee(_prior_production(db, days=WINDOW_DAYS))
     if po["has_data"] and po["oee"] > 0:
         prior_oee = po["oee"]
         delta = o["oee"] - prior_oee
-        oee_trend = ("improving" if delta >= TREND_POINTS
-                     else "worsening" if delta <= -TREND_POINTS else "flat")
+        oee_trend = {"up": "improving", "down": "worsening",
+                     "flat": "flat"}[oee_direction(o["oee"], prior_oee)]
     else:
         prior_oee, delta, oee_trend = None, None, "new"
 

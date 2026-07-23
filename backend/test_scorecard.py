@@ -4,6 +4,7 @@ Four headline KPIs (OEE, good rate, on-time orders, cost of losses), each with a
 tone, composed from the pillar read-models. Run:  python backend/test_scorecard.py
 """
 from datetime import datetime, timedelta
+from types import SimpleNamespace
 
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
@@ -17,6 +18,21 @@ def _fresh_session():
     engine = create_engine("sqlite://", connect_args={"check_same_thread": False})
     Base.metadata.create_all(bind=engine)
     return sessionmaker(bind=engine)()
+
+
+def test_prior_period_loss_cost_shares_the_per_record_downtime_basis():
+    # The prior-period KPIs (used for the week-over-week delta) must value downtime
+    # the SAME way as the live cost card — per record — or the delta is apples to
+    # oranges. A prior week with a job that ran over (100/120) plus a real 50-min
+    # stop (100/50) is 50 min of downtime, not max(0, 200-170)=30.
+    recs = [SimpleNamespace(planned_minutes=100, runtime_minutes=120, total_count=100,
+                            good_count=100, rejected_count=0, ideal_cycle_time_seconds=30),
+            SimpleNamespace(planned_minutes=100, runtime_minutes=50, total_count=50,
+                            good_count=50, rejected_count=0, ideal_cycle_time_seconds=30)]
+    k = scorecard._period_kpis(recs)
+    assert k["loss_cost"] == 50 * scorecard.DOWNTIME_COST_PER_MIN                      # 0+50 min -> $600
+    assert k["loss_cost"] != max(0, 200 - 170) * scorecard.DOWNTIME_COST_PER_MIN       # not the old $360
+    print("PASS scorecard prior-period loss_cost uses the per-record downtime basis (like-for-like WoW)")
 
 
 def test_scorecard_headlines_one_kpi_per_pillar_with_tone():
@@ -60,5 +76,6 @@ def test_scorecard_headlines_one_kpi_per_pillar_with_tone():
 
 
 if __name__ == "__main__":
+    test_prior_period_loss_cost_shares_the_per_record_downtime_basis()
     test_scorecard_headlines_one_kpi_per_pillar_with_tone()
     print("SCORECARD OK: one KPI per pillar (OEE / good rate / on-time orders / cost of losses) with tone; empty-safe")

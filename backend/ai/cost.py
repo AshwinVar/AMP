@@ -21,14 +21,26 @@ DOWNTIME_COST_PER_MIN = 12      # $ lost per minute of unplanned downtime
 SCRAP_COST_PER_UNIT = 25        # $ lost per rejected / scrapped unit
 
 
+def downtime_minutes(records) -> int:
+    """Unplanned downtime over a set of production records: each record's own
+    shortfall (planned - runtime), floored at 0 PER RECORD, then summed.
+
+    This is the ONE basis the headline, the per-line / per-machine / daily
+    breakdowns AND the scorecard's prior-period comparison all share. Flooring
+    per record (not once on the aggregate net) is the honest choice: a job that
+    runs OVER its planned minutes must not silently cancel a real stoppage on
+    another job — max(0, sum(planned) - sum(runtime)) would let it, so the
+    headline could read less than the drill-down it sits above (they must
+    reconcile, and this matches OEE's per-record availability cap of 100%)."""
+    return sum(max(0, (r.planned_minutes or 0) - (r.runtime_minutes or 0)) for r in records)
+
+
 def build_cost_summary(db, tenant: str) -> dict:
     """The cost of the week's losses — downtime and scrap priced at standard
     rates, biggest first — plus the costs actually recorded in the period rolled
     up by type. production_records and cost_records are auto-scoped (ADR-0002)."""
     records = _recent_production(db, days=WINDOW_DAYS)
-    planned = sum(r.planned_minutes or 0 for r in records)
-    runtime = sum(r.runtime_minutes or 0 for r in records)
-    downtime_min = max(0, planned - runtime)
+    downtime_min = downtime_minutes(records)
     rejected = sum(r.rejected_count or 0 for r in records)
 
     downtime_cost = downtime_min * DOWNTIME_COST_PER_MIN

@@ -97,6 +97,17 @@ def test_reliability_computes_mtbf_mttr_and_ranks_worst_first():
     assert modes["Jam"]["minutes"] == 180 and modes["Jam"]["count"] == 2
     assert r["top_modes"][0]["reason"] == "Jam"
 
+    # --- Fleet MTBF/availability are POOLED over the whole fleet, not averaged
+    # per machine (a distinction the per-machine asserts above cannot see).
+    # Fleet calendar = 30d * 24h * 60 * 3 machines = 129600 min; operating =
+    # 129600 - 330 repair = 129270. Fleet MTBF = 129270 / 4 failures / 60 = 538.6 h.
+    # (Averaging the per-machine MTBFs would give 478.9; using one machine's
+    # 43200-min window as the denominator would give 178.6.)
+    assert r["mtbf_hours"] == 538.6, r["mtbf_hours"]
+    # Fleet availability = 129270 / 129600 * 100 = 99.7%.
+    # (A single-machine 43200-min calendar would give 99.2.)
+    assert r["availability"] == 99.7, r["availability"]
+
 
 def test_reliability_is_empty_safe_and_windows_out_old_failures():
     db = _fresh_session()
@@ -148,7 +159,16 @@ def test_machine_drilldown_reads_one_machine_against_the_fleet():
     assert d["mttr_minutes"] == 90.0                 # 360 / 4
     # Same numbers the fleet ranking uses — worst machine ranks 1 of 2.
     assert d["rank"] == 1 and d["machines_tracked"] == 2
-    assert d["fleet_mttr_minutes"] == reliability.build_reliability_summary(db, "DEFAULT")["mttr_minutes"]
+    # --- Fleet baseline pinned to an INDEPENDENTLY-derived number, replacing a
+    # `== build_reliability_summary(...)["mttr_minutes"]` tautology (both sides came
+    # from the same _fleet_stats, so a broken fleet aggregation moved them together).
+    # Fleet = 5 failures across both machines (4 + 1), total repair 360 + 30 = 390, so
+    # fleet MTTR = 390 / 5 = 78.0 min — deliberately different from this machine's own
+    # 90.0, so returning the machine's MTTR as the fleet's, or dividing repair by
+    # machine count (390/2 = 195), would now fail.
+    assert d["fleet_mttr_minutes"] == 78.0, d["fleet_mttr_minutes"]
+    # Fleet availability = (2*43200 - 390) / (2*43200) * 100 = 86010/86400*100 = 99.5%.
+    assert d["fleet_availability"] == 99.5, d["fleet_availability"]
 
     # Its own failure modes only — machine 2's Calibration must not leak in.
     modes = {m["reason"]: m for m in d["top_modes"]}
@@ -195,8 +215,35 @@ def test_machine_drilldown_handles_clean_and_unknown_machines():
     assert missing["machines_tracked"] == 1
 
 
+def test_fleet_ranking_breaks_failure_count_ties_by_total_downtime():
+    """Two machines with the SAME failure count must be ordered worst-first by total
+    repair minutes (the secondary sort key), not left in insertion order. A stable
+    sort on failure count alone would leave Low-Repair first and misname the
+    bottleneck. The existing ranking test only varies failure counts (3 vs 1 vs 0),
+    so this tie-break path is otherwise untested."""
+    db = _fresh_session()
+    _machine(db, 1, "Low-Repair", "SMT")
+    _machine(db, 2, "High-Repair", "IC")
+    # Equal failure counts (2 each); High-Repair carries 4x the downtime.
+    _log(db, 1, "30 min", "Jam", days_ago=2)
+    _log(db, 1, "30 min", "Jam", days_ago=5)
+    _log(db, 2, "120 min", "Breakdown", days_ago=3)
+    _log(db, 2, "120 min", "Breakdown", days_ago=6)
+    db.commit()
+
+    r = reliability.build_reliability_summary(db, "DEFAULT")
+    assert [m["failures"] for m in r["by_machine"]] == [2, 2]
+    # Tie broken by total downtime: 240 min outranks 60 min.
+    assert [m["name"] for m in r["by_machine"]] == ["High-Repair", "Low-Repair"]
+    assert [m["repair_minutes"] for m in r["by_machine"]] == [240, 60]
+    # The bottleneck is the worse of the tied pair, not merely the first inserted.
+    assert r["bottleneck"]["name"] == "High-Repair"
+    print("PASS fleet ranking breaks failure-count ties by total downtime")
+
+
 if __name__ == "__main__":
     test_hour_format_durations_are_parsed_as_hours_not_leading_digits()
+    test_fleet_ranking_breaks_failure_count_ties_by_total_downtime()
     test_reliability_computes_mtbf_mttr_and_ranks_worst_first()
     test_reliability_is_empty_safe_and_windows_out_old_failures()
     test_machine_drilldown_reads_one_machine_against_the_fleet()

@@ -130,8 +130,53 @@ def test_supplier_detail_is_empty_safe_for_unknown_supplier():
     assert d["category"] is None and d["supplier_status"] is None
 
 
+def test_supply_classifies_pos_at_classification_boundaries():
+    """Boundary-value coverage for the receipt-state thresholds (AT_RISK_DAYS=3).
+
+    The existing tests only exercise interior offsets (-2, 2, 30), so an
+    off-by-one in _state would still pass them. These pin the exact edges:
+      - exactly one day overdue (days == -1)        -> late   (days < 0)
+      - exactly due today (days == 0)               -> at_risk (0 <= AT_RISK_DAYS)
+      - exactly AT_RISK_DAYS out (days == 3)        -> at_risk (inclusive top edge)
+      - one day past that (days == AT_RISK_DAYS + 1) -> on_track (window excludes above)
+    A late branch of `days <= 0`, an at-risk branch of `days < AT_RISK_DAYS`,
+    or an over-wide `days <= AT_RISK_DAYS + 1` each shift one of these counts.
+    """
+    assert supply.AT_RISK_DAYS == 3   # boundaries below assume the shipped threshold
+    db = _fresh_session()
+    _supplier(db, 1, "Indium")
+    db.add_all([
+        _po("PO-OVERDUE-1D", 1, 100, 0, -1),                        # one day overdue -> late
+        _po("PO-DUE-TODAY", 1, 100, 0, 0),                          # due today       -> at_risk
+        _po("PO-ATRISK-EDGE", 1, 100, 0, supply.AT_RISK_DAYS),      # exactly 3 days  -> at_risk
+        _po("PO-ONTRACK-EDGE", 1, 100, 0, supply.AT_RISK_DAYS + 1), # exactly 4 days  -> on_track
+    ])
+    db.commit()
+
+    s = supply.build_supply_summary(db, "DEFAULT")
+    assert s["total"] == 4
+    # one-day-overdue is the only late; due-today AND the 3-day edge are at_risk;
+    # the 4-day PO tips over into on_track.
+    assert s["received"] == 0
+    assert s["late"] == 1
+    assert s["at_risk"] == 2
+    assert s["on_track"] == 1
+
+    # Per-PO state + days_to_due, read back from the chase list (which carries
+    # both). on_track POs are never chased, so PO-ONTRACK-EDGE must be absent.
+    state_by_po = {o["po_no"]: (o["state"], o["days_to_due"]) for o in s["chase"]}
+    assert state_by_po["PO-OVERDUE-1D"] == ("late", -1)
+    assert state_by_po["PO-DUE-TODAY"] == ("at_risk", 0)
+    assert state_by_po["PO-ATRISK-EDGE"] == ("at_risk", 3)
+    assert "PO-ONTRACK-EDGE" not in state_by_po
+    # chase order: late (-1) first, then at_risk by soonest due (0 before 3).
+    assert [o["po_no"] for o in s["chase"]] == ["PO-OVERDUE-1D", "PO-DUE-TODAY", "PO-ATRISK-EDGE"]
+    print("PASS PO classification at the AT_RISK_DAYS boundaries (late/at-risk/on-track edges)")
+
+
 if __name__ == "__main__":
     test_supply_classifies_pos_and_rolls_up_by_supplier()
+    test_supply_classifies_pos_at_classification_boundaries()
     test_supply_honours_overdue_status_and_is_empty_safe()
     test_supplier_detail_scopes_and_scores_one_supplier()
     test_supplier_detail_is_empty_safe_for_unknown_supplier()

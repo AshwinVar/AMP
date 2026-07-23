@@ -110,6 +110,16 @@ def test_coverage_forecasts_stockout_and_ranks_soonest_first():
     e = coverage.build_coverage_summary(_fresh_session(), "DEFAULT")
     assert e["total_items"] == 0 and e["running_out"] == 0 and e["items"] == []
 
+    # SLOW-02 is consumed via the routes 'Issue' dialect (140 over the window) and
+    # also carries a 500-unit 'Adjust'. It classifies 'ok' in the summary either
+    # way (28 days > WATCH_DAYS), so pin its burn/cover directly via the drill-down
+    # -- a broken impl that drops 'Issue' or folds 'Adjust' into consumption can't
+    # hide behind the 'ok' classification here.
+    slow = coverage.build_part_runway(db, "DEFAULT", "SLOW-02")
+    assert slow["consumed_units"] == 140 and slow["daily_burn"] == 10.0   # 140 / 14
+    assert slow["days_of_cover"] == 28.0 and slow["state"] == "ok"        # 280 / 10
+    assert slow["received_units"] == 0        # 'Adjust' is neither consumption nor receipt
+
 
 def test_stock_with_no_recent_consumption_is_not_a_runway_risk():
     db = _fresh_session()
@@ -233,8 +243,74 @@ def test_part_runway_is_healthy_and_missing_safe():
     assert missing["inbound"] == [] and missing["daily"] == [] and missing["recent"] == []
 
 
+def test_consumption_vocabulary_distinguishes_issue_out_from_in_adjust():
+    """Only outbound consumption drives the burn, and BOTH seed dialects must
+    count at the days-of-cover computation: routes 'Issue'/'issue' and simulator
+    'OUT'/'out'. Receipts ('IN'/'Receive') and stock corrections ('Adjust'/
+    'Adjustment') must NOT -- otherwise a correction reads as consumed and cover
+    is understated. (The summary fixture can't catch a dropped 'Issue': its only
+    'Issue' item stays 'ok' either way, so pin the dialects head-on here.)
+
+    Each risky part burns exactly 70 units over the 14-day window = 5.0/day and
+    holds 35 in stock = 7.0 days of cover (critical) -- when, and only when, its
+    transactions are treated as consumption."""
+    db = _fresh_session()
+    db.add_all([
+        _item("ISSUE-CAP", stock=35),   # id 1: routes dialect, mixed case
+        _item("OUT-CAP", stock=35),     # id 2: simulator dialect, mixed case
+        _item("RCPT-ONLY", stock=35),   # id 3: only receipts + corrections -> no burn
+    ])
+    db.commit()
+    db.add_all([
+        # routes 'Issue'/'issue' -> 70 consumed over the window.
+        _txn(1, "Issue", 35, days_ago=3),
+        _txn(1, "issue", 35, days_ago=8),
+        # simulator 'OUT'/'out' -> 70 consumed over the window.
+        _txn(2, "OUT", 35, days_ago=2),
+        _txn(2, "out", 35, days_ago=9),
+        # non-consumption only: receipts + corrections must never create burn.
+        _txn(3, "IN", 500, days_ago=1),
+        _txn(3, "Receive", 500, days_ago=4),
+        _txn(3, "Adjust", 500, days_ago=5),
+        _txn(3, "Adjustment", 500, days_ago=6),
+    ])
+    db.commit()
+
+    s = coverage.build_coverage_summary(db, "DEFAULT")
+    by = {r["item_code"]: r for r in s["items"]}
+
+    # Both consumption dialects yield the SAME pinned burn and cover.
+    for code in ("ISSUE-CAP", "OUT-CAP"):
+        assert by[code]["daily_burn"] == 5.0, code     # 70 / 14
+        assert by[code]["days_of_cover"] == 7.0, code  # 35 / 5
+        assert by[code]["state"] == "critical", code
+
+    # Receipts + corrections leave stock un-consumed: not a runway risk, so the
+    # part is neither tallied as running out nor surfaced in the reorder list.
+    assert "RCPT-ONLY" not in by
+    assert s["running_out"] == 2                        # ISSUE-CAP + OUT-CAP only
+    assert s["critical"] == 2
+    assert s["out_of_stock"] == 0 and s["watch"] == 0
+
+    # Drill-down agrees. 'Issue' consumes 70 -> the same 5.0/day, 7.0-day cover.
+    issue = coverage.build_part_runway(db, "DEFAULT", "ISSUE-CAP")
+    assert issue["consumed_units"] == 70 and issue["daily_burn"] == 5.0
+    assert issue["days_of_cover"] == 7.0 and issue["state"] == "critical"
+
+    # 1500 in receipts/corrections on RCPT-ONLY: zero burn, undefined cover. Only
+    # the true receipts ('IN' 500 + 'Receive' 500) count as received; the two
+    # 'Adjust'/'Adjustment' rows are neither consumption nor receipt.
+    rcpt = coverage.build_part_runway(db, "DEFAULT", "RCPT-ONLY")
+    assert rcpt["consumed_units"] == 0
+    assert rcpt["daily_burn"] == 0.0 and rcpt["days_of_cover"] is None
+    assert rcpt["state"] == "ok" and rcpt["cover_verdict"] == "not_at_risk"
+    assert rcpt["received_units"] == 1000
+    print("PASS consumption vocabulary: Issue/issue + OUT/out count; IN/Receive/Adjust do not")
+
+
 if __name__ == "__main__":
     test_barely_moving_part_does_not_overflow_the_stockout_date()
+    test_consumption_vocabulary_distinguishes_issue_out_from_in_adjust()
     test_coverage_forecasts_stockout_and_ranks_soonest_first()
     test_stock_with_no_recent_consumption_is_not_a_runway_risk()
     test_part_runway_reconciles_with_the_summary_row()

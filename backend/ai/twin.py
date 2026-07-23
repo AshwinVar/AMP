@@ -165,13 +165,19 @@ def _open_actions(db, machine_id, tenant):
 
 def _downtime_trend(db, machine_id, days: int = 7):
     """A calendar day-by-day count of this machine's downtime over the last week
-    (oldest -> newest), so the cockpit can draw a downtime sparkline."""
+    (oldest -> newest), so the cockpit can draw a downtime sparkline. Windowed in
+    SQL — downtime_logs grows continuously, so loading a machine's whole history
+    to draw a 7-day sparkline would get slower every week. The window_set check
+    stays to drop any future-dated rows the lower bound can't."""
     today = datetime.utcnow().date()
     window = [today - timedelta(days=i) for i in range(days - 1, -1, -1)]
     window_set = set(window)
+    cutoff = datetime.combine(window[0], datetime.min.time())
     counts = Counter(
         d.created_at.date()
-        for d in db.query(models.DowntimeLog).filter(models.DowntimeLog.machine_id == machine_id).all()
+        for d in db.query(models.DowntimeLog)
+                   .filter(models.DowntimeLog.machine_id == machine_id,
+                           models.DowntimeLog.created_at >= cutoff).all()
         if d.created_at and d.created_at.date() in window_set
     )
     return [{"date": dd.isoformat(), "count": counts.get(dd, 0)} for dd in window]
@@ -179,12 +185,14 @@ def _downtime_trend(db, machine_id, days: int = 7):
 
 def _machine_production(db, machine_id, days: int = 7):
     """This machine's throughput over the last week: good/total, good rate, and a
-    daily good-count series (oldest -> newest)."""
+    daily good-count series (oldest -> newest). Bounded in SQL via the shared
+    _recent_production helper (production_records grows continuously); the
+    window_set check then drops any future-dated rows."""
     today = datetime.utcnow().date()
     window = [today - timedelta(days=i) for i in range(days - 1, -1, -1)]
     window_set = set(window)
     recs = [
-        r for r in db.query(models.ProductionRecord).filter(models.ProductionRecord.machine_id == machine_id).all()
+        r for r in _recent_production(db, machine_id, days)
         if r.created_at and r.created_at.date() in window_set
     ]
     good = sum(r.good_count or 0 for r in recs)

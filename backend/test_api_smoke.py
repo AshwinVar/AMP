@@ -81,6 +81,79 @@ def test_every_read_model_endpoint_answers():
     plat = _handler("/platform/status")(db=_Session(), current_user=USER)
     assert plat["read_model_count"] >= 25 and plat["agent_count"] == 5
 
+    # ── New read-model endpoints exercised through their actual route handlers ──
+    # The original READ_ENDPOINTS list predates the later ADR-0007 pillars, so a
+    # broken route wiring or a projection that silently drops/renames a field on
+    # any of these would have gone uncaught. Each handler below is the real
+    # endpoint pulled off app.routes; asserting its documented keys closes that gap.
+    NEW_SUMMARY_KEYS = {
+        "/reliability-summary":   ["days", "machines_tracked", "total_failures",
+                                   "mttr_minutes", "mtbf_hours", "availability",
+                                   "by_machine", "bottleneck", "top_modes"],
+        "/connectivity-summary":  ["machines_tracked", "reporting", "fresh", "stale",
+                                   "dark", "connectivity_score", "devices",
+                                   "signal_quality", "by_machine"],
+        "/schedule-summary":      ["days", "total", "met", "on_track", "behind",
+                                   "missed", "attainment_rate", "by_shift",
+                                   "by_machine", "daily", "today"],
+        "/supply-summary":        ["total", "received", "on_track", "at_risk", "late",
+                                   "receipt_rate", "by_supplier", "chase"],
+        "/coverage-summary":      ["window_days", "total_items", "out_of_stock",
+                                   "running_out", "critical", "watch", "items"],
+        "/quality-trend":         ["days", "current", "prior", "delta_pts",
+                                   "direction", "defect_movers", "series"],
+        "/maintenance-execution": ["days", "completed", "on_time", "late",
+                                   "compliance_rate", "backlog", "by_machine", "chase"],
+        "/recovery-summary":      ["has_data", "oee", "world_class", "gap_points",
+                                   "components", "biggest_lever"],
+        "/compliance-summary":    ["total", "overdue", "due_soon", "pending_approval",
+                                   "by_status", "documents"],
+    }
+    for ep, expected in NEW_SUMMARY_KEYS.items():
+        result = _handler(ep)(db=_Session(), current_user=USER)
+        assert isinstance(result, dict), f"{ep} did not return an object"
+        missing = [k for k in expected if k not in result]
+        assert not missing, f"{ep} missing keys {missing}"
+
+    # Drill-down endpoints (arg-taking) — same route layer, exercised with a
+    # representative key; each must echo its argument and carry its shape.
+    dr = _handler("/downtime-reason")(reason="Changeover", db=_Session(), current_user=USER)
+    assert dr["reason"] == "Changeover" and {"total_events", "total_minutes", "by_machine"} <= dr.keys()
+
+    qd = _handler("/quality-defect")(category="Solder Bridge", db=_Session(), current_user=USER)
+    assert qd["category"] == "Solder Bridge" and {"failed", "rework", "scrap", "by_machine"} <= qd.keys()
+
+    ip = _handler("/inventory-part")(item_code="NOPE-1", db=_Session(), current_user=USER)
+    assert ip["item_code"] == "NOPE-1" and ip["found"] is False and "days_of_cover" in ip
+
+    ss = _handler("/schedule-shift")(shift="A", db=_Session(), current_user=USER)
+    assert ss["shift"] == "A" and ss["found"] is False and {"attainment_rate", "rank", "by_machine"} <= ss.keys()
+
+    sp = _handler("/supply-supplier")(supplier="Acme", db=_Session(), current_user=USER)
+    assert sp["supplier"] == "Acme" and {"receipt_rate", "total", "recent"} <= sp.keys()
+
+    wt = _handler("/work-order-trace")(work_order_no="WO-NONE", db=_Session(), current_user=USER)
+    assert wt["work_order_no"] == "WO-NONE" and wt["found"] is False and {"timeline", "gaps", "materials"} <= wt.keys()
+
+    # Drill-downs that hit the *found* path on the seeded machine / customer, so a
+    # real row flows through the tenant-scoped read (not just an empty shape). These
+    # pin seed-derived values, so a serializer that garbled the payload would fail.
+    rm = _handler("/reliability-machine")(machine_id=1, db=_Session(), current_user=USER)
+    assert rm["found"] is True and rm["name"] == "SMT-Reflow-01" and rm["status"] == "Breakdown"
+    assert rm["machines_tracked"] == 2 and {"mtbf_hours", "availability", "top_modes"} <= rm.keys()
+
+    cm = _handler("/connectivity-machine")(machine_id=1, db=_Session(), current_user=USER)
+    assert cm["found"] is True and cm["name"] == "SMT-Reflow-01" and {"state", "by_signal", "blind_spots"} <= cm.keys()
+
+    rel = _handler("/reliability-summary")(db=_Session(), current_user=USER)
+    con = _handler("/connectivity-summary")(db=_Session(), current_user=USER)
+    assert rel["machines_tracked"] == 2 and rel["total_failures"] == 0
+    assert con["machines_tracked"] == 2
+
+    dc = _handler("/delivery-customer")(customer="Bugatti", db=_Session(), current_user=USER)
+    assert dc["customer"] == "Bugatti" and dc["total"] == 1
+    assert dc["ordered_units"] == 100 and dc["dispatched_units"] == 50 and dc["fulfillment_rate"] == 50
+
 
 if __name__ == "__main__":
     test_every_read_model_endpoint_answers()

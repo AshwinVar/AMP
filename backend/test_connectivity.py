@@ -235,8 +235,61 @@ def test_connection_detail_handles_a_machine_that_is_not_there():
     assert r["open_work_orders"] == {"count": 0, "orders": []}
 
 
+def test_connectivity_no_dark_orders_stale_by_silence_and_needs_attention():
+    # No DARK machine anywhere: one fresh, three stale. This pins the two paths
+    # the dark-machine cases leave unproven — stale-vs-stale worst-first ordering
+    # (by longest silence, with an unmeasured pre-window silence ranking as the
+    # MOST silent), and needs_attention resolving to a STALE machine rather than
+    # only ever a dark one.
+    db = _fresh_session()
+    _machine(db, 1, "SMT-Reflow-01", "SMT")    # fresh: reported 3 min ago
+    _machine(db, 2, "IC-Test-01", "IC")        # stale: 30 min silent (measured)
+    _machine(db, 3, "SMT-Printer-01", "SMT")   # stale: 120 min silent (measured, longer)
+    _machine(db, 4, "SMT-AOI-01", "SMT")       # stale: last read 30h ago -> before the
+                                               #        24h window -> silence UNMEASURED (None)
+    _telemetry(db, 1, minutes_ago=3)
+    _telemetry(db, 2, minutes_ago=30)
+    _telemetry(db, 3, minutes_ago=120)
+    _telemetry(db, 4, minutes_ago=60 * 30)     # 30h ago: older than the 24h lookback
+    db.commit()
+
+    r = connectivity.build_connectivity_summary(db, "DEFAULT")
+
+    # Headline counts: no dark, exactly one fresh, three stale.
+    assert r["machines_tracked"] == 4
+    assert r["fresh"] == 1 and r["stale"] == 3 and r["dark"] == 0
+    assert r["reporting"] == 4
+    # connectivity score = fresh / tracked = 1/4 = 25%.
+    assert r["connectivity_score"] == 25.0
+
+    # Worst-first with NO dark to lead: the unmeasured (pre-window) silence sorts
+    # as the most silent stale, then measured stale by longest silence, fresh last.
+    assert [m["name"] for m in r["by_machine"]] == [
+        "SMT-AOI-01", "SMT-Printer-01", "IC-Test-01", "SMT-Reflow-01",
+    ]
+    assert [m["state"] for m in r["by_machine"]] == ["stale", "stale", "stale", "fresh"]
+
+    by = {m["name"]: m for m in r["by_machine"]}
+    # Unmeasured silence surfaces as None (reported, but before the window)...
+    assert by["SMT-AOI-01"]["last_signal_minutes"] is None
+    # ...yet still outranks the measured stale machines, whose minutes are pinned.
+    assert 119 <= by["SMT-Printer-01"]["last_signal_minutes"] <= 122
+    assert 29 <= by["IC-Test-01"]["last_signal_minutes"] <= 32
+    assert 2 <= by["SMT-Reflow-01"]["last_signal_minutes"] <= 5
+
+    # needs_attention is the head of the chase list: the stalest stale machine,
+    # NOT None (which is what an only-dark shortcut would wrongly return here).
+    assert r["needs_attention"] is not None
+    assert r["needs_attention"]["name"] == "SMT-AOI-01"
+    assert r["needs_attention"]["machine_id"] == 4
+    assert r["needs_attention"]["state"] == "stale"
+    assert r["needs_attention"]["last_signal_minutes"] is None
+    print("PASS no-dark plant: stale ordered by silence, needs_attention is the stalest")
+
+
 if __name__ == "__main__":
     test_connectivity_classifies_fresh_stale_dark_and_scores()
+    test_connectivity_no_dark_orders_stale_by_silence_and_needs_attention()
     test_connectivity_is_empty_safe()
     test_connectivity_all_fresh_scores_100()
     test_connection_detail_explains_a_silent_machine()

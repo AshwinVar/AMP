@@ -149,8 +149,41 @@ def test_machine_detail_composes_cockpit_and_scopes_actions():
     assert twin.build_machine_detail(db, "DEFAULT", 999) is None      # unknown machine -> caller 404s
 
 
+def test_cockpit_quality_shares_the_cards_seven_day_window():
+    # The cockpit's OEE panel is explicitly "last 7 days" and its Quality bar is
+    # THAT week's quality. A lifetime fail rate rendered beside it could contradict
+    # it outright (a 99% Quality bar above a fail rate earned a year ago), so
+    # quality uses the same window as downtime_7d / production_7d — one basis for
+    # the whole card — and is bounded in SQL.
+    db, stmts = _session_capturing_sql()
+    now = datetime.utcnow()
+    old = now - timedelta(days=400)
+    db.add(models.Machine(id=1, name="M1", status="Running", utilization=80))
+    # this week: 100 inspected, 2 failed -> 2% fail rate
+    db.add(models.QualityInspection(inspection_no="QC-NEW", machine_id=1, inspector="qa",
+                                    inspected_quantity=100, passed_quantity=98,
+                                    failed_quantity=2, defect_category="surface", created_at=now))
+    # a year ago this machine was terrible (50% fail). It must NOT drag this week's
+    # number — that is exactly the lifetime-vs-week contradiction being removed.
+    db.add(models.QualityInspection(inspection_no="QC-OLD", machine_id=1, inspector="qa",
+                                    inspected_quantity=100, passed_quantity=50,
+                                    failed_quantity=50, defect_category="warp", created_at=old))
+    db.commit()
+
+    stmts.clear()
+    q = twin._machine_quality(db, 1)
+    assert q["inspections"] == 1 and q["inspected"] == 100
+    assert q["failed"] == 2 and q["fail_rate"] == 2          # this week, NOT 52/200 = 26% lifetime
+    assert [d["category"] for d in q["top_defects"]] == ["surface"]   # the year-old "warp" is gone
+    # bounded in SQL — the ancient row is never loaded
+    sel = [s for s in stmts if "from quality_inspections" in _norm(s)]
+    assert sel and all("created_at >=" in _norm(s) for s in sel), sel
+    print("PASS cockpit quality shares the card's 7-day window (bounded in SQL, no lifetime contradiction)")
+
+
 if __name__ == "__main__":
     test_twin_composes_health_and_is_tenant_scoped()
     test_machine_detail_composes_cockpit_and_scopes_actions()
     test_cockpit_drilldowns_are_windowed_in_sql_not_loaded_whole()
+    test_cockpit_quality_shares_the_cards_seven_day_window()
     print("TWIN OK: health twin + single-machine cockpit (risk factors, timeline, open actions); worst first; tenant-scoped")

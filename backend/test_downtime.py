@@ -91,8 +91,38 @@ def test_downtime_reason_drilldown_totals_minutes_machines_and_instances():
     assert none["total_events"] == 0 and none["total_minutes"] == 0 and none["instances"] == []
 
 
+def test_downtime_reason_drilldown_windowed_reconciled_and_hour_format():
+    """Pins the drill-down's SQL window bound, denominator reconciliation, and
+    hour-format duration parsing (guards the '2 hrs' -> 2-minutes class of bug)."""
+    db = _fresh_session()
+    now = datetime.utcnow()
+    db.add(models.Machine(id=1, name="PRESS-01", status="Running", utilization=60))
+    db.add(models.Machine(id=2, name="CNC-02", status="Running", utilization=60))
+    db.add_all([
+        # in window, hour-format durations: 2 hrs 15 min -> 135, 1 hr -> 60, 90 min -> 90
+        models.DowntimeLog(machine_id=1, reason="Breakdown", duration="2 hrs 15 min", created_at=now),
+        models.DowntimeLog(machine_id=1, reason="Breakdown", duration="1 hr", created_at=now - timedelta(days=1)),
+        models.DowntimeLog(machine_id=2, reason="Breakdown", duration="90 min", created_at=now - timedelta(days=3)),
+        # far outside the 7-day window: must be excluded by the SQL bound, not just Python
+        models.DowntimeLog(machine_id=1, reason="Breakdown", duration="500 min", created_at=now - timedelta(days=60)),
+    ])
+    db.commit()
+
+    r = downtime.build_downtime_reason(db, "DEFAULT", "Breakdown")
+    assert r["total_events"] == 3                       # 60-days-ago row excluded by the window bound
+    # hour-format parsing: 135 + 60 + 90 = 285 (NOT 2 + 1 + 90 from a leading-digit regex)
+    assert r["total_minutes"] == 285
+    # denominator reconciliation: per-machine minutes must sum to the headline total
+    assert sum(m["minutes"] for m in r["by_machine"]) == r["total_minutes"]
+    assert sum(m["count"] for m in r["by_machine"]) == r["total_events"]
+    # PRESS-01: 135 + 60 = 195 over 2 events; CNC-02: 90 over 1
+    assert r["by_machine"][0]["name"] == "PRESS-01" and r["by_machine"][0]["minutes"] == 195
+    assert r["by_machine"][1]["name"] == "CNC-02" and r["by_machine"][1]["minutes"] == 90
+
+
 if __name__ == "__main__":
     test_downtime_summary_rolls_up_reasons_machines_and_days()
     test_downtime_reason_drilldown_totals_minutes_machines_and_instances()
+    test_downtime_reason_drilldown_windowed_reconciled_and_hour_format()
     print("DOWNTIME OK: total + Pareto reasons + worst machines (named) + 7-day series; windowed; empty-safe; "
-          "reason drill-down (minutes lost, machines, instances)")
+          "reason drill-down (minutes lost, machines, instances); drill-down SQL-windowed + reconciled + hour-format")

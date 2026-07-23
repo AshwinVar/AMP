@@ -77,8 +77,11 @@ def build_downtime_reason(db, tenant: str, reason: str) -> dict:
     today = datetime.utcnow().date()
     window = [today - timedelta(days=i) for i in range(WINDOW_DAYS - 1, -1, -1)]
     window_set = set(window)
+    # Windowed in SQL (the log grows continuously); the set check keeps the exact
+    # per-day semantics for any future-dated rows. Mirrors build_downtime_summary.
+    start = datetime.combine(window[0], datetime.min.time())
     logs = [
-        d for d in db.query(models.DowntimeLog).all()
+        d for d in db.query(models.DowntimeLog).filter(models.DowntimeLog.created_at >= start).all()
         if d.created_at and d.created_at.date() in window_set and _norm_reason(d) == reason
     ]
 

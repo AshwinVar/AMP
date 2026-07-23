@@ -9,6 +9,7 @@ wall of cards. Composes the pillar read-models only; auto-scoped to the tenant
 from datetime import datetime, timedelta
 
 import models
+from analytics_engine import oee_direction
 from ai.oee import build_oee_summary
 from ai.production import build_production_summary
 from ai.delivery import build_delivery_summary
@@ -85,7 +86,13 @@ def build_scorecard(db, tenant: str) -> dict:
 
     on_time = (round((delivery["total"] - delivery["late"]) / delivery["total"] * 100)
                if delivery["total"] else None)
-    oee_d, oee_dt = _delta(oee["oee"], prior["oee"], prior["has"])
+    # OEE week-over-week uses the SHARED direction (with its dead-band), so a small
+    # move can't read "down"/red here while the recovery card's badge says "flat".
+    if prior["has"] and oee["oee"] is not None:
+        oee_d = oee["oee"] - prior["oee"]
+        oee_dt = {"up": "good", "down": "bad", "flat": "flat"}[oee_direction(oee["oee"], prior["oee"])]
+    else:
+        oee_d, oee_dt = None, None
     good_d, good_dt = _delta(prod["good_rate"], prior["good_rate"], prior["has"])
     cost_d, cost_dt = _delta(cost["loss_cost"], prior["loss_cost"], prior["has"], lower_is_better=True)
 

@@ -37,7 +37,7 @@ export type CostingAnalytics = {
   total_cost_records: number;
   manual_cost_total: number;
   production_units: number;
-  cost_per_good_unit: number;
+  cost_per_good_unit: number | null;   // null when there's no production (undefined per-unit cost)
   supplier_receipt_units: number;
   by_type: Record<string, number>;
   by_department: Record<string, number>;

@@ -12,6 +12,7 @@ from datetime import datetime
 from typing import List
 
 from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 import models
@@ -112,7 +113,15 @@ def create_customer_order(
     new_order.status = status
 
     db.add(new_order)
-    db.commit()
+    # order_no is GLOBALLY unique but the pre-check above is tenant-scoped, so a
+    # number another tenant already uses passes the check then trips the DB
+    # constraint on commit. Return a clean 409 (and roll back the poisoned
+    # session) instead of an unhandled IntegrityError -> 500.
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(status_code=409, detail="Order number is already in use")
     db.refresh(new_order)
 
     return new_order
@@ -290,7 +299,11 @@ def create_supplier(
 
     new_supplier = models.Supplier(**supplier.model_dump())
     db.add(new_supplier)
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError:  # supplier_code globally unique; tenant-scoped pre-check
+        db.rollback()
+        raise HTTPException(status_code=409, detail="Supplier code is already in use")
     db.refresh(new_supplier)
     return new_supplier
 
@@ -369,7 +382,11 @@ def create_purchase_order(
     new_po.status = status
 
     db.add(new_po)
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError:  # po_no globally unique; tenant-scoped pre-check
+        db.rollback()
+        raise HTTPException(status_code=409, detail="PO number is already in use")
     db.refresh(new_po)
     return new_po
 

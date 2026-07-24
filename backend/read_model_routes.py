@@ -211,6 +211,15 @@ def get_schedule_shift(shift: str, db: Session = Depends(_get_db), current_user:
     return ai.schedule.build_shift_adherence(db, request_tenant(current_user), shift)
 
 
+@router.get("/schedule-load")
+def get_schedule_load(db: Session = Depends(_get_db), current_user: dict = Depends(get_current_user)):
+    # Schedule load board (ADR-0007): the forward dispatch board over the next 7
+    # days — booked jobs and minutes, per-day / per-machine / per-shift load (each
+    # reconciling to the same headline), the busiest machine and peak day, plus the
+    # slipped backlog (open entries past due, or marked Delayed) to chase.
+    return ai.schedule_load.build_schedule_load(db, request_tenant(current_user))
+
+
 @router.get("/work-order-trace")
 def get_work_order_trace(work_order_no: str, db: Session = Depends(_get_db),
                          current_user: dict = Depends(get_current_user)):

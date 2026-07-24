@@ -94,7 +94,10 @@ def on_message(client, userdata, msg):
 
             db.add(production)
 
-        if status == "Breakdown":
+        # Only on the transition INTO Breakdown — one row per event, not per tick
+        # (see mqtt_service.py for the full rationale). This is the standalone
+        # listener script; mqtt_service.py is the app-wired path.
+        if old_status != status and status == "Breakdown":
             downtime = models.DowntimeLog(
                 machine_id=machine.id,
                 reason="Breakdown",

@@ -143,7 +143,12 @@ def on_message(client, userdata, msg):
 
             db.add(production)
 
-        if status == "Breakdown":
+        # One DowntimeLog per breakdown EVENT — only on the transition INTO
+        # Breakdown, not on every message while the machine stays down. A PLC
+        # gateway publishes on an interval, so gating on status alone wrote a new
+        # row (each re-asserting the full downtime string) on every tick, inflating
+        # event counts, downtime minutes, MTBF/MTTR and the risk score without bound.
+        if old_status != status and status == "Breakdown":
             downtime = models.DowntimeLog(
                 machine_id=machine.id,
                 reason="Breakdown",

@@ -93,8 +93,51 @@ def test_cost_prices_downtime_and_scrap_and_rolls_up_recorded():
     assert empty["has_data"] is False and empty["loss_cost"] == 0 and empty["by_type"] == []
 
 
+def test_machine_cost_is_the_full_uncapped_map_not_just_top_n():
+    """`by_machine` is a costliest-first DISPLAY page capped at TOP_N (5); the twin
+    floor-map overlay instead reads `machine_cost`, the FULL per-machine cost map.
+    With more cost-incurring machines than the cap, every one must appear in
+    machine_cost with its real figure — a machine ranked outside the top 5 must NOT
+    be dropped (it would paint as £0 on the map). Costs are derived by hand."""
+    db = _fresh_session()
+    # 7 machines, each with a DISTINCT, decreasing downtime so their ranks are
+    # unambiguous: machine i has (8 - i) * 10 minutes of downtime, no scrap.
+    #   M1 -> 70 min -> $840 ... M7 -> 10 min -> $120   (all > 0, all distinct)
+    expected = {}
+    for i in range(1, 8):
+        db.add(models.Machine(id=i, name=f"M{i}", status="Running", utilization=80, line="SMT"))
+        down_min = (8 - i) * 10
+        db.add(models.ProductionRecord(machine_id=i, planned_minutes=480,
+                                       runtime_minutes=480 - down_min, ideal_cycle_time_seconds=30,
+                                       total_count=100, good_count=100, rejected_count=0))
+        expected[i] = down_min * cost.DOWNTIME_COST_PER_MIN
+    db.commit()
+
+    s = cost.build_cost_summary(db, "DEFAULT")
+
+    # by_machine is still the capped display list — exactly TOP_N rows, costliest first.
+    assert len(s["by_machine"]) == cost.TOP_N == 5
+    assert [m["machine_id"] for m in s["by_machine"]] == [1, 2, 3, 4, 5]
+    # machine_cost is the FULL map: all 7 machines, each with its independently-derived cost.
+    assert s["machine_cost"] == expected, s["machine_cost"]
+    # The machines dropped from the display page (ranks 6-7) are present with real,
+    # non-zero cost in the full map — the exact rows the overlay would otherwise lose.
+    assert s["machine_cost"][6] == 240 and s["machine_cost"][7] == 120
+    assert 6 not in {m["machine_id"] for m in s["by_machine"]}
+    # The full map reconciles to the headline loss cost (parts sum to the whole, rule 3).
+    assert sum(s["machine_cost"].values()) == s["loss_cost"]
+    # The two views agree on the machines they share (one `_row` formula, rule 1).
+    for m in s["by_machine"]:
+        assert s["machine_cost"][m["machine_id"]] == m["cost"]
+
+    # empty -> an empty map, not a crash.
+    assert cost.build_cost_summary(_fresh_session(), "DEFAULT")["machine_cost"] == {}
+    print("PASS machine_cost is the full uncapped per-machine map (ranks past TOP_N keep real cost)")
+
+
 if __name__ == "__main__":
     test_downtime_minutes_floors_per_record_not_on_the_net()
     test_headline_downtime_reconciles_with_breakdown_when_a_job_runs_over()
     test_cost_prices_downtime_and_scrap_and_rolls_up_recorded()
+    test_machine_cost_is_the_full_uncapped_map_not_just_top_n()
     print("COST OK: downtime + scrap priced at standard rates (biggest flagged); recorded costs by type; empty-safe")

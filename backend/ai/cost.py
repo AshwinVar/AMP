@@ -74,10 +74,17 @@ def build_cost_summary(db, tenant: str) -> dict:
                 "cost": a["downtime_min"] * DOWNTIME_COST_PER_MIN + a["rejected"] * SCRAP_COST_PER_UNIT}
 
     by_line = [_row({"line": ln}, a) for ln, a in sorted(line_agg.items())]
-    by_machine = sorted(
+    machine_rows = sorted(
         (_row({"machine_id": mid, "name": names.get(mid, f"#{mid}")}, a) for mid, a in machine_agg.items()),
         key=lambda m: m["cost"], reverse=True,
-    )[:TOP_N]
+    )
+    # by_machine is the costliest-first DISPLAY list, capped at TOP_N. machine_cost
+    # is the FULL, uncapped {machine_id: cost} map over the same records — the twin
+    # floor-map overlay needs every machine's real figure, not just the top few, or
+    # a machine ranked outside the top-N paints as £0 on the map despite real losses.
+    # Both come from the same `_row` cost formula, so they can never disagree (rule 1).
+    by_machine = machine_rows[:TOP_N]
+    machine_cost = {m["machine_id"]: m["cost"] for m in machine_rows}
 
     # Daily loss cost across the window (oldest -> newest), for the trend.
     today = datetime.utcnow().date()
@@ -122,6 +129,7 @@ def build_cost_summary(db, tenant: str) -> dict:
         "biggest": biggest["key"] if biggest else None,
         "by_line": by_line,
         "by_machine": by_machine,
+        "machine_cost": machine_cost,
         "daily": daily,
         "recorded_total": sum(by_type_amt.values()),
         "by_type": by_type,

@@ -1,7 +1,7 @@
 """Executive scorecard — the plant on one line (ADR-0007).
 
-One headline KPI per pillar — OEE, good rate, on-time orders, and the cost of
-losses — each with a tone (good / warn / bad) and a change vs the prior 7 days,
+One headline KPI per pillar — OEE, good rate, delivery reliability, and the cost
+of losses — each with a tone (good / warn / bad) and a change vs the prior 7 days,
 so the exec home leads with the numbers that matter and their direction, not a
 wall of cards. Composes the pillar read-models only; auto-scoped to the tenant
 (ADR-0002); it adds no storage.
@@ -74,18 +74,24 @@ def _delta(cur, prior, has_prior, lower_is_better=False):
 
 
 def build_scorecard(db, tenant: str) -> dict:
-    """Four headline KPIs — OEE, good rate, on-time orders, cost of losses — each
-    with a tone and a change vs the prior 7 days, composed from the pillar
-    read-models (ADR-0007). On-time is order-state based, so it has no weekly
-    delta."""
+    """Four headline KPIs — OEE, good rate, delivery reliability, cost of losses —
+    each with a tone and a change vs the prior 7 days, composed from the pillar
+    read-models (ADR-0007). Delivery reliability is order-state based, so it has
+    no weekly delta."""
     oee = build_oee_summary(db, tenant)["plant"]
     prod = build_production_summary(db, tenant)
     delivery = build_delivery_summary(db, tenant)
     cost = build_cost_summary(db, tenant)
     prior = _period_kpis(_prior_records(db))
 
-    on_time = (round((delivery["total"] - delivery["late"]) / delivery["total"] * 100)
-               if delivery["total"] else None)
+    # Delivery reliability — of the orders that have come due (delivered or late),
+    # the share actually delivered. Reuses the delivery read-model's own definition
+    # so the scorecard, the delivery summary and the per-customer drill-down all
+    # reconcile. This is NOT an on-time rate: customer_orders carries no dispatch
+    # timestamp, so punctuality isn't computable, and not-yet-due (on-track /
+    # at-risk) orders are held out of the denominator rather than counted as
+    # successes. None when no order has come due yet -> the strip shows "—".
+    reliability = delivery["reliability_rate"] if delivery["resolved"] else None
     # OEE week-over-week uses the SHARED direction (with its dead-band), so a small
     # move can't read "down"/red here while the recovery card's badge says "flat".
     if prior["has"] and oee["oee"] is not None:
@@ -101,8 +107,10 @@ def build_scorecard(db, tenant: str) -> dict:
          "tone": _tone(oee["oee"], 85, 70), "delta": oee_d, "delta_tone": oee_dt},
         {"key": "good_rate", "label": "Good rate", "value": prod["good_rate"], "unit": "%",
          "tone": _tone(prod["good_rate"], 98, 95), "delta": good_d, "delta_tone": good_dt},
-        {"key": "on_time", "label": "On-time orders", "value": on_time, "unit": "%",
-         "tone": _tone(on_time, 95, 85), "delta": None, "delta_tone": None},
+        # key stays "on_time" so the strip still drills into the orders view; the
+        # displayed label and value are the honest delivery-reliability number.
+        {"key": "on_time", "label": "Delivery reliability", "value": reliability, "unit": "%",
+         "tone": _tone(reliability, 95, 85), "delta": None, "delta_tone": None},
         {"key": "loss_cost", "label": "Cost of losses", "value": cost["loss_cost"], "unit": "$",
          "tone": ("good" if cost["loss_cost"] == 0 else "warn"), "delta": cost_d, "delta_tone": cost_dt},
     ]

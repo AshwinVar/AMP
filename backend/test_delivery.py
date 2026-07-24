@@ -48,6 +48,16 @@ def test_delivery_classifies_orders_and_rolls_up_by_customer():
     assert s["fulfillment_rate"] == 54
     # on-track rate: 2 delivered + 1 on-track of 5 orders = 60%
     assert s["on_track_rate"] == 60
+    # delivery reliability: of the orders that have come due (2 delivered + 1 late),
+    # 2 delivered = 67%. Not-yet-due orders (on-track / at-risk) are held out of the
+    # denominator, so this is NOT (total - late)/total = (5-1)/5 = 80%.
+    assert s["resolved"] == 3 and s["reliability_rate"] == 67
+    assert s["reliability_rate"] != round((s["total"] - s["late"]) / s["total"] * 100)
+    # the plant-wide reliability reconciles with the sum of each customer's due orders
+    by_c = {c["customer"]: c for c in s["by_customer"]}
+    due = sum(c["delivered"] + c["late"] for c in by_c.values())
+    delivered = sum(c["delivered"] for c in by_c.values())
+    assert due == s["resolved"] and round(delivered / due * 100) == s["reliability_rate"]
     # unit totals: 500 ordered, 270 dispatched, 230 remaining
     assert s["units_ordered"] == 500 and s["units_dispatched"] == 270 and s["units_remaining"] == 230
     # units at risk: undelivered on the late (BUG-2: 80) + at-risk (MER-1: 100) orders
@@ -72,6 +82,7 @@ def test_delivery_classifies_orders_and_rolls_up_by_customer():
     empty = delivery.build_delivery_summary(_fresh_session(), "DEFAULT")
     assert empty["total"] == 0 and empty["fulfillment_rate"] == 0 and empty["at_risk_orders"] == []
     assert empty["on_track_rate"] == 0 and empty["units_at_risk"] == 0 and empty["units_remaining"] == 0
+    assert empty["resolved"] == 0 and empty["reliability_rate"] == 0   # no divide-by-zero
 
 
 def test_customer_detail_scopes_and_scores_one_customer():

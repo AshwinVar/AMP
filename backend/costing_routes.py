@@ -83,7 +83,11 @@ def get_costing_analytics(db: Session = Depends(_get_db), current_user: dict = D
         department = row.department or "Unassigned"
         by_department[department] = by_department.get(department, 0) + row.amount
 
-    cost_per_good_unit = round(manual_cost / production_units) if production_units else 0
+    # Per-unit cost to pence precision, not whole pounds: manufacturing per-unit
+    # costs are usually sub-£1, so round(0.50) -> 0 fabricated a £0/unit. And with
+    # no production the metric is undefined (you can't divide real cost by zero
+    # units) -> None, shown as "—", never a misleading £0 while costs exist.
+    cost_per_good_unit = round(manual_cost / production_units, 2) if production_units else None
 
     return {
         "total_cost_records": len(costs),

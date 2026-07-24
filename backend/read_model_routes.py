@@ -351,6 +351,15 @@ def get_operator_summary(db: Session = Depends(_get_db), current_user: dict = De
     return ai.workforce.build_operator_summary(db, request_tenant(current_user))
 
 
+@router.get("/operator-detail")
+def get_operator_detail(operator: str, db: Session = Depends(_get_db), current_user: dict = Depends(get_current_user)):
+    # Operator drill-down (ADR-0007): for one operator — their good/rejected units
+    # and quality rate against the plant and where they rank among the crew, which
+    # machines they ran (worst quality first), a measured average job time, a daily
+    # good/rejected series, and their recent jobs.
+    return ai.workforce.build_operator_detail(db, request_tenant(current_user), operator)
+
+
 @router.get("/weekly-report")
 def get_weekly_report(db: Session = Depends(_get_db), current_user: dict = Depends(get_current_user)):
     # Weekly plant report (ADR-0007): a Markdown report composing the scorecard,

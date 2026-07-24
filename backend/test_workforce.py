@@ -24,15 +24,19 @@ def _fresh_session():
 _seq = [0]
 
 
-def _exe(operator, good, rejected, status="Completed", days_ago=0):
+def _exe(operator, good, rejected, status="Completed", days_ago=0,
+         machine_id=None, minutes=None):
     _seq[0] += 1
+    started = datetime.utcnow() - timedelta(days=days_ago)
     return models.OperatorJobExecution(
         execution_no=f"EXE-{_seq[0]}",
         operator_name=operator,
+        machine_id=machine_id,
         good_count=good,
         rejected_count=rejected,
         job_status=status,
-        started_at=datetime.utcnow() - timedelta(days=days_ago),
+        started_at=started,
+        completed_at=(started + timedelta(minutes=minutes)) if minutes is not None else None,
     )
 
 
@@ -184,6 +188,124 @@ def test_true_totals_not_top_n_length():
     assert s["good_units"] == 12 * 50         # totals cover all 12, not just the page
 
 
+def _machine(mid, name):
+    return models.Machine(id=mid, name=name, status="Running")
+
+
+def test_detail_reconciles_with_the_summary_and_ranks_the_operator():
+    """The drill-down's totals, plant rate and rank must line up with the summary
+    card the user clicked from (rule 3)."""
+    db = _fresh_session()
+    db.add_all([_machine(1, "SMT-1"), _machine(2, "IC-1")])
+    db.add_all([
+        # Ben: machine 1 -> 90 good / 30 rej (75%); machine 2 -> 60 good / 0 rej (100%)
+        _exe("Ben", 90, 30, "Completed", 0, machine_id=1),
+        _exe("Ben", 60, 0, "In Progress", 1, machine_id=2),
+        # Anya: 200 good / 20 rej overall (200/220 = 90.9 -> 91)
+        _exe("Anya", 100, 10, "Completed", 0, machine_id=1),
+        _exe("Anya", 100, 10, "Completed", 1, machine_id=2),
+        # out-of-window row must be excluded from the drill-down too
+        _exe("Ben", 999, 999, "Completed", 8, machine_id=1),
+    ])
+    db.commit()
+
+    summary = workforce.build_operator_summary(db, "DEFAULT")
+    d = workforce.build_operator_detail(db, "DEFAULT", "Ben")
+
+    assert d["found"] is True and d["operator"] == "Ben"
+    # Ben's in-window totals: good 90+60=150, rejected 30, units 180.
+    assert d["good_units"] == 150 and d["rejected_units"] == 30
+    assert d["total_units"] == 180
+    assert d["jobs"] == 2 and d["completed"] == 1 and d["active"] == 1
+    # Quality 150/180 = 83.3 -> 83 (independently derived).
+    assert d["quality_rate"] == 83
+
+    # Plant rate matches the summary headline exactly (same rows, same math).
+    assert d["plant_quality_rate"] == summary["quality_rate"]
+    # Plant: good 150(Ben)+200(Anya)=350, rej 30+20=50 -> 350/400 = 87.5 -> 88.
+    assert d["plant_quality_rate"] == 88
+    assert d["vs_plant"] == 83 - 88   # -5
+
+    # Rank matches the operator's position in the summary's worst-first list.
+    order = [o["operator"] for o in summary["by_operator"]]
+    assert d["rank"] == order.index("Ben") + 1
+    assert d["operators"] == 2
+
+    # Per-machine breakdown sums back to the operator's totals (rule 3), worst first.
+    assert sum(m["good"] for m in d["by_machine"]) == d["good_units"]
+    assert sum(m["rejected"] for m in d["by_machine"]) == d["rejected_units"]
+    assert sum(m["jobs"] for m in d["by_machine"]) == d["jobs"]
+    bym = {m["name"]: m for m in d["by_machine"]}
+    assert bym["SMT-1"]["quality_rate"] == 75 and bym["IC-1"]["quality_rate"] == 100
+    # SMT-1 (75%, real volume) ranks ahead of IC-1 (100%).
+    assert d["by_machine"][0]["name"] == "SMT-1"
+
+    # Daily series reconciles to the operator's totals.
+    assert sum(x["good"] for x in d["daily"]) == d["good_units"]
+    assert sum(x["rejected"] for x in d["daily"]) == d["rejected_units"]
+    assert len(d["daily"]) == workforce.WINDOW_DAYS
+
+
+def test_detail_job_time_is_measured_from_real_timestamps_only():
+    """avg_job_minutes comes from started_at/completed_at — an unfinished or
+    skewed job is excluded, never scored 0, and it is a cycle time not 'on-time'."""
+    db = _fresh_session()
+    db.add_all([
+        _exe("Cy", 50, 0, "Completed", 0, minutes=30),    # 30 min
+        _exe("Cy", 50, 0, "Completed", 0, minutes=90),    # 90 min
+        _exe("Cy", 40, 0, "In Progress", 0, minutes=None),  # no completion -> untimed
+    ])
+    db.commit()
+
+    d = workforce.build_operator_detail(db, "DEFAULT", "Cy")
+    # Only the two completed jobs are timed: (30 + 90) / 2 = 60.0.
+    assert d["timed_jobs"] == 2
+    assert d["avg_job_minutes"] == 60.0
+    assert d["jobs"] == 3            # the untimed job still counts as a job
+    # No "on_time" field is invented anywhere in the payload.
+    assert "on_time" not in d and "on_time_rate" not in d
+
+
+def test_detail_unknown_operator_is_empty_safe():
+    db = _fresh_session()
+    db.add(_exe("Real", 10, 0, "Completed", 0))
+    db.commit()
+
+    d = workforce.build_operator_detail(db, "DEFAULT", "Ghost")
+    assert d["found"] is False and d["operator"] == "Ghost"
+    assert d["jobs"] == 0 and d["good_units"] == 0 and d["total_units"] == 0
+    assert d["quality_rate"] is None and d["vs_plant"] is None and d["rank"] is None
+    assert d["avg_job_minutes"] is None and d["timed_jobs"] == 0
+    assert d["by_machine"] == [] and d["recent"] == []
+    assert len(d["daily"]) == workforce.WINDOW_DAYS
+    assert all(x["good"] == 0 and x["rejected"] == 0 for x in d["daily"])
+
+    # Empty table -> found:false, no crash.
+    d0 = workforce.build_operator_detail(_fresh_session(), "DEFAULT", "Anyone")
+    assert d0["found"] is False and d0["operators"] == 0
+
+
+def test_detail_none_machine_and_no_units_are_safe():
+    """A NULL machine falls into the '—' bucket (parts still reconcile) and an
+    operator who booked no units has None rate and None vs_plant, not a 0%."""
+    db = _fresh_session()
+    # Dane: one job, no machine, no units booked yet.
+    row = _exe("Dane", None, None, "In Progress", 0, machine_id=None)
+    row.good_count = None
+    row.rejected_count = None
+    db.add(row)
+    db.commit()
+
+    d = workforce.build_operator_detail(db, "DEFAULT", "Dane")
+    assert d["found"] is True
+    assert d["good_units"] == 0 and d["rejected_units"] == 0 and d["total_units"] == 0
+    assert d["quality_rate"] is None
+    assert d["plant_quality_rate"] is None and d["vs_plant"] is None
+    assert len(d["by_machine"]) == 1 and d["by_machine"][0]["name"] == "—"
+    assert d["by_machine"][0]["quality_rate"] is None
+    assert sum(m["jobs"] for m in d["by_machine"]) == d["jobs"] == 1
+
+
 if __name__ == "__main__":
     test_rolls_up_per_operator_and_reconciles_to_the_headline()
     test_operator_with_no_units_has_no_rate_and_is_never_worst()
@@ -191,6 +313,11 @@ if __name__ == "__main__":
     test_uniformly_good_crew_flags_nobody()
     test_empty_and_none_fields_are_safe()
     test_true_totals_not_top_n_length()
+    test_detail_reconciles_with_the_summary_and_ranks_the_operator()
+    test_detail_job_time_is_measured_from_real_timestamps_only()
+    test_detail_unknown_operator_is_empty_safe()
+    test_detail_none_machine_and_no_units_are_safe()
     print("WORKFORCE OK: per-operator rollup reconciles to headline; None rate when no units; "
           "thin-sample never worst; uniformly-good crew flags nobody; true totals not TOP_N; "
-          "windowed; empty/None-safe")
+          "windowed; empty/None-safe; drill-down reconciles plant rate + rank + per-machine "
+          "parts; job time measured from real timestamps; unknown/None/no-units safe")

@@ -143,15 +143,21 @@ def test_shift_drilldown_reads_against_the_plant():
     # machines inside the shift, worst first: SMT-01 carries the missed plan
     assert [m["machine"] for m in s["by_machine"]] == ["SMT-01", "IC-01"]
     assert s["worst_machine"]["machine"] == "SMT-01"
-    assert s["by_machine"][0]["shortfall"] == 160   # (100-0) + (100-40)
-    # Per-machine attainment inside the shift is on the machine's OWN
-    # actual/planned (Night's today plan N-4 on IC-01 is INCLUDED here, unlike
-    # the due-only headline): SMT-01 = (0+40)/(100+100) = 20%;
-    # IC-01 = (60+10)/(100+100) = 35%.  Pin both rates and IC-01's shortfall so a
-    # wrong basis (e.g. due-only, which would read IC-01 as 60/100 = 60%) is caught.
-    assert s["by_machine"][0]["attainment_rate"] == 20   # SMT-01 (worst)
-    assert s["by_machine"][1]["attainment_rate"] == 35   # IC-01
-    assert s["by_machine"][1]["shortfall"] == 130        # 200 - 70
+    # Per-machine attainment/shortfall are on the SAME "due so far" basis as the
+    # shift headline, so the breakdown reconciles with the number above it
+    # (rule 3). Night's today plan N-4 (IC-01, 10/100) hasn't run yet, so it's
+    # held out of IC-01's rate exactly as it's held out of the headline — it must
+    # not drag the machine below the shift it belongs to.
+    #   SMT-01: due plans N-1 (0/100) + N-2 (40/100) = 40/200 = 20%, short 160.
+    #   IC-01:  due plan  N-3 (60/100)               = 60/100 = 60%, short  40.
+    assert s["by_machine"][0]["attainment_rate"] == 20 and s["by_machine"][0]["shortfall"] == 160
+    assert s["by_machine"][1]["attainment_rate"] == 60 and s["by_machine"][1]["shortfall"] == 40
+    # Parts sum to the whole: per-machine due planned/actual reconcile with the
+    # shift headline, and the shortfalls add up to the headline shortfall — the
+    # full-window basis (which read IC-01 at 35% / 130 short) did not.
+    assert sum(m["due_planned"] for m in s["by_machine"]) == s["planned_units"]
+    assert sum(m["due_actual"] for m in s["by_machine"]) == s["actual_units"]
+    assert sum(m["shortfall"] for m in s["by_machine"]) == s["shortfall_units"]
 
     # chase: missed first, then behind by biggest shortfall; Day's plans excluded
     assert [c["plan_no"] for c in s["chase"]] == ["N-1", "N-2", "N-3"]

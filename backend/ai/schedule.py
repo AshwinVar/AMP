@@ -226,7 +226,12 @@ def build_shift_adherence(db, tenant: str, shift: str) -> dict:
         if p.plan_date is not None:
             per_day_planned[p.plan_date] += planned
             per_day_actual[p.plan_date] += actual
-        if p.plan_date is not None and p.plan_date < today:
+        # "Due so far" = plan_date strictly before today. The headline rate and
+        # the per-machine rows below both use this basis so the breakdown
+        # reconciles with the number it sits under (rule 3); a plan due today or
+        # later has actual=0 only because it hasn't run yet.
+        is_due = p.plan_date is not None and p.plan_date < today
+        if is_due:
             due_planned += planned
             due_actual += actual
 
@@ -234,12 +239,15 @@ def build_shift_adherence(db, tenant: str, shift: str) -> dict:
         m = per_machine.setdefault(p.machine_id, {
             "machine_id": p.machine_id, "machine": mname, "plans": 0,
             "met": 0, "on_track": 0, "behind": 0, "missed": 0,
-            "planned": 0, "actual": 0,
+            "planned": 0, "actual": 0, "due_planned": 0, "due_actual": 0,
         })
         m["plans"] += 1
         m[state] += 1
         m["planned"] += planned
         m["actual"] += actual
+        if is_due:
+            m["due_planned"] += planned
+            m["due_actual"] += actual
 
         if state in ("behind", "missed"):
             chase.append({
@@ -255,8 +263,11 @@ def build_shift_adherence(db, tenant: str, shift: str) -> dict:
                 "days_ago": (today - p.plan_date).days if p.plan_date else None,
             })
 
-    by_machine = [{**m, "attainment_rate": _pct(m["actual"], m["planned"]),
-                   "shortfall": max(m["planned"] - m["actual"], 0)}
+    # Per-machine attainment/shortfall on the same "due so far" basis as the
+    # shift headline (and the summary's own by_machine), so the parts sum to the
+    # whole: sum(due_planned) == planned_units and sum(shortfall) == shortfall_units.
+    by_machine = [{**m, "attainment_rate": _pct(m["due_actual"], m["due_planned"]),
+                   "shortfall": max(m["due_planned"] - m["due_actual"], 0)}
                   for m in per_machine.values()]
     by_machine.sort(key=lambda m: (m["missed"], m["behind"], -m["attainment_rate"]), reverse=True)
 

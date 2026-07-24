@@ -143,6 +143,8 @@ _ensure_index("inventory_transactions", "item_id")     # per-item burn / part-ru
 _ensure_index("production_plans", "plan_date")      # schedule-adherence window (now filtered in SQL)
 _ensure_index("production_schedules", "scheduled_date")  # schedule-load board window (filtered in SQL)
 _ensure_index("operator_job_executions", "started_at")   # operator-performance window (filtered in SQL)
+_ensure_index("cycle_count_items", "created_at")   # inventory-record-accuracy window (filtered in SQL)
+_ensure_index("cycle_count_items", "item_id")      # scope count lines to the tenant's items (ai/stock_accuracy)
 _ensure_index("escalations", "created_at")               # escalation-queue resolution window (filtered in SQL)
 tenancy.ensure_tenant_columns(engine)  # ADR-0002: tenant_code on core tables
 tenancy.install_scoping()              # ADR-0002: auto-enforce tenant scoping

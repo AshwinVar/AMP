@@ -44,11 +44,28 @@ CORE_TENANT_TABLES = [
     "industrial_devices", "industrial_signals", "plc_signal_mappings",
 ]
 
+# Tables that gain tenant_code but must NOT be blind-backfilled to DEFAULT: the
+# audit trail and the enterprise-inventory domain. Their legacy rows have no
+# reliable in-row tenant, so a blanket UPDATE ... = 'DEFAULT' could hand another
+# tenant's records (or system audit) to the founder workspace. They are added
+# NULLABLE and left NULL — hidden from every tenant's reads — until an approved,
+# source-based backfill (see backfill_enterprise_tenants.py) assigns them.
+FAIL_SAFE_TENANT_TABLES = [
+    "audit_logs", "remnants", "material_issue_slips", "goods_receipt_notes",
+    "grn_items", "cycle_counts", "cycle_count_items",
+]
 
-def ensure_tenant_columns(engine, tables=CORE_TENANT_TABLES):
-    """Idempotently add ``tenant_code`` (+ index) to each table and backfill
-    existing rows to the default tenant. Never raises — a migration hiccup must
-    not block application startup."""
+
+def ensure_tenant_columns(engine, tables=CORE_TENANT_TABLES, backfill=True):
+    """Idempotently add ``tenant_code`` (+ index) to each table. Never raises — a
+    migration hiccup must not block application startup.
+
+    ``backfill=True`` (core tables): existing rows are set to the DEFAULT tenant.
+    ``backfill=False`` (audit + enterprise inventory): the column is added
+    NULLABLE with no default and existing rows are LEFT NULL. A NULL tenant_code
+    matches no tenant under the read filter, so an ambiguous legacy row is hidden
+    rather than silently assigned to the wrong tenant — it waits for an approved,
+    source-based backfill."""
     insp = inspect(engine)
     present = set(insp.get_table_names())
     for table in tables:
@@ -59,16 +76,21 @@ def ensure_tenant_columns(engine, tables=CORE_TENANT_TABLES):
             continue
         try:
             with engine.begin() as conn:
-                conn.execute(text(
-                    f"ALTER TABLE {table} ADD COLUMN tenant_code VARCHAR DEFAULT '{DEFAULT_TENANT}'"
-                ))
-                conn.execute(text(
-                    f"UPDATE {table} SET tenant_code = '{DEFAULT_TENANT}' WHERE tenant_code IS NULL"
-                ))
+                if backfill:
+                    conn.execute(text(
+                        f"ALTER TABLE {table} ADD COLUMN tenant_code VARCHAR DEFAULT '{DEFAULT_TENANT}'"
+                    ))
+                    conn.execute(text(
+                        f"UPDATE {table} SET tenant_code = '{DEFAULT_TENANT}' WHERE tenant_code IS NULL"
+                    ))
+                else:
+                    # Nullable, no default, no backfill — legacy rows stay NULL
+                    # (hidden) pending an approved, source-based backfill.
+                    conn.execute(text(f"ALTER TABLE {table} ADD COLUMN tenant_code VARCHAR"))
                 conn.execute(text(
                     f"CREATE INDEX IF NOT EXISTS ix_{table}_tenant_code ON {table} (tenant_code)"
                 ))
-            print(f"[MIGRATE] {table}.tenant_code added")
+            print(f"[MIGRATE] {table}.tenant_code added (backfill={backfill})")
         except Exception as e:
             print(f"[MIGRATE] {table}.tenant_code skipped: {e}")
 
@@ -129,6 +151,11 @@ SCOPED_MODELS = (
     models.IoTTelemetry, models.AIRecommendation, models.CostRecord,
     models.OperatorJobExecution, models.Notification, models.ReportRequest,
     models.IndustrialDevice, models.IndustrialSignal, models.PlcSignalMapping,
+    # Fail-safe scoping (this PR): the audit trail + the enterprise-inventory
+    # domain. These carry a NULLABLE tenant_code (FAIL_SAFE_TENANT_TABLES) —
+    # request writes auto-stamp, legacy NULL rows stay hidden until backfilled.
+    models.AuditLog, models.Remnant, models.MaterialIssueSlip,
+    models.GoodsReceiptNote, models.GRNItem, models.CycleCount, models.CycleCountItem,
 )
 
 

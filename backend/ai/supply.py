@@ -51,10 +51,12 @@ def _state(po, today) -> str:
 
 
 def build_supply_summary(db, tenant: str) -> dict:
-    """Inbound supply outlook across the PO book: plant-wide state counts and
-    unit receipt rate, a per-supplier breakdown (worst first), and the specific
-    at-risk/late POs to chase. purchase_orders and suppliers are auto-scoped
-    (ADR-0002)."""
+    """Inbound supply outlook across the PO book: plant-wide state counts, the
+    unit receipt rate and the delivery-reliability (completion) rate, a
+    per-supplier breakdown (worst first), and the specific at-risk/late POs to
+    chase. The reliability rate uses the same completion basis as the supplier
+    drill-down (build_supplier_detail), so the two reconcile. purchase_orders and
+    suppliers are auto-scoped (ADR-0002)."""
     today = datetime.utcnow().date()
     pos = db.query(models.PurchaseOrder).all()
     supplier_names = {s.id: s.supplier_name for s in db.query(models.Supplier).all()}
@@ -106,7 +108,21 @@ def build_supply_summary(db, tenant: str) -> dict:
             due_count[p.expected_delivery_date] += 1
     upcoming = [{"date": d.isoformat(), "pos": due_count[d]} for d in upcoming_days]
 
-    by_supplier = [{**s, "receipt_rate": _pct(s["received_units"], s["ordered"])} for s in per_supplier.values()]
+    # Delivery reliability, plant-wide: of the POs already due (received in full, or
+    # overdue and still short), the share received in full. On-track / at-risk POs
+    # aren't due yet, so they're held out of the denominator — the same completion
+    # basis as the supplier drill-down (build_supplier_detail), so the summary and
+    # the drill-down reconcile per supplier.
+    # NOT an on-time rate: purchase_orders carries no receipt timestamp (only
+    # expected_delivery_date), so a PO received long after its date still counts as
+    # received. Nothing may present this as an "on time" figure.
+    resolved = totals["received"] + totals["late"]
+
+    by_supplier = [{**s, "receipt_rate": _pct(s["received_units"], s["ordered"]),
+                    # per-supplier reliability on the same completion basis, keyed the
+                    # same way the drill-down computes it (received / received+late).
+                    "reliability_rate": _pct(s["received"], s["received"] + s["late"])}
+                   for s in per_supplier.values()]
     # worst first: most late, then most at-risk, then lowest receipt rate
     by_supplier.sort(key=lambda s: (s["late"], s["at_risk"], -s["receipt_rate"]), reverse=True)
 
@@ -121,6 +137,11 @@ def build_supply_summary(db, tenant: str) -> dict:
         "at_risk": totals["at_risk"],
         "late": totals["late"],
         "receipt_rate": _pct(received_units, ordered_units),
+        # POs that have come due (received or late) and, of those, the share received
+        # in full — the honest "can I count on inbound supply?" number, reconciled
+        # with the per-supplier drill-down.
+        "resolved": resolved,
+        "reliability_rate": _pct(totals["received"], resolved),
         "by_supplier": by_supplier,
         "chase": chase[:TOP_N],
         "upcoming": upcoming,

@@ -243,6 +243,11 @@ def build_supplier_detail(db, tenant: str, supplier: str) -> dict:
         "at_risk": totals["at_risk"],
         "late": totals["late"],
         "receipt_rate": _pct(received_units, ordered_units),
+        # POs that have come due (received or late). When it's 0 no PO is due yet,
+        # so reliability_rate is a floored empty denominator (0), NOT a real 0% —
+        # callers must gate the display on `resolved > 0` (the plant card does), or
+        # they'll show "0% received of due POs" for a supplier nothing is due from.
+        "resolved": resolved,
         "reliability_rate": _pct(totals["received"], resolved),
         "ordered_units": ordered_units,
         "received_units": received_units,

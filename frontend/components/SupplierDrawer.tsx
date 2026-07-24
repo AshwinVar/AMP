@@ -25,6 +25,7 @@ type SupplierDetail = {
   total: number;
   received: number; on_track: number; at_risk: number; late: number;
   receipt_rate: number;
+  resolved: number;
   reliability_rate: number;
   ordered_units: number; received_units: number; overdue_units: number;
   chase: ChasePo[];
@@ -135,9 +136,16 @@ export default function SupplierDrawer({ supplier, onClose }: { supplier: string
                   </p>
                 </div>
                 <div className="rounded-2xl bg-slate-900 border border-slate-800 p-5">
-                  <p className={`text-3xl font-bold ${rateColor(detail.reliability_rate)}`}>{detail.reliability_rate}%</p>
+                  {/* Reliability is a completion rate over POs already due. With
+                      none due yet the backend's rate is a floored empty denominator
+                      (0), not a real 0% — show "—" rather than a misleading red 0. */}
+                  {detail.resolved > 0 ? (
+                    <p className={`text-3xl font-bold ${rateColor(detail.reliability_rate)}`}>{detail.reliability_rate}%</p>
+                  ) : (
+                    <p className="text-3xl font-bold text-slate-500">—</p>
+                  )}
                   <p className="text-xs text-slate-500 mt-1">
-                    received · of POs already due
+                    {detail.resolved > 0 ? "received · of POs already due" : "no POs due yet"}
                   </p>
                 </div>
               </div>

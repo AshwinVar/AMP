@@ -131,6 +131,9 @@ def test_supplier_detail_scopes_and_scores_one_supplier():
     # timestamp, so a PO received long after its expected date still counts as
     # received. Nothing may present this as an "on time" rate.
     assert d["reliability_rate"] == 50
+    # `resolved` (POs already due) must be returned so a caller can tell a real
+    # 50% from a floored 0%: 1 received + 1 late = 2 due; the at-risk PO isn't due.
+    assert d["resolved"] == 2
     assert d["overdue_units"] == 80                         # 100 - 20 on the late PO
     # chase list: late (PO-2) first, then at-risk (PO-3); received excluded
     assert [o["po_no"] for o in d["chase"]] == ["PO-2", "PO-3"]
@@ -141,6 +144,41 @@ def test_supplier_detail_scopes_and_scores_one_supplier():
     assert {r["po_no"] for r in d["recent"]} == {"PO-1", "PO-2", "PO-3"}
 
 
+def test_supplier_detail_exposes_resolved_so_no_due_reads_as_dash_not_zero():
+    """A supplier with open POs but none yet due must NOT read as 0% reliable.
+
+    reliability_rate is a completion rate over POs already due; with nothing due
+    its denominator is empty and _pct floors it to 0. That 0 is a rendering
+    default, not a measured failure, so the drill-down exposes `resolved` (the
+    count of due POs) and the drawer shows "—" while resolved == 0 — otherwise a
+    supplier we simply haven't waited on yet renders a red "0% received of due POs".
+    """
+    db = _fresh_session()
+    _supplier(db, 1, "Indium")
+    db.add_all([
+        _po("PO-FUTURE", 1, 100, 0, 30),   # on_track — due in 30 days, nothing in yet
+        _po("PO-SOON", 1, 100, 0, 2),      # at_risk — due in 2 days, still not due
+    ])
+    db.commit()
+
+    d = supply.build_supplier_detail(db, "DEFAULT", "Indium")
+    assert d["total"] == 2
+    assert d["received"] == 0 and d["late"] == 0            # nothing has come due
+    assert d["on_track"] == 1 and d["at_risk"] == 1
+    # No PO is due yet -> resolved is 0 and reliability_rate is a floored 0, NOT a
+    # real 0%. The distinguishing field the drawer gates on is `resolved`.
+    assert d["resolved"] == 0
+    assert d["reliability_rate"] == 0                       # floored empty denominator
+    # A real 0% (below) has resolved > 0; this case has resolved == 0. The two are
+    # only separable because `resolved` is exposed.
+    db2 = _fresh_session()
+    _supplier(db2, 1, "Indium")
+    db2.add(_po("PO-LATE", 1, 100, 0, -1))                  # one PO due, none received
+    db2.commit()
+    real_zero = supply.build_supplier_detail(db2, "DEFAULT", "Indium")
+    assert real_zero["resolved"] == 1 and real_zero["reliability_rate"] == 0
+
+
 def test_supplier_detail_is_empty_safe_for_unknown_supplier():
     db = _fresh_session()
     _supplier(db, 1, "Indium")
@@ -148,6 +186,7 @@ def test_supplier_detail_is_empty_safe_for_unknown_supplier():
     db.commit()
     d = supply.build_supplier_detail(db, "DEFAULT", "Nonexistent")
     assert d["total"] == 0
+    assert d["resolved"] == 0                                      # nothing due -> "—" in the drawer
     assert d["receipt_rate"] == 0 and d["reliability_rate"] == 0   # no divide-by-zero
     assert d["chase"] == [] and d["recent"] == []
     assert d["category"] is None and d["supplier_status"] is None
@@ -202,6 +241,7 @@ if __name__ == "__main__":
     test_supply_classifies_pos_at_classification_boundaries()
     test_supply_honours_overdue_status_and_is_empty_safe()
     test_supplier_detail_scopes_and_scores_one_supplier()
+    test_supplier_detail_exposes_resolved_so_no_due_reads_as_dash_not_zero()
     test_supplier_detail_is_empty_safe_for_unknown_supplier()
     print("SUPPLY OK: POs classified received/on-track/at-risk/late; unit receipt rate; "
           "plant + per-supplier reliability (completion basis, reconciled with the drill-down); "

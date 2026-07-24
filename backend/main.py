@@ -142,6 +142,7 @@ _ensure_index("inventory_transactions", "created_at")  # coverage burn-rate wind
 _ensure_index("inventory_transactions", "item_id")     # per-item burn / part-runway drill-down
 _ensure_index("production_plans", "plan_date")      # schedule-adherence window (now filtered in SQL)
 _ensure_index("production_schedules", "scheduled_date")  # schedule-load board window (filtered in SQL)
+_ensure_index("operator_job_executions", "started_at")   # operator-performance window (filtered in SQL)
 tenancy.ensure_tenant_columns(engine)  # ADR-0002: tenant_code on core tables
 tenancy.install_scoping()              # ADR-0002: auto-enforce tenant scoping
 

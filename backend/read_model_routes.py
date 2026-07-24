@@ -325,6 +325,14 @@ def global_search(q: str = "", db: Session = Depends(_get_db), current_user: dic
     return ai.search.build_search(db, request_tenant(current_user), q)
 
 
+@router.get("/operator-summary")
+def get_operator_summary(db: Session = Depends(_get_db), current_user: dict = Depends(get_current_user)):
+    # Operator performance (ADR-0007): the labour read-model over the operator
+    # terminal log — per-operator jobs, good/rejected units and quality rate over
+    # the last 7 days, worst quality (on real volume) first, with plant totals.
+    return ai.workforce.build_operator_summary(db, request_tenant(current_user))
+
+
 @router.get("/weekly-report")
 def get_weekly_report(db: Session = Depends(_get_db), current_user: dict = Depends(get_current_user)):
     # Weekly plant report (ADR-0007): a Markdown report composing the scorecard,

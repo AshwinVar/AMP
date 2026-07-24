@@ -97,6 +97,14 @@ def build_delivery_summary(db, tenant: str) -> dict:
             due_count[o.due_date] += 1
     upcoming = [{"date": d.isoformat(), "orders": due_count[d]} for d in upcoming_days]
 
+    # Delivery reliability, plant-wide: of the orders that have come due (delivered
+    # or late), the share actually delivered — the same completion basis as the
+    # per-customer drill-down (build_customer_detail), so the summary and the
+    # drill-down reconcile. NOT an on-time rate: customer_orders has no dispatch
+    # timestamp, and not-yet-due orders (on-track / at-risk) are held out of the
+    # denominator rather than counted as successes.
+    resolved = totals["delivered"] + totals["late"]
+
     by_customer = [{**c, "fulfillment_rate": _pct(c["dispatched"], c["ordered"])} for c in per_customer.values()]
     # worst first: most late, then most at-risk, then lowest fulfillment
     by_customer.sort(key=lambda c: (c["late"], c["at_risk"], -c["fulfillment_rate"]), reverse=True)
@@ -114,6 +122,11 @@ def build_delivery_summary(db, tenant: str) -> dict:
         # Share of the order book that's not late or at-risk — the headline "are we
         # keeping our promises?" number.
         "on_track_rate": _pct(totals["delivered"] + totals["on_track"], len(orders)),
+        # Orders that have come due (delivered or late) and, of those, the share
+        # delivered — the honest "are we keeping delivery promises?" number,
+        # reconciled with the per-customer drill-down.
+        "resolved": resolved,
+        "reliability_rate": _pct(totals["delivered"], resolved),
         "fulfillment_rate": _pct(dispatched_units, ordered_units),
         "units_ordered": ordered_units,
         "units_dispatched": dispatched_units,

@@ -23,6 +23,7 @@ type CustomerDetail = {
   total: number;
   delivered: number; on_track: number; at_risk: number; late: number;
   fulfillment_rate: number;
+  resolved: number;
   reliability_rate: number;
   ordered_units: number; dispatched_units: number; overdue_units: number;
   chase: ChaseOrder[];
@@ -130,9 +131,16 @@ export default function CustomerDrawer({ customer, onClose }: { customer: string
                   </p>
                 </div>
                 <div className="rounded-2xl bg-slate-900 border border-slate-800 p-5">
-                  <p className={`text-3xl font-bold ${rateColor(detail.reliability_rate)}`}>{detail.reliability_rate}%</p>
+                  {/* Reliability is a completion rate over orders already due. With
+                      none due yet the backend's rate is a floored empty denominator
+                      (0), not a real 0% — show "—" rather than a misleading red 0. */}
+                  {detail.resolved > 0 ? (
+                    <p className={`text-3xl font-bold ${rateColor(detail.reliability_rate)}`}>{detail.reliability_rate}%</p>
+                  ) : (
+                    <p className="text-3xl font-bold text-slate-500">—</p>
+                  )}
                   <p className="text-xs text-slate-500 mt-1">
-                    delivered · of orders already due
+                    {detail.resolved > 0 ? "delivered · of orders already due" : "no orders due yet"}
                   </p>
                 </div>
               </div>

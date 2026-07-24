@@ -105,6 +105,9 @@ def test_customer_detail_scopes_and_scores_one_customer():
     assert d["fulfillment_rate"] == 40
     # reliability: of the due orders (1 delivered + 1 late), 1 delivered in full = 50%
     assert d["reliability_rate"] == 50
+    # `resolved` (orders already due) must be returned so a caller can tell a real
+    # 50% from a floored 0%: 1 delivered + 1 late = 2 due; the at-risk order isn't due.
+    assert d["resolved"] == 2
     assert d["overdue_units"] == 80                         # 100 - 20 on the late order
     # chase list: late (BUG-2) first, then at-risk (BUG-3); delivered excluded
     assert [o["order_no"] for o in d["chase"]] == ["BUG-2", "BUG-3"]
@@ -115,12 +118,44 @@ def test_customer_detail_scopes_and_scores_one_customer():
     assert {r["order_no"] for r in d["recent"]} == {"BUG-1", "BUG-2", "BUG-3"}
 
 
+def test_customer_detail_exposes_resolved_so_no_due_reads_as_dash_not_zero():
+    """A customer with open orders but none yet due must NOT read as 0% reliable.
+
+    reliability_rate is a completion rate over orders already due; with nothing due
+    its denominator is empty and _pct floors it to 0. That 0 is a rendering
+    default, not a measured failure, so the drill-down exposes `resolved` (the
+    count of due orders) and the drawer shows "—" while resolved == 0 — otherwise a
+    customer we simply haven't reached the due date for renders a red "0% delivered".
+    """
+    db = _fresh_session()
+    db.add_all([
+        _order("BUG-FUTURE", "Bugatti", 100, 0, 30),   # on_track — due in 30 days, none out
+        _order("BUG-SOON", "Bugatti", 100, 0, 2),      # at_risk — due in 2 days, still not due
+    ])
+    db.commit()
+
+    d = delivery.build_customer_detail(db, "DEFAULT", "Bugatti")
+    assert d["total"] == 2
+    assert d["delivered"] == 0 and d["late"] == 0          # nothing has come due
+    assert d["on_track"] == 1 and d["at_risk"] == 1
+    # No order is due yet -> resolved 0 and reliability_rate a floored 0, NOT a real 0%.
+    assert d["resolved"] == 0
+    assert d["reliability_rate"] == 0                       # floored empty denominator
+    # A real 0% (below) has resolved > 0; only `resolved` separates the two.
+    db2 = _fresh_session()
+    db2.add(_order("BUG-LATE", "Bugatti", 100, 0, -1))     # one order due, none delivered
+    db2.commit()
+    real_zero = delivery.build_customer_detail(db2, "DEFAULT", "Bugatti")
+    assert real_zero["resolved"] == 1 and real_zero["reliability_rate"] == 0
+
+
 def test_customer_detail_is_empty_safe_for_unknown_customer():
     db = _fresh_session()
     db.add(_order("BUG-1", "Bugatti", 100, 100, 5))
     db.commit()
     d = delivery.build_customer_detail(db, "DEFAULT", "Nonexistent")
     assert d["total"] == 0
+    assert d["resolved"] == 0                                          # nothing due -> "—" in the drawer
     assert d["fulfillment_rate"] == 0 and d["reliability_rate"] == 0   # no divide-by-zero
     assert d["chase"] == [] and d["recent"] == []
 
@@ -128,6 +163,7 @@ def test_customer_detail_is_empty_safe_for_unknown_customer():
 if __name__ == "__main__":
     test_delivery_classifies_orders_and_rolls_up_by_customer()
     test_customer_detail_scopes_and_scores_one_customer()
+    test_customer_detail_exposes_resolved_so_no_due_reads_as_dash_not_zero()
     test_customer_detail_is_empty_safe_for_unknown_customer()
     print("DELIVERY OK: orders classified delivered/on-track/at-risk/late; unit fulfillment; "
           "per-customer rollup (worst first); chase list (late then at-risk); empty-safe; "

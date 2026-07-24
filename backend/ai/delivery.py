@@ -226,6 +226,11 @@ def build_customer_detail(db, tenant: str, customer: str) -> dict:
         "at_risk": totals["at_risk"],
         "late": totals["late"],
         "fulfillment_rate": _pct(dispatched_units, ordered_units),
+        # Orders that have come due (delivered or late). When it's 0 no order is due
+        # yet, so reliability_rate is a floored empty denominator (0), NOT a real 0% —
+        # callers must gate the display on `resolved > 0` (the plant card does), or
+        # they'll show "0% delivered of due orders" for a customer nothing is due to.
+        "resolved": resolved,
         "reliability_rate": _pct(totals["delivered"], resolved),
         "ordered_units": ordered_units,
         "dispatched_units": dispatched_units,

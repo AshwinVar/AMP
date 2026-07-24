@@ -501,6 +501,12 @@ class AuditLog(Base):
     __tablename__ = "audit_logs"
 
     id = Column(Integer, primary_key=True, index=True)
+    # ADR-0002 tenant scoping. NULLABLE with NO default on purpose: request writes
+    # are auto-stamped (tenancy.before_flush); a row created without a tenant
+    # context (system audit) stays NULL and is hidden from every tenant's read
+    # (with_loader_criteria(tenant_code == tenant) never matches NULL) — fail-safe,
+    # never silently assigned to DEFAULT.
+    tenant_code = Column(String, index=True, nullable=True)
     actor = Column(String, default="system")
     action = Column(String, nullable=False)
     entity_type = Column(String, nullable=True)
@@ -627,6 +633,7 @@ class Remnant(Base):
     __tablename__ = "remnants"
 
     id = Column(Integer, primary_key=True, index=True)
+    tenant_code = Column(String, index=True, nullable=True)  # ADR-0002 fail-safe (see AuditLog)
     tag_no = Column(String, unique=True, nullable=False)
     item_id = Column(Integer, ForeignKey("inventory_items.id"))
     source_reference = Column(String, nullable=True)   # WO or PO that generated this remnant
@@ -643,6 +650,7 @@ class MaterialIssueSlip(Base):
     __tablename__ = "material_issue_slips"
 
     id = Column(Integer, primary_key=True, index=True)
+    tenant_code = Column(String, index=True, nullable=True)  # ADR-0002 fail-safe (see AuditLog)
     slip_no = Column(String, unique=True, nullable=False)
     item_id = Column(Integer, ForeignKey("inventory_items.id"))
     remnant_id = Column(Integer, ForeignKey("remnants.id"), nullable=True)
@@ -661,6 +669,7 @@ class GoodsReceiptNote(Base):
     __tablename__ = "goods_receipt_notes"
 
     id = Column(Integer, primary_key=True, index=True)
+    tenant_code = Column(String, index=True, nullable=True)  # ADR-0002 fail-safe (see AuditLog)
     grn_no = Column(String, unique=True, nullable=False)
     purchase_order_ref = Column(String, nullable=True)
     supplier_name = Column(String, nullable=False)
@@ -674,6 +683,7 @@ class GRNItem(Base):
     __tablename__ = "grn_items"
 
     id = Column(Integer, primary_key=True, index=True)
+    tenant_code = Column(String, index=True, nullable=True)  # ADR-0002 fail-safe (see AuditLog)
     grn_id = Column(Integer, ForeignKey("goods_receipt_notes.id"))
     item_id = Column(Integer, ForeignKey("inventory_items.id"))
     lot_no = Column(String, nullable=True)
@@ -689,6 +699,7 @@ class CycleCount(Base):
     __tablename__ = "cycle_counts"
 
     id = Column(Integer, primary_key=True, index=True)
+    tenant_code = Column(String, index=True, nullable=True)  # ADR-0002 fail-safe (see AuditLog)
     count_no = Column(String, unique=True, nullable=False)
     counted_by = Column(String, nullable=False)
     status = Column(String, default="Draft")           # Draft / Submitted / Approved
@@ -700,6 +711,7 @@ class CycleCountItem(Base):
     __tablename__ = "cycle_count_items"
 
     id = Column(Integer, primary_key=True, index=True)
+    tenant_code = Column(String, index=True, nullable=True)  # ADR-0002 fail-safe (see AuditLog)
     count_id = Column(Integer, ForeignKey("cycle_counts.id"))
     item_id = Column(Integer, ForeignKey("inventory_items.id"))
     book_qty = Column(Integer, nullable=False)

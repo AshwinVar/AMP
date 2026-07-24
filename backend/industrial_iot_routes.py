@@ -13,6 +13,7 @@ import models
 import schemas
 from auth import get_current_user, require_roles
 from database import SessionLocal
+from machine_status import clamp_utilization, normalize_machine_status
 
 
 def _get_db():
@@ -42,12 +43,17 @@ def create_iot_telemetry(telemetry: schemas.IoTTelemetryCreate, db: Session = De
 
     signal = telemetry.signal_name.lower()
     if signal in ["utilization", "load", "efficiency"]:
-        machine.utilization = telemetry.numeric_value
+        util = clamp_utilization(telemetry.numeric_value)
+        if util is not None:
+            machine.utilization = util
 
     if signal in ["status", "machine_status"]:
+        # Only apply a RECOGNISED status; an unknown string would drop the machine
+        # from every status-based report, so leave the machine's status untouched.
+        new_status = normalize_machine_status(telemetry.signal_value)
         old_status = machine.status
-        machine.status = telemetry.signal_value
-        if old_status != machine.status:
+        if new_status and new_status != old_status:
+            machine.status = new_status
             db.add(models.MachineEvent(
                 machine_id=machine.id,
                 machine_name=machine.name,
@@ -110,9 +116,10 @@ def create_industrial_signal(signal: schemas.IndustrialSignalCreate, db: Session
         if machine:
             field = signal.signal_name.lower()
             if field in ["status", "machine_status", "state"]:
+                new_status = normalize_machine_status(signal.signal_value)
                 old_status = machine.status
-                machine.status = signal.signal_value
-                if old_status != machine.status:
+                if new_status and new_status != old_status:
+                    machine.status = new_status
                     db.add(models.MachineEvent(
                         machine_id=machine.id,
                         machine_name=machine.name,
@@ -122,7 +129,9 @@ def create_industrial_signal(signal: schemas.IndustrialSignalCreate, db: Session
                         source="industrial_gateway",
                     ))
             if field in ["utilization", "load", "efficiency"]:
-                machine.utilization = signal.numeric_value
+                util = clamp_utilization(signal.numeric_value)
+                if util is not None:
+                    machine.utilization = util
             if field == "downtime":
                 machine.downtime = signal.signal_value
 

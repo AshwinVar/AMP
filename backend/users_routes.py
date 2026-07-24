@@ -34,6 +34,23 @@ def _get_db():
         db.close()
 
 
+def _same_tenant_or_403(user, current_user):
+    """An Admin may only manage users inside their OWN workspace tenant.
+
+    The mutating handlers fetch the target by id, and User is NOT auto-scoped
+    (it is absent from tenancy.SCOPED_MODELS — see list_users, which filters by
+    hand), so this is the sole tenant boundary on those rows: without it an Admin
+    could change the role of, delete, or reset the password of any tenant's user
+    by id (a cross-tenant IDOR). It was referenced by three handlers but never
+    defined, so update-role / delete / password-reset raised NameError -> HTTP 500
+    on every call. Mirrors list_users: the DEFAULT workspace also owns legacy
+    NULL-tenant rows."""
+    tenant = request_tenant(current_user)
+    owned = (user.tenant_code in ("DEFAULT", None)) if tenant == "DEFAULT" else (user.tenant_code == tenant)
+    if not owned:
+        raise HTTPException(status_code=403, detail="User is not in your workspace")
+
+
 router = APIRouter(prefix="/users", tags=["Users"], dependencies=[Depends(require_roles(["Admin"]))])
 
 

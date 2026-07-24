@@ -53,11 +53,31 @@ def test_supply_classifies_pos_and_rolls_up_by_supplier():
     # unit receipt: received 270 of 500 ordered = 54%
     assert s["receipt_rate"] == 54
 
+    # plant reliability (completion basis): of the POs already due (2 received +
+    # 1 late = 3 resolved), 2 were received in full -> round(2/3*100) = 67%.
+    # On-track / at-risk POs aren't due yet and stay out of the denominator.
+    assert s["resolved"] == 3
+    assert s["reliability_rate"] == 67
+
     by = {x["supplier"]: x for x in s["by_supplier"]}
     assert by["Indium"]["pos"] == 2 and by["Indium"]["received"] == 1 and by["Indium"]["late"] == 1
     assert by["Kester"]["pos"] == 3 and by["Kester"]["at_risk"] == 1
     # worst-first: Indium (has a late PO) sorts before Kester
     assert s["by_supplier"][0]["supplier"] == "Indium"
+
+    # per-supplier reliability, independently derived:
+    #   Indium: 1 received of (1 received + 1 late) = 50%
+    #   Kester: 1 received (PO-5) of (1 received + 0 late) = 100%; at-risk/on-track held out
+    assert by["Indium"]["reliability_rate"] == 50
+    assert by["Kester"]["reliability_rate"] == 100
+
+    # RECONCILE: the summary's per-supplier reliability must equal the number the
+    # supplier drill-down reports for that same supplier (same completion basis,
+    # same PO set) — the two views can't disagree.
+    for name in ("Indium", "Kester"):
+        detail = supply.build_supplier_detail(db, "DEFAULT", name)
+        assert by[name]["reliability_rate"] == detail["reliability_rate"], name
+        assert by[name]["receipt_rate"] == detail["receipt_rate"], name
 
     # chase list: late first (PO-2), then at-risk (PO-3); received/on-track excluded
     chase = s["chase"]
@@ -77,10 +97,13 @@ def test_supply_honours_overdue_status_and_is_empty_safe():
     db.commit()
     s = supply.build_supply_summary(db, "DEFAULT")
     assert s["late"] == 1 and s["chase"][0]["po_no"] == "PO-9"
+    # one late PO, none received: 0 of 1 resolved delivered in full -> 0% (a real 0).
+    assert s["resolved"] == 1 and s["reliability_rate"] == 0
 
-    # empty PO book -> zeros, no divide-by-zero
+    # empty PO book -> zeros, no divide-by-zero (resolved 0 -> reliability 0, not a crash)
     empty = supply.build_supply_summary(_fresh_session(), "DEFAULT")
     assert empty["total"] == 0 and empty["receipt_rate"] == 0 and empty["chase"] == []
+    assert empty["resolved"] == 0 and empty["reliability_rate"] == 0
 
 
 def test_supplier_detail_scopes_and_scores_one_supplier():
@@ -181,6 +204,7 @@ if __name__ == "__main__":
     test_supplier_detail_scopes_and_scores_one_supplier()
     test_supplier_detail_is_empty_safe_for_unknown_supplier()
     print("SUPPLY OK: POs classified received/on-track/at-risk/late; unit receipt rate; "
+          "plant + per-supplier reliability (completion basis, reconciled with the drill-down); "
           "per-supplier rollup (worst first); chase list (late then at-risk); "
           "overdue-status wins; empty-safe; supplier drill-down scopes to one supplier "
           "(receipt rate, reliability, overdue units, chase, upcoming, recent) and is empty-safe")

@@ -9,6 +9,7 @@ type BySupplier = {
   supplier: string; pos: number;
   received: number; on_track: number; at_risk: number; late: number;
   ordered: number; received_units: number; receipt_rate: number;
+  reliability_rate: number;
 };
 type ChasePo = {
   po_no: string; supplier: string; item_name: string; expected_delivery_date: string | null;
@@ -19,6 +20,8 @@ type SupplySummary = {
   total: number;
   received: number; on_track: number; at_risk: number; late: number;
   receipt_rate: number;
+  resolved: number;
+  reliability_rate: number;
   by_supplier: BySupplier[];
   chase: ChasePo[];
   upcoming: { date: string; pos: number }[];
@@ -82,6 +85,15 @@ export default function SupplySnapshot({ onOpen }: { onOpen?: (viewKey: string) 
         <div className="text-right">
           <p className={`text-3xl font-bold ${receiptColor(d.receipt_rate)}`}>{d.receipt_rate}%</p>
           <p className="text-[11px] text-slate-500">units received</p>
+          {/* Completion (not on-time): of the POs already due, the share received in
+              full. Only shown when something has actually come due — an empty
+              denominator would render a misleading 0%. */}
+          {d.resolved > 0 && (
+            <p className="text-[11px] text-slate-500 mt-1">
+              <span className={`font-semibold ${receiptColor(d.reliability_rate)}`}>{d.reliability_rate}%</span>{" "}
+              of due POs received in full
+            </p>
+          )}
         </div>
       </div>
 

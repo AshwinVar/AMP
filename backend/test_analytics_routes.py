@@ -14,8 +14,15 @@ Run:  python backend/test_analytics_routes.py     (exit 0 = pass)
 """
 import inspect
 
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
+
 import main
 import core_routes
+import analytics_routes
+import models
+from analytics_engine import pooled_oee
+from database import Base
 
 EXPECTED = {
     "/oee/summary",
@@ -71,8 +78,55 @@ def test_module_has_no_relocated_helper_copies():
     print("PASS analytics_routes imports its compute from analytics_engine (no local copies)")
 
 
+def _fresh_session():
+    engine = create_engine("sqlite://", connect_args={"check_same_thread": False})
+    Base.metadata.create_all(bind=engine)
+    return sessionmaker(bind=engine)()
+
+
+def test_executive_oee_plant_rollup_is_pooled_not_a_per_machine_mean():
+    # A high-volume machine running poorly + a tiny perfect run. Averaging the two
+    # machines' OEE (mean of ratios) over-weights the tiny perfect run; pooling
+    # weights by volume — and it must match /oee-summary's pooled definition.
+    db = _fresh_session()
+    db.add(models.Machine(id=1, name="Big", status="Running", utilization=80))
+    db.add(models.Machine(id=2, name="Tiny", status="Running", utilization=80))
+    db.add(models.ProductionRecord(machine_id=1, planned_minutes=1000, runtime_minutes=500,
+                                   ideal_cycle_time_seconds=30, total_count=500, good_count=400, rejected_count=100))
+    db.add(models.ProductionRecord(machine_id=2, planned_minutes=10, runtime_minutes=10,
+                                   ideal_cycle_time_seconds=60, total_count=10, good_count=10, rejected_count=0))
+    db.commit()
+
+    out = analytics_routes.get_executive_oee(db=db, current_user={})
+    expected = pooled_oee(db.query(models.ProductionRecord).all())
+    assert out["plant_oee"] == expected["oee"]
+    assert out["plant_availability"] == expected["availability"]
+    assert out["plant_performance"] == expected["performance"]
+    assert out["plant_quality"] == expected["quality"]
+
+    # and it is emphatically NOT the mean of the per-machine ranking (Big 20 +
+    # Tiny 100) / 2 = 60 — the number the endpoint used to report.
+    ranking = out["machine_ranking"]
+    mean_oee = round(sum(r["oee"] for r in ranking) / len(ranking))
+    assert out["plant_oee"] != mean_oee and out["plant_oee"] == expected["oee"] < mean_oee, (out["plant_oee"], mean_oee)
+    print(f"PASS executive-oee plant rollup is pooled ({out['plant_oee']}%), not the per-machine mean ({mean_oee}%)")
+
+
+def test_executive_oee_no_production_is_zero_not_fabricated():
+    # No production records -> pooled has no data -> plant OEE is 0, not a number
+    # invented from per-machine fallback constants.
+    db = _fresh_session()
+    db.add(models.Machine(id=1, name="Idle", status="Running", utilization=80))
+    db.commit()
+    out = analytics_routes.get_executive_oee(db=db, current_user={})
+    assert out["plant_oee"] == 0 and out["plant_availability"] == 0
+    print("PASS executive-oee reports 0 plant OEE on no production (no fabricated number)")
+
+
 if __name__ == "__main__":
     test_analytics_paths_owned_by_module()
     test_analytics_summary_is_module_level_and_shared()
     test_module_has_no_relocated_helper_copies()
+    test_executive_oee_plant_rollup_is_pooled_not_a_per_machine_mean()
+    test_executive_oee_no_production_is_zero_not_fabricated()
     print("ALL ANALYTICS ROUTE TESTS PASSED")

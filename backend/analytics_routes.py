@@ -450,10 +450,17 @@ def get_executive_oee(
 
     machine_rows.sort(key=lambda row: row["oee"], reverse=True)
 
-    plant_availability = round(sum(row["availability"] for row in machine_rows) / len(machine_rows)) if machine_rows else 0
-    plant_performance = round(sum(row["performance"] for row in machine_rows) / len(machine_rows)) if machine_rows else 0
-    plant_quality = round(sum(row["quality"] for row in machine_rows) / len(machine_rows)) if machine_rows else 0
-    plant_oee = round(sum(row["oee"] for row in machine_rows) / len(machine_rows)) if machine_rows else 0
+    # Plant rollup is POOLED (ratio of sums) — the single standardised OEE
+    # definition (analytics_engine.pooled_oee), so /analytics/executive-oee agrees
+    # with /oee-summary and every other surface. Averaging per-machine OEE was a
+    # mean of ratios that over-weighted small runs AND folded in the no-data
+    # fallback constants (utilization / 90-or-60 / 95), giving the exec home a
+    # plant OEE that contradicted the pooled one shown elsewhere.
+    plant = pooled_oee([rec for recs in production_by_machine.values() for rec in recs])
+    plant_availability = plant["availability"]
+    plant_performance = plant["performance"]
+    plant_quality = plant["quality"]
+    plant_oee = plant["oee"]
 
     total_target = sum(shift.target_output for shift in shifts)
     total_actual = sum(shift.actual_output for shift in shifts)

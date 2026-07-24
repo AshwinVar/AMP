@@ -283,6 +283,15 @@ def get_maintenance_execution(db: Session = Depends(_get_db), current_user: dict
     return ai.maintenance.build_maintenance_execution(db, request_tenant(current_user))
 
 
+@router.get("/escalation-summary")
+def get_escalation_summary(db: Session = Depends(_get_db), current_user: dict = Depends(get_current_user)):
+    # Escalation queue (ADR-0005 / ADR-0007): the open backlog — count, severity /
+    # department / source / aging breakdowns and the most urgent to action — plus a
+    # 30-day resolution scorecard (raised, resolved, rate, and the measured average
+    # time to close from the real resolved_at timestamp).
+    return ai.escalations.build_escalation_summary(db, request_tenant(current_user))
+
+
 @router.get("/reliability-summary")
 def get_reliability_summary(db: Session = Depends(_get_db), current_user: dict = Depends(get_current_user)):
     # Machine reliability (ADR-0007): fleet MTBF / MTTR / availability over 30 days

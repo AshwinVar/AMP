@@ -1,10 +1,15 @@
 """Downtime summary — a fleet-wide read-model over downtime (ADR-0007).
 
 Answers the first question a plant manager asks each morning: *what's stopping
-my machines?* Over the last week it rolls up the total downtime events, the top
-reasons (a Pareto), the machines losing the most time, and a day-by-day series.
-A read-model over downtime_logs — auto-scoped to the tenant by the query layer
-(ADR-0002) in a request context; it adds no storage.
+my machines?* Over the last week it rolls up the downtime events **and the time
+lost** — the top reasons and worst machines ranked by minutes down (a single
+six-hour breakdown outweighs a handful of two-minute micro-stops), plus a
+day-by-day series. A read-model over downtime_logs — auto-scoped to the tenant
+by the query layer (ADR-0002) in a request context; it adds no storage.
+
+Minutes come from the one shared free-text duration parser
+(``duration.parse_duration_to_minutes``: "2 hrs 15 min" -> 135), the same one
+the reason drill-down uses, so the summary and its drill-down reconcile.
 """
 from collections import Counter
 from datetime import datetime, timedelta
@@ -24,8 +29,10 @@ def _norm_reason(d) -> str:
 
 
 def build_downtime_summary(db, tenant: str) -> dict:
-    """Fleet downtime over the last 7 days: total, top reasons, worst machines,
-    and a daily series. downtime_logs and machines are auto-scoped (ADR-0002)."""
+    """Fleet downtime over the last 7 days: total events and total minutes lost,
+    the top reasons and worst machines (both ranked by minutes down, events as the
+    tiebreak), a per-line rollup, and a daily series carrying both counts and
+    minutes. downtime_logs and machines are auto-scoped (ADR-0002)."""
     today = datetime.utcnow().date()
     window = [today - timedelta(days=i) for i in range(WINDOW_DAYS - 1, -1, -1)]
     window_set = set(window)
@@ -37,31 +44,62 @@ def build_downtime_summary(db, tenant: str) -> dict:
         if d.created_at and d.created_at.date() in window_set
     ]
 
-    reasons = Counter(_norm_reason(d) for d in logs)
-    top_reasons = [{"reason": r, "count": c} for r, c in reasons.most_common(TOP_N)]
-
-    per_machine = Counter(d.machine_id for d in logs if d.machine_id is not None)
     all_machines = db.query(models.Machine).all()
     names = {m.id: m.name for m in all_machines}
     line_of = {m.id: (m.line or "") for m in all_machines}
-    by_machine = [
-        {"machine_id": mid, "name": names.get(mid, f"#{mid}"), "count": c}
-        for mid, c in per_machine.most_common(TOP_N)
-    ]
 
-    per_line: Counter = Counter()
+    # One pass over the window: parse each stoppage's duration once (via the shared
+    # helper) and roll events + minutes up by reason, machine, line and day. Every
+    # per-day bucket sees every in-window log, so sum(daily minutes) == total_minutes.
+    total_minutes = 0
+    reason_events: Counter = Counter()
+    reason_minutes: Counter = Counter()
+    mach_events: Counter = Counter()
+    mach_minutes: Counter = Counter()
+    line_events: Counter = Counter()
+    line_minutes: Counter = Counter()
+    day_events: Counter = Counter()
+    day_minutes: Counter = Counter()
     for d in logs:
-        ln = line_of.get(d.machine_id, "")
-        if ln:
-            per_line[ln] += 1
-    by_line = [{"line": ln, "count": c} for ln, c in sorted(per_line.items())]
+        mins = _duration_minutes(d.duration)
+        total_minutes += mins
+        r = _norm_reason(d)
+        reason_events[r] += 1
+        reason_minutes[r] += mins
+        if d.machine_id is not None:
+            mach_events[d.machine_id] += 1
+            mach_minutes[d.machine_id] += mins
+            ln = line_of.get(d.machine_id, "")
+            if ln:
+                line_events[ln] += 1
+                line_minutes[ln] += mins
+        day = d.created_at.date()
+        day_events[day] += 1
+        day_minutes[day] += mins
 
-    per_day = Counter(d.created_at.date() for d in logs)
-    daily = [{"date": dd.isoformat(), "count": per_day.get(dd, 0)} for dd in window]
+    # Ranked by time lost (the honest impact), events then name as deterministic
+    # tiebreaks so equal-minute rows order stably.
+    ranked_reasons = sorted(reason_events,
+                            key=lambda r: (-reason_minutes[r], -reason_events[r], r))
+    top_reasons = [{"reason": r, "count": reason_events[r], "minutes": reason_minutes[r]}
+                   for r in ranked_reasons[:TOP_N]]
+
+    ranked_machines = sorted(mach_events,
+                             key=lambda mid: (-mach_minutes[mid], -mach_events[mid], mid))
+    by_machine = [{"machine_id": mid, "name": names.get(mid, f"#{mid}"),
+                   "count": mach_events[mid], "minutes": mach_minutes[mid]}
+                  for mid in ranked_machines[:TOP_N]]
+
+    by_line = [{"line": ln, "count": line_events[ln], "minutes": line_minutes[ln]}
+               for ln in sorted(line_events)]
+
+    daily = [{"date": dd.isoformat(), "count": day_events.get(dd, 0),
+              "minutes": day_minutes.get(dd, 0)} for dd in window]
 
     return {
         "days": WINDOW_DAYS,
         "total_events": len(logs),
+        "total_minutes": total_minutes,
         "top_reasons": top_reasons,
         "by_machine": by_machine,
         "by_line": by_line,

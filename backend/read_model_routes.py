@@ -67,6 +67,14 @@ def get_downtime_reason(reason: str, db: Session = Depends(_get_db), current_use
     return ai.downtime.build_downtime_reason(db, request_tenant(current_user), reason)
 
 
+@router.get("/downtime-trend")
+def get_downtime_trend(db: Session = Depends(_get_db), current_user: dict = Depends(get_current_user)):
+    # Downtime trend (ADR-0007): this week's lost minutes vs the 7 days before,
+    # with the machines and reasons that moved it — the downtime twin of the
+    # quality trend.
+    return ai.downtime.build_downtime_trend(db, request_tenant(current_user))
+
+
 @router.get("/quality-summary")
 def get_quality_summary(db: Session = Depends(_get_db), current_user: dict = Depends(get_current_user)):
     # Quality summary (ADR-0007): first-pass yield, fail rate, a defect Pareto,

@@ -6,13 +6,23 @@ import DowntimeReasonDrawer from "./DowntimeReasonDrawer";
 import MachineDetailDrawer from "./MachineDetailDrawer";
 
 // Mirrors the backend downtime summary (ai/downtime.py build_downtime_summary).
+// Reasons and machines are ranked by minutes lost, not event count.
 type DowntimeSummary = {
   days: number;
   total_events: number;
-  top_reasons: { reason: string; count: number }[];
-  by_machine: { machine_id: number; name: string; count: number }[];
-  by_line: { line: string; count: number }[];
-  daily: { date: string; count: number }[];
+  total_minutes: number;
+  top_reasons: { reason: string; count: number; minutes: number }[];
+  by_machine: { machine_id: number; name: string; count: number; minutes: number }[];
+  by_line: { line: string; count: number; minutes: number }[];
+  daily: { date: string; count: number; minutes: number }[];
+};
+
+// Compact "time lost" label: minutes under an hour, else "Xh Ym" / "Xh".
+const fmtMins = (m: number) => {
+  if (m < 60) return `${m} min`;
+  const h = Math.floor(m / 60);
+  const r = m % 60;
+  return r ? `${h}h ${r}m` : `${h}h`;
 };
 
 // SMT and IC each get a consistent accent across the dashboard (sky / violet).
@@ -51,35 +61,39 @@ export default function DowntimeSnapshot() {
     <div className="rounded-2xl border border-slate-800 bg-slate-900/60 p-6">
       <div className="flex items-center justify-between">
         <h3 className="text-xs font-semibold uppercase tracking-wide text-slate-300">Downtime · last 7 days</h3>
-        <span className="text-xs text-slate-500">{dt.total_events} event{dt.total_events !== 1 ? "s" : ""}</span>
+        <span className="text-xs text-slate-500">
+          {fmtMins(dt.total_minutes)} lost · {dt.total_events} event{dt.total_events !== 1 ? "s" : ""}
+        </span>
       </div>
       <div className="mt-4 grid grid-cols-1 md:grid-cols-2 gap-6">
         <div>
-          <p className="text-xs text-slate-500 mb-2">Top reasons</p>
+          <p className="text-xs text-slate-500 mb-2">Top reasons · by time lost</p>
           <div className="space-y-2">
             {dt.top_reasons.map((r) => {
-              const lead = dt.top_reasons[0].count || 1;
-              const pct = Math.round((r.count / lead) * 100);
+              // Bar reflects minutes lost (the ranking basis). The lead sets full width;
+              // a genuinely zero-minute reason renders no bar (true zero, no min floor).
+              const lead = dt.top_reasons[0].minutes || 1;
+              const pct = Math.round((r.minutes / lead) * 100);
               return (
                 <button
                   key={r.reason}
                   type="button"
                   onClick={() => setReason(r.reason)}
                   className="w-full flex items-center gap-3 rounded-lg px-1 py-1 -mx-1 hover:bg-slate-800/60 transition focus:outline-none focus:ring-2 focus:ring-slate-600"
-                  title={`${r.reason} — click for detail`}
+                  title={`${r.reason} — ${fmtMins(r.minutes)} over ${r.count} event${r.count !== 1 ? "s" : ""}, click for detail`}
                 >
                   <span className="w-28 shrink-0 text-sm text-slate-300 truncate text-left">{r.reason}</span>
                   <div className="flex-1 h-2 rounded bg-slate-800 overflow-hidden">
-                    <div className="h-full bg-red-500/60" style={{ width: `${Math.max(6, pct)}%` }} />
+                    <div className="h-full bg-red-500/60" style={{ width: `${r.minutes > 0 ? Math.max(4, pct) : 0}%` }} />
                   </div>
-                  <span className="w-6 text-right text-xs text-slate-400">{r.count}</span>
+                  <span className="w-14 text-right text-xs text-slate-400">{fmtMins(r.minutes)}</span>
                 </button>
               );
             })}
           </div>
         </div>
         <div>
-          <p className="text-xs text-slate-500 mb-2">Most affected machines</p>
+          <p className="text-xs text-slate-500 mb-2">Worst machines · by time lost</p>
           <div className="flex flex-wrap gap-2">
             {dt.by_machine.map((m) => (
               <button
@@ -87,9 +101,9 @@ export default function DowntimeSnapshot() {
                 type="button"
                 onClick={() => setMachine(m.machine_id)}
                 className="rounded-lg border border-slate-700 px-3 py-1.5 text-sm text-slate-300 hover:border-slate-500 hover:bg-slate-800 transition focus:outline-none focus:ring-2 focus:ring-slate-600"
-                title={`${m.name} — open machine cockpit`}
+                title={`${m.name} — ${fmtMins(m.minutes)} over ${m.count} event${m.count !== 1 ? "s" : ""}, open machine cockpit`}
               >
-                {m.name} <span className="text-slate-500">· {m.count}</span>
+                {m.name} <span className="text-slate-500">· {fmtMins(m.minutes)}</span>
               </button>
             ))}
           </div>
@@ -104,7 +118,7 @@ export default function DowntimeSnapshot() {
                 key={l.line}
                 className={`rounded-md border px-2.5 py-1 text-xs font-medium ${lineChip(l.line)}`}
               >
-                {l.line} <span className="opacity-70">· {l.count} event{l.count !== 1 ? "s" : ""}</span>
+                {l.line} <span className="opacity-70">· {fmtMins(l.minutes)} · {l.count} event{l.count !== 1 ? "s" : ""}</span>
               </span>
             ))}
           </div>

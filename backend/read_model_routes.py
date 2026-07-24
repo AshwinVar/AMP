@@ -137,6 +137,16 @@ def get_stock_health(db: Session = Depends(_get_db), current_user: dict = Depend
     return ai.stock_health.build_stock_health(db, request_tenant(current_user))
 
 
+@router.get("/stock-accuracy")
+def get_stock_accuracy(db: Session = Depends(_get_db), current_user: dict = Depends(get_current_user)):
+    # Inventory record accuracy (ADR-0007): the cycle-count read-model the reorder
+    # and stock-health cards assume but never check — of the items counted in the
+    # last 90 days, the share whose book matched the shelf (IRA%), how much of the
+    # master has been counted at all, the net/absolute unit variance found, and the
+    # items whose records are furthest off. Measured in units/% only (no unit cost).
+    return ai.stock_accuracy.build_stock_accuracy(db, request_tenant(current_user))
+
+
 @router.get("/flow-summary")
 def get_flow_summary(db: Session = Depends(_get_db), current_user: dict = Depends(get_current_user)):
     # WIP flow (ADR-0007): work orders grouped by material state —

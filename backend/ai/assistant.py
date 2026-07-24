@@ -161,6 +161,10 @@ def _shift(db, tenant):
     sh = build_shift_summary(db, tenant)
     if sh["entries"] == 0:
         return "No shift data recorded yet.", "shifts"
+    if sh["attainment"] is None:
+        return (f"{sh['actual']:,} units produced across shifts over the last "
+                f"{sh['days']} days, but no shift had a target set to measure "
+                "attainment against."), "shifts"
     ans = (f"Shift attainment is {sh['attainment']}% ({sh['actual']:,} of "
            f"{sh['target']:,} target) over the last {sh['days']} days.")
     if sh.get("best"):

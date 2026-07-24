@@ -5,8 +5,10 @@ watches, what it proposes, whether it acts autonomously (per the auto-approve
 policy), and how active it has been. Static role metadata + live counts from the
 agent_actions log; tenant-scoped explicitly (agent_actions is stamped).
 """
-from collections import Counter
+from collections import Counter, defaultdict
 from datetime import datetime, timedelta
+
+from sqlalchemy import func
 
 import models
 
@@ -34,24 +36,40 @@ AGENTS = [
 
 
 def build_roster(db, tenant: str):
-    """One card per agent: role + autonomy + live activity, tenant-scoped."""
+    """One card per agent: role + autonomy + live activity, tenant-scoped.
+
+    agent_actions is an append-only log that grows without bound, and this card is
+    polled — so the per-agent tallies are computed as a GROUP BY count in SQL and
+    the last-action stamp as a MAX, rather than hydrating the whole history on
+    every poll (ADR-0002 rule 4). agent_actions is not in SCOPED_MODELS, so the
+    tenant filter stays explicit."""
     from ai.agents import trusted_agents  # lazy: avoids an import cycle at package load
 
     trusted = trusted_agents(db, tenant)
-    rows = db.query(models.AgentAction).filter(models.AgentAction.tenant_code == tenant).all()
-    by_agent: dict[str, list] = {}
-    for r in rows:
-        by_agent.setdefault(r.agent, []).append(r)
+
+    # Lifetime action tally per (agent, status) — one grouped count, not a scan of
+    # the whole log. (agent, tenant_code) both index-backed.
+    tally: dict = defaultdict(Counter)
+    for agent, status, n in (
+            db.query(models.AgentAction.agent, models.AgentAction.status, func.count())
+            .filter(models.AgentAction.tenant_code == tenant)
+            .group_by(models.AgentAction.agent, models.AgentAction.status).all()):
+        tally[agent][status] += n
+    # Most-recent action per agent — MAX on the indexed datetime, returned as a
+    # real datetime (SQLAlchemy applies the column's type to func.max).
+    last_by_agent = dict(
+        db.query(models.AgentAction.agent, func.max(models.AgentAction.created_at))
+        .filter(models.AgentAction.tenant_code == tenant)
+        .group_by(models.AgentAction.agent).all())
 
     roster = []
     for meta in AGENTS:
-        mine = by_agent.get(meta["key"], [])
-        status = Counter(a.status for a in mine)
-        last = max((a.created_at for a in mine if a.created_at), default=None)
+        status = tally.get(meta["key"], Counter())
+        last = last_by_agent.get(meta["key"])
         roster.append({
             **meta,
             "auto_approves": meta["key"] in trusted,
-            "total_actions": len(mine),
+            "total_actions": sum(status.values()),
             "pending": status.get("Proposed", 0),
             "approved": status.get("Approved", 0),
             "rejected": status.get("Rejected", 0),
@@ -75,35 +93,53 @@ def build_agent_detail(db, tenant: str, agent_key: str):
         return None
     from ai.agents import trusted_agents  # lazy: avoids an import cycle at package load
 
-    rows = (db.query(models.AgentAction)
+    # The whole cockpit reads one agent's slice of an append-only, unbounded log on
+    # a polled endpoint, so nothing hydrates the full history: the lifetime tally
+    # and output kinds are GROUP BY counts, the last-action stamp is a MAX, the
+    # 7-day series is bounded to the window in SQL, and the evidence list is a
+    # LIMIT (rule 4). agent_actions is not in SCOPED_MODELS -> explicit tenant filter.
+    base = (db.query(models.AgentAction)
             .filter(models.AgentAction.tenant_code == tenant,
-                    models.AgentAction.agent == agent_key)
-            .order_by(models.AgentAction.id.desc()).all())
-    status = Counter(a.status for a in rows)
+                    models.AgentAction.agent == agent_key))
+
+    status = Counter(dict(base.with_entities(models.AgentAction.status, func.count())
+                          .group_by(models.AgentAction.status).all()))
     approved, rejected = status.get("Approved", 0), status.get("Rejected", 0)
     decided = approved + rejected
 
     # what this agent has produced, by the kind of thing it creates
-    outputs = Counter(a.ref_kind for a in rows if a.ref_kind)
+    outputs = {kind: n for kind, n in
+               (base.with_entities(models.AgentAction.ref_kind, func.count())
+                .filter(models.AgentAction.ref_kind.isnot(None))
+                .group_by(models.AgentAction.ref_kind).all())}
 
-    # 7-day daily activity, oldest -> newest, so the cockpit can draw a sparkline
+    last = base.with_entities(func.max(models.AgentAction.created_at)).scalar()
+
+    # 7-day daily activity, oldest -> newest, so the cockpit can draw a sparkline.
+    # Bounded to the window in SQL; the set check keeps exact per-day semantics.
     today = datetime.utcnow().date()
     window = [today - timedelta(days=i) for i in range(6, -1, -1)]
     window_set = set(window)
-    per_day = Counter(a.created_at.date() for a in rows if a.created_at and a.created_at.date() in window_set)
+    cutoff = datetime.combine(window[0], datetime.min.time())
+    per_day = Counter(
+        c.date() for (c,) in
+        base.with_entities(models.AgentAction.created_at)
+        .filter(models.AgentAction.created_at >= cutoff).all()
+        if c and c.date() in window_set)
     daily = [{"date": d.isoformat(), "count": per_day.get(d, 0)} for d in window]
 
-    last = max((a.created_at for a in rows if a.created_at), default=None)
+    # Most-recent actions as evidence — a LIMIT, not the whole history.
+    rows = base.order_by(models.AgentAction.id.desc()).limit(15).all()
 
     return {
         **meta,
         "auto_approves": agent_key in trusted_agents(db, tenant),
-        "total_actions": len(rows),
+        "total_actions": sum(status.values()),
         "pending": status.get("Proposed", 0),
         "approved": approved,
         "rejected": rejected,
         "approval_rate": round(approved / decided * 100) if decided else None,
-        "outputs": dict(outputs),
+        "outputs": outputs,
         "last_action_at": last.isoformat() if last else None,
         "daily": daily,
         "recent": [{
@@ -113,7 +149,7 @@ def build_agent_detail(db, tenant: str, agent_key: str):
             "created_at": a.created_at.isoformat() if a.created_at else None,
             "decided_by": a.decided_by,
             "decided_at": a.decided_at.isoformat() if a.decided_at else None,
-        } for a in rows[:15]],
+        } for a in rows],
     }
 
 

@@ -30,6 +30,19 @@ def test_compact_and_bare_formats():
     print("PASS compact (2h30m) and bare-number formats")
 
 
+def test_decimal_hours_are_not_read_as_the_trailing_digit():
+    # The bug this fixes: an integer-only \d+ skipped the "1." and matched the "5"
+    # in "1.5 h", reading a 90-minute stop as 5 hours (300 min).
+    assert p("1.5 hrs") == 90            # NOT 300
+    assert p("1.5 hrs") != 300
+    assert p("0.5 hr") == 30             # half an hour, not 5 hours
+    assert p("2.5 hrs") == 150           # NOT 300
+    assert p("1.5 hrs 30 min") == 120    # 90 + 30
+    assert p("0.25 hr") == 15            # quarter hour
+    assert p("1.25 hr") == 75            # rounds 75.0
+    print("PASS decimal hours parse to real minutes (1.5 hrs -> 90, not 300)")
+
+
 def test_empty_and_none_are_zero():
     assert p("") == 0
     assert p(None) == 0
@@ -48,6 +61,7 @@ def test_regression_hour_formats_are_not_digit_concatenated():
 if __name__ == "__main__":
     test_hour_and_minute_formats()
     test_compact_and_bare_formats()
+    test_decimal_hours_are_not_read_as_the_trailing_digit()
     test_empty_and_none_are_zero()
     test_regression_hour_formats_are_not_digit_concatenated()
     print("ALL DURATION TESTS PASSED")

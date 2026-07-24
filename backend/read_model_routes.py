@@ -128,6 +128,15 @@ def get_inventory_part(item_code: str, db: Session = Depends(_get_db), current_u
     return ai.coverage.build_part_runway(db, request_tenant(current_user), item_code)
 
 
+@router.get("/stock-health")
+def get_stock_health(db: Session = Depends(_get_db), current_user: dict = Depends(get_current_user)):
+    # Stock health (ADR-0007): the capital-tied-up side of inventory the reorder
+    # and days-of-cover cards never show — items sitting with no movement (dead)
+    # or held far beyond need (overstocked), the units tied up in each, and the
+    # items to review first. Measured in units/days only (the schema has no cost).
+    return ai.stock_health.build_stock_health(db, request_tenant(current_user))
+
+
 @router.get("/flow-summary")
 def get_flow_summary(db: Session = Depends(_get_db), current_user: dict = Depends(get_current_user)):
     # WIP flow (ADR-0007): work orders grouped by material state —

@@ -44,15 +44,27 @@ def _get_db():
 router = APIRouter(prefix="/reports", tags=["Reports"])
 
 
+def _machine_names(db) -> dict:
+    """{machine_id: name} for the (tenant-scoped) machine roster, in one query.
+
+    The CSV exports below resolve a machine name per row. Looking that name up
+    with a fresh ``db.query(Machine)`` inside the row loop is an N+1 that grows
+    with the (unbounded) downtime / production tables — thousands of point
+    lookups for one export. The machine roster itself is small and bounded, so
+    fetch it once as a map and read names from memory. Matches the N+1 fixes
+    already applied to the analytics endpoints (e.g. #273, #276)."""
+    return dict(db.query(models.Machine.id, models.Machine.name).all())
+
+
 @router.get("/downtime.csv")
 def export_downtime_csv(db: Session = Depends(_get_db), current_user: dict = Depends(require_roles(["Admin", "Supervisor"]))):
-    logs = db.query(models.DowntimeLog).all()
+    logs = db.query(models.DowntimeLog).order_by(models.DowntimeLog.id.asc()).all()
+    names = _machine_names(db)
     output = io.StringIO()
     writer = csv.writer(output)
     writer.writerow(["id", "machine_id", "machine_name", "reason", "duration", "notes", "created_at"])
     for log in logs:
-        machine = db.query(models.Machine).filter(models.Machine.id == log.machine_id).first()
-        writer.writerow([log.id, log.machine_id, machine.name if machine else "", log.reason, log.duration, log.notes or "", log.created_at])
+        writer.writerow([log.id, log.machine_id, names.get(log.machine_id) or "", log.reason, log.duration, log.notes or "", log.created_at])
     return Response(content=output.getvalue(), media_type="text/csv", headers={"Content-Disposition": "attachment; filename=downtime_report.csv"})
 
 
@@ -70,13 +82,14 @@ def export_shifts_csv(db: Session = Depends(_get_db), current_user: dict = Depen
 
 @router.get("/oee.csv")
 def export_oee_csv(db: Session = Depends(_get_db), current_user: dict = Depends(require_roles(["Admin", "Supervisor"]))):
-    records = db.query(models.ProductionRecord).all()
+    records = db.query(models.ProductionRecord).order_by(models.ProductionRecord.id.asc()).all()
+    names = _machine_names(db)
     output = io.StringIO()
     writer = csv.writer(output)
     writer.writerow(["id", "machine_id", "machine_name", "availability", "performance", "quality", "oee", "planned_minutes", "runtime_minutes", "total_count", "good_count", "rejected_count", "created_at"])
     for record in records:
         oee = calculate_oee_from_record(record)
-        writer.writerow([record.id, record.machine_id, record.machine.name if record.machine else "", oee["availability"], oee["performance"], oee["quality"], oee["oee"], record.planned_minutes, record.runtime_minutes, record.total_count, record.good_count, record.rejected_count, record.created_at])
+        writer.writerow([record.id, record.machine_id, names.get(record.machine_id) or "", oee["availability"], oee["performance"], oee["quality"], oee["oee"], record.planned_minutes, record.runtime_minutes, record.total_count, record.good_count, record.rejected_count, record.created_at])
     return Response(content=output.getvalue(), media_type="text/csv", headers={"Content-Disposition": "attachment; filename=oee_report.csv"})
 
 

@@ -223,9 +223,17 @@ def build_smart_alerts(machines, production_records, downtime_logs):
     for machine in machines:
         if machine.status == "Breakdown":
             add_alert("Breakdown", "Critical", machine.name, f"{machine.name} is currently in breakdown.")
-        if machine.utilization < 40:
+        # utilization is Column(Integer, default=0) WITHOUT nullable=False — a row
+        # written by raw SQL / a migration / an update that clears the field can be
+        # NULL, and `None < 40` raised TypeError, 500-ing every caller (/alerts/smart,
+        # the intelligence-summary export). A NULL means "no utilization recorded",
+        # which is NOT the same as a measured 0%: coercing it to 0 would fabricate a
+        # "critically low at 0%" alert from the column default (ADR-0010 — a default
+        # must never leak into a displayed value). So skip the utilization alert when
+        # there's no reading; the status-based alerts above still fire.
+        if machine.utilization is not None and machine.utilization < 40:
             add_alert("Low Utilization", "High", machine.name, f"{machine.name} utilization is critically low at {machine.utilization}%.")
-        elif machine.utilization < 50:
+        elif machine.utilization is not None and machine.utilization < 50:
             add_alert("Low Utilization", "Medium", machine.name, f"{machine.name} utilization is below 50%.")
 
     latest_by_machine = {}
@@ -308,7 +316,9 @@ def generate_alerts(db: Session):
         if machine.status == "Breakdown":
             add_alert("Breakdown", "High", machine.name, f"{machine.name} is currently in breakdown")
 
-        if machine.utilization < 50:
+        # NULL utilization = no reading (see build_smart_alerts): skip rather than
+        # crash on `None < 50` or fabricate a 0% alert from the column default.
+        if machine.utilization is not None and machine.utilization < 50:
             add_alert("Low Utilization", "Medium", machine.name, f"{machine.name} utilization is below 50%")
 
     latest_by_machine = {}

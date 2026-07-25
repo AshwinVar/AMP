@@ -16,6 +16,7 @@ main's /reports/daily-summary.txt calls it directly; it is registered as
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 import ai
@@ -226,20 +227,35 @@ def get_machine_detail(machine_id: int, db: Session = Depends(_get_db), current_
 
 @router.get("/analytics/work-orders")
 def get_work_order_analytics(db: Session = Depends(_get_db), current_user: dict = Depends(get_current_user)):
-    work_orders = db.query(models.WorkOrder).all()
-    planned = len([wo for wo in work_orders if wo.status == "Planned"])
-    running = len([wo for wo in work_orders if wo.status == "Running"])
-    completed = len([wo for wo in work_orders if wo.status == "Completed"])
-    delayed = len([wo for wo in work_orders if wo.status == "Delayed"])
-    total_target = sum(wo.target_quantity for wo in work_orders)
-    total_actual = sum(wo.actual_quantity for wo in work_orders)
+    # Aggregate in SQL, not by hydrating the whole (growing) work_orders table and
+    # counting/summing in Python (rule-4 antipattern, same fix already applied to
+    # the agent-actions stats #270 and the roster #259). WorkOrder is in
+    # SCOPED_MODELS, so the do_orm_execute hook (ADR-0002) tenant-scopes these
+    # aggregate SELECTs exactly as it did the old .all() scan.
+    #
+    # actual_quantity is Column(Integer, default=0) WITHOUT nullable=False, so a
+    # row written by raw SQL / a migration / an update that cleared the field can
+    # be NULL. The old sum(wo.actual_quantity ...) then did int + None and raised
+    # TypeError, 500-ing this endpoint — the same NULL-count class of bug fixed in
+    # the predictive scorer (#274). COALESCE(SUM(...), 0) treats a NULL actual as
+    # the column's own default of 0 and never sees an empty-table NULL either.
+    status_counts = dict(
+        db.query(models.WorkOrder.status, func.count()).group_by(models.WorkOrder.status).all()
+    )
+    total_work_orders, total_target, total_actual = db.query(
+        func.count(models.WorkOrder.id),
+        func.coalesce(func.sum(models.WorkOrder.target_quantity), 0),
+        func.coalesce(func.sum(models.WorkOrder.actual_quantity), 0),
+    ).one()
+    total_target = int(total_target)
+    total_actual = int(total_actual)
     achievement = round((total_actual / total_target) * 100) if total_target else 0
     return {
-        "total_work_orders": len(work_orders),
-        "planned": planned,
-        "running": running,
-        "completed": completed,
-        "delayed": delayed,
+        "total_work_orders": total_work_orders,
+        "planned": status_counts.get("Planned", 0),
+        "running": status_counts.get("Running", 0),
+        "completed": status_counts.get("Completed", 0),
+        "delayed": status_counts.get("Delayed", 0),
         "total_target": total_target,
         "total_actual": total_actual,
         "achievement": achievement,
@@ -248,19 +264,32 @@ def get_work_order_analytics(db: Session = Depends(_get_db), current_user: dict 
 
 @router.get("/analytics/production-plans")
 def get_production_plan_analytics(db: Session = Depends(_get_db), current_user: dict = Depends(get_current_user)):
-    plans = db.query(models.ProductionPlan).all()
-    planned_quantity = sum(plan.planned_quantity for plan in plans)
-    actual_quantity = sum(plan.actual_quantity for plan in plans)
+    # Same hardening as /analytics/work-orders above: aggregate the growing
+    # production_plans table in SQL rather than pulling it into Python (rule-4),
+    # and COALESCE(SUM(actual_quantity), 0) so a NULL actual (the column is
+    # Integer default=0, not NOT NULL) counts as 0 instead of raising TypeError.
+    # ProductionPlan is in SCOPED_MODELS, so these aggregates stay tenant-scoped
+    # by the ORM hook (ADR-0002).
+    status_counts = dict(
+        db.query(models.ProductionPlan.status, func.count()).group_by(models.ProductionPlan.status).all()
+    )
+    total_plans, planned_quantity, actual_quantity = db.query(
+        func.count(models.ProductionPlan.id),
+        func.coalesce(func.sum(models.ProductionPlan.planned_quantity), 0),
+        func.coalesce(func.sum(models.ProductionPlan.actual_quantity), 0),
+    ).one()
+    planned_quantity = int(planned_quantity)
+    actual_quantity = int(actual_quantity)
     achievement = round((actual_quantity / planned_quantity) * 100) if planned_quantity else 0
     return {
-        "total_plans": len(plans),
+        "total_plans": total_plans,
         "planned_quantity": planned_quantity,
         "actual_quantity": actual_quantity,
         "achievement": achievement,
-        "planned": len([plan for plan in plans if plan.status == "Planned"]),
-        "running": len([plan for plan in plans if plan.status == "Running"]),
-        "completed": len([plan for plan in plans if plan.status == "Completed"]),
-        "behind": len([plan for plan in plans if plan.status == "Behind"]),
+        "planned": status_counts.get("Planned", 0),
+        "running": status_counts.get("Running", 0),
+        "completed": status_counts.get("Completed", 0),
+        "behind": status_counts.get("Behind", 0),
     }
 
 

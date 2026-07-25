@@ -794,17 +794,39 @@ def get_ai_insights(db: Session = Depends(_get_db), current_user: dict = Depends
 
 @router.get("/analytics/operator-terminal")
 def get_operator_terminal_analytics(db: Session = Depends(_get_db), current_user: dict = Depends(get_current_user)):
-    rows = db.query(models.OperatorJobExecution).all()
-    good = sum(row.good_count for row in rows)
-    rejected = sum(row.rejected_count for row in rows)
+    # Aggregate the growing operator_job_executions table in SQL, not by hydrating
+    # every row and counting/summing in Python (rule-4 antipattern, same fix as
+    # /analytics/work-orders #275 and the roster #259). OperatorJobExecution is in
+    # SCOPED_MODELS, so the do_orm_execute hook (ADR-0002) tenant-scopes these
+    # aggregate SELECTs exactly as it did the old .all() scan.
+    #
+    # good_count / rejected_count are Column(Integer, default=0) WITHOUT
+    # nullable=False, so a row written by raw SQL / a migration / an update that
+    # cleared the field can be NULL. The old sum(row.good_count for ...) then did
+    # int + None and raised TypeError, 500-ing this endpoint — the same NULL-count
+    # class fixed in the work-order rollup (#275) and predictive scorer (#274).
+    # COALESCE(SUM(...), 0) treats a NULL count as the column's own default of 0
+    # and never sees an empty-table NULL either.
+    status_counts = dict(
+        db.query(models.OperatorJobExecution.job_status, func.count())
+        .group_by(models.OperatorJobExecution.job_status)
+        .all()
+    )
+    total_jobs, good, rejected = db.query(
+        func.count(models.OperatorJobExecution.id),
+        func.coalesce(func.sum(models.OperatorJobExecution.good_count), 0),
+        func.coalesce(func.sum(models.OperatorJobExecution.rejected_count), 0),
+    ).one()
+    good = int(good)
+    rejected = int(rejected)
     total = good + rejected
     quality_rate = round((good / total) * 100) if total else 0
 
     return {
-        "total_jobs": len(rows),
-        "started": len([r for r in rows if r.job_status == "Started"]),
-        "paused": len([r for r in rows if r.job_status == "Paused"]),
-        "completed": len([r for r in rows if r.job_status == "Completed"]),
+        "total_jobs": total_jobs,
+        "started": status_counts.get("Started", 0),
+        "paused": status_counts.get("Paused", 0),
+        "completed": status_counts.get("Completed", 0),
         "good_count": good,
         "rejected_count": rejected,
         "quality_rate": quality_rate,

@@ -352,6 +352,56 @@ def test_final_executive_summary_empty_tables_are_zero_not_a_crash():
     print("PASS final-executive-summary: empty tables -> zeros, no divide-by-zero")
 
 
+def _operator_job(**kw):
+    kw.setdefault("operator_name", "Op")
+    return models.OperatorJobExecution(**kw)
+
+
+def test_operator_terminal_analytics_null_counts_and_reconciled_totals():
+    # good_count / rejected_count are Column(Integer, default=0) WITHOUT
+    # nullable=False, so a real SQL NULL (raw SQL / migration / a cleared update)
+    # is legitimate. The old sum(row.good_count for ...) did int + None and 500'd;
+    # COALESCE(SUM, 0) must treat the NULL as 0. Status buckets now come from a SQL
+    # GROUP BY instead of a Python scan of the whole (growing) table. Every
+    # expected number is derived by hand, not read back from the endpoint.
+    db = _fresh_session()
+    db.add(_operator_job(id=1, execution_no="OJ1", job_status="Started", good_count=40, rejected_count=10))
+    db.add(_operator_job(id=2, execution_no="OJ2", job_status="Paused", good_count=20, rejected_count=0))
+    db.add(_operator_job(id=3, execution_no="OJ3", job_status="Completed", good_count=100, rejected_count=None))
+    db.add(_operator_job(id=4, execution_no="OJ4", job_status="Completed", good_count=None, rejected_count=5))
+    db.commit()
+    # Force genuine SQL NULLs (the ORM applies default=0 to a None passed on insert).
+    db.execute(text("UPDATE operator_job_executions SET rejected_count = NULL WHERE execution_no = 'OJ3'"))
+    db.execute(text("UPDATE operator_job_executions SET good_count = NULL WHERE execution_no = 'OJ4'"))
+    db.commit()
+    db.expire_all()
+
+    out = analytics_routes.get_operator_terminal_analytics(db=db, current_user={})
+    assert out["total_jobs"] == 4, out
+    assert out["started"] == 1 and out["paused"] == 1 and out["completed"] == 2, out
+    # good: 40 + 20 + 100 + 0(NULL->0) = 160
+    assert out["good_count"] == 160, out
+    # rejected: 10 + 0 + 0(NULL->0) + 5 = 15
+    assert out["rejected_count"] == 15, out
+    # quality_rate = round(160 / (160+15) * 100) = round(91.43) = 91
+    assert out["quality_rate"] == 91, out
+    # the status buckets reconcile with the total job count (all four are named)
+    assert out["started"] + out["paused"] + out["completed"] == 4, out
+    print("PASS operator-terminal analytics: NULL counts -> 0, totals reconcile "
+          "(160 good / 15 rejected / 91%)")
+
+
+def test_operator_terminal_analytics_empty_table_is_zero_not_a_crash():
+    db = _fresh_session()
+    out = analytics_routes.get_operator_terminal_analytics(db=db, current_user={})
+    assert out["total_jobs"] == 0, out
+    assert out["good_count"] == 0 and out["rejected_count"] == 0, out
+    assert out["started"] == 0 and out["paused"] == 0 and out["completed"] == 0, out
+    # zero denominator -> 0, not a ZeroDivisionError; SUM over no rows -> 0, not None
+    assert out["quality_rate"] == 0, out
+    print("PASS operator-terminal analytics: empty table -> zeros, no divide-by-zero, no None-sum crash")
+
+
 if __name__ == "__main__":
     test_analytics_paths_owned_by_module()
     test_analytics_summary_is_module_level_and_shared()
@@ -367,4 +417,6 @@ if __name__ == "__main__":
     test_executive_oee_null_utilization_fallback_is_zero_not_a_crash()
     test_final_executive_summary_null_columns_are_zero_not_a_crash()
     test_final_executive_summary_empty_tables_are_zero_not_a_crash()
+    test_operator_terminal_analytics_null_counts_and_reconciled_totals()
+    test_operator_terminal_analytics_empty_table_is_zero_not_a_crash()
     print("ALL ANALYTICS ROUTE TESTS PASSED")

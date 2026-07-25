@@ -11,7 +11,7 @@ Run:  python backend/test_recommendations_routes.py     (exit 0 = pass)
 import inspect
 from datetime import datetime, timedelta
 
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker
 
 import main
@@ -144,6 +144,61 @@ def test_generator_is_edge_safe_on_empty_and_zero_inspection():
     print("PASS generator is edge-safe on empty data and zero-inspection denominators")
 
 
+def test_generator_survives_null_utilization_stock_and_quality_columns():
+    # Machine.utilization, InventoryItem.current_stock/reorder_level and
+    # QualityInspection.failed_quantity are all Column(Integer, default=0) WITHOUT
+    # nullable=False, so a raw write / migration / cleared field can leave them
+    # NULL. Before the guards, `None < 45`, `None <= None` and `int + None` each
+    # raised TypeError and 500-ed /ai/generate-recommendations. Force real NULLs
+    # (the ORM default coerces a Python None on insert, so drive them in via SQL)
+    # and assert the generator runs and skips the NULL rows rather than crashing.
+    db = _fresh_session()
+    now = datetime.utcnow()
+    # A healthy machine with a real reading so a survivable run still produces the
+    # rows it should, alongside the NULL rows that must be skipped.
+    db.add(models.Machine(id=1, name="Null-Util", status="Running", utilization=50))
+    db.add(models.Machine(id=2, name="Low-Util", status="Running", utilization=30))
+    db.add(models.InventoryItem(item_code="NULLSTK", item_name="Ghost", category="C",
+                                supplier="S", unit="ea", current_stock=5,
+                                reorder_level=2, location="L"))
+    db.add(models.InventoryItem(item_code="LOWSTK", item_name="Bolt", category="C",
+                                supplier="S", unit="ea", current_stock=1,
+                                reorder_level=10, location="L"))
+    db.add(models.QualityInspection(inspection_no="Q-NULL", inspector="A",
+                                    inspected_quantity=100, failed_quantity=5,
+                                    created_at=now))
+    db.commit()
+    # Clear the columns to a genuine NULL, as raw SQL / a migration would.
+    db.execute(text("UPDATE machines SET utilization = NULL WHERE id = 1"))
+    db.execute(text("UPDATE inventory_items SET current_stock = NULL, "
+                    "reorder_level = NULL WHERE item_code = 'NULLSTK'"))
+    db.execute(text("UPDATE quality_inspections SET failed_quantity = NULL "
+                    "WHERE inspection_no = 'Q-NULL'"))
+    db.commit()
+    db.expire_all()
+
+    # No TypeError — the endpoint returns cleanly.
+    out = recommendations_routes.generate_ai_recommendations(db=db, current_user={})
+    assert isinstance(out, dict) and "created" in out, out
+
+    # The NULL-utilization machine yields no utilization rec (no reading != low),
+    # while the genuinely-low one (30%) still does.
+    util = _by_type(db, "Utilization Optimization")
+    util_titles = {r.title for r in util}
+    assert "Low utilization on Null-Util" not in util_titles, util_titles
+    assert "Low utilization on Low-Util" in util_titles, util_titles
+
+    # The NULL-stock item is excluded (can't say it's low); the real low one fires.
+    inv_titles = {r.title for r in _by_type(db, "Inventory Forecast")}
+    assert "Inventory replenishment recommended for NULLSTK" not in inv_titles, inv_titles
+    assert "Inventory replenishment recommended for LOWSTK" in inv_titles, inv_titles
+
+    # failed_quantity NULL counts as 0 failures: 0/100 = 0% -> no quality rec.
+    assert _by_type(db, "Quality Prediction") == []
+    print("PASS generator survives NULL utilization / stock / failed_quantity and "
+          "skips those rows instead of 500-ing")
+
+
 if __name__ == "__main__":
     test_recommendations_paths_owned_by_module()
     test_generator_is_bounded_to_the_recent_window_in_sql()
@@ -151,4 +206,5 @@ if __name__ == "__main__":
     test_breakdown_now_fires_even_with_no_recent_downtime()
     test_quality_fail_rate_uses_the_recent_window_denominator()
     test_generator_is_edge_safe_on_empty_and_zero_inspection()
+    test_generator_survives_null_utilization_stock_and_quality_columns()
     print("ALL RECOMMENDATION ROUTE TESTS PASSED")

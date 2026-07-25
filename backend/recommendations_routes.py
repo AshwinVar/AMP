@@ -103,19 +103,36 @@ def generate_ai_recommendations(db: Session = Depends(_get_db), current_user: di
         if machine.status == "Breakdown" or downtime_minutes > 120:
             add_rec("Predictive Maintenance", "High", f"Maintenance risk detected on {machine.name}", f"{machine.name} has {downtime_minutes} minutes downtime in the last {RECOMMENDATION_WINDOW_DAYS} days or is in breakdown state. Schedule inspection.", machine.id, 86)
 
-        if machine.utilization < 45:
+        # Machine.utilization is Column(Integer, default=0) WITHOUT nullable=False —
+        # a row written by raw SQL / a migration / an update that clears the field
+        # can be NULL, and `None < 45` raised TypeError, 500-ing this endpoint. A
+        # NULL means "no reading", which is NOT a measured 0%: skip the utilization
+        # rule rather than fabricate a "low utilization" one from the column default
+        # (ADR-0010 — a default must never leak into a displayed value), matching
+        # build_smart_alerts / generate_alerts.
+        if machine.utilization is not None and machine.utilization < 45:
             add_rec("Utilization Optimization", "Medium", f"Low utilization on {machine.name}", f"{machine.name} utilization is {machine.utilization}%. Rebalance schedule.", machine.id, 74)
 
     for item in inventory_items:
-        if item.current_stock <= item.reorder_level:
+        # current_stock / reorder_level are Column(Integer, default=0) WITHOUT
+        # nullable=False, so either can be NULL and `None <= None` raised TypeError.
+        # A NULL level can't say whether the item is low, so exclude it — matching
+        # generate_low_stock_escalations, whose SQL `current_stock <= reorder_level`
+        # filter yields NULL (excluded) when either side is NULL.
+        if item.current_stock is not None and item.reorder_level is not None and item.current_stock <= item.reorder_level:
             add_rec("Inventory Forecast", "High" if item.current_stock == 0 else "Medium", f"Inventory replenishment recommended for {item.item_code}", f"{item.item_name} is at {item.current_stock} {item.unit}; reorder level is {item.reorder_level}.", None, 82)
 
     for plan in production_plans:
         if plan.status == "Behind":
             add_rec("Production Delay Prediction", "High", f"Delay risk on plan {plan.plan_no}", f"Plan {plan.plan_no} is behind schedule. Review capacity/materials.", plan.machine_id, 80)
 
-    inspected = sum(row.inspected_quantity for row in quality_rows)
-    failed = sum(row.failed_quantity for row in quality_rows)
+    # inspected_quantity is nullable=False, but failed_quantity is
+    # Column(Integer, default=0) WITHOUT nullable=False — a NULL (raw write /
+    # migration) made `sum(... + None)` raise TypeError. NULL means "no failures
+    # recorded", i.e. 0, so coalesce; numerator and denominator stay on the same
+    # windowed rows so the rate reconciles.
+    inspected = sum((row.inspected_quantity or 0) for row in quality_rows)
+    failed = sum((row.failed_quantity or 0) for row in quality_rows)
     fail_rate = round((failed / inspected) * 100) if inspected else 0
     if fail_rate >= 10:
         add_rec("Quality Prediction", "High", "Quality failure trend detected", f"Fail rate over the last {RECOMMENDATION_WINDOW_DAYS} days is {fail_rate}%. Trigger root-cause analysis.", None, 84)

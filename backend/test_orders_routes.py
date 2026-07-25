@@ -97,8 +97,105 @@ def test_same_tenant_duplicate_order_no_is_400():
     print("PASS same-tenant duplicate order_no -> 400 (caught by the scoped pre-check)")
 
 
+def _counting_session():
+    """Isolated session whose engine counts every SQL statement it executes, so a
+    test can assert the purchasing analytics no longer runs one query per PO."""
+    from sqlalchemy import event
+
+    T.install_scoping()
+    engine = create_engine("sqlite://", connect_args={"check_same_thread": False})
+    Base.metadata.create_all(bind=engine)
+    counter = {"n": 0}
+
+    @event.listens_for(engine, "before_cursor_execute")
+    def _count(conn, cursor, statement, params, context, executemany):  # noqa: ANN001
+        counter["n"] += 1
+
+    return sessionmaker(bind=engine)(), counter
+
+
+def _supplier(code, name):
+    return schemas.SupplierCreate(supplier_code=code, supplier_name=name)
+
+
+def _po(no, supplier_id, order_qty, received_qty):
+    from datetime import date, timedelta
+
+    return schemas.PurchaseOrderCreate(
+        po_no=no, supplier_id=supplier_id, item_name="Widget",
+        order_quantity=order_qty, received_quantity=received_qty, unit="ea",
+        expected_delivery_date=date.today() + timedelta(days=30),  # future -> never overdue
+    )
+
+
+def test_purchasing_analytics_supplier_pending_reconciled_and_no_n_plus_1():
+    # The supplier-pending breakdown must resolve names from the suppliers already
+    # loaded, not a SELECT per PO. This pins BOTH: (a) the numbers are unchanged
+    # (independently-derived totals per supplier, incl. the "Supplier {id}"
+    # fallback for a dangling supplier_id), and (b) the query count does NOT scale
+    # with the number of purchase orders (the N+1 that this fixes).
+    db, counter = _counting_session()
+    tok = T.set_current_tenant("TA")
+    try:
+        s1 = orders_routes.create_supplier(_supplier("S1", "Acme"), db=db, current_user={"tenant": "TA"})
+        s2 = orders_routes.create_supplier(_supplier("S2", "Globex"), db=db, current_user={"tenant": "TA"})
+
+        # Acme: 100-30=70, 50-50=0, 10-10=0  -> 70 pending
+        orders_routes.create_purchase_order(_po("PO-1", s1.id, 100, 30), db=db, current_user={"tenant": "TA"})
+        orders_routes.create_purchase_order(_po("PO-2", s1.id, 50, 50), db=db, current_user={"tenant": "TA"})
+        orders_routes.create_purchase_order(_po("PO-6", s1.id, 10, 10), db=db, current_user={"tenant": "TA"})
+        # Globex: 40-0=40, 20-5=15  -> 55 pending
+        orders_routes.create_purchase_order(_po("PO-3", s2.id, 40, 0), db=db, current_user={"tenant": "TA"})
+        orders_routes.create_purchase_order(_po("PO-4", s2.id, 20, 5), db=db, current_user={"tenant": "TA"})
+
+        # A PO whose supplier row does not exist (deleted supplier / bad ref):
+        # inserted directly to bypass the create-time existence check, so the
+        # fallback-label branch is exercised. 10-0=10 pending under "Supplier 9999".
+        db.add(models.PurchaseOrder(
+            po_no="PO-5", supplier_id=9999, item_name="Widget", order_quantity=10,
+            received_quantity=0, unit="ea",
+            expected_delivery_date=_po("x", 1, 1, 0).expected_delivery_date, status="Open",
+        ))
+        db.commit()
+
+        counter["n"] = 0  # count only the analytics call
+        result = orders_routes.get_purchasing_analytics(db=db, current_user={"tenant": "TA"})
+        queries = counter["n"]
+    finally:
+        T.reset_current_tenant(tok)
+
+    # Independently-derived expectations.
+    assert result["supplier_pending"] == {"Acme": 70, "Globex": 55, "Supplier 9999": 10}, result["supplier_pending"]
+    assert result["purchase_orders"] == 6, result["purchase_orders"]
+    # ordered = 100+50+10+40+20+10 = 230 ; received = 30+50+10+0+5+0 = 95 -> round(95/230*100)=41
+    assert result["ordered_qty"] == 230 and result["received_qty"] == 95, result
+    assert result["receipt_rate"] == 41, result["receipt_rate"]
+
+    # 6 purchase orders, but the analytics must not run ~6 supplier lookups. The
+    # bounded query count (a small constant) is what the N+1 removal guarantees;
+    # the old per-PO SELECT made this grow past the PO count.
+    assert queries <= 3, f"purchasing analytics ran {queries} queries for 6 POs (N+1 regressed?)"
+    print(f"PASS purchasing supplier_pending reconciled + bounded ({queries} queries for 6 POs)")
+
+
+def test_purchasing_analytics_empty_book():
+    # No suppliers, no POs: no crash, honest zeros, empty breakdown.
+    db = _iso_session()
+    tok = T.set_current_tenant("TA")
+    try:
+        result = orders_routes.get_purchasing_analytics(db=db, current_user={"tenant": "TA"})
+    finally:
+        T.reset_current_tenant(tok)
+    assert result["purchase_orders"] == 0
+    assert result["receipt_rate"] == 0  # ordered_qty == 0 -> no divide-by-zero
+    assert result["supplier_pending"] == {}
+    print("PASS purchasing analytics on an empty order book -> honest zeros, no crash")
+
+
 if __name__ == "__main__":
     test_procurement_paths_owned_by_orders_routes()
     test_duplicate_order_no_across_tenants_is_409_not_500()
     test_same_tenant_duplicate_order_no_is_400()
+    test_purchasing_analytics_supplier_pending_reconciled_and_no_n_plus_1()
+    test_purchasing_analytics_empty_book()
     print("ALL ORDERS ROUTE TESTS PASSED")

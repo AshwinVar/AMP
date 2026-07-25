@@ -470,10 +470,17 @@ def get_purchasing_analytics(
     received_qty = sum(row.received_quantity for row in pos)
     receipt_rate = round((received_qty / ordered_qty) * 100) if ordered_qty else 0
 
+    # Resolve supplier names from the suppliers already loaded above, rather than
+    # a per-PO SELECT — that inner lookup was an N+1 that hit the database once
+    # for every purchase order in the book (200 open POs -> 200 extra queries).
+    # Supplier is in SCOPED_MODELS, so the tenant-scoped `.all()` fetch already
+    # holds exactly the suppliers the per-row query could have returned; an
+    # unknown/foreign supplier_id is simply absent from the map and still falls
+    # back to the "Supplier {id}" label — output unchanged, one scan instead of N.
+    supplier_names = {s.id: s.supplier_name for s in suppliers}
     supplier_pending = {}
     for row in pos:
-        supplier = db.query(models.Supplier).filter(models.Supplier.id == row.supplier_id).first()
-        name = supplier.supplier_name if supplier else f"Supplier {row.supplier_id}"
+        name = supplier_names.get(row.supplier_id, f"Supplier {row.supplier_id}")
         pending = max(row.order_quantity - row.received_quantity, 0)
         supplier_pending[name] = supplier_pending.get(name, 0) + pending
 

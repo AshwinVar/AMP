@@ -6,9 +6,8 @@ approve/reject decisions. Peeled out of main.py, following the register(app)
 pattern. Every handler is tenant-scoped; the mutating ones (policy PUT,
 approve/reject) advance an AgentAction under human oversight (ADR-0005).
 """
-from collections import Counter
-
 from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 import ai
@@ -68,18 +67,34 @@ def list_agent_actions(status: str = None, db: Session = Depends(_get_db), curre
 
 @router.get("/agent-actions/stats")
 def agent_action_stats(db: Session = Depends(_get_db), current_user: dict = Depends(get_current_user)):
-    # Agent oversight metrics (ADR-0005), tenant-scoped.
+    # Agent oversight metrics (ADR-0005), tenant-scoped. agent_actions is an
+    # append-only log with no natural window, so aggregate in SQL (GROUP BY
+    # counts) rather than hydrating the whole history on every poll — the rule-4
+    # antipattern (db.query(Model).all() then aggregate in Python on a growing
+    # table), the same fix already applied to the roster (#259). agent_actions is
+    # not in SCOPED_MODELS, so the tenant filter stays explicit; (tenant_code) and
+    # (agent) are index-backed.
     tenant = request_tenant(current_user)
-    rows = db.query(models.AgentAction).filter(models.AgentAction.tenant_code == tenant).all()
-    by_status = Counter(r.status for r in rows)
-    by_agent = Counter(r.agent for r in rows)
+    scoped = lambda: db.query(models.AgentAction).filter(models.AgentAction.tenant_code == tenant)
+
+    by_status = dict(
+        scoped().with_entities(models.AgentAction.status, func.count())
+        .group_by(models.AgentAction.status).all()
+    )
+    by_agent = dict(
+        scoped().with_entities(models.AgentAction.agent, func.count())
+        .group_by(models.AgentAction.agent).all()
+    )
+    auto_approved = scoped().filter(models.AgentAction.decided_by == "auto-policy").count()
     return {
-        "total": len(rows),
+        # Total counts every row, including any with a NULL status (which falls in
+        # its own GROUP BY bucket) — so summing the status tally equals len(rows).
+        "total": sum(by_status.values()),
         "proposed": by_status.get("Proposed", 0),
         "approved": by_status.get("Approved", 0),
         "rejected": by_status.get("Rejected", 0),
-        "auto_approved": sum(1 for r in rows if r.decided_by == "auto-policy"),
-        "by_agent": dict(by_agent),   # every agent that has acted (maintenance/quality/reorder/escalation/…)
+        "auto_approved": auto_approved,
+        "by_agent": by_agent,   # every agent that has acted (maintenance/quality/reorder/escalation/…)
     }
 
 

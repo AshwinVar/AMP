@@ -16,6 +16,7 @@ from datetime import datetime
 from typing import List
 
 from fastapi import APIRouter, Depends, HTTPException, Response
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 import models
@@ -105,7 +106,11 @@ def create_report(payload: schemas.ReportRequestCreate, db: Session = Depends(_g
         raise HTTPException(status_code=400, detail="Report number already exists")
     row = models.ReportRequest(**payload.model_dump())
     db.add(row)
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(status_code=409, detail="Report number is already in use")
     db.refresh(row)
     return row
 

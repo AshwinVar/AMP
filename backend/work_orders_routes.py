@@ -11,6 +11,7 @@ from datetime import datetime
 from typing import List
 
 from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 import models
@@ -52,7 +53,11 @@ def create_work_order(
         raise HTTPException(status_code=400, detail="Work order number already exists")
     new_work_order = models.WorkOrder(**work_order.model_dump())
     db.add(new_work_order)
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(status_code=409, detail="Work order number is already in use")
     db.refresh(new_work_order)
     return new_work_order
 

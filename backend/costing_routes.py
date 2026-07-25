@@ -8,6 +8,7 @@ ProductionRecord. Peeled out of main.py per ADR-0009 (register(app) pattern).
 from typing import List
 
 from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 import models
@@ -39,7 +40,11 @@ def create_cost_record(cost: schemas.CostRecordCreate, db: Session = Depends(_ge
         raise HTTPException(status_code=400, detail="Cost number already exists")
     row = models.CostRecord(**cost.model_dump())
     db.add(row)
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(status_code=409, detail="Cost number is already in use")
     db.refresh(row)
     return row
 

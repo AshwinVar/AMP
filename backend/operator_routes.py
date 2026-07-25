@@ -9,6 +9,7 @@ from datetime import datetime
 from typing import List
 
 from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 import models
@@ -45,7 +46,11 @@ def create_operator_execution(execution: schemas.OperatorJobExecutionCreate, db:
 
     row = models.OperatorJobExecution(**execution.model_dump())
     db.add(row)
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(status_code=409, detail="Execution number is already in use")
     db.refresh(row)
     return row
 

@@ -10,6 +10,7 @@ ADR-0009.
 from typing import List
 
 from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 import models
@@ -107,7 +108,11 @@ def create_quality_inspection(
             defect_category=new_inspection.defect_category,
         ), db)
 
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(status_code=409, detail="Inspection number is already in use")
     db.refresh(new_inspection)
 
     return new_inspection

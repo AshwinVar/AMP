@@ -10,6 +10,7 @@ from datetime import datetime, timedelta
 from typing import List
 
 from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 import models
@@ -249,7 +250,11 @@ def create_document(
 
     new_document = models.ComplianceDocument(**document.model_dump())
     db.add(new_document)
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(status_code=409, detail="Document number is already in use")
     db.refresh(new_document)
     return new_document
 
@@ -362,7 +367,11 @@ def create_maintenance_task(
 
     new_task = models.MaintenanceTask(**task.model_dump())
     db.add(new_task)
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(status_code=409, detail="Task number is already in use")
     db.refresh(new_task)
     return new_task
 

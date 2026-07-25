@@ -11,6 +11,7 @@ ADR-0009.
 from typing import List
 
 from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 import models
@@ -62,7 +63,11 @@ def create_inventory_item(
 
     new_item = models.InventoryItem(**item.model_dump())
     db.add(new_item)
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(status_code=409, detail="Item code is already in use")
     db.refresh(new_item)
 
     return new_item

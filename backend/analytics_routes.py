@@ -618,18 +618,28 @@ def get_maintenance_analytics(
 
     open_count = len([row for row in tasks if row.status == "Open"])
     in_progress = len([row for row in tasks if row.status == "In Progress"])
-    completed = len([row for row in tasks if row.status == "Completed"])
+    completed_tasks = [row for row in tasks if row.status == "Completed"]
+    completed = len(completed_tasks)
     overdue = len([row for row in tasks if row.planned_date < today and row.status != "Completed"])
     preventive = len([row for row in tasks if row.task_type == "Preventive"])
     breakdown = len([row for row in tasks if row.task_type == "Breakdown"])
 
-    total_downtime = sum(row.downtime_minutes for row in tasks)
-    avg_repair = round(total_downtime / completed) if completed else 0
+    # total_downtime_minutes is the honest sum over EVERY task (an open task can
+    # already carry accumulated downtime). Mean-time-to-repair, though, is a
+    # per-COMPLETED-repair average, so its numerator must be the completed tasks'
+    # downtime — dividing the all-task total by only the completed count inflated
+    # the average with downtime from repairs that haven't finished. (`or 0` guards
+    # the nullable downtime_minutes column against a None -> TypeError 500.)
+    total_downtime = sum((row.downtime_minutes or 0) for row in tasks)
+    completed_downtime = sum((row.downtime_minutes or 0) for row in completed_tasks)
+    avg_repair = round(completed_downtime / completed) if completed else 0
 
+    # One name lookup for all machines (tenant-scoped like the task query itself),
+    # instead of a per-task query — this loop was an N+1 on a growing table.
+    machine_names = dict(db.query(models.Machine.id, models.Machine.name).all())
     machine_counts = {}
     for row in tasks:
-        machine = db.query(models.Machine).filter(models.Machine.id == row.machine_id).first()
-        name = machine.name if machine else f"Machine {row.machine_id}"
+        name = machine_names.get(row.machine_id, f"Machine {row.machine_id}")
         machine_counts[name] = machine_counts.get(name, 0) + 1
 
     return {

@@ -5,6 +5,20 @@ from collections import defaultdict
 from duration import parse_duration_to_minutes
 
 
+def _int(value):
+    """Coalesce a possibly-NULL integer column to 0.
+
+    ``Machine.utilization`` and ``WorkOrder.actual_quantity`` are declared
+    ``Column(Integer, default=0)`` WITHOUT ``nullable=False`` — the ORM default
+    only fills a value the *inserter* omitted, so a row written by raw SQL, a
+    migration, or an update that clears the field can legitimately be NULL. The
+    scorer then did ``None < 40`` / ``target - None`` and raised ``TypeError``,
+    500-ing the predictive-maintenance endpoint. Treat a missing count as the
+    column's own default of 0.
+    """
+    return value if value is not None else 0
+
+
 def classify_risk(score: int):
     if score >= 75:
         return "Critical"
@@ -47,7 +61,7 @@ def calculate_predictive_risk(machines, downtime_logs, production_records, machi
 
     for work_order in work_orders:
         if work_order.status in ["Running", "Delayed"]:
-            work_order_pressure[work_order.machine_id] += max(work_order.target_quantity - work_order.actual_quantity, 0)
+            work_order_pressure[work_order.machine_id] += max(work_order.target_quantity - _int(work_order.actual_quantity), 0)
 
     rows = []
     for machine in machines:
@@ -57,6 +71,8 @@ def calculate_predictive_risk(machines, downtime_logs, production_records, machi
         downtime_events = downtime_events_by_machine[machine.id]
         breakdown_events = breakdown_events_by_machine[machine.id]
         pressure = work_order_pressure[machine.id]
+
+        utilization = _int(machine.utilization)
 
         reject_rate = 0
         if total_by_machine[machine.id]:
@@ -68,10 +84,10 @@ def calculate_predictive_risk(machines, downtime_logs, production_records, machi
         if machine.status == "Maintenance":
             score += 15
             reasons.append("machine currently in maintenance")
-        if machine.utilization < 40:
+        if utilization < 40:
             score += 20
             reasons.append("low utilization below 40%")
-        if machine.utilization > 90:
+        if utilization > 90:
             score += 12
             reasons.append("high utilization above 90%")
         if downtime_minutes >= 120:
@@ -104,7 +120,7 @@ def calculate_predictive_risk(machines, downtime_logs, production_records, machi
             "machine_id": machine.id,
             "machine_name": machine.name,
             "status": machine.status,
-            "utilization": machine.utilization,
+            "utilization": utilization,
             "risk_score": score,
             "risk_level": classify_risk(score),
             "downtime_minutes": downtime_minutes,

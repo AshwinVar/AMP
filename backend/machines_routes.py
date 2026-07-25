@@ -139,6 +139,14 @@ def create_production_record(record: schemas.ProductionCreate, db: Session = Dep
     machine = db.query(models.Machine).filter(models.Machine.id == record.machine_id).first()
     if not machine:
         raise HTTPException(status_code=404, detail="Machine not found")
+    # Reject physically-impossible rows at the boundary. Negative minutes/counts
+    # are nonsensical and silently corrupt every window that includes them (a
+    # negative good_count drags good-rate, scrap and OEE). The schema types are
+    # plain ints, so nothing else stops them. (runtime > planned is intentionally
+    # allowed — a job can run over its plan; the OEE/cost math handles it, ADR-0010.)
+    if min(record.planned_minutes, record.runtime_minutes, record.ideal_cycle_time_seconds,
+           record.total_count, record.good_count, record.rejected_count) < 0:
+        raise HTTPException(status_code=400, detail="minutes and counts must be non-negative")
     if record.good_count + record.rejected_count != record.total_count:
         raise HTTPException(status_code=400, detail="good_count + rejected_count must equal total_count")
     new_record = models.ProductionRecord(**record.model_dump())

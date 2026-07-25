@@ -13,6 +13,7 @@ its own copy of the relocated helpers.
 Run:  python backend/test_analytics_routes.py     (exit 0 = pass)
 """
 import inspect
+from datetime import date
 
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
@@ -123,10 +124,89 @@ def test_executive_oee_no_production_is_zero_not_fabricated():
     print("PASS executive-oee reports 0 plant OEE on no production (no fabricated number)")
 
 
+def _work_order(**kw):
+    kw.setdefault("part_number", "PN")
+    kw.setdefault("batch_number", "BN")
+    return models.WorkOrder(**kw)
+
+
+def test_work_order_analytics_null_actual_and_reconciled_totals():
+    # actual_quantity is Column(Integer, default=0) without nullable=False, so a
+    # NULL slips in via raw SQL / a cleared update. The old sum(...) did int + None
+    # and 500'd; COALESCE(SUM,0) must treat the NULL as 0. Numbers are derived by
+    # hand, not read back from the endpoint.
+    db = _fresh_session()
+    db.add(_work_order(id=1, work_order_no="W1", status="Running", target_quantity=100, actual_quantity=50))
+    db.add(_work_order(id=2, work_order_no="W2", status="Planned", target_quantity=200, actual_quantity=None))
+    db.add(_work_order(id=3, work_order_no="W3", status="Completed", target_quantity=300, actual_quantity=300))
+    db.add(_work_order(id=4, work_order_no="W4", status="Delayed", target_quantity=50, actual_quantity=10))
+    db.commit()
+
+    out = analytics_routes.get_work_order_analytics(db=db, current_user={})
+    assert out["total_work_orders"] == 4, out
+    assert out["planned"] == 1 and out["running"] == 1
+    assert out["completed"] == 1 and out["delayed"] == 1
+    # target: 100+200+300+50 = 650 (target_quantity is NOT NULL, all counted)
+    assert out["total_target"] == 650, out
+    # actual: 50 + 0(NULL->0) + 300 + 10 = 360 — NOT a crash, NOT dropping the row
+    assert out["total_actual"] == 360, out
+    # achievement = round(360/650*100) = round(55.38) = 55
+    assert out["achievement"] == 55, out
+    # the four status buckets reconcile with the count of the four named statuses
+    assert out["planned"] + out["running"] + out["completed"] + out["delayed"] == 4
+    print("PASS work-order analytics: NULL actual -> 0, totals reconcile (650 target / 360 actual / 55%)")
+
+
+def test_work_order_analytics_empty_table_is_zero_not_a_crash():
+    db = _fresh_session()
+    out = analytics_routes.get_work_order_analytics(db=db, current_user={})
+    assert out["total_work_orders"] == 0
+    assert out["total_target"] == 0 and out["total_actual"] == 0
+    # zero denominator -> 0, not a ZeroDivisionError
+    assert out["achievement"] == 0
+    print("PASS work-order analytics: empty table -> zeros, no divide-by-zero")
+
+
+def test_production_plan_analytics_null_actual_and_reconciled_totals():
+    db = _fresh_session()
+    db.add(models.ProductionPlan(id=1, plan_no="P1", status="Running", planned_quantity=100,
+                                 actual_quantity=80, plan_date=date(2026, 1, 1), shift_name="A"))
+    db.add(models.ProductionPlan(id=2, plan_no="P2", status="Behind", planned_quantity=200,
+                                 actual_quantity=None, plan_date=date(2026, 1, 1), shift_name="B"))
+    db.add(models.ProductionPlan(id=3, plan_no="P3", status="Completed", planned_quantity=100,
+                                 actual_quantity=100, plan_date=date(2026, 1, 1), shift_name="C"))
+    db.commit()
+
+    out = analytics_routes.get_production_plan_analytics(db=db, current_user={})
+    assert out["total_plans"] == 3, out
+    # planned: 100+200+100 = 400 (planned_quantity is NOT NULL)
+    assert out["planned_quantity"] == 400, out
+    # actual: 80 + 0(NULL->0) + 100 = 180
+    assert out["actual_quantity"] == 180, out
+    # achievement = round(180/400*100) = 45
+    assert out["achievement"] == 45, out
+    assert out["running"] == 1 and out["completed"] == 1 and out["behind"] == 1
+    assert out["planned"] == 0
+    print("PASS production-plan analytics: NULL actual -> 0, totals reconcile (400 planned / 180 actual / 45%)")
+
+
+def test_production_plan_analytics_empty_table_is_zero_not_a_crash():
+    db = _fresh_session()
+    out = analytics_routes.get_production_plan_analytics(db=db, current_user={})
+    assert out["total_plans"] == 0
+    assert out["planned_quantity"] == 0 and out["actual_quantity"] == 0
+    assert out["achievement"] == 0
+    print("PASS production-plan analytics: empty table -> zeros, no divide-by-zero")
+
+
 if __name__ == "__main__":
     test_analytics_paths_owned_by_module()
     test_analytics_summary_is_module_level_and_shared()
     test_module_has_no_relocated_helper_copies()
     test_executive_oee_plant_rollup_is_pooled_not_a_per_machine_mean()
     test_executive_oee_no_production_is_zero_not_fabricated()
+    test_work_order_analytics_null_actual_and_reconciled_totals()
+    test_work_order_analytics_empty_table_is_zero_not_a_crash()
+    test_production_plan_analytics_null_actual_and_reconciled_totals()
+    test_production_plan_analytics_empty_table_is_zero_not_a_crash()
     print("ALL ANALYTICS ROUTE TESTS PASSED")

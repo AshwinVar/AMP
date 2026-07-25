@@ -498,6 +498,101 @@ def test_inventory_analytics_transaction_count_is_tenant_scoped():
     print("PASS inventory analytics: transaction COUNT stays tenant-scoped (GMATS sees 2 of 3)")
 
 
+def _escalation(**kw):
+    kw.setdefault("title", "T")
+    kw.setdefault("owner", "O")
+    kw.setdefault("department", "D")
+    return models.Escalation(**kw)
+
+
+def test_escalation_analytics_buckets_and_reconciled_totals():
+    # The endpoint used to hydrate the whole (growing) escalations table and
+    # bucket it in Python; it now GROUP BYs in SQL. Semantics must be identical:
+    # `total` counts every row, the status/severity buckets count only their
+    # named values. Numbers are derived by hand, not read back from the endpoint.
+    # One row carries a status ("Cancelled") outside the three named buckets and
+    # another a NULL status — both must still be counted in `total` and must not
+    # crash the GROUP BY.
+    db = _fresh_session()
+    db.add(_escalation(id=1, severity="Critical", status="Open"))
+    db.add(_escalation(id=2, severity="High", status="In Progress"))
+    db.add(_escalation(id=3, severity="Medium", status="Resolved"))
+    db.add(_escalation(id=4, severity="Low", status="Open"))
+    db.add(_escalation(id=5, severity="High", status="Open"))
+    db.add(_escalation(id=6, severity="Critical", status="Cancelled"))
+    db.commit()
+    # A genuine NULL status (the column is nullable) — written directly because
+    # the ORM would apply default="Open" if we passed status=None on insert.
+    db.execute(text("UPDATE escalations SET status = NULL WHERE id = 3"))
+    db.commit()
+    db.expire_all()
+
+    out = analytics_routes.get_escalation_analytics(db=db, current_user={})
+    # total counts all 6 rows (including the Cancelled and the NULL-status one).
+    assert out["total"] == 6, out
+    # status buckets: Open = ids 1,4,5 = 3; In Progress = id 2 = 1;
+    # Resolved = 0 (id 3's status was nulled out, so it no longer counts).
+    assert out["open"] == 3, out
+    assert out["in_progress"] == 1, out
+    assert out["resolved"] == 0, out
+    # severity buckets: Critical = ids 1,6 = 2; High = ids 2,5 = 2; Medium = 1; Low = 1.
+    assert out["critical"] == 2, out
+    assert out["high"] == 2, out
+    assert out["medium"] == 1, out
+    assert out["low"] == 1, out
+    # severity is NOT NULL and every row here has a named severity, so the four
+    # severity buckets reconcile with the headline total.
+    assert out["critical"] + out["high"] + out["medium"] + out["low"] == out["total"], out
+    # the named status buckets + the two unnamed-status rows (Cancelled, NULL)
+    # also account for every row — nothing double-counted, nothing dropped.
+    assert out["open"] + out["in_progress"] + out["resolved"] + 2 == out["total"], out
+    print("PASS escalation analytics: SQL buckets match hand totals, severity reconciles (6 rows)")
+
+
+def test_escalation_analytics_empty_table_is_zero_not_a_crash():
+    db = _fresh_session()
+    out = analytics_routes.get_escalation_analytics(db=db, current_user={})
+    assert out["total"] == 0
+    assert out["open"] == 0 and out["in_progress"] == 0 and out["resolved"] == 0
+    assert out["critical"] == 0 and out["high"] == 0
+    assert out["medium"] == 0 and out["low"] == 0
+    print("PASS escalation analytics: empty table -> all zeros, no crash")
+
+
+def test_escalation_analytics_is_tenant_scoped():
+    # The GROUP BY aggregates that replaced `.all()` must stay tenant-scoped,
+    # exactly like the auto-scoped load they replaced (ADR-0002 do_orm_execute
+    # hook). A tenant must never see another tenant's escalation counts.
+    import tenancy as T
+    T.install_scoping()
+    db = _fresh_session()
+    tok = T.set_current_tenant("GMATS")
+    try:
+        db.add(_escalation(id=1, severity="Critical", status="Open"))
+        db.add(_escalation(id=2, severity="High", status="Resolved"))
+        db.commit()
+    finally:
+        T.reset_current_tenant(tok)
+    tok = T.set_current_tenant("DEFAULT")
+    try:
+        db.add(_escalation(id=3, severity="Low", status="Open"))
+        db.commit()
+    finally:
+        T.reset_current_tenant(tok)
+
+    tok = T.set_current_tenant("GMATS")
+    try:
+        out = analytics_routes.get_escalation_analytics(db=db, current_user={"tenant": "GMATS"})
+    finally:
+        T.reset_current_tenant(tok)
+    # GMATS wrote 2 of the 3 rows; it must count only its own.
+    assert out["total"] == 2, out
+    assert out["open"] == 1 and out["resolved"] == 1, out
+    assert out["critical"] == 1 and out["high"] == 1, out
+    assert out["low"] == 0, out  # the DEFAULT-tenant Low row is invisible to GMATS
+    print("PASS escalation analytics: SQL GROUP BY stays tenant-scoped (GMATS sees 2 of 3)")
+
+
 if __name__ == "__main__":
     test_analytics_paths_owned_by_module()
     test_analytics_summary_is_module_level_and_shared()
@@ -518,4 +613,7 @@ if __name__ == "__main__":
     test_inventory_analytics_null_stock_and_bounded_transaction_count()
     test_inventory_analytics_empty_tables_are_zero_not_a_crash()
     test_inventory_analytics_transaction_count_is_tenant_scoped()
+    test_escalation_analytics_buckets_and_reconciled_totals()
+    test_escalation_analytics_empty_table_is_zero_not_a_crash()
+    test_escalation_analytics_is_tenant_scoped()
     print("ALL ANALYTICS ROUTE TESTS PASSED")

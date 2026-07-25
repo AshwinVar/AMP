@@ -10,7 +10,7 @@ Run:  python backend/test_orders_routes.py     (exit 0 = pass)
 from datetime import datetime
 
 from fastapi import HTTPException
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker
 
 import main
@@ -192,10 +192,80 @@ def test_purchasing_analytics_empty_book():
     print("PASS purchasing analytics on an empty order book -> honest zeros, no crash")
 
 
+def test_purchasing_analytics_survives_null_received_quantity():
+    # received_quantity is Column(Integer, default=0) WITHOUT nullable=False, so a
+    # legacy row (raw SQL / migration / cleared update) can hold a true NULL. The
+    # ORM default only fills an *omitted* value, so we force NULL with a raw UPDATE
+    # (create-then-null), the same "slips in via raw SQL" path the fix targets.
+    # Pre-fix the summary did sum(int + None) and max(int - None) and 500'd; NULL
+    # must now read as the column's own default of 0.
+    db = _iso_session()
+    tok = T.set_current_tenant("TA")
+    try:
+        s1 = orders_routes.create_supplier(_supplier("S1", "Acme"), db=db, current_user={"tenant": "TA"})
+        # ordered 100, received 30 (clean); ordered 40, received -> NULL.
+        po_a = orders_routes.create_purchase_order(_po("PO-A", s1.id, 100, 30), db=db, current_user={"tenant": "TA"})
+        po_b = orders_routes.create_purchase_order(_po("PO-B", s1.id, 40, 0), db=db, current_user={"tenant": "TA"})
+        db.execute(text("UPDATE purchase_orders SET received_quantity = NULL WHERE id = :i"), {"i": po_b.id})
+        db.commit()
+        db.expire_all()  # force the analytics query to reload the true NULL from the DB
+
+        result = orders_routes.get_purchasing_analytics(db=db, current_user={"tenant": "TA"})
+    finally:
+        T.reset_current_tenant(tok)
+
+    # Independently-derived: ordered = 100+40 = 140; received = 30 + 0(NULL->0) = 30.
+    assert result["ordered_qty"] == 140, result["ordered_qty"]
+    assert result["received_qty"] == 30, result["received_qty"]
+    # receipt_rate = round(30/140*100) = round(21.43) = 21 (NOT a crash, NOT dropping the NULL PO).
+    assert result["receipt_rate"] == 21, result["receipt_rate"]
+    # supplier_pending under Acme: (100-30) + (40 - NULL->0) = 70 + 40 = 110.
+    assert result["supplier_pending"] == {"Acme": 110}, result["supplier_pending"]
+    print("PASS purchasing analytics: NULL received_quantity -> 0, totals reconcile (140/30/21%, pending 110)")
+
+
+def _co(no, order_qty, dispatched_qty):
+    from datetime import date, timedelta
+
+    return schemas.CustomerOrderCreate(
+        order_no=no, customer_name="Acme", product_name="Widget",
+        order_quantity=order_qty, dispatched_quantity=dispatched_qty,
+        due_date=date.today() + timedelta(days=30),  # future -> never late
+    )
+
+
+def test_customer_order_analytics_survives_null_dispatched_quantity():
+    # dispatched_quantity is Column(Integer, default=0) WITHOUT nullable=False —
+    # same NULL exposure as received_quantity. Force a true NULL with a raw UPDATE
+    # and assert the dispatch summary treats it as 0 rather than 500'ing.
+    db = _iso_session()
+    tok = T.set_current_tenant("TA")
+    try:
+        co_a = orders_routes.create_customer_order(_co("CO-A", 100, 40), db=db, current_user={"tenant": "TA"})
+        co_b = orders_routes.create_customer_order(_co("CO-B", 50, 0), db=db, current_user={"tenant": "TA"})
+        db.execute(text("UPDATE customer_orders SET dispatched_quantity = NULL WHERE id = :i"), {"i": co_b.id})
+        db.commit()
+        db.expire_all()
+
+        result = orders_routes.get_customer_order_analytics(db=db, current_user={"tenant": "TA"})
+    finally:
+        T.reset_current_tenant(tok)
+
+    # Independently-derived: order = 100+50 = 150; dispatched = 40 + 0(NULL->0) = 40.
+    assert result["total_order_qty"] == 150, result["total_order_qty"]
+    assert result["total_dispatched_qty"] == 40, result["total_dispatched_qty"]
+    # dispatch_rate = round(40/150*100) = round(26.67) = 27.
+    assert result["dispatch_rate"] == 27, result["dispatch_rate"]
+    assert result["total_orders"] == 2, result["total_orders"]
+    print("PASS customer-order analytics: NULL dispatched_quantity -> 0, totals reconcile (150/40/27%)")
+
+
 if __name__ == "__main__":
     test_procurement_paths_owned_by_orders_routes()
     test_duplicate_order_no_across_tenants_is_409_not_500()
     test_same_tenant_duplicate_order_no_is_400()
     test_purchasing_analytics_supplier_pending_reconciled_and_no_n_plus_1()
     test_purchasing_analytics_empty_book()
+    test_purchasing_analytics_survives_null_received_quantity()
+    test_customer_order_analytics_survives_null_dispatched_quantity()
     print("ALL ORDERS ROUTE TESTS PASSED")

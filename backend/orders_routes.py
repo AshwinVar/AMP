@@ -198,8 +198,14 @@ def get_customer_order_analytics(
     cancelled = len([row for row in orders if row.status == "Cancelled"])
     late = len([row for row in orders if row.due_date < today and row.status not in ["Dispatched", "Cancelled"]])
 
+    # dispatched_quantity is Column(Integer, default=0) WITHOUT nullable=False —
+    # the ORM default only fills a value the inserter omitted, so a row written by
+    # raw SQL, a migration, or an update that clears the field can be NULL. Summing
+    # a NULL then 500'd this endpoint (None in sum()); the CSV export already reads
+    # it as `dispatched_quantity or 0`, so coalesce to the column's own default of 0
+    # here too. order_quantity is nullable=False, so it needs no guard.
     total_order_qty = sum(row.order_quantity for row in orders)
-    total_dispatched_qty = sum(row.dispatched_quantity for row in orders)
+    total_dispatched_qty = sum((row.dispatched_quantity or 0) for row in orders)
     dispatch_rate = round((total_dispatched_qty / total_order_qty) * 100) if total_order_qty else 0
 
     priority_counts = {}
@@ -466,8 +472,13 @@ def get_purchasing_analytics(
     cancelled = len([row for row in pos if row.status == "Cancelled"])
     overdue = len([row for row in pos if row.expected_delivery_date < today and row.status not in ["Received", "Cancelled"]])
 
+    # received_quantity is Column(Integer, default=0) WITHOUT nullable=False, so a
+    # row written by raw SQL / a migration / a cleared update can be NULL. Summing a
+    # NULL 500'd this endpoint (None in sum()); coalesce to the column's own default
+    # of 0, matching the CSV export's `received_quantity or 0`. order_quantity is
+    # nullable=False and needs no guard.
     ordered_qty = sum(row.order_quantity for row in pos)
-    received_qty = sum(row.received_quantity for row in pos)
+    received_qty = sum((row.received_quantity or 0) for row in pos)
     receipt_rate = round((received_qty / ordered_qty) * 100) if ordered_qty else 0
 
     # Resolve supplier names from the suppliers already loaded above, rather than
@@ -481,7 +492,7 @@ def get_purchasing_analytics(
     supplier_pending = {}
     for row in pos:
         name = supplier_names.get(row.supplier_id, f"Supplier {row.supplier_id}")
-        pending = max(row.order_quantity - row.received_quantity, 0)
+        pending = max(row.order_quantity - (row.received_quantity or 0), 0)
         supplier_pending[name] = supplier_pending.get(name, 0) + pending
 
     return {

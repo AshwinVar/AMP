@@ -305,17 +305,35 @@ def get_escalation_analytics(
     db: Session = Depends(_get_db),
     current_user: dict = Depends(get_current_user),
 ):
-    rows = db.query(models.Escalation).all()
+    # Aggregate the growing escalations table in SQL rather than hydrating every
+    # row into Python just to bucket it with list comprehensions (rule-4
+    # antipattern, same fix already applied to /analytics/work-orders and
+    # /analytics/production-plans directly above, and the agent-actions stats
+    # #270). Escalation is in SCOPED_MODELS, so the do_orm_execute hook
+    # (ADR-0002) tenant-scopes these aggregate SELECTs exactly as it did the old
+    # .all() scan. GROUP BY reads only the distinct (status|severity) rows, and
+    # the total is a single COUNT — no per-row transfer.
+    total = db.query(func.count(models.Escalation.id)).scalar() or 0
+    status_counts = dict(
+        db.query(models.Escalation.status, func.count())
+        .group_by(models.Escalation.status)
+        .all()
+    )
+    severity_counts = dict(
+        db.query(models.Escalation.severity, func.count())
+        .group_by(models.Escalation.severity)
+        .all()
+    )
 
     return {
-        "total": len(rows),
-        "open": len([row for row in rows if row.status == "Open"]),
-        "in_progress": len([row for row in rows if row.status == "In Progress"]),
-        "resolved": len([row for row in rows if row.status == "Resolved"]),
-        "critical": len([row for row in rows if row.severity == "Critical"]),
-        "high": len([row for row in rows if row.severity == "High"]),
-        "medium": len([row for row in rows if row.severity == "Medium"]),
-        "low": len([row for row in rows if row.severity == "Low"]),
+        "total": total,
+        "open": status_counts.get("Open", 0),
+        "in_progress": status_counts.get("In Progress", 0),
+        "resolved": status_counts.get("Resolved", 0),
+        "critical": severity_counts.get("Critical", 0),
+        "high": severity_counts.get("High", 0),
+        "medium": severity_counts.get("Medium", 0),
+        "low": severity_counts.get("Low", 0),
     }
 
 

@@ -10,6 +10,7 @@ ADR-0009.
 from typing import List
 
 from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy import or_
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -177,17 +178,32 @@ def generate_defect_escalations(
     db: Session = Depends(_get_db),
     current_user: dict = Depends(require_roles(["Admin", "Supervisor"])),
 ):
-    inspections = db.query(models.QualityInspection).all()
+    # Bound the scan in SQL — only inspections that can actually raise an
+    # escalation come back, like the sibling generators (document-review,
+    # maintenance-overdue, late-order) which filter in SQL rather than pulling a
+    # growing table into Python. An escalation fires when inspected_quantity > 0
+    # AND (fail rate >= 10% OR there was scrap). "fail rate >= 10%" is
+    # failed/inspected*100 >= 10, i.e. failed*10 >= inspected (integer-exact, no
+    # rounding), so the SQL predicate matches the Python threshold below exactly.
+    # NULL failed/scrap columns make the predicate false and are simply excluded —
+    # matching the "no escalation" intent, and sidestepping a None comparison.
+    inspections = (
+        db.query(models.QualityInspection)
+        .filter(
+            models.QualityInspection.inspected_quantity > 0,
+            or_(
+                models.QualityInspection.failed_quantity * 10
+                >= models.QualityInspection.inspected_quantity,
+                models.QualityInspection.scrap_quantity > 0,
+            ),
+        )
+        .all()
+    )
     created = 0
 
     for inspection in inspections:
-        if inspection.inspected_quantity <= 0:
-            continue
-
+        # inspected_quantity > 0 is guaranteed by the query, so this is safe.
         fail_rate = (inspection.failed_quantity / inspection.inspected_quantity) * 100
-
-        if fail_rate < 10 and inspection.scrap_quantity <= 0:
-            continue
 
         title = f"Quality issue: {inspection.inspection_no}"
 

@@ -9,6 +9,7 @@ the ORM chokepoint (ADR-0002). Peeled out of main.py per ADR-0009.
 Named recommendations_routes (not ai_routes) to avoid confusion with the `ai`
 read-model package.
 """
+from datetime import datetime, timedelta
 from typing import List
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -31,6 +32,18 @@ def _get_db():
 
 router = APIRouter(prefix="/ai", tags=["AI Recommendations"])
 
+# Recommendations describe the shop floor's RECENT condition, so the two
+# history-based rules — accumulated downtime and the quality fail rate — are
+# windowed to the last WINDOW_DAYS and bounded SQL-side on the indexed
+# created_at. Two bugs otherwise: (1) an unbounded scan of the growing
+# downtime_logs / quality_inspections tables, and (2) LIFETIME accumulation
+# labelled as the machine's current state — every long-lived machine eventually
+# crosses the 120-minute downtime threshold and a fail rate labelled "current"
+# would really be an all-time average that a single bad week months ago keeps
+# elevated. Current point-in-time state (machine status/utilization, stock
+# levels, a plan's Behind flag) is not history and stays unwindowed.
+RECOMMENDATION_WINDOW_DAYS = 30
+
 
 @router.get("/recommendations", response_model=List[schemas.AIRecommendationResponse])
 def get_ai_recommendations(db: Session = Depends(_get_db), current_user: dict = Depends(get_current_user)):
@@ -51,11 +64,20 @@ def update_ai_recommendation(recommendation_id: int, payload: schemas.AIRecommen
 
 @router.post("/generate-recommendations")
 def generate_ai_recommendations(db: Session = Depends(_get_db), current_user: dict = Depends(require_roles(["Admin", "Supervisor"]))):
+    cutoff = datetime.utcnow() - timedelta(days=RECOMMENDATION_WINDOW_DAYS)
     machines = db.query(models.Machine).all()
-    downtime_logs = db.query(models.DowntimeLog).all()
+    downtime_logs = (
+        db.query(models.DowntimeLog)
+        .filter(models.DowntimeLog.created_at >= cutoff)
+        .all()
+    )
     inventory_items = db.query(models.InventoryItem).all()
     production_plans = db.query(models.ProductionPlan).all()
-    quality_rows = db.query(models.QualityInspection).all()
+    quality_rows = (
+        db.query(models.QualityInspection)
+        .filter(models.QualityInspection.created_at >= cutoff)
+        .all()
+    )
     created = 0
 
     def add_rec(kind, severity, title, message, machine_id=None, confidence=78):
@@ -79,7 +101,7 @@ def generate_ai_recommendations(db: Session = Depends(_get_db), current_user: di
         downtime_minutes = sum(parse_duration_to_minutes(log.duration) for log in machine_downtime)
 
         if machine.status == "Breakdown" or downtime_minutes > 120:
-            add_rec("Predictive Maintenance", "High", f"Maintenance risk detected on {machine.name}", f"{machine.name} has {downtime_minutes} minutes downtime or breakdown state. Schedule inspection.", machine.id, 86)
+            add_rec("Predictive Maintenance", "High", f"Maintenance risk detected on {machine.name}", f"{machine.name} has {downtime_minutes} minutes downtime in the last {RECOMMENDATION_WINDOW_DAYS} days or is in breakdown state. Schedule inspection.", machine.id, 86)
 
         if machine.utilization < 45:
             add_rec("Utilization Optimization", "Medium", f"Low utilization on {machine.name}", f"{machine.name} utilization is {machine.utilization}%. Rebalance schedule.", machine.id, 74)
@@ -96,7 +118,7 @@ def generate_ai_recommendations(db: Session = Depends(_get_db), current_user: di
     failed = sum(row.failed_quantity for row in quality_rows)
     fail_rate = round((failed / inspected) * 100) if inspected else 0
     if fail_rate >= 10:
-        add_rec("Quality Prediction", "High", "Quality failure trend detected", f"Current fail rate is {fail_rate}%. Trigger root-cause analysis.", None, 84)
+        add_rec("Quality Prediction", "High", "Quality failure trend detected", f"Fail rate over the last {RECOMMENDATION_WINDOW_DAYS} days is {fail_rate}%. Trigger root-cause analysis.", None, 84)
 
     db.commit()
     return {"created": created}

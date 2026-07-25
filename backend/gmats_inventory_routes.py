@@ -203,7 +203,14 @@ def gmats_resolve(name: str, tenant: str = "GMATS", db: Session = Depends(get_db
 def gmats_proformas(tenant: str = "GMATS", db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
     tenant = _effective_tenant(current_user, tenant)
     rows = db.query(models.GmatsProforma).filter(models.GmatsProforma.tenant_code == tenant).order_by(models.GmatsProforma.id.desc()).all()
-    items = {i.id: i for i in db.query(models.GmatsItem).all()}
+    # Resolve line item names from THIS tenant's items only. GmatsItem is not in
+    # tenancy.SCOPED_MODELS, so an unfiltered .all() loads every company's items
+    # into memory (an unbounded cross-tenant scan) and would leak a foreign
+    # tenant's item name into this view if a line ever referenced a foreign id.
+    items = {
+        i.id: i
+        for i in db.query(models.GmatsItem).filter(models.GmatsItem.tenant_code == tenant).all()
+    }
     out = []
     for p in rows:
         lines = db.query(models.GmatsProformaLine).filter(models.GmatsProformaLine.proforma_id == p.id).all()
@@ -314,7 +321,12 @@ def gmats_generate_invoice(pid: int, db: Session = Depends(get_db), current_user
 def gmats_min_list(tenant: str = "GMATS", db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
     tenant = _effective_tenant(current_user, tenant)
     rows = db.query(models.GmatsMIN).filter(models.GmatsMIN.tenant_code == tenant).order_by(models.GmatsMIN.id.desc()).all()
-    items = {i.id: i for i in db.query(models.GmatsItem).all()}
+    # Same tenant-scoping as the proforma listing: only resolve names from this
+    # tenant's items, never every company's (see gmats_proformas above).
+    items = {
+        i.id: i
+        for i in db.query(models.GmatsItem).filter(models.GmatsItem.tenant_code == tenant).all()
+    }
     out = []
     for m in rows:
         lines = db.query(models.GmatsMINLine).filter(models.GmatsMINLine.min_id == m.id).all()

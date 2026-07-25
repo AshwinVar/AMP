@@ -249,8 +249,17 @@ def build_smart_alerts(machines, production_records, downtime_logs):
         elif reject_rate > 5:
             add_alert("Quality Loss", "Medium", machine_name, f"{machine_name} reject rate is above 5%.")
 
+    # "Recently" = the 50 most-recent logs by id, selected HERE rather than
+    # trusting the caller's ordering. /alerts/smart passes downtime newest-first
+    # (id desc, limit 100) and the report export oldest-first (.all()), so a
+    # positional [-50:] slice read OPPOSITE windows: on the newest-first caller it
+    # summed the OLDEST 50 and missed the very downtime this alert exists to flag.
+    # Sorting by id here makes "recent" mean recent for both callers.
+    recent_downtime = sorted(
+        downtime_logs, key=lambda log: getattr(log, "id", 0) or 0, reverse=True
+    )[:50]
     downtime_by_machine = defaultdict(int)
-    for log in downtime_logs[-50:]:
+    for log in recent_downtime:
         downtime_by_machine[log.machine_id] += parse_duration_to_minutes(log.duration)
 
     for machine_id, minutes in downtime_by_machine.items():

@@ -114,6 +114,42 @@ def test_null_scrap_does_not_crash():
     print("PASS NULL scrap column escalates without crashing")
 
 
+def test_null_failed_quantity_with_scrap_does_not_crash():
+    """A NULL failed_quantity used to crash the divide. The SQL filter selects a
+    row on scrap_quantity > 0 regardless of failed_quantity, so an inspection with
+    recorded scrap but a NULL (raw SQL / cleared) failed_quantity reaches the
+    Python fail-rate divide — `None / inspected_quantity` raised TypeError and
+    500'd the generator. A NULL count is the column default of 0, so fail rate is a
+    clean 0% and the row still escalates on its scrap alone (High, not Critical)."""
+    from sqlalchemy import text
+
+    db = _fresh_session()
+    # inspected 100, scrap 5, failed cleared to a real SQL NULL below.
+    scrapped = _insp("NULLFAIL_SCRAP", 100, failed=0, scrap=5)
+    db.add(scrapped)
+    # A NULL failed_quantity with NO scrap must NOT be selected at all (the SQL
+    # predicate is NULL/false on both branches) — so it neither escalates nor crashes.
+    clean = _insp("NULLFAIL_CLEAN", 100, failed=0, scrap=0)
+    db.add(clean)
+    db.commit()
+    db.execute(text(
+        "UPDATE quality_inspections SET failed_quantity = NULL "
+        "WHERE inspection_no IN ('NULLFAIL_SCRAP', 'NULLFAIL_CLEAN')"
+    ))
+    db.commit()
+    db.expire_all()
+
+    assert _run(db) == 1
+    esc = _escalations(db)
+    assert len(esc) == 1
+    assert esc[0].title == "Quality issue: NULLFAIL_SCRAP"
+    # fail rate = 0(NULL->0)/100*100 = 0.0% -> below 20% -> High, driven by scrap.
+    assert esc[0].severity == "High", esc[0].severity
+    assert "Fail rate 0.0%" in esc[0].notes, esc[0].notes
+    assert "scrap 5" in esc[0].notes, esc[0].notes
+    print("PASS NULL failed_quantity with scrap -> 0% fail rate, escalates without crashing")
+
+
 def test_dedup_open_but_regenerate_after_resolved():
     """An already-OPEN escalation for the same inspection is not duplicated; a
     RESOLVED one does not block a fresh escalation."""
@@ -150,6 +186,7 @@ if __name__ == "__main__":
     test_threshold_and_severity()
     test_below_threshold_rows_are_not_selected()
     test_null_scrap_does_not_crash()
+    test_null_failed_quantity_with_scrap_does_not_crash()
     test_dedup_open_but_regenerate_after_resolved()
     test_empty_table()
     print("ALL DEFECT-ESCALATION TESTS PASSED")

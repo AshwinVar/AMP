@@ -8,6 +8,7 @@ ProductionRecord. Peeled out of main.py per ADR-0009 (register(app) pattern).
 from typing import List
 
 from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy import func
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -73,20 +74,57 @@ def delete_cost_record(cost_id: int, db: Session = Depends(_get_db), current_use
 
 @router.get("/analytics/costing")
 def get_costing_analytics(db: Session = Depends(_get_db), current_user: dict = Depends(get_current_user)):
-    costs = db.query(models.CostRecord).all()
-    pos = db.query(models.PurchaseOrder).all()
-    production = db.query(models.ProductionRecord).all()
+    # Aggregate in SQL, NULL-safe. amount / received_quantity are nullable Integer
+    # columns (Column(Integer, default=0) with no nullable=False — the default only
+    # fills a value the *inserter* omitted, so a raw-SQL / migration / cleared-field
+    # write can store NULL). A plain Python sum(...) then did int + None ->
+    # TypeError -> an unhandled 500 on the whole costing rollup — the same NULL bug
+    # already fixed for these very columns in orders_routes / saas_routes. Doing the
+    # sums in SQL with func.coalesce(func.sum(...), 0) fixes that AND bounds the
+    # scan: the old code pulled all of cost_records / purchase_orders /
+    # production_records into Python just to add them up (bound growing-table scans
+    # in SQL). All three models are tenant-scoped (tenancy.SCOPED_MODELS), so the
+    # do_orm_execute hook still filters each aggregate to the request's tenant.
+    total_cost_records, manual_cost = db.query(
+        func.count(models.CostRecord.id),
+        func.coalesce(func.sum(models.CostRecord.amount), 0),
+    ).one()
+    material_spend = db.query(
+        func.coalesce(func.sum(models.PurchaseOrder.received_quantity), 0)
+    ).scalar()
+    production_units = db.query(
+        func.coalesce(func.sum(models.ProductionRecord.good_count), 0)
+    ).scalar()
 
-    material_spend = sum(po.received_quantity for po in pos)
-    manual_cost = sum(row.amount for row in costs)
-    production_units = sum(row.good_count for row in production)
+    total_cost_records = int(total_cost_records)
+    manual_cost = int(manual_cost)
+    material_spend = int(material_spend)
+    production_units = int(production_units)
 
+    # Spend by type / department, grouped in SQL (one row per distinct key — a
+    # small, naturally-bounded result set), NULL-safe on the amount. The parts sum
+    # to manual_cost by construction: both coalesce amount and cover every row, so
+    # the headline and its breakdowns reconcile. department keeps the endpoint's
+    # existing rule — a NULL *or empty* label collapses to "Unassigned" — merged in
+    # Python so both land in one bucket (SQL COALESCE alone would not fold "").
     by_type = {}
+    for cost_type, total in (
+        db.query(models.CostRecord.cost_type,
+                 func.coalesce(func.sum(models.CostRecord.amount), 0))
+        .group_by(models.CostRecord.cost_type)
+        .all()
+    ):
+        by_type[cost_type] = by_type.get(cost_type, 0) + int(total)
+
     by_department = {}
-    for row in costs:
-        by_type[row.cost_type] = by_type.get(row.cost_type, 0) + row.amount
-        department = row.department or "Unassigned"
-        by_department[department] = by_department.get(department, 0) + row.amount
+    for department, total in (
+        db.query(models.CostRecord.department,
+                 func.coalesce(func.sum(models.CostRecord.amount), 0))
+        .group_by(models.CostRecord.department)
+        .all()
+    ):
+        key = department or "Unassigned"
+        by_department[key] = by_department.get(key, 0) + int(total)
 
     # Per-unit cost to pence precision, not whole pounds: manufacturing per-unit
     # costs are usually sub-£1, so round(0.50) -> 0 fabricated a £0/unit. And with
@@ -95,7 +133,7 @@ def get_costing_analytics(db: Session = Depends(_get_db), current_user: dict = D
     cost_per_good_unit = round(manual_cost / production_units, 2) if production_units else None
 
     return {
-        "total_cost_records": len(costs),
+        "total_cost_records": total_cost_records,
         "manual_cost_total": manual_cost,
         "production_units": production_units,
         "cost_per_good_unit": cost_per_good_unit,

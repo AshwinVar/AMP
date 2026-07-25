@@ -84,9 +84,14 @@ def _build_factory_context(db: Session, tenant: str) -> str:
 
     recs = db.query(models.ProductionRecord).order_by(models.ProductionRecord.id.desc()).limit(10).all()
     if recs:
-        from analytics_engine import calculate_oee_from_record
-        oees = [calculate_oee_from_record(r)["oee"] for r in recs]
-        lines.append(f"AVERAGE OEE (last {len(recs)} runs): {round(sum(oees) / len(oees))}%")
+        # Pooled plant OEE over the window (ratio of sums) — the ONE definition
+        # every dashboard uses (ADR-0010 / analytics_engine.pooled_oee). Averaging
+        # per-record OEE (mean of ratios) over-weights tiny runs and would ground
+        # the model in a number that disagrees with the OEE cards; that's the same
+        # bug already fixed in the executive-OEE rollup. Pooling also tolerates
+        # NULL counts, so the context never crashes on a sparse record.
+        from analytics_engine import pooled_oee
+        lines.append(f"PLANT OEE (pooled, last {len(recs)} runs): {pooled_oee(recs)['oee']}%")
 
     downs = db.query(models.DowntimeLog).order_by(models.DowntimeLog.id.desc()).limit(8).all()
     if downs:

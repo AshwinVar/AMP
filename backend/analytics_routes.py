@@ -669,15 +669,21 @@ def get_production_schedule_analytics(
     delayed = len([row for row in schedules if row.status == "Delayed"])
 
     total_quantity = sum(row.planned_quantity for row in schedules)
-    total_minutes = sum(row.estimated_minutes for row in schedules)
+    # estimated_minutes is nullable (it carries only a column default); a legacy
+    # NULL must read as 0, not crash the summation with a None -> TypeError 500.
+    total_minutes = sum((row.estimated_minutes or 0) for row in schedules)
 
+    # One name lookup for every machine (tenant-scoped like the schedule query
+    # itself), instead of a per-schedule Machine query inside the loop — that was
+    # an N+1 on a growing table, the same anti-pattern the maintenance rollup
+    # already dropped.
+    machine_names = dict(db.query(models.Machine.id, models.Machine.name).all())
     machine_load = {}
     shift_load = {}
 
     for row in schedules:
-        machine = db.query(models.Machine).filter(models.Machine.id == row.machine_id).first()
-        machine_name = machine.name if machine else f"Machine {row.machine_id}"
-        machine_load[machine_name] = machine_load.get(machine_name, 0) + row.estimated_minutes
+        machine_name = machine_names.get(row.machine_id, f"Machine {row.machine_id}")
+        machine_load[machine_name] = machine_load.get(machine_name, 0) + (row.estimated_minutes or 0)
         shift_load[row.shift_name] = shift_load.get(row.shift_name, 0) + row.planned_quantity
 
     bottlenecks = [

@@ -117,6 +117,11 @@ def approve_issue_slip(sid: int, db: Session = Depends(get_db), current_user: di
     s = db.query(models.MaterialIssueSlip).filter(models.MaterialIssueSlip.id == sid).first()
     if not s:
         raise HTTPException(status_code=404, detail="Slip not found")
+    # Only a Pending slip may be approved. Without this, an already-Issued slip
+    # could be flipped back to "Approved" and issued again (issue_slip only checks
+    # status == "Approved"), deducting the same stock twice.
+    if s.status != "Pending":
+        raise HTTPException(status_code=400, detail=f"Slip cannot be approved from status '{s.status}'")
     s.status = "Approved"
     s.approved_by = current_user.get("sub", "Admin")
     db.commit()
@@ -224,6 +229,11 @@ def accept_grn(gid: int, db: Session = Depends(get_db), current_user: dict = Dep
     g = db.query(models.GoodsReceiptNote).filter(models.GoodsReceiptNote.id == gid).first()
     if not g:
         raise HTTPException(status_code=404, detail="GRN not found")
+    # Accepting adds each line's accepted_qty to stock, so it must run at most once.
+    # Without this guard a repeat call re-adds the whole GRN to inventory (and logs
+    # a second Receive transaction) — silent stock inflation.
+    if g.status != "Draft":
+        raise HTTPException(status_code=400, detail=f"GRN already processed (status '{g.status}')")
     gi = db.query(models.GRNItem).filter(models.GRNItem.grn_id == gid).all()
     for line in gi:
         if line.accepted_qty > 0:

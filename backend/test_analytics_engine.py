@@ -183,6 +183,48 @@ def test_build_smart_alerts_severity_and_dedup():
     print(f"PASS build_smart_alerts raises the right severities and dedups ({len(alerts)} alerts)")
 
 
+def test_build_smart_alerts_downtime_window_is_recent_not_caller_order():
+    """The 'accumulated downtime recently' alert must reflect the MOST-RECENT
+    logs no matter how the caller ordered the list. /alerts/smart passes them
+    newest-first (id desc, limit 100); a positional [-50:] slice on that read the
+    OLDEST 50 and missed recent downtime, while the report export (.all(),
+    oldest-first) read the newest 50 — the same helper gave opposite windows.
+    Sorting by id inside the helper makes the window order-independent."""
+    machine = SimpleNamespace(id=1, name="CNC-1", status="Running", utilization=95)
+    # 50 recent logs (ids 51..100), 1 min each = 50 min recent -> BELOW the 60 min
+    # threshold, so no alert. 10 OLD logs (ids 1..10), 100 min each = 1000 min,
+    # which WOULD fire if (wrongly) counted. Independently derived: recent = 50.
+    recent = [SimpleNamespace(id=i, machine_id=1, reason="Minor stop", duration="1m")
+              for i in range(51, 101)]
+    old = [SimpleNamespace(id=i, machine_id=1, reason="Breakdown", duration="100m")
+           for i in range(1, 11)]
+    pool = recent + old
+    for label, logs in [
+        ("newest-first", sorted(pool, key=lambda l: l.id, reverse=True)),  # like /alerts/smart
+        ("oldest-first", sorted(pool, key=lambda l: l.id)),                # like the report export
+    ]:
+        alerts = ae.build_smart_alerts([machine], [], logs)
+        fired = any(a["type"] == "Downtime Escalation" for a in alerts)
+        assert not fired, f"{label}: recent 50 logs = 50 min (<60) must NOT fire; the 1000 min is stale"
+
+    # And when the RECENT logs themselves exceed 60 min, it fires in either order:
+    # 50 x 2 min = 100 min recent.
+    heavy = [SimpleNamespace(id=i, machine_id=1, reason="Breakdown", duration="2m")
+             for i in range(51, 101)]
+    for logs in (sorted(heavy, key=lambda l: l.id, reverse=True),
+                 sorted(heavy, key=lambda l: l.id)):
+        alerts = ae.build_smart_alerts([machine], [], logs)
+        assert any(a["type"] == "Downtime Escalation" for a in alerts), "recent 100 min must fire"
+    print("PASS build_smart_alerts downtime window = most-recent 50 logs, order-independent")
+
+
+def test_build_smart_alerts_empty_downtime_is_safe():
+    machine = SimpleNamespace(id=1, name="CNC-1", status="Running", utilization=95)
+    alerts = ae.build_smart_alerts([machine], [], [])
+    assert not any(a["type"] == "Downtime Escalation" for a in alerts)
+    print("PASS build_smart_alerts is safe on empty downtime")
+
+
 def test_calculate_fallback_oee_monotonic():
     assert ae.calculate_fallback_oee(80) == round((80 / 100) * 0.9 * 0.95 * 100)
     assert ae.calculate_fallback_oee(90) > ae.calculate_fallback_oee(50)
@@ -201,5 +243,7 @@ if __name__ == "__main__":
     test_oee_direction_is_one_shared_definition_with_a_dead_band()
     test_build_management_summary_empty_is_safe()
     test_build_smart_alerts_severity_and_dedup()
+    test_build_smart_alerts_downtime_window_is_recent_not_caller_order()
+    test_build_smart_alerts_empty_downtime_is_safe()
     test_calculate_fallback_oee_monotonic()
     print("ALL ANALYTICS-ENGINE TESTS PASSED")

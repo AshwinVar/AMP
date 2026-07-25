@@ -120,6 +120,15 @@ def update_company_tenant(tenant_id: int, payload: schemas.CompanyTenantUpdate, 
     if not row:
         raise HTTPException(status_code=404, detail="Tenant not found")
     changes = payload.model_dump(exclude_unset=True)
+    # seats/monthly_fee are required numeric columns (Integer, Python-side default
+    # only — NOT nullable=False). A partial update omits a field entirely; an
+    # explicit `null` is not "leave unchanged", it would BLANK the column to NULL.
+    # A NULL then TypeError-500s /analytics/saas (sum over seats/fees) and fails
+    # the non-optional CompanyTenantResponse on the very next list. Reject the null
+    # here so the invariant "these are never NULL" holds at the write boundary.
+    for field in ("seats", "monthly_fee"):
+        if field in changes and changes[field] is None:
+            raise HTTPException(status_code=400, detail=f"{field} must be a number")
     for key, value in changes.items():
         setattr(row, key, value)
     db.commit()
@@ -169,8 +178,13 @@ def get_saas_analytics(db: Session = Depends(_get_db), current_user: dict = Depe
         "active": len([r for r in rows if r.subscription_status == "Active"]),
         "past_due": len([r for r in rows if r.subscription_status == "Past Due"]),
         "cancelled": len([r for r in rows if r.subscription_status == "Cancelled"]),
-        "monthly_recurring_revenue": sum(r.monthly_fee for r in rows if r.subscription_status in ["Trial", "Active"]),
-        "total_seats": sum(r.seats for r in rows),
+        # NULL-safe: a legacy / raw-SQL / migration row can carry a NULL seats or
+        # monthly_fee (the columns are nullable — Python-side default only), and a
+        # bare sum() over a None raised TypeError, 500-ing this whole rollup. A NULL
+        # fee/seat contributes 0 to the total (we can't fabricate a figure the data
+        # doesn't hold); a real recorded 0 already contributes 0, so both agree.
+        "monthly_recurring_revenue": sum((r.monthly_fee or 0) for r in rows if r.subscription_status in ["Trial", "Active"]),
+        "total_seats": sum((r.seats or 0) for r in rows),
     }
 
 

@@ -10,6 +10,13 @@ Run:  python backend/test_gmats_inventory_routes.py     (exit 0 = pass)
 """
 import main
 
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
+
+import gmats_inventory_routes as gmats
+import models
+from database import Base
+
 EXPECTED = {
     "/gmats/items", "/gmats/items/{item_id}", "/gmats/items/{item_id}/aliases",
     "/gmats/items/{item_id}/correct", "/gmats/items/{item_id}/stock-in",
@@ -34,6 +41,89 @@ def test_gmats_inventory_paths_registered_once_and_owned():
     print(f"PASS all {len(EXPECTED)} gmats-inventory paths owned by the module")
 
 
+# --- Behavioural tests: the proforma / MIN listings resolve item names from the
+# CURRENT tenant's items only. GmatsItem is not in tenancy.SCOPED_MODELS, so a
+# prior `db.query(GmatsItem).all()` built the name-lookup from EVERY company's
+# items — an unbounded cross-tenant scan that also leaked a foreign tenant's item
+# name into this tenant's view whenever a line referenced a foreign item id (the
+# create path resolves items by unscoped id while locking the parent's tenant). ---
+
+# A client login is locked to its own tenant by _effective_tenant.
+ACME = {"sub": "acme", "role": "Admin", "tenant": "ACME"}
+
+
+def _db():
+    engine = create_engine("sqlite://", connect_args={"check_same_thread": False})
+    Base.metadata.create_all(bind=engine)
+    return sessionmaker(bind=engine)()
+
+
+def _item(db, iid, tenant, name):
+    db.add(models.GmatsItem(id=iid, tenant_code=tenant, item_code=f"C{iid}",
+                            item_name=name, physical_stock=10, reserved_stock=0,
+                            reorder_level=0, purchase_rate=0))
+    db.commit()
+
+
+def test_proforma_listing_resolves_only_same_tenant_item_names():
+    db = _db()
+    _item(db, 1, "ACME", "Acme Widget")       # legit ACME item
+    _item(db, 2, "GLOBEX", "Globex Secret")   # a DIFFERENT tenant's item
+    p = models.GmatsProforma(id=1, tenant_code="ACME", proforma_no="PI-1001",
+                             customer_name="Buyer", status="Open")
+    db.add(p); db.commit()
+    db.add(models.GmatsProformaLine(proforma_id=1, item_id=1, qty=3))   # own item
+    db.add(models.GmatsProformaLine(proforma_id=1, item_id=2, qty=5))   # foreign id
+    db.commit()
+
+    out = gmats.gmats_proformas(tenant="ACME", db=db, current_user=ACME)
+    assert len(out) == 1
+    lines = {l["item_id"]: l["item_name"] for l in out[0]["lines"]}
+    assert lines[1] == "Acme Widget", "own item name must resolve"
+    # The foreign tenant's item name must NOT leak into ACME's proforma view.
+    assert lines[2] == "", f"cross-tenant item name leaked: {lines[2]!r}"
+    print("PASS proforma listing resolves own item names, never a foreign tenant's")
+
+
+def test_min_listing_resolves_only_same_tenant_item_names():
+    db = _db()
+    _item(db, 1, "ACME", "Acme Spare")
+    _item(db, 2, "GLOBEX", "Globex Spare")
+    m = models.GmatsMIN(id=1, tenant_code="ACME", min_no="MIN-4001",
+                        customer_name="Buyer", machine_ref="Rig", status="Issued")
+    db.add(m); db.commit()
+    db.add(models.GmatsMINLine(min_id=1, item_id=1, qty=1))
+    db.add(models.GmatsMINLine(min_id=1, item_id=2, qty=1))
+    db.commit()
+
+    out = gmats.gmats_min_list(tenant="ACME", db=db, current_user=ACME)
+    assert len(out) == 1
+    lines = {l["item_id"]: l["item_name"] for l in out[0]["lines"]}
+    assert lines[1] == "Acme Spare"
+    assert lines[2] == "", f"cross-tenant item name leaked into MIN view: {lines[2]!r}"
+    print("PASS MIN listing resolves own item names, never a foreign tenant's")
+
+
+def test_listing_names_match_the_items_endpoint():
+    # The name a proforma line shows must be the same one /gmats/items reports —
+    # a reconciliation check that the scoped map is still complete for own items.
+    db = _db()
+    _item(db, 7, "ACME", "Reconciled Part")
+    p = models.GmatsProforma(id=1, tenant_code="ACME", proforma_no="PI-1001",
+                             customer_name="Buyer", status="Open")
+    db.add(p); db.commit()
+    db.add(models.GmatsProformaLine(proforma_id=1, item_id=7, qty=2)); db.commit()
+
+    listed = {i["id"]: i["item_name"] for i in gmats.gmats_items(tenant="ACME", db=db, current_user=ACME)}
+    pf = gmats.gmats_proformas(tenant="ACME", db=db, current_user=ACME)
+    line = pf[0]["lines"][0]
+    assert line["item_name"] == listed[line["item_id"]] == "Reconciled Part"
+    print("PASS proforma line name reconciles with the /gmats/items name")
+
+
 if __name__ == "__main__":
     test_gmats_inventory_paths_registered_once_and_owned()
+    test_proforma_listing_resolves_only_same_tenant_item_names()
+    test_min_listing_resolves_only_same_tenant_item_names()
+    test_listing_names_match_the_items_endpoint()
     print("ALL GMATS-INVENTORY ROUTE TESTS PASSED")

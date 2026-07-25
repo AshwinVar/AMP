@@ -402,6 +402,102 @@ def test_operator_terminal_analytics_empty_table_is_zero_not_a_crash():
     print("PASS operator-terminal analytics: empty table -> zeros, no divide-by-zero, no None-sum crash")
 
 
+def _inventory_item(**kw):
+    kw.setdefault("item_name", kw.get("item_code", "ITEM"))
+    kw.setdefault("unit", "pcs")
+    return models.InventoryItem(**kw)
+
+
+def test_inventory_analytics_null_stock_and_bounded_transaction_count():
+    # current_stock / reorder_level are Column(Integer, default=0) WITHOUT
+    # nullable=False, so a genuine SQL NULL slips in via raw SQL / a migration / a
+    # cleared update. The old `item.current_stock <= item.reorder_level` did
+    # `None <= int` and the old `sum(item.current_stock ...)` did `int + None` —
+    # both TypeError and 500 the endpoint. Coalescing to 0 must keep every number
+    # honest. Separately, the transaction count now comes from a SQL COUNT instead
+    # of loading the whole (growing) inventory_transactions table just for len().
+    # Every expected number is derived by hand, not read back from the endpoint.
+    db = _fresh_session()
+    db.add(_inventory_item(id=1, item_code="ST1", category="Steel", supplier="ACME",
+                           current_stock=100, reorder_level=20))
+    db.add(_inventory_item(id=2, item_code="ST2", category="Steel", supplier=None,
+                           current_stock=5, reorder_level=10))
+    db.add(_inventory_item(id=3, item_code="BO1", category="Bolts", supplier="ACME",
+                           current_stock=1, reorder_level=1))
+    db.add(_inventory_item(id=4, item_code="BO2", category="Bolts", supplier="ACME",
+                           current_stock=1, reorder_level=5))
+    # three movements on the ledger — we only ever need the count
+    db.add(models.InventoryTransaction(item_id=1, transaction_type="IN", quantity=50))
+    db.add(models.InventoryTransaction(item_id=1, transaction_type="OUT", quantity=10))
+    db.add(models.InventoryTransaction(item_id=2, transaction_type="IN", quantity=5))
+    db.commit()
+    # Force genuine SQL NULLs (the ORM applies default=0 to a None passed on insert):
+    # BO1 has NULL stock AND NULL reorder; BO2 has NULL stock, reorder = 5.
+    db.execute(text("UPDATE inventory_items SET current_stock = NULL, reorder_level = NULL WHERE item_code = 'BO1'"))
+    db.execute(text("UPDATE inventory_items SET current_stock = NULL WHERE item_code = 'BO2'"))
+    db.commit()
+    db.expire_all()
+
+    out = analytics_routes.get_inventory_analytics(db=db, current_user={})
+    assert out["total_items"] == 4, out
+    # total_stock_units = 100 + 5 + 0(NULL) + 0(NULL) = 105
+    assert out["total_stock_units"] == 105, out
+    # low stock: ST2 (5<=10), BO1 (0<=0), BO2 (0<=5) -> 3.  ST1 (100<=20) is not.
+    assert out["low_stock_items"] == 3, out
+    # count came from SQL, and equals the true number of ledger rows
+    assert out["transactions"] == 3, out
+    # per-category stock reconciles with the total (Steel 105 + Bolts 0 = 105)
+    assert out["category_counts"] == {"Steel": 105, "Bolts": 0}, out
+    assert sum(out["category_counts"].values()) == out["total_stock_units"], out
+    # per-supplier stock reconciles too; a NULL supplier folds into "Unknown"
+    assert out["supplier_counts"] == {"ACME": 100, "Unknown": 5}, out
+    assert sum(out["supplier_counts"].values()) == out["total_stock_units"], out
+    print("PASS inventory analytics: NULL stock -> 0, totals reconcile (105 units), "
+          "transaction count is a bounded SQL COUNT (3)")
+
+
+def test_inventory_analytics_empty_tables_are_zero_not_a_crash():
+    db = _fresh_session()
+    out = analytics_routes.get_inventory_analytics(db=db, current_user={})
+    assert out["total_items"] == 0 and out["low_stock_items"] == 0, out
+    assert out["total_stock_units"] == 0, out
+    # COUNT over no rows is 0, not None (the `or 0` guard also holds)
+    assert out["transactions"] == 0, out
+    assert out["category_counts"] == {} and out["supplier_counts"] == {}, out
+    print("PASS inventory analytics: empty tables -> zeros, no None-count, no crash")
+
+
+def test_inventory_analytics_transaction_count_is_tenant_scoped():
+    # The SQL COUNT that replaced `.all()` must stay tenant-scoped, exactly like
+    # the auto-scoped load it replaced (ADR-0002 do_orm_execute hook). A tenant
+    # must never see another tenant's ledger size.
+    import tenancy as T
+    T.install_scoping()
+    db = _fresh_session()
+    tok = T.set_current_tenant("GMATS")
+    try:
+        db.add(models.InventoryTransaction(item_id=1, transaction_type="IN", quantity=5))
+        db.add(models.InventoryTransaction(item_id=1, transaction_type="OUT", quantity=2))
+        db.commit()
+    finally:
+        T.reset_current_tenant(tok)
+    tok = T.set_current_tenant("DEFAULT")
+    try:
+        db.add(models.InventoryTransaction(item_id=1, transaction_type="IN", quantity=9))
+        db.commit()
+    finally:
+        T.reset_current_tenant(tok)
+
+    tok = T.set_current_tenant("GMATS")
+    try:
+        out = analytics_routes.get_inventory_analytics(db=db, current_user={"tenant": "GMATS"})
+    finally:
+        T.reset_current_tenant(tok)
+    # GMATS wrote 2 of the 3 rows; it must count only its own.
+    assert out["transactions"] == 2, out
+    print("PASS inventory analytics: transaction COUNT stays tenant-scoped (GMATS sees 2 of 3)")
+
+
 if __name__ == "__main__":
     test_analytics_paths_owned_by_module()
     test_analytics_summary_is_module_level_and_shared()
@@ -419,4 +515,7 @@ if __name__ == "__main__":
     test_final_executive_summary_empty_tables_are_zero_not_a_crash()
     test_operator_terminal_analytics_null_counts_and_reconciled_totals()
     test_operator_terminal_analytics_empty_table_is_zero_not_a_crash()
+    test_inventory_analytics_null_stock_and_bounded_transaction_count()
+    test_inventory_analytics_empty_tables_are_zero_not_a_crash()
+    test_inventory_analytics_transaction_count_is_tenant_scoped()
     print("ALL ANALYTICS ROUTE TESTS PASSED")

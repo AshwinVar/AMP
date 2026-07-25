@@ -325,28 +325,40 @@ def get_inventory_analytics(
     current_user: dict = Depends(get_current_user),
 ):
     items = db.query(models.InventoryItem).all()
-    transactions = db.query(models.InventoryTransaction).all()
+    # We only need the ledger's size, never the rows. Loading the whole
+    # inventory_transactions table into Python just to call len() is unbounded on
+    # a per-movement table that grows with every stock in/out; count it in SQL
+    # instead. The count is auto-scoped to the tenant by the do_orm_execute hook
+    # exactly like the .all() it replaces (ADR-0002).
+    transaction_count = db.query(func.count(models.InventoryTransaction.id)).scalar() or 0
 
+    # current_stock / reorder_level are Column(Integer, default=0) WITHOUT
+    # nullable=False — the ORM default only fills a value the *inserter* omitted,
+    # so a row written by raw SQL, a migration, or an update that clears the field
+    # can legitimately be NULL. `None <= int` and `int + None` raise TypeError and
+    # 500 the endpoint; coalesce a missing count to the column's own default of 0,
+    # matching the sibling /analytics/system-health rollup which already guards it.
     low_stock_items = [
         item for item in items
-        if item.current_stock <= item.reorder_level
+        if (item.current_stock or 0) <= (item.reorder_level or 0)
     ]
 
-    total_stock_units = sum(item.current_stock for item in items)
+    total_stock_units = sum((item.current_stock or 0) for item in items)
 
     category_counts = {}
     supplier_counts = {}
 
     for item in items:
-        category_counts[item.category] = category_counts.get(item.category, 0) + item.current_stock
+        stock = item.current_stock or 0
+        category_counts[item.category] = category_counts.get(item.category, 0) + stock
         supplier = item.supplier or "Unknown"
-        supplier_counts[supplier] = supplier_counts.get(supplier, 0) + item.current_stock
+        supplier_counts[supplier] = supplier_counts.get(supplier, 0) + stock
 
     return {
         "total_items": len(items),
         "low_stock_items": len(low_stock_items),
         "total_stock_units": total_stock_units,
-        "transactions": len(transactions),
+        "transactions": transaction_count,
         "category_counts": category_counts,
         "supplier_counts": supplier_counts,
     }

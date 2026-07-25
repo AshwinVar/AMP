@@ -10,6 +10,7 @@ load_dotenv()
 
 from database import SessionLocal
 import models
+from machine_status import clamp_utilization, normalize_machine_status
 
 try:
     from live_ws import broadcast_live_event
@@ -88,14 +89,26 @@ def on_message(client, userdata, msg):
             print("MQTT payload skipped: missing machine name")
             return
 
-        status = payload.get("status", "Idle")
-        utilization = int(payload.get("utilization", 0))
         downtime_value = payload.get("downtime", "0 min")
 
         machine = get_or_create_machine(db, machine_name)
 
         old_status = machine.status
         old_utilization = machine.utilization
+
+        # Canonicalise the inbound reading before it touches the machine — the same
+        # guard the IoT/industrial ingest paths already use (machine_status). An
+        # MQTT/PLC gateway can publish a non-canonical status ("running",
+        # "breakdown") or a glitching utilization; writing those straight onto the
+        # machine dropped it from every status-based report and — because the
+        # breakdown check below is case-sensitive — silently skipped its
+        # DowntimeLog. An unrecognised status / non-numeric utilization leaves the
+        # previous value untouched rather than corrupting it.
+        new_status = normalize_machine_status(payload.get("status", "Idle"))
+        status = new_status if new_status is not None else old_status
+
+        clamped_utilization = clamp_utilization(payload.get("utilization", 0))
+        utilization = clamped_utilization if clamped_utilization is not None else old_utilization
 
         machine.status = status
         machine.utilization = utilization

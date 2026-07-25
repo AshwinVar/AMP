@@ -15,7 +15,7 @@ Run:  python backend/test_analytics_routes.py     (exit 0 = pass)
 import inspect
 from datetime import date
 
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker
 
 import main
@@ -199,6 +199,75 @@ def test_production_plan_analytics_empty_table_is_zero_not_a_crash():
     print("PASS production-plan analytics: empty table -> zeros, no divide-by-zero")
 
 
+def _null_utilization(db, *machine_ids):
+    # Force a genuine SQL NULL. The ORM applies the column default=0 when you pass
+    # utilization=None on insert, so a real NULL — the state that arises from raw
+    # SQL / a migration / a cleared update in production — must be written directly.
+    for mid in machine_ids:
+        db.execute(text("UPDATE machines SET utilization = NULL WHERE id = :id"), {"id": mid})
+    db.commit()
+    db.expire_all()
+
+
+def test_analytics_summary_null_utilization_averages_only_readings():
+    # utilization is Column(Integer, default=0) without nullable=False -> a machine
+    # can have a NULL reading. The old sum(m.utilization ...) did int + None and
+    # 500'd the whole dashboard summary. Only machines WITH a reading are averaged,
+    # so one unset row neither crashes nor drags the mean toward 0. No production
+    # records -> the OEE fallback also runs (over machines with a reading). Numbers
+    # are derived by hand.
+    db = _fresh_session()
+    db.add(models.Machine(id=1, name="Unset", status="Running", utilization=0))
+    db.add(models.Machine(id=2, name="Good", status="Running", utilization=80))
+    db.add(models.Machine(id=3, name="Low", status="Running", utilization=30))
+    db.commit()
+    _null_utilization(db, 1)
+
+    out = analytics_routes.analytics_summary(db=db, current_user={})
+    # avg over readings only: (80 + 30) / 2 = 55 — NOT (80+30+0)/3 = 37, NOT a crash.
+    assert out["avg_utilization"] == 55, out["avg_utilization"]
+    # no production -> fallback OEE = mean of calculate_fallback_oee over readings:
+    # round(80*0.855)=68, round(30*0.855)=26 -> round((68+26)/2)=47.
+    assert out["avg_oee"] == 47, out["avg_oee"]
+    # alerts (generate_alerts, DB-backed) don't crash and don't invent a low-util
+    # alert for the unset machine; the genuine 30% one still fires (<50 -> Medium).
+    alert_pairs = {(a["machine"], a["type"]) for a in out["alerts"]}
+    assert ("Unset", "Low Utilization") not in alert_pairs, alert_pairs
+    assert ("Low", "Low Utilization") in alert_pairs, alert_pairs
+    print("PASS analytics-summary averages only machines with a utilization reading (NULL-safe, 55% / OEE 47%)")
+
+
+def test_analytics_summary_all_null_utilization_is_zero_not_a_crash():
+    db = _fresh_session()
+    db.add(models.Machine(id=1, name="A", status="Running", utilization=0))
+    db.add(models.Machine(id=2, name="B", status="Idle", utilization=0))
+    db.commit()
+    _null_utilization(db, 1, 2)
+    out = analytics_routes.analytics_summary(db=db, current_user={})
+    # no readings at all -> 0, not a divide-by-zero and not a None-sum crash.
+    assert out["avg_utilization"] == 0, out["avg_utilization"]
+    assert out["avg_oee"] == 0, out["avg_oee"]
+    assert not any(a["type"] == "Low Utilization" for a in out["alerts"]), out["alerts"]
+    print("PASS analytics-summary: all-NULL utilization -> 0, no crash, no fabricated alert")
+
+
+def test_executive_oee_null_utilization_fallback_is_zero_not_a_crash():
+    # No production for the machine -> availability falls back to utilization. With
+    # a NULL reading the old `max(machine.utilization, 0)` raised TypeError; it must
+    # treat an unset reading as 0. Running with no runtime -> performance 90, no
+    # quality rows -> quality 95, so OEE = round(0 * .9 * .95 * 100) = 0.
+    db = _fresh_session()
+    db.add(models.Machine(id=1, name="Unset", status="Running", utilization=0))
+    db.commit()
+    _null_utilization(db, 1)
+    out = analytics_routes.get_executive_oee(db=db, current_user={})
+    row = next(r for r in out["machine_ranking"] if r["machine_name"] == "Unset")
+    assert row["availability"] == 0, row
+    assert row["oee"] == 0, row
+    assert row["utilization"] is None, row      # raw reading still surfaced honestly
+    print("PASS executive-oee: NULL utilization fallback -> availability 0 (no max(None,0) crash)")
+
+
 if __name__ == "__main__":
     test_analytics_paths_owned_by_module()
     test_analytics_summary_is_module_level_and_shared()
@@ -209,4 +278,7 @@ if __name__ == "__main__":
     test_work_order_analytics_empty_table_is_zero_not_a_crash()
     test_production_plan_analytics_null_actual_and_reconciled_totals()
     test_production_plan_analytics_empty_table_is_zero_not_a_crash()
+    test_analytics_summary_null_utilization_averages_only_readings()
+    test_analytics_summary_all_null_utilization_is_zero_not_a_crash()
+    test_executive_oee_null_utilization_fallback_is_zero_not_a_crash()
     print("ALL ANALYTICS ROUTE TESTS PASSED")

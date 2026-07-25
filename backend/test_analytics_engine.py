@@ -225,6 +225,35 @@ def test_build_smart_alerts_empty_downtime_is_safe():
     print("PASS build_smart_alerts is safe on empty downtime")
 
 
+def test_build_smart_alerts_null_utilization_is_safe_and_honest():
+    """utilization is Column(Integer, default=0) WITHOUT nullable=False, so a row
+    written by raw SQL / a cleared update can be NULL. `None < 40` used to raise
+    TypeError and 500 /alerts/smart. A NULL means "no reading", which is NOT a
+    measured 0%: the engine must skip the utilization alert (not fabricate a
+    'critically low at 0%' from the column default), while still firing the
+    status-based alerts. Expected counts are derived by hand, not read back."""
+    machines = [
+        SimpleNamespace(id=1, name="No-Reading", status="Running", utilization=None),
+        SimpleNamespace(id=2, name="Breakdown-No-Reading", status="Breakdown", utilization=None),
+        SimpleNamespace(id=3, name="Genuinely-Low", status="Running", utilization=30),
+    ]
+    alerts = ae.build_smart_alerts(machines, [], [])          # no records, no downtime
+    kinds = {(a["machine"], a["type"]) for a in alerts}
+
+    # NULL-utilization machines raise NO "Low Utilization" alert (not a 0% one).
+    assert ("No-Reading", "Low Utilization") not in kinds, kinds
+    assert ("Breakdown-No-Reading", "Low Utilization") not in kinds, kinds
+    # status-based alerts are unaffected by the missing reading.
+    assert ("Breakdown-No-Reading", "Breakdown") in kinds, kinds
+    # a real low reading still fires (util 30 < 40 -> High).
+    assert ("Genuinely-Low", "Low Utilization") in kinds, kinds
+    # exactly two alerts total: the breakdown + the one genuine low-utilization.
+    assert len(alerts) == 2, alerts
+    # no fabricated "0%" leaked into any message.
+    assert not any("at 0%" in a["message"] for a in alerts), alerts
+    print("PASS build_smart_alerts skips the utilization alert on a NULL reading (no crash, no fake 0%)")
+
+
 def test_calculate_fallback_oee_monotonic():
     assert ae.calculate_fallback_oee(80) == round((80 / 100) * 0.9 * 0.95 * 100)
     assert ae.calculate_fallback_oee(90) > ae.calculate_fallback_oee(50)
@@ -245,5 +274,6 @@ if __name__ == "__main__":
     test_build_smart_alerts_severity_and_dedup()
     test_build_smart_alerts_downtime_window_is_recent_not_caller_order()
     test_build_smart_alerts_empty_downtime_is_safe()
+    test_build_smart_alerts_null_utilization_is_safe_and_honest()
     test_calculate_fallback_oee_monotonic()
     print("ALL ANALYTICS-ENGINE TESTS PASSED")

@@ -57,7 +57,11 @@ def analytics_summary(db: Session = Depends(_get_db), current_user: dict = Depen
     idle = len([m for m in machines if m.status == "Idle"])
     breakdown = len([m for m in machines if m.status == "Breakdown"])
     maintenance = len([m for m in machines if m.status == "Maintenance"])
-    avg_utilization = round(sum(m.utilization for m in machines) / len(machines)) if machines else 0
+    # utilization is a nullable Integer (Column(Integer, default=0)); average only
+    # the machines that actually have a reading so a single NULL row can't 500 the
+    # summary (None in sum()) and an unset machine doesn't drag the mean toward 0.
+    util_values = [m.utilization for m in machines if m.utilization is not None]
+    avg_utilization = round(sum(util_values) / len(util_values)) if util_values else 0
     total_downtime_minutes = sum(parse_duration_to_minutes(log.duration) for log in logs)
 
     # Plant OEE pooled across records (ratio of sums), consistent with every other
@@ -68,7 +72,10 @@ def analytics_summary(db: Session = Depends(_get_db), current_user: dict = Depen
     avg_performance = pooled["performance"]
     avg_quality = pooled["quality"]
     if not records and machines:
-        avg_oee = round(sum(calculate_fallback_oee(m.utilization) for m in machines) / len(machines))
+        # Fallback only over machines with a utilization reading — calculate_fallback_oee
+        # divides utilization by 100, so a NULL row would crash the estimate.
+        fallback = [calculate_fallback_oee(m.utilization) for m in machines if m.utilization is not None]
+        avg_oee = round(sum(fallback) / len(fallback)) if fallback else 0
 
     avg_shift_efficiency = (
         round(sum((s.actual_output / s.target_output) * 100 if s.target_output else 0 for s in shifts) / len(shifts))
@@ -441,7 +448,10 @@ def get_executive_oee(
         if planned_minutes > 0:
             availability = round((runtime_minutes / planned_minutes) * 100)
         else:
-            availability = max(machine.utilization, 0)
+            # No production for this machine — fall back to its utilization as a
+            # rough availability. utilization is nullable, so treat an unset reading
+            # as 0 (max() also floors any stray negative), never `max(None, 0)`.
+            availability = max(machine.utilization or 0, 0)
 
         runtime_seconds = runtime_minutes * 60
         if runtime_seconds > 0:

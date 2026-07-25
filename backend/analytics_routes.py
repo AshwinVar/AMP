@@ -860,12 +860,22 @@ def get_final_executive_summary(db: Session = Depends(_get_db), current_user: di
     purchase_orders = db.query(models.PurchaseOrder).all()
     cost_records = db.query(models.CostRecord).all()
 
+    # Several count columns are Column(Integer, default=0) WITHOUT nullable=False
+    # (passed_quantity, dispatched_quantity, current_stock, reorder_level, amount).
+    # The ORM default only fills a value the inserter omitted, so a row written by
+    # raw SQL, a migration, or an update that clears the field can legitimately be
+    # NULL. The old raw sum(...) / None comparisons then did int + None (or
+    # None <= None) and raised TypeError, 500-ing this whole executive summary on a
+    # single unset row — the same NULL-count class fixed in the order/purchasing
+    # analytics (#278) and the work-order rollup. Coalesce each to the column's own
+    # default of 0. inspected_quantity and order_quantity are nullable=False and
+    # need no guard (but stay the divisors, so the divide-by-zero guards remain).
     inspected = sum(row.inspected_quantity for row in quality)
-    passed = sum(row.passed_quantity for row in quality)
+    passed = sum((row.passed_quantity or 0) for row in quality)
     quality_rate = round((passed / inspected) * 100) if inspected else 0
 
     order_qty = sum(row.order_quantity for row in orders)
-    dispatched_qty = sum(row.dispatched_quantity for row in orders)
+    dispatched_qty = sum((row.dispatched_quantity or 0) for row in orders)
     dispatch_rate = round((dispatched_qty / order_qty) * 100) if order_qty else 0
 
     return {
@@ -874,11 +884,14 @@ def get_final_executive_summary(db: Session = Depends(_get_db), current_user: di
         "work_orders": len(work_orders),
         "production_plans": len(production_plans),
         "quality_rate": quality_rate,
-        "low_stock_items": len([item for item in inventory if item.current_stock <= item.reorder_level]),
+        "low_stock_items": len([
+            item for item in inventory
+            if (item.current_stock or 0) <= (item.reorder_level or 0)
+        ]),
         "customer_orders": len(orders),
         "dispatch_rate": dispatch_rate,
         "purchase_orders": len(purchase_orders),
-        "total_cost": sum(row.amount for row in cost_records),
+        "total_cost": sum((row.amount or 0) for row in cost_records),
     }
 
 

@@ -7,7 +7,7 @@ ownership. (The CSV export helper is exercised by test_orders_export.py.)
 
 Run:  python backend/test_orders_routes.py     (exit 0 = pass)
 """
-from datetime import date
+from datetime import datetime
 
 from fastapi import HTTPException
 from sqlalchemy import create_engine
@@ -51,7 +51,8 @@ def _iso_session():
 
 def _order(no):
     return schemas.CustomerOrderCreate(order_no=no, customer_name="C", product_name="P",
-                                       order_quantity=10, dispatched_quantity=0, due_date=date.today())
+                                       order_quantity=10, dispatched_quantity=0,
+                                       due_date=datetime.utcnow().date())  # UTC, matches the read-models
 
 
 def _create_as(db, tenant, payload):

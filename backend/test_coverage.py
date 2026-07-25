@@ -134,7 +134,9 @@ def _po(po_no, item_id, qty, received, due_in_days, status="Open", supplier_id=1
     return models.PurchaseOrder(
         po_no=po_no, supplier_id=supplier_id, item_id=item_id, item_name="part",
         order_quantity=qty, received_quantity=received, unit="pcs",
-        expected_delivery_date=date.today() + timedelta(days=due_in_days), status=status)
+        # UTC like the read-model (coverage uses datetime.utcnow().date()); a local
+        # date.today() drifts a day around midnight-BST and skews days_uncovered.
+        expected_delivery_date=datetime.utcnow().date() + timedelta(days=due_in_days), status=status)
 
 
 def _burning_part(db):

@@ -121,6 +121,56 @@ def _build_factory_context(db: Session, tenant: str) -> str:
             for i in low[:15]:
                 lines.append(f"- {i.item_name}: {i.current_stock} {i.unit} (reorder {i.reorder_level})")
 
+    # The raw tables above only cover machines / OEE / downtime / stock, so the
+    # LLM answered "the data doesn't contain that" for cost, orders, quality,
+    # maintenance, WIP and compliance questions. Compose the same read-models the
+    # dashboard uses so the copilot can actually answer the domains it advertises.
+    # Lazy imports avoid the import cycle (these pull in the pillar modules);
+    # best-effort so a hiccup in one summary can't blank the whole context.
+    try:
+        from ai.production import build_production_summary
+        from ai.cost import build_cost_summary
+        from ai.delivery import build_delivery_summary
+        from ai.quality import build_quality_summary
+        from ai.maintenance import build_maintenance_summary
+        from ai.flow import build_flow_summary
+        from ai.compliance import build_compliance_summary
+
+        prod = build_production_summary(db, tenant)
+        if prod["runs"]:
+            lines.append(f"PRODUCTION (7d): {prod['good']:,} good of {prod['total']:,} units "
+                         f"({prod['good_rate']}% good) over {prod['runs']} runs.")
+        cost = build_cost_summary(db, tenant)
+        if cost["has_data"]:
+            worst = cost["by_machine"][0]["name"] if cost["by_machine"] else "-"
+            lines.append(f"COST OF LOSSES (7d): ${cost['loss_cost']:,} total "
+                         f"(downtime ${cost['downtime_cost']:,}, scrap ${cost['scrap_cost']:,}); "
+                         f"costliest machine {worst}.")
+        deliv = build_delivery_summary(db, tenant)
+        if deliv["total"]:
+            lines.append(f"ORDERS/DELIVERY: {deliv['total']} orders, "
+                         f"{deliv['fulfillment_rate']}% fulfilled by units, "
+                         f"{deliv['late']} late, {deliv['at_risk']} at risk.")
+        qual = build_quality_summary(db, tenant)
+        if qual["inspections"]:
+            defect = qual["top_defects"][0]["category"] if qual["top_defects"] else "-"
+            lines.append(f"QUALITY (7d): first-pass yield {qual['first_pass_yield']}%, "
+                         f"fail rate {qual['fail_rate']}%, top defect {defect}.")
+        maint = build_maintenance_summary(db, tenant)
+        if maint["open"]:
+            lines.append(f"MAINTENANCE: {maint['open']} open task(s), {maint['overdue']} overdue, "
+                         f"{maint['pending_approval']} awaiting approval.")
+        flow = build_flow_summary(db, tenant)
+        if flow["total"]:
+            lines.append(f"WORK ORDERS: {flow['wip']} in progress, {flow['finished']} finished "
+                         f"({flow['total']} total).")
+        comp = build_compliance_summary(db, tenant)
+        if comp["total"]:
+            lines.append(f"COMPLIANCE: {comp['total']} controlled documents, "
+                         f"{comp['overdue']} review(s) overdue.")
+    except Exception as e:  # pragma: no cover - defensive; context must never 500 the copilot
+        print(f"[AI COPILOT] context enrichment skipped: {e}")
+
     return "\n".join(lines) if lines else "No factory data available yet."
 
 

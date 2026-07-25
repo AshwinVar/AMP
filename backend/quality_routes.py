@@ -202,8 +202,19 @@ def generate_defect_escalations(
     created = 0
 
     for inspection in inspections:
-        # inspected_quantity > 0 is guaranteed by the query, so this is safe.
-        fail_rate = (inspection.failed_quantity / inspection.inspected_quantity) * 100
+        # failed/scrap/rework are Column(Integer, default=0) WITHOUT nullable=False,
+        # so a row written by raw SQL / a migration / an update that clears the field
+        # can legitimately be NULL. The SQL filter above selects a row when
+        # scrap_quantity > 0 REGARDLESS of failed_quantity, so an inspection with
+        # recorded scrap but a NULL failed_quantity reaches here — and the old
+        # `None / inspected_quantity` raised TypeError, 500-ing the whole generator.
+        # A NULL count is the column's own default of 0, so coalesce before dividing
+        # and rendering (matching the _int coalesce used across the engines).
+        failed = inspection.failed_quantity or 0
+        scrap = inspection.scrap_quantity or 0
+        rework = inspection.rework_quantity or 0
+        # inspected_quantity > 0 is guaranteed by the query, so the divide is safe.
+        fail_rate = (failed / inspection.inspected_quantity) * 100
 
         title = f"Quality issue: {inspection.inspection_no}"
 
@@ -230,7 +241,7 @@ def generate_defect_escalations(
             notes=(
                 f"Fail rate {round(fail_rate, 1)}%; "
                 f"defect category {inspection.defect_category or 'N/A'}; "
-                f"scrap {inspection.scrap_quantity}; rework {inspection.rework_quantity}"
+                f"scrap {scrap}; rework {rework}"
             ),
         )
 

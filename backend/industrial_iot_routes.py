@@ -7,6 +7,7 @@ the ORM chokepoint (ADR-0002). Peeled out of main.py per ADR-0009.
 from typing import List
 
 from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 import models
@@ -80,7 +81,11 @@ def create_industrial_device(device: schemas.IndustrialDeviceCreate, db: Session
         raise HTTPException(status_code=400, detail="Device code already exists")
     row = models.IndustrialDevice(**device.model_dump())
     db.add(row)
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(status_code=409, detail="Device code is already in use")
     db.refresh(row)
     return row
 
@@ -152,6 +157,10 @@ def create_plc_signal_mapping(mapping: schemas.PlcSignalMappingCreate, db: Sessi
         raise HTTPException(status_code=400, detail="Mapping code already exists")
     row = models.PlcSignalMapping(**mapping.model_dump())
     db.add(row)
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(status_code=409, detail="Mapping code is already in use")
     db.refresh(row)
     return row

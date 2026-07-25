@@ -268,6 +268,90 @@ def test_executive_oee_null_utilization_fallback_is_zero_not_a_crash():
     print("PASS executive-oee: NULL utilization fallback -> availability 0 (no max(None,0) crash)")
 
 
+def test_final_executive_summary_null_columns_are_zero_not_a_crash():
+    # /analytics/final-executive-summary sums / compares several columns that are
+    # Column(Integer, default=0) WITHOUT nullable=False — passed_quantity,
+    # dispatched_quantity, current_stock, reorder_level, amount — so a real SQL
+    # NULL (raw SQL / migration / a cleared update) is legitimate. The old raw
+    # sum(...) and `current_stock <= reorder_level` then did int + None / None <=
+    # None and 500'd the whole summary on a single unset row. Each must coalesce
+    # to the column's own default of 0. Every expected number is derived by hand.
+    db = _fresh_session()
+    db.add(models.Machine(id=1, name="A", status="Running", utilization=70))
+    db.add(models.Machine(id=2, name="B", status="Running", utilization=60))
+    db.add(models.Machine(id=3, name="C", status="Idle", utilization=0))
+
+    db.add(_work_order(id=1, work_order_no="W1", status="Running", target_quantity=100, actual_quantity=10))
+    db.add(_work_order(id=2, work_order_no="W2", status="Completed", target_quantity=50, actual_quantity=50))
+    db.add(models.ProductionPlan(id=1, plan_no="P1", status="Running", planned_quantity=100,
+                                 actual_quantity=10, plan_date=date(2026, 1, 1), shift_name="A"))
+
+    db.add(models.QualityInspection(inspection_no="Q1", inspector="I", inspected_quantity=100, passed_quantity=80))
+    db.add(models.QualityInspection(inspection_no="Q2", inspector="I", inspected_quantity=50, passed_quantity=0))
+
+    db.add(models.InventoryItem(item_code="I1", item_name="One", category="raw", unit="pcs",
+                                current_stock=5, reorder_level=10))
+    db.add(models.InventoryItem(item_code="I2", item_name="Two", category="raw", unit="pcs",
+                                current_stock=0, reorder_level=0))
+    db.add(models.InventoryItem(item_code="I3", item_name="Three", category="raw", unit="pcs",
+                                current_stock=100, reorder_level=10))
+
+    db.add(models.CustomerOrder(order_no="O1", customer_name="Cust", product_name="P",
+                                order_quantity=100, dispatched_quantity=60, due_date=date(2026, 1, 1)))
+    db.add(models.CustomerOrder(order_no="O2", customer_name="Cust", product_name="P",
+                                order_quantity=200, dispatched_quantity=0, due_date=date(2026, 1, 1)))
+
+    db.add(models.PurchaseOrder(po_no="PO1", item_name="Part", order_quantity=10, unit="pcs",
+                                expected_delivery_date=date(2026, 1, 1)))
+
+    db.add(models.CostRecord(cost_no="C1", cost_type="Downtime", description="d", amount=1000))
+    db.add(models.CostRecord(cost_no="C2", cost_type="Downtime", description="d", amount=0))
+    db.commit()
+
+    # Force genuine SQL NULLs (the ORM would apply default=0 to a None on insert).
+    db.execute(text("UPDATE quality_inspections SET passed_quantity = NULL WHERE inspection_no = 'Q2'"))
+    db.execute(text("UPDATE inventory_items SET current_stock = NULL, reorder_level = NULL WHERE item_code = 'I2'"))
+    db.execute(text("UPDATE customer_orders SET dispatched_quantity = NULL WHERE order_no = 'O2'"))
+    db.execute(text("UPDATE cost_records SET amount = NULL WHERE cost_no = 'C2'"))
+    db.commit()
+    db.expire_all()
+
+    out = analytics_routes.get_final_executive_summary(db=db, current_user={})
+
+    assert out["machine_count"] == 3, out
+    assert out["running_machines"] == 2, out
+    assert out["work_orders"] == 2, out
+    assert out["production_plans"] == 1, out
+    # quality: inspected 100+50 = 150 (NOT NULL); passed 80 + 0(NULL->0) = 80
+    #          -> round(80/150*100) = round(53.33) = 53
+    assert out["quality_rate"] == 53, out
+    # low stock: I1 (5<=10) + I2 (0<=0, both NULL->0) low; I3 (100<=10) not. = 2
+    assert out["low_stock_items"] == 2, out
+    assert out["customer_orders"] == 2, out
+    # dispatch: order 100+200 = 300 (NOT NULL); dispatched 60 + 0(NULL->0) = 60
+    #           -> round(60/300*100) = 20
+    assert out["dispatch_rate"] == 20, out
+    assert out["purchase_orders"] == 1, out
+    # cost: 1000 + 0(NULL->0) = 1000
+    assert out["total_cost"] == 1000, out
+    print("PASS final-executive-summary: NULL count columns -> 0, no crash "
+          "(quality 53% / dispatch 20% / 2 low-stock / £1000)")
+
+
+def test_final_executive_summary_empty_tables_are_zero_not_a_crash():
+    db = _fresh_session()
+    out = analytics_routes.get_final_executive_summary(db=db, current_user={})
+    assert out["machine_count"] == 0 and out["running_machines"] == 0
+    assert out["work_orders"] == 0 and out["production_plans"] == 0
+    # zero denominators -> 0, not ZeroDivisionError
+    assert out["quality_rate"] == 0, out
+    assert out["dispatch_rate"] == 0, out
+    assert out["low_stock_items"] == 0, out
+    assert out["customer_orders"] == 0 and out["purchase_orders"] == 0
+    assert out["total_cost"] == 0, out
+    print("PASS final-executive-summary: empty tables -> zeros, no divide-by-zero")
+
+
 if __name__ == "__main__":
     test_analytics_paths_owned_by_module()
     test_analytics_summary_is_module_level_and_shared()
@@ -281,4 +365,6 @@ if __name__ == "__main__":
     test_analytics_summary_null_utilization_averages_only_readings()
     test_analytics_summary_all_null_utilization_is_zero_not_a_crash()
     test_executive_oee_null_utilization_fallback_is_zero_not_a_crash()
+    test_final_executive_summary_null_columns_are_zero_not_a_crash()
+    test_final_executive_summary_empty_tables_are_zero_not_a_crash()
     print("ALL ANALYTICS ROUTE TESTS PASSED")

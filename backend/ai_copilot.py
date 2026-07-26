@@ -108,14 +108,34 @@ def _build_factory_context(db: Session, tenant: str) -> str:
     # Low stock — tenant aware (GMATS uses its own 4-bucket inventory).
     if tenant == "GMATS":
         items = db.query(models.GmatsItem).filter(models.GmatsItem.tenant_code == "GMATS").all()
-        low = [i for i in items if (i.physical_stock - i.reserved_stock) <= i.reorder_level]
+        # physical_stock / reserved_stock / reorder_level are Column(Integer,
+        # default=0) WITHOUT nullable=False — any can be NULL, and `None - None` /
+        # `None <= None` raised TypeError. As above, this runs outside the copilot's
+        # try/except, so a NULL 500'd /ai/ask & /ai/report; exclude an item whose
+        # availability or level can't be computed rather than crash the context.
+        low = [i for i in items
+               if i.physical_stock is not None and i.reserved_stock is not None
+               and i.reorder_level is not None
+               and (i.physical_stock - i.reserved_stock) <= i.reorder_level]
         if low:
             lines.append("LOW STOCK:")
             for i in low:
                 lines.append(f"- {i.item_name}: available {i.physical_stock - i.reserved_stock} {i.unit} (reorder {i.reorder_level})")
     else:
         items = db.query(models.InventoryItem).all()
-        low = [i for i in items if i.current_stock <= i.reorder_level]
+        # current_stock / reorder_level are Column(Integer, default=0) WITHOUT
+        # nullable=False, so either can be NULL (a raw-SQL / migration / cleared
+        # write), and `None <= None` raised TypeError. _build_factory_context is
+        # called OUTSIDE the /ai/ask & /ai/report try/except that answers from the
+        # honest rules fallback, so that TypeError became an unhandled 500 — the
+        # exact failure the fallback exists to prevent. A NULL level can't say
+        # whether the item is low, so exclude it, matching generate_low_stock_
+        # escalations (whose SQL `current_stock <= reorder_level` yields NULL, and
+        # so excludes the row, when either side is NULL) and the recommendations
+        # generator.
+        low = [i for i in items
+               if i.current_stock is not None and i.reorder_level is not None
+               and i.current_stock <= i.reorder_level]
         if low:
             lines.append("LOW STOCK:")
             for i in low[:15]:

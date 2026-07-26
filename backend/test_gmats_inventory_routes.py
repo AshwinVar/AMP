@@ -11,7 +11,7 @@ Run:  python backend/test_gmats_inventory_routes.py     (exit 0 = pass)
 import main
 
 from fastapi import HTTPException
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker
 
 import gmats_inventory_routes as gmats
@@ -165,6 +165,97 @@ def test_invoice_then_void_is_stock_neutral():
     print("PASS invoice+void is stock-neutral (void is a true inverse of the deduction)")
 
 
+# --- NULL-stock safety: physical_stock / reserved_stock / reorder_level are
+# Column(Integer, default=0) WITHOUT nullable=False, so a raw-SQL / migration /
+# blank-import write can store a true NULL. The shared _item_dict serializer and
+# the summary rollup read them raw, so ONE such row 500'd the whole /gmats/items
+# list and /gmats/summary card via `None - None` / `sum(None ...)`. The ORM default
+# masks an explicit None on insert (it becomes 0), so these tests force a genuine
+# NULL with a raw UPDATE — exactly the scenario the guard exists for. ---
+
+
+def _null_stock(db, iid):
+    db.execute(
+        text(
+            "UPDATE gmats_items SET physical_stock=NULL, reserved_stock=NULL, "
+            "reorder_level=NULL, purchase_rate=NULL WHERE id=:id"
+        ),
+        {"id": iid},
+    )
+    db.commit()
+    db.expire_all()
+
+
+def test_item_dict_coalesces_null_stock_to_zero():
+    # A single all-NULL row must serialize as a concrete 0-stock item, not 500.
+    db = _db()
+    _item(db, 1, "GMATS", "Blank Row")
+    _null_stock(db, 1)
+    out = gmats.gmats_items(tenant="GMATS", db=db, current_user=_ADMIN)
+    assert len(out) == 1
+    row = out[0]
+    # Every nullable count is healed to the column's own default of 0 — never null.
+    assert row["physical_stock"] == 0
+    assert row["reserved_stock"] == 0
+    assert row["reorder_level"] == 0
+    assert row["purchase_rate"] == 0
+    assert row["available_stock"] == 0            # 0 - 0, not None - None
+    # reorder_needed is available <= reorder_level -> 0 <= 0 -> True.
+    assert row["reorder_needed"] is True
+    print("PASS _item_dict coalesces a fully-NULL stock row to 0 instead of 500")
+
+
+def test_items_list_survives_one_null_row_among_healthy():
+    # The high-impact bug: one NULL row must not poison the serializer for the
+    # OTHER, healthy items in the same tenant. Healthy figures stay exact.
+    db = _db()
+    db.add(models.GmatsItem(id=1, tenant_code="GMATS", item_code="C1", item_name="Healthy",
+                            physical_stock=100, reserved_stock=30, reorder_level=10,
+                            purchase_rate=5, unit="ea"))
+    _item(db, 2, "GMATS", "Blank Row")            # will be NULLed below
+    db.commit()
+    _null_stock(db, 2)
+
+    out = {i["id"]: i for i in gmats.gmats_items(tenant="GMATS", db=db, current_user=_ADMIN)}
+    assert len(out) == 2, "the NULL row must not drop or 500 the whole list"
+    healthy = out[1]
+    assert healthy["physical_stock"] == 100 and healthy["reserved_stock"] == 30
+    assert healthy["available_stock"] == 70       # 100 - 30, independently derived
+    assert healthy["reorder_needed"] is False     # 70 <= 10 is False
+    assert out[2]["available_stock"] == 0
+    print("PASS one NULL row doesn't poison the healthy rows in /gmats/items")
+
+
+def test_summary_treats_null_as_zero_and_reconciles():
+    # Independently-derived expected values over healthy + NULL rows:
+    #   A: physical 100, reserved 30, reorder 10 -> available 70, not reorder_needed
+    #   B: physical   5, reserved  0, reorder 20 -> available  5, reorder_needed
+    #   C: all NULL -> coalesced 0/0/0          -> available  0, reorder_needed (0<=0)
+    # total_physical = 100+5+0 = 105 ; total_reserved = 30 ; total_available = 75
+    # reorder_needed count = B and C = 2 ; items = 3
+    db = _db()
+    db.add(models.GmatsItem(id=1, tenant_code="GMATS", item_code="A", item_name="A",
+                            physical_stock=100, reserved_stock=30, reorder_level=10,
+                            purchase_rate=0, unit="ea"))
+    db.add(models.GmatsItem(id=2, tenant_code="GMATS", item_code="B", item_name="B",
+                            physical_stock=5, reserved_stock=0, reorder_level=20,
+                            purchase_rate=0, unit="ea"))
+    _item(db, 3, "GMATS", "C")
+    db.commit()
+    _null_stock(db, 3)
+
+    s = gmats.gmats_summary(tenant="GMATS", db=db, current_user=_ADMIN)
+    assert s["items"] == 3
+    assert s["total_physical"] == 105
+    assert s["total_reserved"] == 30
+    # Headline total_available reconciles with the per-item available_stock sum
+    # (70 + 5 + 0) that /gmats/items reports — same physical-minus-reserved basis.
+    assert s["total_available"] == 75
+    assert s["total_available"] == s["total_physical"] - s["total_reserved"]
+    assert s["reorder_needed"] == 2
+    print("PASS summary coalesces NULL stock to 0 and reconciles the available total")
+
+
 if __name__ == "__main__":
     test_gmats_inventory_paths_registered_once_and_owned()
     test_proforma_listing_resolves_only_same_tenant_item_names()
@@ -172,4 +263,7 @@ if __name__ == "__main__":
     test_listing_names_match_the_items_endpoint()
     test_invoice_rejects_over_issue_instead_of_clamping()
     test_invoice_then_void_is_stock_neutral()
+    test_item_dict_coalesces_null_stock_to_zero()
+    test_items_list_survives_one_null_row_among_healthy()
+    test_summary_treats_null_as_zero_and_reconciles()
     print("ALL GMATS-INVENTORY ROUTE TESTS PASSED")

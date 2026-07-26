@@ -26,9 +26,21 @@ def move_bom_on_production_completed(event: ProductionCompleted, db) -> None:
             models.InventoryItem.item_code == bom["raw"]
         ).first()
         if raw_item:
-            was_above = raw_item.current_stock > raw_item.reorder_level
-            consume = min(qty * bom["consume_per_unit"], raw_item.current_stock)
-            raw_item.current_stock -= consume
+            # current_stock / reorder_level are nullable Integer columns
+            # (Column(Integer, default=0) WITHOUT nullable=False — the default only
+            # fills a value the *inserter* omitted, so a raw-SQL / migration /
+            # cleared-field write can legitimately store NULL). This handler runs
+            # synchronously inside the work-order-completion transaction and a
+            # subscriber error propagates by design (events.py), so `None > int`,
+            # `min(int, None)` and `None - int` would raise TypeError and 500 the
+            # completion write. Coalesce a missing stock to 0 (an empty shelf can
+            # issue nothing) — the same guard already applied to these very columns
+            # elsewhere (ai_copilot, inventory_routes, recommendations_routes).
+            current_stock = raw_item.current_stock or 0
+            reorder_level = raw_item.reorder_level or 0
+            was_above = current_stock > reorder_level
+            consume = min(qty * bom["consume_per_unit"], current_stock)
+            raw_item.current_stock = current_stock - consume
             db.add(models.InventoryTransaction(
                 item_id=raw_item.id,
                 transaction_type="Issue",
@@ -38,14 +50,14 @@ def move_bom_on_production_completed(event: ProductionCompleted, db) -> None:
             ))
             # Production consumption can trip a reorder — emit InventoryLow so the
             # Reorder agent reacts (ADR-0005).
-            if was_above and raw_item.current_stock <= raw_item.reorder_level:
+            if was_above and raw_item.current_stock <= reorder_level:
                 event_bus.publish(InventoryLow(
                     tenant_code=event.tenant_code,
                     item_id=raw_item.id,
                     item_code=raw_item.item_code,
                     item_name=raw_item.item_name,
                     current_stock=raw_item.current_stock,
-                    reorder_level=raw_item.reorder_level,
+                    reorder_level=reorder_level,
                 ), db)
 
     # Add finished goods
@@ -54,7 +66,9 @@ def move_bom_on_production_completed(event: ProductionCompleted, db) -> None:
             models.InventoryItem.item_code == bom["fg"]
         ).first()
         if fg_item:
-            fg_item.current_stock += qty
+            # Same nullable-column guard as the raw side: a NULL finished-goods
+            # stock must not TypeError-500 the completion write.
+            fg_item.current_stock = (fg_item.current_stock or 0) + qty
             db.add(models.InventoryTransaction(
                 item_id=fg_item.id,
                 transaction_type="Receive",

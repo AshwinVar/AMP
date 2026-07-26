@@ -12,6 +12,7 @@ from datetime import datetime
 from typing import List
 
 from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy import func, or_
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -188,39 +189,69 @@ def get_customer_order_analytics(
     db: Session = Depends(_get_db),
     current_user: dict = Depends(get_current_user),
 ):
-    orders = db.query(models.CustomerOrder).all()
-
+    # Aggregate the growing customer_orders table in SQL rather than hydrating
+    # every row into Python just to bucket it with list comprehensions (rule-4
+    # antipattern; the same GROUP BY fix already applied to /analytics/work-orders,
+    # /analytics/production-plans and /analytics/escalations). CustomerOrder is in
+    # SCOPED_MODELS, so the do_orm_execute hook (ADR-0002) tenant-scopes every
+    # aggregate SELECT below exactly as it did the old .all() scan.
     today = datetime.utcnow().date()
 
-    pending = len([row for row in orders if row.status == "Pending"])
-    partial = len([row for row in orders if row.status == "Partial"])
-    dispatched = len([row for row in orders if row.status == "Dispatched"])
-    cancelled = len([row for row in orders if row.status == "Cancelled"])
-    late = len([row for row in orders if row.due_date < today and row.status not in ["Dispatched", "Cancelled"]])
+    status_counts = dict(
+        db.query(models.CustomerOrder.status, func.count())
+        .group_by(models.CustomerOrder.status)
+        .all()
+    )
 
-    # dispatched_quantity is Column(Integer, default=0) WITHOUT nullable=False —
-    # the ORM default only fills a value the inserter omitted, so a row written by
-    # raw SQL, a migration, or an update that clears the field can be NULL. Summing
-    # a NULL then 500'd this endpoint (None in sum()); the CSV export already reads
-    # it as `dispatched_quantity or 0`, so coalesce to the column's own default of 0
-    # here too. order_quantity is nullable=False, so it needs no guard.
-    total_order_qty = sum(row.order_quantity for row in orders)
-    total_dispatched_qty = sum((row.dispatched_quantity or 0) for row in orders)
+    # order_quantity is nullable=False, but SUM over an empty book is still NULL;
+    # dispatched_quantity is Column(Integer, default=0) WITHOUT nullable=False, so a
+    # row written by raw SQL / a migration / a cleared update can be a true NULL,
+    # which the old Python sum() turned into int + None -> TypeError. COALESCE(..,0)
+    # makes both read as the column's own default of 0 (the CSV export already reads
+    # dispatched_quantity as `or 0`).
+    total_orders, total_order_qty, total_dispatched_qty = db.query(
+        func.count(models.CustomerOrder.id),
+        func.coalesce(func.sum(models.CustomerOrder.order_quantity), 0),
+        func.coalesce(func.sum(models.CustomerOrder.dispatched_quantity), 0),
+    ).one()
+    total_order_qty = int(total_order_qty)
+    total_dispatched_qty = int(total_dispatched_qty)
     dispatch_rate = round((total_dispatched_qty / total_order_qty) * 100) if total_order_qty else 0
 
-    priority_counts = {}
-    customer_counts = {}
+    # Late = past due and not already dispatched/cancelled. status is String
+    # default="Pending" (not NOT NULL); the old Python `row.status not in [...]`
+    # counted a NULL-status overdue order as late (None is not in the list), but
+    # SQL's `status NOT IN (...)` is NULL — not TRUE — for a NULL status, so it
+    # would silently drop that row. OR the NULL back in to keep the same basis.
+    late = db.query(func.count(models.CustomerOrder.id)).filter(
+        models.CustomerOrder.due_date < today,
+        or_(
+            models.CustomerOrder.status.is_(None),
+            models.CustomerOrder.status.notin_(["Dispatched", "Cancelled"]),
+        ),
+    ).scalar() or 0
 
-    for row in orders:
-        priority_counts[row.priority] = priority_counts.get(row.priority, 0) + 1
-        customer_counts[row.customer_name] = customer_counts.get(row.customer_name, 0) + row.order_quantity
+    priority_counts = dict(
+        db.query(models.CustomerOrder.priority, func.count())
+        .group_by(models.CustomerOrder.priority)
+        .all()
+    )
+    customer_counts = {
+        name: int(qty)
+        for name, qty in db.query(
+            models.CustomerOrder.customer_name,
+            func.coalesce(func.sum(models.CustomerOrder.order_quantity), 0),
+        )
+        .group_by(models.CustomerOrder.customer_name)
+        .all()
+    }
 
     return {
-        "total_orders": len(orders),
-        "pending": pending,
-        "partial": partial,
-        "dispatched": dispatched,
-        "cancelled": cancelled,
+        "total_orders": total_orders,
+        "pending": status_counts.get("Pending", 0),
+        "partial": status_counts.get("Partial", 0),
+        "dispatched": status_counts.get("Dispatched", 0),
+        "cancelled": status_counts.get("Cancelled", 0),
         "late": late,
         "total_order_qty": total_order_qty,
         "total_dispatched_qty": total_dispatched_qty,

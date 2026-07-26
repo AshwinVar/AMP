@@ -33,6 +33,15 @@ def test_weekly_report_composes_a_markdown_page():
                                      department="Quality", version="1.0", owner="QA Lead",
                                      approval_status="Approved",
                                      review_due_date=(now.date() - timedelta(days=3))))
+    # Maintenance: one overdue open task and one completed-on-plan task, so the
+    # report's Maintenance section shows both the backlog and a PM-compliance rate.
+    db.add(models.MaintenanceTask(task_no="PM-1", machine_id=1, task_type="Preventive",
+                                  priority="High", assigned_to="tech",
+                                  planned_date=(now.date() - timedelta(days=2)), status="Open"))
+    db.add(models.MaintenanceTask(task_no="PM-2", machine_id=1, task_type="Preventive",
+                                  priority="Medium", assigned_to="tech",
+                                  planned_date=(now.date() - timedelta(days=5)),
+                                  completed_date=(now.date() - timedelta(days=6)), status="Completed"))
     db.commit()
 
     r = report.build_weekly_report(db, "DEFAULT")
@@ -40,9 +49,12 @@ def test_weekly_report_composes_a_markdown_page():
     md = r["markdown"]
     # the report has the expected sections
     for section in ["# Weekly Plant Report", "## Scorecard", "## Cost of losses",
-                    "## Delivery", "## Compliance", "## Needs attention", "## Wins"]:
+                    "## Delivery", "## Maintenance", "## Compliance", "## Needs attention", "## Wins"]:
         assert section in md
     assert "1 overdue for review" in md
+    # maintenance: the overdue backlog and the PM-compliance rate both render
+    assert "1 overdue, 0 scheduled over the next 14 days" in md
+    assert "PM compliance (30d): 100% completed on plan" in md
     # and pulls real figures through
     assert "Plant OEE" in md and "Bugatti" in md and "machine down" in md
     assert "$" in md   # cost of losses rendered as money

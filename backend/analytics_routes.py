@@ -800,12 +800,22 @@ def get_iot_command_center(db: Session = Depends(_get_db), current_user: dict = 
         if key not in latest:
             latest[key] = row
 
+    # Resolve machine names from the roster already loaded above rather than a
+    # per-signal SELECT inside the loop — that inner query was an N+1 firing once
+    # for every distinct (machine, signal) in the window (up to 300 point lookups
+    # on a single call), the same anti-pattern already dropped from the
+    # maintenance / production-schedule rollups (#273) and the purchasing
+    # analytics (#276). Machine is in SCOPED_MODELS, so this tenant-scoped roster
+    # holds exactly the machines the per-row query could have returned; an
+    # unknown/foreign machine_id is simply absent from the map and still falls
+    # back to the "Machine {id}" label — output unchanged, one scan instead of N.
+    machine_names = {machine.id: machine.name for machine in machines}
+
     latest_rows = []
     for row in latest.values():
-        machine = db.query(models.Machine).filter(models.Machine.id == row.machine_id).first()
         latest_rows.append({
             "machine_id": row.machine_id,
-            "machine_name": machine.name if machine else f"Machine {row.machine_id}",
+            "machine_name": machine_names.get(row.machine_id, f"Machine {row.machine_id}"),
             "signal_name": row.signal_name,
             "signal_value": row.signal_value,
             "numeric_value": row.numeric_value,

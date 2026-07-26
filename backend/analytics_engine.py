@@ -56,7 +56,17 @@ def calculate_oee_from_record(record):
     )
 
     quality = record.good_count / record.total_count if record.total_count else 0
+
+    # Clamp EVERY component to [0, 1], matching pooled_oee (which caps a/p/q the
+    # same way). Only performance was capped here, so the per-record view could
+    # print availability > 100% (a machine that ran past its planned minutes,
+    # runtime > planned) or quality > 100% (good_count > total_count from a
+    # data-entry slip), and its OEE could top 100% — disagreeing with the pooled
+    # headline and violating the honesty rule (a metric can't exceed the bound
+    # the data supports). Reconciles the per-record view with the pooled one.
+    availability = min(availability, 1)
     performance = min(performance, 1)
+    quality = min(quality, 1)
 
     return {
         "availability": round(availability * 100),

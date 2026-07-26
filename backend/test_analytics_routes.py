@@ -705,6 +705,108 @@ def test_factory_command_center_null_stock_and_failed_are_zero_not_a_crash():
           "(2 low-stock / fail 13%)")
 
 
+def _count_selects(engine):
+    """Attach a SELECT counter to an engine for the life of the returned handle.
+
+    Lets a test assert the endpoint issues a BOUNDED number of queries — the
+    proof that the per-signal N+1 lookups are gone, not merely that the numbers
+    still add up."""
+    from sqlalchemy import event
+
+    state = {"selects": 0}
+
+    def _before_cursor(conn, cursor, statement, parameters, context, executemany):
+        if statement.lstrip().lower().startswith("select"):
+            state["selects"] += 1
+
+    event.listen(engine, "before_cursor_execute", _before_cursor)
+    return state
+
+
+def _fresh_session_with_engine():
+    engine = create_engine("sqlite://", connect_args={"check_same_thread": False})
+    Base.metadata.create_all(bind=engine)
+    return sessionmaker(bind=engine)(), engine
+
+
+def test_industrial_gateway_names_resolved_and_scan_is_bounded():
+    # The gateway rollup used to run a fresh SELECT for the device AND the machine
+    # of every distinct signal in the window (an N+1 on the growing
+    # industrial_signals table). Resolving both from rosters read once must (a)
+    # leave the resolved names byte-for-byte identical and (b) issue a bounded
+    # number of queries regardless of how many signals are in the window.
+    db, engine = _fresh_session_with_engine()
+    db.add(models.Machine(id=1, name="Press-01", status="Running", utilization=80))
+    db.add(models.Machine(id=2, name="Lathe-02", status="Idle", utilization=40))
+    db.add(models.IndustrialDevice(id=10, device_code="D10", device_name="PLC-North", status="Online"))
+    db.add(models.IndustrialDevice(id=11, device_code="D11", device_name="PLC-South", status="Offline"))
+    db.add(models.PlcSignalMapping(mapping_code="M1", device_id=10, source_signal="s", mes_field="f", enabled="Yes"))
+    db.add(models.PlcSignalMapping(mapping_code="M2", device_id=10, source_signal="s", mes_field="f", enabled="No"))
+    # 8 signals across 2 devices/machines, each a distinct (device, signal) key so
+    # none are deduped — the loop resolves a name for all 8.
+    for i in range(4):
+        db.add(models.IndustrialSignal(device_id=10, machine_id=1, signal_name=f"temp{i}",
+                                       signal_value="hot", numeric_value=90, quality="Good"))
+        db.add(models.IndustrialSignal(device_id=11, machine_id=2, signal_name=f"vibe{i}",
+                                       signal_value="low", numeric_value=5, quality="Good"))
+    db.commit()
+
+    counter = _count_selects(engine)
+    out = analytics_routes.get_industrial_gateway_analytics(db=db, current_user={})
+
+    # Names are resolved correctly from the maps.
+    by_name = {(r["signal_name"]): r for r in out["latest_signals"]}
+    assert by_name["temp0"]["device_name"] == "PLC-North"
+    assert by_name["temp0"]["machine_name"] == "Press-01"
+    assert by_name["vibe0"]["device_name"] == "PLC-South"
+    assert by_name["vibe0"]["machine_name"] == "Lathe-02"
+    # Header counts are hand-derived from the fixture.
+    assert out["devices"] == 2, out
+    assert out["online_devices"] == 1 and out["offline_devices"] == 1, out
+    assert out["signals"] == 8, out
+    assert out["mappings"] == 2 and out["enabled_mappings"] == 1, out
+
+    # The scan is bounded: devices + signals + mappings + machine-name roster = 4
+    # SELECTs, and it does NOT grow with the 8 signals in the window. The old code
+    # issued 4 + 2*(distinct signals) = 20 here.
+    assert counter["selects"] <= 6, (
+        f"expected a bounded query count, got {counter['selects']} — the per-signal N+1 is back")
+    print(f"PASS industrial-gateway: names resolved from maps, bounded scan "
+          f"({counter['selects']} SELECTs for 8 signals, not the old ~20)")
+
+
+def test_industrial_gateway_missing_and_null_refs_fall_back_to_same_labels():
+    # A signal with NO machine (machine_id NULL) must render "-"; a signal whose
+    # device_id / machine_id point at a row that isn't there must fall back to the
+    # SAME "Device {id}" / "-" labels the per-row-query version produced — the map
+    # lookup must not crash or change the label on an absent id.
+    db = _fresh_session()
+    db.add(models.Machine(id=1, name="Press-01", status="Running", utilization=80))
+    db.add(models.IndustrialDevice(id=10, device_code="D10", device_name="PLC-North", status="Online"))
+    # (a) real device, no machine -> "-"
+    db.add(models.IndustrialSignal(device_id=10, machine_id=None, signal_name="temp",
+                                   signal_value="hot", numeric_value=90))
+    # (b) device id with no matching device row -> "Device 99"; machine id 42 absent -> "-"
+    db.add(models.IndustrialSignal(device_id=99, machine_id=42, signal_name="ghost",
+                                   signal_value="x", numeric_value=1))
+    db.commit()
+
+    out = analytics_routes.get_industrial_gateway_analytics(db=db, current_user={})
+    rows = {r["signal_name"]: r for r in out["latest_signals"]}
+    assert rows["temp"]["device_name"] == "PLC-North" and rows["temp"]["machine_name"] == "-", rows
+    assert rows["ghost"]["device_name"] == "Device 99" and rows["ghost"]["machine_name"] == "-", rows
+    print("PASS industrial-gateway: absent device -> 'Device {id}', absent/NULL machine -> '-' (labels unchanged)")
+
+
+def test_industrial_gateway_empty_tables_are_zero_not_a_crash():
+    db = _fresh_session()
+    out = analytics_routes.get_industrial_gateway_analytics(db=db, current_user={})
+    assert out["devices"] == 0 and out["signals"] == 0 and out["mappings"] == 0
+    assert out["online_devices"] == 0 and out["offline_devices"] == 0
+    assert out["enabled_mappings"] == 0 and out["latest_signals"] == []
+    print("PASS industrial-gateway: empty tables -> zeros / empty list, no crash")
+
+
 if __name__ == "__main__":
     test_analytics_paths_owned_by_module()
     test_analytics_summary_is_module_level_and_shared()
@@ -732,4 +834,7 @@ if __name__ == "__main__":
     test_quality_analytics_empty_table_is_zero_not_a_crash()
     test_executive_oee_null_quality_columns_in_per_machine_fallback()
     test_factory_command_center_null_stock_and_failed_are_zero_not_a_crash()
+    test_industrial_gateway_names_resolved_and_scan_is_bounded()
+    test_industrial_gateway_missing_and_null_refs_fall_back_to_same_labels()
+    test_industrial_gateway_empty_tables_are_zero_not_a_crash()
     print("ALL ANALYTICS ROUTE TESTS PASSED")

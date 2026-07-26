@@ -978,6 +978,21 @@ def get_industrial_gateway_analytics(db: Session = Depends(_get_db), current_use
     signals = db.query(models.IndustrialSignal).order_by(models.IndustrialSignal.id.desc()).limit(500).all()
     mappings = db.query(models.PlcSignalMapping).all()
 
+    # Resolve device and machine names from rosters read ONCE, not with a fresh
+    # SELECT per signal inside the loop — that was an N+1 firing twice for every
+    # distinct (device, signal) in the window (up to ~1,000 point lookups on a
+    # single call) on the growing industrial_signals table, the same anti-pattern
+    # already dropped from the sibling /analytics/iot-command (#294) and the
+    # maintenance / production-schedule / purchasing rollups (#273, #276).
+    # `devices` above is already the full roster, and IndustrialDevice / Machine
+    # are both in SCOPED_MODELS, so the do_orm_execute hook (ADR-0002) tenant-scopes
+    # these maps exactly as it scoped the per-row queries — each map holds exactly
+    # the rows the inner query could have returned. An unknown/foreign id is simply
+    # absent and still falls back to the SAME label. Output unchanged, one scan
+    # instead of N.
+    device_names = {device.id: device.device_name for device in devices}
+    machine_names = dict(db.query(models.Machine.id, models.Machine.name).all())
+
     latest = []
     seen = set()
     for signal in signals:
@@ -985,12 +1000,10 @@ def get_industrial_gateway_analytics(db: Session = Depends(_get_db), current_use
         if key in seen:
             continue
         seen.add(key)
-        device = db.query(models.IndustrialDevice).filter(models.IndustrialDevice.id == signal.device_id).first()
-        machine = db.query(models.Machine).filter(models.Machine.id == signal.machine_id).first() if signal.machine_id else None
         latest.append({
             "device_id": signal.device_id,
-            "device_name": device.device_name if device else f"Device {signal.device_id}",
-            "machine_name": machine.name if machine else "-",
+            "device_name": device_names.get(signal.device_id, f"Device {signal.device_id}"),
+            "machine_name": machine_names.get(signal.machine_id, "-"),
             "signal_name": signal.signal_name,
             "signal_value": signal.signal_value,
             "numeric_value": signal.numeric_value,

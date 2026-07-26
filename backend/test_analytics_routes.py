@@ -649,6 +649,50 @@ def test_quality_analytics_empty_table_is_zero_not_a_crash():
     print("PASS quality analytics: empty table -> zeros, no divide-by-zero")
 
 
+def test_quality_analytics_is_tenant_scoped():
+    # The SUM/GROUP BY aggregates that replaced the `.all()` scan must stay
+    # tenant-scoped, exactly like the auto-scoped load they replaced (ADR-0002
+    # do_orm_execute hook). A tenant must never see another tenant's inspections.
+    import tenancy as T
+    T.install_scoping()
+    db = _fresh_session()
+    tok = T.set_current_tenant("GMATS")
+    try:
+        db.add(models.QualityInspection(inspection_no="Q1", inspector="I", machine_id=1,
+                                        inspected_quantity=100, passed_quantity=90,
+                                        failed_quantity=10, defect_category="Scratch"))
+        db.add(models.QualityInspection(inspection_no="Q2", inspector="I", machine_id=1,
+                                        inspected_quantity=50, passed_quantity=45,
+                                        failed_quantity=5, defect_category="Scratch"))
+        db.commit()
+    finally:
+        T.reset_current_tenant(tok)
+    tok = T.set_current_tenant("DEFAULT")
+    try:
+        db.add(models.QualityInspection(inspection_no="Q3", inspector="I", machine_id=2,
+                                        inspected_quantity=999, passed_quantity=0,
+                                        failed_quantity=999, defect_category="Dent"))
+        db.commit()
+    finally:
+        T.reset_current_tenant(tok)
+
+    tok = T.set_current_tenant("GMATS")
+    try:
+        out = analytics_routes.get_quality_analytics(db=db, current_user={"tenant": "GMATS"})
+    finally:
+        T.reset_current_tenant(tok)
+    # GMATS wrote 2 of the 3 rows; it must see only its own (150 inspected, 15
+    # failed), never the DEFAULT tenant's 999s bleeding into any total or bucket.
+    assert out["total_inspections"] == 2, out
+    assert out["inspected_quantity"] == 150, out                 # 100 + 50
+    assert out["failed_quantity"] == 15, out                     # 10 + 5
+    assert out["pass_rate"] == 90, out                           # round(135/150*100)
+    assert out["fail_rate"] == 10, out                           # round(15/150*100)
+    assert out["defect_counts"] == {"Scratch": 15}, out          # no "Dent" from DEFAULT
+    assert out["machine_failures"] == {1: 15}, out               # no machine 2 from DEFAULT
+    print("PASS quality analytics: SQL SUM/GROUP BY stays tenant-scoped (GMATS sees 2 of 3)")
+
+
 def test_executive_oee_null_quality_columns_in_per_machine_fallback():
     # When a machine has NO production records but DOES have inspections,
     # executive-oee falls back to its pooled inspection quality (passed/inspected).
@@ -832,6 +876,7 @@ if __name__ == "__main__":
     test_escalation_analytics_is_tenant_scoped()
     test_quality_analytics_null_count_columns_are_zero_not_a_crash()
     test_quality_analytics_empty_table_is_zero_not_a_crash()
+    test_quality_analytics_is_tenant_scoped()
     test_executive_oee_null_quality_columns_in_per_machine_fallback()
     test_factory_command_center_null_stock_and_failed_are_zero_not_a_crash()
     test_industrial_gateway_names_resolved_and_scan_is_bounded()

@@ -387,37 +387,74 @@ def get_quality_analytics(
     db: Session = Depends(_get_db),
     current_user: dict = Depends(get_current_user),
 ):
-    inspections = db.query(models.QualityInspection).all()
+    QI = models.QualityInspection
 
+    # quality_inspections grows with every inspection, so never load the whole
+    # table into Python to aggregate it (the rule-4 antipattern the sibling
+    # command centres — /analytics/inventory #286, /escalations #288,
+    # /operator-terminal #285 — were already bounded away from). Sum the totals
+    # in ONE aggregate SELECT and the drill-downs with GROUP BY, so we scan the
+    # window in SQL and materialise only the distinct categories/machines, not
+    # every row. All of these are auto-scoped to the tenant by the do_orm_execute
+    # hook exactly like the .all() scan they replace (ADR-0002).
+    #
     # passed / failed / rework / scrap_quantity are Column(Integer, default=0)
     # WITHOUT nullable=False — the ORM default only fills a value the *inserter*
     # omitted, so a row written by raw SQL, a migration, or an update that clears
-    # the field can legitimately be NULL. A plain sum(... None ...) then raised
-    # TypeError and 500'd the whole quality rollup. Coalesce each to the column's
-    # own default of 0 (inspected_quantity IS nullable=False, so it stays raw).
-    # This is the same NULL guard the ai/* quality read-models and the sibling
+    # the field can legitimately be NULL. SUM ignores NULLs and returns NULL for
+    # an all-NULL/empty group, so coalesce each to the column's own default of 0
+    # (inspected_quantity IS nullable=False, so its SUM stays exact). This is the
+    # same NULL guard the ai/* quality read-models and the sibling
     # /analytics/final-executive-summary (#281) already apply to these columns.
-    inspected = sum(row.inspected_quantity for row in inspections)
-    passed = sum((row.passed_quantity or 0) for row in inspections)
-    failed = sum((row.failed_quantity or 0) for row in inspections)
-    rework = sum((row.rework_quantity or 0) for row in inspections)
-    scrap = sum((row.scrap_quantity or 0) for row in inspections)
+    total_inspections, inspected, passed, failed, rework, scrap = db.query(
+        func.count(QI.id),
+        func.coalesce(func.sum(QI.inspected_quantity), 0),
+        func.coalesce(func.sum(QI.passed_quantity), 0),
+        func.coalesce(func.sum(QI.failed_quantity), 0),
+        func.coalesce(func.sum(QI.rework_quantity), 0),
+        func.coalesce(func.sum(QI.scrap_quantity), 0),
+    ).one()
 
+    # int() so a DB that returns Decimal for SUM (Postgres) matches the plain-int
+    # payload the frontend type expects, and so pass/fail rates divide cleanly.
+    total_inspections = int(total_inspections or 0)
+    inspected = int(inspected or 0)
+    passed = int(passed or 0)
+    failed = int(failed or 0)
+    rework = int(rework or 0)
+    scrap = int(scrap or 0)
+
+    # pass_rate / fail_rate share `inspected` as their denominator with the
+    # headline totals above — same basis, reconciled (rule 3). 0/0 guarded -> 0.
     pass_rate = round((passed / inspected) * 100) if inspected else 0
     fail_rate = round((failed / inspected) * 100) if inspected else 0
 
+    # Defect breakdown: SUM(failed) per category. `category or "No Defect"` still
+    # folds both a NULL and an empty-string category into one bucket (and merges
+    # them if both exist), matching the old per-row accumulation exactly.
     defect_counts = {}
+    for category, cat_failed in (
+        db.query(QI.defect_category, func.coalesce(func.sum(QI.failed_quantity), 0))
+        .group_by(QI.defect_category)
+        .all()
+    ):
+        key = category or "No Defect"
+        defect_counts[key] = defect_counts.get(key, 0) + int(cat_failed or 0)
+
+    # Per-machine failures: SUM(failed) per machine, skipping the NULL/0 machine_id
+    # the old `if row.machine_id` guard dropped (unattributed inspections).
     machine_failures = {}
-
-    for row in inspections:
-        category = row.defect_category or "No Defect"
-        defect_counts[category] = defect_counts.get(category, 0) + (row.failed_quantity or 0)
-
-        if row.machine_id:
-            machine_failures[row.machine_id] = machine_failures.get(row.machine_id, 0) + (row.failed_quantity or 0)
+    for machine_id, m_failed in (
+        db.query(QI.machine_id, func.coalesce(func.sum(QI.failed_quantity), 0))
+        .filter(QI.machine_id.isnot(None))
+        .group_by(QI.machine_id)
+        .all()
+    ):
+        if machine_id:
+            machine_failures[machine_id] = int(m_failed or 0)
 
     return {
-        "total_inspections": len(inspections),
+        "total_inspections": total_inspections,
         "inspected_quantity": inspected,
         "passed_quantity": passed,
         "failed_quantity": failed,

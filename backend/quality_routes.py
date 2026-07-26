@@ -140,6 +140,22 @@ def update_quality_inspection(
     for key, value in data.items():
         setattr(inspection, key, value)
 
+    # passed/failed/rework/scrap are Column(Integer, default=0) WITHOUT nullable=False,
+    # and QualityInspectionUpdate types each Optional[int]=None — so a client can PATCH
+    # an explicit `{"passed_quantity": null}` (exclude_unset keeps an explicit null) and
+    # a legacy/raw-SQL row can already carry NULL. Left as None, the invariant check
+    # below did `None + failed` (TypeError -> unhandled 500) and, even past that, the
+    # response 500'd anyway because QualityInspectionResponse types these fields as
+    # non-optional int. A NULL count is the column's own default of 0 — coalesce before
+    # the check and the return, the same `or 0` the sibling generate_defect_escalations
+    # (#287) and the analytics rollups already apply to these very columns. This also
+    # heals a pre-existing NULL row on any update. inspected_quantity is nullable=False
+    # and not settable via this schema, so it needs no guard.
+    inspection.passed_quantity = inspection.passed_quantity or 0
+    inspection.failed_quantity = inspection.failed_quantity or 0
+    inspection.rework_quantity = inspection.rework_quantity or 0
+    inspection.scrap_quantity = inspection.scrap_quantity or 0
+
     if inspection.passed_quantity + inspection.failed_quantity > inspection.inspected_quantity:
         raise HTTPException(
             status_code=400,

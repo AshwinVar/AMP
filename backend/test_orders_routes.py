@@ -361,6 +361,43 @@ def test_customer_order_analytics_null_status_overdue_counts_as_late():
     print("PASS customer-order analytics: NULL-status overdue order still counts as late")
 
 
+def test_late_order_escalation_generator_reconciles_with_late_headline():
+    # The /analytics/customer-orders headline counts a NULL-status overdue order as
+    # late (see the test above). The generate-late-order-escalations generator must
+    # use the SAME basis, or the two disagree — the headline says "2 late" while the
+    # generator raises fewer escalations. Before the fix its `status NOT IN (...)`
+    # evaluated to NULL (not TRUE) for a NULL status, silently dropping the very same
+    # overdue order the headline still counts. Fixture is hand-derived: two overdue
+    # orders that ARE late (one Pending, one forced to NULL) and one dispatched-overdue
+    # that is NOT late -> late basis == 2, so exactly 2 escalations must be created.
+    db = _iso_session()
+    tok = T.set_current_tenant("TA")
+    try:
+        orders_routes.create_customer_order(_co_full("CO-P", "Acme", 10, 0, "Pending", "High", -3), db=db, current_user={"tenant": "TA"})
+        n = orders_routes.create_customer_order(_co_full("CO-NULL", "Beta", 10, 0, "Pending", "Medium", -2), db=db, current_user={"tenant": "TA"})
+        # dispatched >= qty -> create_customer_order auto-derives "Dispatched": overdue
+        # but NOT late, so it must not produce an escalation.
+        orders_routes.create_customer_order(_co_full("CO-D", "Gamma", 10, 10, "Pending", "Low", -5), db=db, current_user={"tenant": "TA"})
+        db.execute(text("UPDATE customer_orders SET status = NULL WHERE id = :i"), {"i": n.id})
+        db.commit()
+        db.expire_all()
+
+        # Headline basis: 2 late (Pending overdue + NULL overdue; the dispatched one is out).
+        analytics = orders_routes.get_customer_order_analytics(db=db, current_user={"tenant": "TA"})
+        assert analytics["late"] == 2, analytics["late"]
+
+        # Generator must match that basis exactly: 2 escalations, one for the NULL row.
+        created = orders_routes.generate_late_order_escalations(db=db, current_user={"tenant": "TA"})["created"]
+        assert created == analytics["late"] == 2, (created, analytics["late"])
+        titles = {e.title for e in db.query(models.Escalation).all()}
+        assert "Late customer order: CO-NULL" in titles, titles   # the NULL-status row is escalated
+        assert "Late customer order: CO-P" in titles, titles
+        assert "Late customer order: CO-D" not in titles, titles  # dispatched -> not late
+    finally:
+        T.reset_current_tenant(tok)
+    print("PASS late-order escalation generator reconciles with the late headline (incl. NULL status)")
+
+
 if __name__ == "__main__":
     test_procurement_paths_owned_by_orders_routes()
     test_duplicate_order_no_across_tenants_is_409_not_500()
@@ -372,4 +409,5 @@ if __name__ == "__main__":
     test_customer_order_analytics_buckets_and_reconciles()
     test_customer_order_analytics_empty_book()
     test_customer_order_analytics_null_status_overdue_counts_as_late()
+    test_late_order_escalation_generator_reconciles_with_late_headline()
     print("ALL ORDERS ROUTE TESTS PASSED")

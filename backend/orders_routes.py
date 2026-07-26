@@ -268,11 +268,22 @@ def generate_late_order_escalations(
 ):
     today = datetime.utcnow().date()
 
+    # "Late" here MUST mean exactly what the /analytics/customer-orders headline
+    # counts as late, or the two disagree: the headline says N late while this
+    # generator raises fewer than N escalations. status is String default="Pending"
+    # (not NOT NULL), so a raw-SQL / migration / cleared write can store NULL, and
+    # SQL's `status NOT IN (...)` is NULL — not TRUE — for a NULL status, which
+    # silently drops an overdue NULL-status order from this scan even though the
+    # analytics endpoint (#295) OR's the NULL back in and counts it as late. Mirror
+    # that predicate exactly so the escalation basis reconciles with the headline.
     late_orders = (
         db.query(models.CustomerOrder)
         .filter(
             models.CustomerOrder.due_date < today,
-            models.CustomerOrder.status.notin_(["Dispatched", "Cancelled"]),
+            or_(
+                models.CustomerOrder.status.is_(None),
+                models.CustomerOrder.status.notin_(["Dispatched", "Cancelled"]),
+            ),
         )
         .all()
     )

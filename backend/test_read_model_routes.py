@@ -15,7 +15,7 @@ EXPECTED = {
     "/downtime-summary", "/downtime-reason", "/quality-summary", "/quality-trend", "/quality-defect",
     "/production-summary", "/oee-summary", "/inventory-summary", "/flow-summary",
     "/shift-summary", "/losses-summary", "/briefing", "/delivery-summary",
-    "/cost-summary", "/handover", "/scorecard", "/twin-overlay",
+    "/cost-summary", "/cost-trend", "/handover", "/scorecard", "/twin-overlay",
     "/maintenance-summary", "/compliance-summary", "/search", "/weekly-report",
     "/copilot/ask", "/copilot/digest", "/recovery-summary", "/reliability-summary",
     "/schedule-summary", "/schedule-shift", "/coverage-summary", "/inventory-part",

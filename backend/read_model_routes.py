@@ -264,6 +264,15 @@ def get_cost_summary(db: Session = Depends(_get_db), current_user: dict = Depend
     return ai.cost.build_cost_summary(db, request_tenant(current_user))
 
 
+@router.get("/cost-trend")
+def get_cost_trend(db: Session = Depends(_get_db), current_user: dict = Depends(get_current_user)):
+    # Cost-of-losses trend (ADR-0007): this week's loss cost (downtime + scrap at
+    # standard rates) against last week's on the same per-record basis, the
+    # direction, the machines and the driver (downtime vs scrap) that moved it —
+    # the money twin of the downtime and quality trends.
+    return ai.cost.build_cost_trend(db, request_tenant(current_user))
+
+
 @router.get("/handover")
 def get_handover(db: Session = Depends(_get_db), current_user: dict = Depends(get_current_user)):
     # Shift handover (ADR-0007): output + OEE, open work to carry over, attention

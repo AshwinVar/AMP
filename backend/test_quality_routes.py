@@ -99,6 +99,17 @@ def _update(db, row_id, **patch):
         T.reset_current_tenant(tok)
 
 
+def _create(db, **kw):
+    tok = T.set_current_tenant(TENANT)
+    try:
+        payload = schemas.QualityInspectionCreate(inspector="QC-1", **kw)
+        return QR.create_quality_inspection(
+            payload, db=db, current_user={"tenant": TENANT},
+        )
+    finally:
+        T.reset_current_tenant(tok)
+
+
 def test_patch_explicit_null_count_heals_to_zero_not_500():
     # A client PATCHing an explicit `{"passed_quantity": null}` (exclude_unset keeps
     # an explicit null) must not crash. NULL is the column's own default of 0, so the
@@ -147,10 +158,66 @@ def test_valid_update_applies_and_preserves_invariant():
     print("PASS valid update applies; the invariant still rejects overflow with a 400")
 
 
+def test_create_rejects_negative_count_the_invariant_would_pass():
+    # The key case the upper-bound invariant CANNOT catch: passed=5, failed=-5,
+    # inspected=10 -> passed+failed = 0 <= 10, so the "cannot exceed inspected"
+    # check passes and the OLD code stored a row with failed_quantity = -5. That
+    # negative then drives the fail rate (failed/inspected = -50%) below zero and
+    # the quality rate above 100% in every rollup that sums it. The non-negative
+    # guard rejects it with a clean 400, and nothing is persisted. Numbers derived
+    # independently: 5 + (-5) = 0 <= 10 (invariant OK) yet min(...) = -5 < 0 (reject).
+    db = _iso_session()
+    try:
+        _create(db, inspection_no="QI-NEG", inspected_quantity=10,
+                passed_quantity=5, failed_quantity=-5)
+        assert False, "a negative failed_quantity must raise, not store a corrupt row"
+    except HTTPException as exc:
+        assert exc.status_code == 400, exc.status_code
+    db.rollback()
+    stored = (
+        db.query(models.QualityInspection)
+        .filter(models.QualityInspection.inspection_no == "QI-NEG")
+        .first()
+    )
+    assert stored is None, "rejected inspection must not be persisted"
+    print("PASS create rejects a negative count the upper-bound invariant would pass (400)")
+
+
+def test_create_accepts_valid_counts():
+    # Regression: a clean, non-negative inspection still creates. 90 + 8 = 98 <= 100,
+    # all counts >= 0 -> stored with the values as given.
+    db = _iso_session()
+    row = _create(db, inspection_no="QI-POS", inspected_quantity=100,
+                  passed_quantity=90, failed_quantity=8, rework_quantity=1, scrap_quantity=1)
+    assert row.passed_quantity == 90 and row.failed_quantity == 8, (row.passed_quantity, row.failed_quantity)
+    assert row.rework_quantity == 1 and row.scrap_quantity == 1
+    print("PASS create accepts a valid non-negative inspection")
+
+
+def test_update_rejects_negative_count():
+    # Parity on the patch path: PATCHing failed_quantity=-5 onto a valid row is
+    # physically impossible and must 400 rather than persist. The stored row is
+    # unchanged (still failed=10) after the rejection.
+    db = _iso_session()
+    row = _make_inspection(db, "QI-UNEG", inspected=100, passed=90, failed=10)
+    try:
+        _update(db, row.id, failed_quantity=-5)
+        assert False, "a negative failed_quantity patch must raise, not persist"
+    except HTTPException as exc:
+        assert exc.status_code == 400, exc.status_code
+    db.rollback()
+    db.refresh(row)
+    assert row.failed_quantity == 10, row.failed_quantity
+    print("PASS update rejects a negative count with a 400 (stored row unchanged)")
+
+
 if __name__ == "__main__":
     test_quality_paths_owned_by_module()
     test_failed_inspection_still_publishes_event()
     test_patch_explicit_null_count_heals_to_zero_not_500()
     test_unrelated_patch_over_legacy_null_row_is_safe()
     test_valid_update_applies_and_preserves_invariant()
+    test_create_rejects_negative_count_the_invariant_would_pass()
+    test_create_accepts_valid_counts()
+    test_update_rejects_negative_count()
     print("ALL QUALITY ROUTE TESTS PASSED")

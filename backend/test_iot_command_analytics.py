@@ -1,10 +1,17 @@
 """IoT command-centre analytics endpoint tests (/analytics/iot-command).
 
 The endpoint reports the live telemetry surface: a headcount of machines and of
-signals in the window, how many machines are currently reporting, and the latest
-value of each (machine, signal) pair with its machine name resolved. Two things
-it must get right, pinned here because the route test only covers registration:
+signals ingested, how many machines have reported, and the latest value of each
+(machine, signal) pair with its machine name resolved. Things it must get right,
+pinned here because the route test only covers registration:
 
+  * The "signals" and "live_machines" headline counts are TRUE totals, not the
+    length of the last-300 display window. iot_telemetry is a never-pruned
+    growing table, so once it passes 300 rows the old `len(telemetry)` froze at
+    300 (the .limit() cap leaking into the displayed KPI) and `len(set(...))`
+    counted only reporters inside that window — both understated while the
+    sibling "machines" stayed a true roster total. They're now bounded SQL
+    COUNTs over the full (tenant-scoped) table, reconciling the basis.
   * Machine names are resolved from ONE roster lookup, not a per-signal query
     inside the loop — that inner query was an N+1 on the (bounded but repeatedly
     scanned) latest-signal set, up to 300 point lookups per call, the same
@@ -58,8 +65,8 @@ def test_latest_per_signal_names_resolved_and_counts():
 
     out = get_iot_command_center(db=db, current_user=USER)
 
-    # headcounts: 3 machines total (roster), 5 telemetry rows in the window,
-    # 3 distinct reporting machines (1, 2, 99).
+    # headcounts: 2 machines in the roster, 5 telemetry rows ingested, 3 distinct
+    # reporting machines (1, 2, 99 — 99 has no Machine row but still reported).
     assert out["machines"] == 2, out            # only two Machine rows exist
     assert out["signals"] == 5, out
     assert out["live_machines"] == 3, out
@@ -123,6 +130,35 @@ def test_names_resolved_without_a_per_row_query():
     print("PASS iot-command: 6 signals rendered with a single machines SELECT (no N+1)")
 
 
+def test_headline_counts_are_true_totals_past_the_display_window():
+    # The regression the fix targets: iot_telemetry grows unbounded, and the
+    # endpoint only hydrates the last 300 rows for the latest-signal display. The
+    # "signals" and "live_machines" KPIs must be the TRUE totals, not the length
+    # of that 300-row window (which used to freeze at 300 forever).
+    db = _fresh_session()
+    # 5 machines, so distinct reporters is an independently-known 5.
+    for mid in range(1, 6):
+        db.add(models.Machine(id=mid, name=f"CNC-{mid:02d}", status="Running", utilization=70))
+    # 350 telemetry rows (> the 300 window) spread across all 5 machines: machine
+    # (i % 5) + 1 gets a row for each i, so every machine reports and the total is
+    # a hand-counted 350.
+    db.add_all([_tel((i % 5) + 1, "temperature", str(i), i) for i in range(350)])
+    db.commit()
+
+    out = get_iot_command_center(db=db, current_user=USER)
+
+    # true total ingested — NOT the 300-row display cap
+    assert out["signals"] == 350, out
+    # every one of the 5 machines has reported at least once
+    assert out["live_machines"] == 5, out
+    # the display list is still capped: at most 300 rows were scanned, so at most
+    # the 5 distinct (machine, "temperature") pairs it could dedup to.
+    assert len(out["latest_signals"]) == 5, out
+    # machines is the roster total, independent of the telemetry window
+    assert out["machines"] == 5, out
+    print("PASS iot-command: signals/live_machines are true totals past the 300-row window (350 signals / 5 live)")
+
+
 def test_empty_factory_is_all_zeros_no_crash():
     out = get_iot_command_center(db=_fresh_session(), current_user=USER)
     assert out["machines"] == 0, out
@@ -135,5 +171,6 @@ def test_empty_factory_is_all_zeros_no_crash():
 if __name__ == "__main__":
     test_latest_per_signal_names_resolved_and_counts()
     test_names_resolved_without_a_per_row_query()
+    test_headline_counts_are_true_totals_past_the_display_window()
     test_empty_factory_is_all_zeros_no_crash()
     print("ALL IOT-COMMAND ANALYTICS TESTS PASSED")

@@ -941,6 +941,21 @@ def get_production_schedule_analytics(
 @router.get("/analytics/iot-command")
 def get_iot_command_center(db: Session = Depends(_get_db), current_user: dict = Depends(get_current_user)):
     machines = db.query(models.Machine).all()
+    # The last-300 window is a DISPLAY bound for latest_signals only — it must not
+    # define the headline counts. iot_telemetry is an unbounded, never-pruned
+    # growing table (factory_simulator.tick_iot appends every tick), so once it
+    # exceeds 300 rows the old `len(telemetry)` reported a flat 300 — the .limit()
+    # cap leaking straight into the displayed "Signals" KPI (IoTCommandSection) —
+    # and `len(set(machine_id))` counted only reporters inside that same window,
+    # both frozen while the sibling "Machines" stayed a true roster total (an
+    # inconsistent basis). Report the true totals with bounded SQL aggregates
+    # instead: IoTTelemetry is in SCOPED_MODELS, so the do_orm_execute hook
+    # (ADR-0002) tenant-scopes these COUNTs exactly as it scopes the window scan —
+    # the same aggregate pattern the operator-terminal rollup already uses.
+    total_signals = db.query(func.count(models.IoTTelemetry.id)).scalar() or 0
+    live_machines = db.query(
+        func.count(func.distinct(models.IoTTelemetry.machine_id))
+    ).scalar() or 0
     telemetry = db.query(models.IoTTelemetry).order_by(models.IoTTelemetry.id.desc()).limit(300).all()
 
     latest = {}
@@ -975,8 +990,8 @@ def get_iot_command_center(db: Session = Depends(_get_db), current_user: dict = 
 
     return {
         "machines": len(machines),
-        "signals": len(telemetry),
-        "live_machines": len(set([row.machine_id for row in telemetry])),
+        "signals": total_signals,
+        "live_machines": live_machines,
         "latest_signals": latest_rows,
     }
 

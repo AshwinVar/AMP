@@ -389,11 +389,19 @@ def get_quality_analytics(
 ):
     inspections = db.query(models.QualityInspection).all()
 
+    # passed / failed / rework / scrap_quantity are Column(Integer, default=0)
+    # WITHOUT nullable=False — the ORM default only fills a value the *inserter*
+    # omitted, so a row written by raw SQL, a migration, or an update that clears
+    # the field can legitimately be NULL. A plain sum(... None ...) then raised
+    # TypeError and 500'd the whole quality rollup. Coalesce each to the column's
+    # own default of 0 (inspected_quantity IS nullable=False, so it stays raw).
+    # This is the same NULL guard the ai/* quality read-models and the sibling
+    # /analytics/final-executive-summary (#281) already apply to these columns.
     inspected = sum(row.inspected_quantity for row in inspections)
-    passed = sum(row.passed_quantity for row in inspections)
-    failed = sum(row.failed_quantity for row in inspections)
-    rework = sum(row.rework_quantity for row in inspections)
-    scrap = sum(row.scrap_quantity for row in inspections)
+    passed = sum((row.passed_quantity or 0) for row in inspections)
+    failed = sum((row.failed_quantity or 0) for row in inspections)
+    rework = sum((row.rework_quantity or 0) for row in inspections)
+    scrap = sum((row.scrap_quantity or 0) for row in inspections)
 
     pass_rate = round((passed / inspected) * 100) if inspected else 0
     fail_rate = round((failed / inspected) * 100) if inspected else 0
@@ -403,10 +411,10 @@ def get_quality_analytics(
 
     for row in inspections:
         category = row.defect_category or "No Defect"
-        defect_counts[category] = defect_counts.get(category, 0) + row.failed_quantity
+        defect_counts[category] = defect_counts.get(category, 0) + (row.failed_quantity or 0)
 
         if row.machine_id:
-            machine_failures[row.machine_id] = machine_failures.get(row.machine_id, 0) + row.failed_quantity
+            machine_failures[row.machine_id] = machine_failures.get(row.machine_id, 0) + (row.failed_quantity or 0)
 
     return {
         "total_inspections": len(inspections),
@@ -455,11 +463,14 @@ def get_executive_oee(
             row.machine_id,
             {"inspected": 0, "passed": 0, "failed": 0, "scrap": 0, "rework": 0},
         )
+        # passed / failed / scrap / rework_quantity are nullable Integers (default=0,
+        # no nullable=False) — coalesce to 0 so a real SQL NULL can't 500 the exec
+        # rollup via int + None (inspected_quantity is nullable=False).
         bucket["inspected"] += row.inspected_quantity
-        bucket["passed"] += row.passed_quantity
-        bucket["failed"] += row.failed_quantity
-        bucket["scrap"] += row.scrap_quantity
-        bucket["rework"] += row.rework_quantity
+        bucket["passed"] += row.passed_quantity or 0
+        bucket["failed"] += row.failed_quantity or 0
+        bucket["scrap"] += row.scrap_quantity or 0
+        bucket["rework"] += row.rework_quantity or 0
 
     machine_rows = []
 
@@ -555,7 +566,7 @@ def get_executive_oee(
     quality_defects = {}
     for row in quality_rows:
         key = row.defect_category or "No Defect"
-        quality_defects[key] = quality_defects.get(key, 0) + row.failed_quantity
+        quality_defects[key] = quality_defects.get(key, 0) + (row.failed_quantity or 0)
 
     quality_trend = [
         {"defect": defect, "failed_quantity": qty}
@@ -601,10 +612,14 @@ def get_factory_command_center(
     active_work_orders = len([row for row in work_orders if row.status in ["Running", "Planned"]])
     behind_plans = len([row for row in production_plans if row.status == "Behind"])
     open_escalations = len([row for row in escalations if row.status != "Resolved"])
-    low_stock = len([item for item in inventory_items if item.current_stock <= item.reorder_level])
+    # current_stock / reorder_level and failed_quantity are nullable Integers
+    # (default=0, no nullable=False); a real SQL NULL made `None <= None` and
+    # `sum(... None ...)` 500 this command centre. Coalesce to the column default
+    # of 0, exactly like the sibling /analytics/inventory (#286) already does.
+    low_stock = len([item for item in inventory_items if (item.current_stock or 0) <= (item.reorder_level or 0)])
 
     inspected = sum(row.inspected_quantity for row in quality_rows)
-    failed = sum(row.failed_quantity for row in quality_rows)
+    failed = sum((row.failed_quantity or 0) for row in quality_rows)
     quality_fail_rate = round((failed / inspected) * 100) if inspected else 0
 
     machine_map = {machine.id: machine for machine in machines}

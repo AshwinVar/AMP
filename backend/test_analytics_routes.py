@@ -251,6 +251,42 @@ def test_analytics_summary_all_null_utilization_is_zero_not_a_crash():
     print("PASS analytics-summary: all-NULL utilization -> 0, no crash, no fabricated alert")
 
 
+def test_analytics_summary_shift_efficiency_is_pooled_not_mean_of_ratios():
+    # Shift efficiency must POOL (total actual / total target), reconciling with
+    # build_management_summary.target_achievement and ai/shift.py — not average
+    # per-shift ratios. Two shifts of very different size make the two methods
+    # disagree, and a third UNPLANNED shift (target 0) exposes the honesty bug:
+    # the old code scored it a real 0% and divided by its slot, dragging the
+    # headline down. Numbers derived by hand.
+    db = _fresh_session()
+    db.add(models.Machine(id=1, name="M1", status="Running", utilization=70))
+    # Big shift: 800/1000 = 80%. Small shift: 90/100 = 90%. Unplanned: 50/0.
+    db.add(models.ShiftData(id=1, shift_name="A", target_output=1000, actual_output=800))
+    db.add(models.ShiftData(id=2, shift_name="B", target_output=100, actual_output=90))
+    db.add(models.ShiftData(id=3, shift_name="C", target_output=0, actual_output=50))
+    db.commit()
+
+    out = analytics_routes.analytics_summary(db=db, current_user={})
+    # Pooled: (800 + 90 + 50) / (1000 + 100 + 0) = 940 / 1100 = 85.45% -> 85.
+    # The old mean-of-ratios gave round((80 + 90 + 0) / 3) = round(56.67) = 57,
+    # both over-weighting the tiny shift and counting the unplanned shift as 0%.
+    assert out["avg_shift_efficiency"] == 85, out["avg_shift_efficiency"]
+    print("PASS analytics-summary shift efficiency is pooled (85%), not mean-of-ratios (57%)")
+
+
+def test_analytics_summary_shift_efficiency_all_zero_target_is_zero_not_a_crash():
+    # Every shift unplanned (target 0): there is nothing to measure attainment
+    # against, so the pooled rate is 0 (guarded divisor), never a ZeroDivisionError.
+    db = _fresh_session()
+    db.add(models.Machine(id=1, name="M1", status="Idle", utilization=0))
+    db.add(models.ShiftData(id=1, shift_name="A", target_output=0, actual_output=40))
+    db.add(models.ShiftData(id=2, shift_name="B", target_output=0, actual_output=0))
+    db.commit()
+    out = analytics_routes.analytics_summary(db=db, current_user={})
+    assert out["avg_shift_efficiency"] == 0, out["avg_shift_efficiency"]
+    print("PASS analytics-summary shift efficiency: all-zero-target -> 0, no divide-by-zero")
+
+
 def test_executive_oee_null_utilization_fallback_is_zero_not_a_crash():
     # No production for the machine -> availability falls back to utilization. With
     # a NULL reading the old `max(machine.utilization, 0)` raised TypeError; it must
@@ -863,6 +899,8 @@ if __name__ == "__main__":
     test_production_plan_analytics_empty_table_is_zero_not_a_crash()
     test_analytics_summary_null_utilization_averages_only_readings()
     test_analytics_summary_all_null_utilization_is_zero_not_a_crash()
+    test_analytics_summary_shift_efficiency_is_pooled_not_mean_of_ratios()
+    test_analytics_summary_shift_efficiency_all_zero_target_is_zero_not_a_crash()
     test_executive_oee_null_utilization_fallback_is_zero_not_a_crash()
     test_final_executive_summary_null_columns_are_zero_not_a_crash()
     test_final_executive_summary_empty_tables_are_zero_not_a_crash()

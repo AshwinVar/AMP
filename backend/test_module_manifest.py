@@ -40,6 +40,38 @@ def test_manifest_reproduces_the_plan_gate_route_map():
     print("PASS manifest reproduces the plan-gate's gated route map exactly")
 
 
+# The exact (view_key -> pack) map the dashboard nav renders. The frontend now
+# builds its sidebar from GET /modules (module_manifest.packs_for_tenant), so a
+# manifest edit that drops, duplicates, or re-packs a view would silently change
+# every tenant's nav — pin it here so that can't happen unnoticed.
+_EXPECTED_VIEWS = {
+    "mission": "core", "overview": "core", "machines": "core", "downtime": "core",
+    "shifts": "core", "analytics": "core", "trends": "core", "timeline": "core",
+    "workorders": "operations", "planning": "operations", "scheduling": "operations",
+    "operator": "operations", "orders": "operations",
+    "maintenance_ai": "factory", "cmms": "factory", "quality": "factory",
+    "inventory": "factory", "purchasing": "factory", "digitaltwin": "factory",
+    "machinehealth": "factory",
+    "iot": "intelligence", "connectivity": "intelligence", "ai": "intelligence",
+    "copilot": "intelligence", "inbox": "intelligence", "agentactivity": "intelligence",
+    "roi": "intelligence", "executive": "intelligence", "escalations": "intelligence",
+    "notifications": "intelligence",
+    "documents": "admin", "saas": "admin", "users": "admin", "costing": "admin",
+    "enterprise": "admin",
+}
+
+
+def test_manifest_views_reproduce_the_frontend_nav():
+    seen = {}
+    for pack in module_manifest.packs_for_tenant([]):   # every pack, views carried
+        for v in pack["views"]:
+            assert v["key"] not in seen, f"duplicate view key {v['key']}"
+            assert v["label"] and v["icon"], v            # nav needs a label + icon
+            seen[v["key"]] = pack["id"]
+    assert seen == _EXPECTED_VIEWS, seen
+    print("PASS manifest views reproduce the dashboard nav exactly (view -> pack pinned)")
+
+
 def test_pack_for_path_routes_unchanged():
     for path, pack in [("/copilot", "intelligence"), ("/ai/ask", "intelligence"),
                        ("/work-orders", "operations"), ("/analytics/production-schedules", "operations"),
@@ -120,6 +152,7 @@ def test_apply_plan_sets_the_bundle_and_is_founder_only():
 
 if __name__ == "__main__":
     test_manifest_reproduces_the_plan_gate_route_map()
+    test_manifest_views_reproduce_the_frontend_nav()
     test_pack_for_path_routes_unchanged()
     test_packs_for_tenant_marks_enablement_and_carries_views()
     test_modules_endpoint_reflects_tenant_subscription()

@@ -138,3 +138,84 @@ export function canRoleSeeView(viewKey: string, role: string, isFounder: boolean
   if (role === "Supervisor") return !ADMIN_ONLY_VIEWS.has(viewKey);
   return true; // Admin (and the founder super-admin)
 }
+
+// ── Manifest-driven nav (the plug-and-play plugin system) ─────────
+// The backend serves the SAME module definitions from modules.json at
+// GET /modules, annotated with each pack's `enabled` flag for the calling
+// tenant's subscription. The dashboard renders its nav from that response so
+// adding/removing/relabelling a module is a one-file change on the backend
+// (modules.json) with no frontend edit — the constants above are the offline
+// fallback used only when /modules can't be reached.
+
+export type ModuleView = { key: string; label: string; icon: string };
+
+export type ModulePack = {
+  id: string;
+  label: string;
+  description: string;
+  tagline: string;
+  color: string;
+  gated: boolean;
+  plans: string[];
+  enabled: boolean;
+  views: ModuleView[];
+};
+
+export type ModulesResponse = {
+  tenant: string;
+  plan: string;
+  enabled_modules: string[];
+  packs: ModulePack[];
+  plan_bundles?: Record<string, string[]>;
+};
+
+// Flatten the manifest packs into the nav list (pack order preserved). A view's
+// `module` is its pack id, so role/plan gating below keeps working unchanged.
+export function navItemsFromPacks(packs: ModulePack[]): NavItem[] {
+  return packs.flatMap((p) =>
+    (p.views || []).map((v) => ({
+      key: v.key,
+      label: v.label,
+      icon: v.icon,
+      module: p.id as ModuleKey,
+    }))
+  );
+}
+
+// The sidebar group headers, from the manifest packs.
+export function catalogFromPacks(packs: ModulePack[]): ModuleInfo[] {
+  return packs.map((p) => ({
+    key: p.id as ModuleKey,
+    label: p.label,
+    description: p.description,
+    tagline: p.tagline,
+    color: p.color,
+  }));
+}
+
+// The module keys a tenant can use: every pack the subscription enables, plus
+// the never-gated packs (core basics + account admin) — mirrors the server-side
+// plan-gate's always-open set so the UI and the API agree.
+export function enabledModulesFromPacks(packs: ModulePack[]): ModuleKey[] {
+  const on = packs
+    .filter((p) => p.enabled || !p.gated)
+    .map((p) => p.id as ModuleKey);
+  return Array.from(new Set<ModuleKey>([...on, "core", "admin"]));
+}
+
+// view→module and view enablement resolved against a supplied nav list (the live
+// manifest one, or the static fallback). Using the live list means a module the
+// manifest adds resolves correctly even before this file is updated.
+export function getViewModuleIn(viewKey: string, navItems: NavItem[]): ModuleKey {
+  return (navItems.find((n) => n.key === viewKey)?.module as ModuleKey) ?? "core";
+}
+
+export function isViewEnabledIn(
+  viewKey: string,
+  enabledModules: ModuleKey[],
+  navItems: NavItem[]
+): boolean {
+  const item = navItems.find((n) => n.key === viewKey);
+  if (!item) return false;
+  return enabledModules.includes(item.module);
+}

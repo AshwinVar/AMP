@@ -734,37 +734,74 @@ def get_maintenance_analytics(
     db: Session = Depends(_get_db),
     current_user: dict = Depends(get_current_user),
 ):
-    tasks = db.query(models.MaintenanceTask).all()
+    # Aggregate the growing maintenance_tasks table in SQL rather than hydrating
+    # every row into Python just to bucket it with list comprehensions (rule-4
+    # antipattern, same fix already applied to /analytics/work-orders,
+    # /analytics/production-plans and /analytics/escalations). MaintenanceTask is
+    # in SCOPED_MODELS, so the do_orm_execute hook (ADR-0002) tenant-scopes each of
+    # these aggregate SELECTs exactly as it did the old .all() scan — same basis,
+    # so the parts still reconcile against the whole.
     today = datetime.utcnow().date()
 
-    open_count = len([row for row in tasks if row.status == "Open"])
-    in_progress = len([row for row in tasks if row.status == "In Progress"])
-    completed_tasks = [row for row in tasks if row.status == "Completed"]
-    completed = len(completed_tasks)
-    overdue = len([row for row in tasks if row.planned_date < today and row.status != "Completed"])
-    preventive = len([row for row in tasks if row.task_type == "Preventive"])
-    breakdown = len([row for row in tasks if row.task_type == "Breakdown"])
+    total_tasks = db.query(func.count(models.MaintenanceTask.id)).scalar() or 0
+    status_counts = dict(
+        db.query(models.MaintenanceTask.status, func.count())
+        .group_by(models.MaintenanceTask.status)
+        .all()
+    )
+    type_counts = dict(
+        db.query(models.MaintenanceTask.task_type, func.count())
+        .group_by(models.MaintenanceTask.task_type)
+        .all()
+    )
+    open_count = status_counts.get("Open", 0)
+    in_progress = status_counts.get("In Progress", 0)
+    completed = status_counts.get("Completed", 0)
+    preventive = type_counts.get("Preventive", 0)
+    breakdown = type_counts.get("Breakdown", 0)
+
+    # Overdue = planned in the past and not yet finished. Filtered in SQL (on the
+    # now-indexed planned_date, see main._ensure_index) so a growing backlog never
+    # streams every row back just to count the late ones.
+    overdue = db.query(func.count(models.MaintenanceTask.id)).filter(
+        models.MaintenanceTask.planned_date < today,
+        models.MaintenanceTask.status != "Completed",
+    ).scalar() or 0
 
     # total_downtime_minutes is the honest sum over EVERY task (an open task can
     # already carry accumulated downtime). Mean-time-to-repair, though, is a
-    # per-COMPLETED-repair average, so its numerator must be the completed tasks'
-    # downtime — dividing the all-task total by only the completed count inflated
-    # the average with downtime from repairs that haven't finished. (`or 0` guards
-    # the nullable downtime_minutes column against a None -> TypeError 500.)
-    total_downtime = sum((row.downtime_minutes or 0) for row in tasks)
-    completed_downtime = sum((row.downtime_minutes or 0) for row in completed_tasks)
+    # per-COMPLETED-repair average, so its numerator must be ONLY the completed
+    # tasks' downtime — dividing the all-task total by the completed count inflated
+    # the average with downtime from repairs that haven't finished (#269).
+    # COALESCE(SUM(...), 0) guards the nullable downtime_minutes column (a NULL -> 0,
+    # never a None -> TypeError 500) and the empty-table NULL alike.
+    total_downtime = int(
+        db.query(func.coalesce(func.sum(models.MaintenanceTask.downtime_minutes), 0)).scalar() or 0
+    )
+    completed_downtime = int(
+        db.query(func.coalesce(func.sum(models.MaintenanceTask.downtime_minutes), 0))
+        .filter(models.MaintenanceTask.status == "Completed")
+        .scalar() or 0
+    )
     avg_repair = round(completed_downtime / completed) if completed else 0
 
-    # One name lookup for all machines (tenant-scoped like the task query itself),
-    # instead of a per-task query — this loop was an N+1 on a growing table.
+    # Per-machine task counts: one GROUP BY on machine_id, then a single name
+    # lookup (tenant-scoped like the aggregate itself) — never a per-task Machine
+    # query (the old N+1 on a growing table). An unknown machine_id keeps its
+    # "Machine {id}" fallback label, exactly as before.
+    machine_id_counts = (
+        db.query(models.MaintenanceTask.machine_id, func.count())
+        .group_by(models.MaintenanceTask.machine_id)
+        .all()
+    )
     machine_names = dict(db.query(models.Machine.id, models.Machine.name).all())
     machine_counts = {}
-    for row in tasks:
-        name = machine_names.get(row.machine_id, f"Machine {row.machine_id}")
-        machine_counts[name] = machine_counts.get(name, 0) + 1
+    for machine_id, count in machine_id_counts:
+        name = machine_names.get(machine_id, f"Machine {machine_id}")
+        machine_counts[name] = machine_counts.get(name, 0) + count
 
     return {
-        "total_tasks": len(tasks),
+        "total_tasks": total_tasks,
         "open": open_count,
         "in_progress": in_progress,
         "completed": completed,

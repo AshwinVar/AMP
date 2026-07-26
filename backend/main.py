@@ -147,6 +147,7 @@ _ensure_index("cycle_count_items", "created_at")   # inventory-record-accuracy w
 _ensure_index("cycle_count_items", "item_id")      # scope count lines to the tenant's items (ai/stock_accuracy)
 _ensure_index("escalations", "created_at")               # escalation-queue resolution window (filtered in SQL)
 _ensure_index("customer_orders", "due_date")             # late-order count + escalation generator filter due_date in SQL
+_ensure_index("maintenance_tasks", "planned_date")       # overdue-task count filters planned_date in SQL (/analytics/maintenance)
 tenancy.ensure_tenant_columns(engine)  # ADR-0002: tenant_code on core tables
 tenancy.install_scoping()              # ADR-0002: auto-enforce tenant scoping
 

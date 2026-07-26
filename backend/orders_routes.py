@@ -149,6 +149,19 @@ def update_customer_order(
     for key, value in data.items():
         setattr(order, key, value)
 
+    # dispatched_quantity is Column(Integer, default=0) WITHOUT nullable=False, so a
+    # row written by raw SQL / a migration / a cleared update can hold a true NULL,
+    # and CustomerOrderUpdate.dispatched_quantity is Optional (omitted -> not
+    # applied). A PATCH that leaves the field alone on such a row then hit
+    # `None > order_quantity` / `None >= order_quantity` and raised TypeError,
+    # 500-ing the update — and even guarding the comparison, response_model
+    # CustomerOrderResponse.dispatched_quantity is `int`, so returning a NULL would
+    # just move the 500 to response serialisation. Materialise the column's own
+    # default of 0 (exactly what /analytics/customer-orders already coalesces this
+    # NULL to) so both the status logic and the response see a real int.
+    if order.dispatched_quantity is None:
+        order.dispatched_quantity = 0
+
     if order.dispatched_quantity > order.order_quantity:
         raise HTTPException(status_code=400, detail="Dispatched quantity cannot exceed order quantity")
 
@@ -450,10 +463,24 @@ def update_purchase_order(
     if not po:
         raise HTTPException(status_code=404, detail="Purchase order not found")
 
-    old_received = po.received_quantity
+    # received_quantity is Column(Integer, default=0) WITHOUT nullable=False, so a
+    # row written by raw SQL / a migration / a cleared update can hold a true NULL,
+    # and PurchaseOrderUpdate.received_quantity is Optional (omitted -> not applied).
+    # Pre-fix a PATCH against such a row hit `None > order_quantity` and
+    # `received - None` (max()) and raised TypeError, 500-ing the update — even the
+    # normal "receive stock" PATCH, whose new value is fine but whose OLD value is
+    # NULL. /analytics/purchasing already coalesces this exact NULL to its column
+    # default of 0; do the same here (and response_model PurchaseOrderResponse
+    # .received_quantity is `int`, so a NULL would ResponseValidationError-500 on
+    # the way out regardless). Capture old_received BEFORE the payload applies so
+    # the stock-receipt delta stays correct (new - 0 = new, not new - new = 0).
+    old_received = po.received_quantity or 0
 
     for key, value in payload.model_dump(exclude_unset=True).items():
         setattr(po, key, value)
+
+    if po.received_quantity is None:
+        po.received_quantity = 0
 
     if po.received_quantity > po.order_quantity:
         raise HTTPException(status_code=400, detail="Received quantity cannot exceed order quantity")
@@ -468,7 +495,10 @@ def update_purchase_order(
     if received_delta > 0 and po.item_id:
         item = db.query(models.InventoryItem).filter(models.InventoryItem.id == po.item_id).first()
         if item:
-            item.current_stock += received_delta
+            # current_stock is likewise Column(Integer, default=0) WITHOUT
+            # nullable=False; `None += int` would TypeError-500 the receipt on a
+            # legacy NULL-stock item (same guard as subscribers.py / inventory_routes).
+            item.current_stock = (item.current_stock or 0) + received_delta
 
             transaction = models.InventoryTransaction(
                 item_id=item.id,

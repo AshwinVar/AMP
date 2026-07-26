@@ -456,6 +456,135 @@ def test_purchasing_analytics_overdue_reconciles_with_generator():
     print("PASS purchasing overdue headline reconciles with the generator (incl. NULL status)")
 
 
+def test_update_customer_order_survives_null_dispatched_quantity():
+    # The WRITE path complement to test_customer_order_analytics_survives_null_*:
+    # dispatched_quantity is Column(Integer, default=0) WITHOUT nullable=False and
+    # CustomerOrderUpdate.dispatched_quantity is Optional, so a PATCH that only
+    # touches (say) status on a legacy NULL-dispatch row hit `None > order_quantity`
+    # and 500'd. It must instead treat the missing dispatch as the column's own
+    # default of 0, materialise it, and apply the requested field.
+    db = _iso_session()
+    tok = T.set_current_tenant("TA")
+    try:
+        co = orders_routes.create_customer_order(_co("CO-U1", 100, 0), db=db, current_user={"tenant": "TA"})
+        db.execute(text("UPDATE customer_orders SET dispatched_quantity = NULL WHERE id = :i"), {"i": co.id})
+        db.commit()
+        db.expire_all()
+
+        # PATCH only the notes — dispatched_quantity is left NULL by the payload.
+        updated = orders_routes.update_customer_order(
+            co.id, schemas.CustomerOrderUpdate(notes="checked"),
+            db=db, current_user={"tenant": "TA"},
+        )
+    finally:
+        T.reset_current_tenant(tok)
+
+    # No crash; NULL materialised to the column default of 0 (so the int-typed
+    # response serialises); status untouched (0 dispatched of 100 -> neither branch).
+    assert updated.dispatched_quantity == 0, updated.dispatched_quantity
+    assert updated.notes == "checked", updated.notes
+    print("PASS update customer order: NULL dispatched_quantity -> 0 on a status/notes PATCH (no 500)")
+
+
+def test_update_customer_order_dispatch_from_null_transitions_partial():
+    # PATCH that DOES set dispatched (30 of 100) on a NULL-dispatch row: the value
+    # applies, no crash, and the status transitions to Partial exactly as it would
+    # from a 0 baseline.
+    db = _iso_session()
+    tok = T.set_current_tenant("TA")
+    try:
+        co = orders_routes.create_customer_order(_co("CO-U2", 100, 0), db=db, current_user={"tenant": "TA"})
+        db.execute(text("UPDATE customer_orders SET dispatched_quantity = NULL WHERE id = :i"), {"i": co.id})
+        db.commit()
+        db.expire_all()
+
+        updated = orders_routes.update_customer_order(
+            co.id, schemas.CustomerOrderUpdate(dispatched_quantity=30),
+            db=db, current_user={"tenant": "TA"},
+        )
+    finally:
+        T.reset_current_tenant(tok)
+
+    assert updated.dispatched_quantity == 30, updated.dispatched_quantity
+    assert updated.status == "Partial", updated.status
+    print("PASS update customer order: dispatch 30/100 from NULL -> Partial (value applied, no 500)")
+
+
+def test_update_purchase_order_survives_null_received_quantity():
+    # WRITE-path complement to test_purchasing_analytics_survives_null_received_*:
+    # a PATCH that only touches status/notes on a legacy NULL-received PO must not
+    # `None > order_quantity` / `max(None - old)` 500; NULL reads as 0 and is
+    # materialised, and no phantom stock movement is created (delta 0 - 0 = 0).
+    db = _iso_session()
+    tok = T.set_current_tenant("TA")
+    try:
+        s1 = orders_routes.create_supplier(_supplier("S1", "Acme"), db=db, current_user={"tenant": "TA"})
+        po = orders_routes.create_purchase_order(_po("PO-U1", s1.id, 100, 0), db=db, current_user={"tenant": "TA"})
+        db.execute(text("UPDATE purchase_orders SET received_quantity = NULL WHERE id = :i"), {"i": po.id})
+        db.commit()
+        db.expire_all()
+
+        updated = orders_routes.update_purchase_order(
+            po.id, schemas.PurchaseOrderUpdate(notes="noted"),
+            db=db, current_user={"tenant": "TA"},
+        )
+        txns = db.query(models.InventoryTransaction).count()
+    finally:
+        T.reset_current_tenant(tok)
+
+    assert updated.received_quantity == 0, updated.received_quantity
+    assert updated.notes == "noted", updated.notes
+    assert txns == 0, f"a NULL->0 no-op PATCH must not fabricate a stock receipt (got {txns})"
+    print("PASS update purchase order: NULL received_quantity -> 0 on a notes PATCH, no phantom receipt")
+
+
+def test_update_purchase_order_receive_from_null_stocks_exact_delta():
+    # The delta correctness pin: old_received is captured BEFORE the payload applies
+    # AND the pre-existing value is NULL. Receiving 30 must add exactly 30 to stock
+    # (30 - 0), NOT 0 (the `max(new - new, 0)` bug a naive coalesce-after-apply gives)
+    # and NOT a crash. Stock starts at 5 -> ends at 35; the Receive txn quantity is 30.
+    db = _iso_session()
+    tok = T.set_current_tenant("TA")
+    try:
+        s1 = orders_routes.create_supplier(_supplier("S1", "Acme"), db=db, current_user={"tenant": "TA"})
+        item = models.InventoryItem(
+            tenant_code="TA", item_code="ITM-1", item_name="Widget",
+            category="Raw", unit="ea", current_stock=5, reorder_level=2,
+        )
+        db.add(item)
+        db.commit()
+        po = orders_routes.create_purchase_order(
+            schemas.PurchaseOrderCreate(
+                po_no="PO-U2", supplier_id=s1.id, item_id=item.id, item_name="Widget",
+                order_quantity=100, received_quantity=0, unit="ea",
+                expected_delivery_date=_po("x", s1.id, 1, 0).expected_delivery_date,
+            ),
+            db=db, current_user={"tenant": "TA"},
+        )
+        db.execute(text("UPDATE purchase_orders SET received_quantity = NULL WHERE id = :i"), {"i": po.id})
+        db.commit()
+        db.expire_all()
+
+        updated = orders_routes.update_purchase_order(
+            po.id, schemas.PurchaseOrderUpdate(received_quantity=30),
+            db=db, current_user={"tenant": "TA"},
+        )
+        item_after = db.query(models.InventoryItem).filter(models.InventoryItem.id == item.id).first()
+        receipt = (
+            db.query(models.InventoryTransaction)
+            .filter(models.InventoryTransaction.reference == "PO-U2")
+            .one()
+        )
+    finally:
+        T.reset_current_tenant(tok)
+
+    assert updated.received_quantity == 30, updated.received_quantity
+    assert updated.status == "Partial", updated.status          # 30 of 100
+    assert item_after.current_stock == 35, item_after.current_stock  # 5 + (30 - 0), not 5 + 0
+    assert receipt.quantity == 30, receipt.quantity             # the delta booked, not the whole/None
+    print("PASS update purchase order: receive 30 from NULL adds exactly 30 to stock (5 -> 35), delta correct")
+
+
 if __name__ == "__main__":
     test_procurement_paths_owned_by_orders_routes()
     test_duplicate_order_no_across_tenants_is_409_not_500()
@@ -469,4 +598,8 @@ if __name__ == "__main__":
     test_customer_order_analytics_null_status_overdue_counts_as_late()
     test_late_order_escalation_generator_reconciles_with_late_headline()
     test_purchasing_analytics_overdue_reconciles_with_generator()
+    test_update_customer_order_survives_null_dispatched_quantity()
+    test_update_customer_order_dispatch_from_null_transitions_partial()
+    test_update_purchase_order_survives_null_received_quantity()
+    test_update_purchase_order_receive_from_null_stocks_exact_delta()
     print("ALL ORDERS ROUTE TESTS PASSED")

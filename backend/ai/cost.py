@@ -7,7 +7,7 @@ production_records + cost_records — auto-scoped to the tenant (ADR-0002); it
 adds no storage. The rates are conservative SME defaults; a tenant cost policy
 can replace them later.
 """
-from collections import Counter
+from collections import Counter, defaultdict
 from datetime import datetime, timedelta
 
 import models
@@ -19,6 +19,18 @@ WINDOW_DAYS = 7
 TOP_N = 5
 DOWNTIME_COST_PER_MIN = 12      # $ lost per minute of unplanned downtime
 SCRAP_COST_PER_UNIT = 25        # $ lost per rejected / scrapped unit
+
+# Trend window — two WINDOW_DAYS halves, so "this week vs last week" over the same
+# 7-day window the cost summary already reports. Mirrors ai.downtime's trend.
+TREND_HALVES = 2
+TREND_WINDOW_DAYS = WINDOW_DAYS * TREND_HALVES
+# A week-to-week swing in loss cost below this ($) is ordinary noise, not a trend —
+# and the floor a machine must clear to be named a mover. 300 = ~25 downtime min
+# or 12 scrapped units, the same order as ai.downtime's 30-minute floor.
+MIN_MOVE_COST = 300
+# The move is driven by fewer loss-making production records than this across BOTH
+# halves -> a single bad job swings the whole number; report it but don't judge it.
+MIN_TREND_RECORDS = 4
 
 
 def downtime_minutes(records) -> int:
@@ -133,4 +145,152 @@ def build_cost_summary(db, tenant: str) -> dict:
         "daily": daily,
         "recorded_total": sum(by_type_amt.values()),
         "by_type": by_type,
+    }
+
+
+def _half_of(day, today):
+    """Which half a day falls in: 'current' = the last WINDOW_DAYS including today,
+    'prior' = the WINDOW_DAYS before that, None = outside the window. Mirrors
+    ai.downtime._half_of so the trend cards split their windows the same way."""
+    age = (today - day).days
+    if 0 <= age < WINDOW_DAYS:
+        return "current"
+    if WINDOW_DAYS <= age < TREND_WINDOW_DAYS:
+        return "prior"
+    return None
+
+
+def build_cost_trend(db, tenant: str) -> dict:
+    """Which way is the cost of losses going, and who moved it? Compares the last
+    7 days of loss cost (downtime + scrap priced at the standard rates) against the
+    7 before — on the SAME per-record basis as build_cost_summary (downtime floored
+    per record, never on the net) — and attributes the swing to machines and to the
+    two drivers (downtime vs scrap). A read-model over production_records (+ machines
+    for labels), auto-scoped to the tenant (ADR-0002); it adds no storage.
+
+    Cost is the metric that moves here, the money twin of ai.downtime's minutes and
+    ai.quality's scrap trend, so an owner sees losses creeping up while it is still a
+    few hundred dollars rather than after a bad month. Every in-window record lands
+    in exactly one day and one half, so the daily series sums back to the half totals
+    (rule 3). A swing built on one or two loss-making jobs is reported but not judged."""
+    today = datetime.utcnow().date()
+    window = [today - timedelta(days=n) for n in range(TREND_WINDOW_DAYS - 1, -1, -1)]
+    records = _recent_production(db, days=TREND_WINDOW_DAYS)
+    names = {m.id: m.name for m in db.query(models.Machine).all()}
+
+    def _blank():
+        return {"cost": 0, "downtime_cost": 0, "scrap_cost": 0, "records": 0, "loss_records": 0}
+
+    daily = {d: {"cost": 0, "downtime_cost": 0, "scrap_cost": 0} for d in window}
+    halves = {"current": _blank(), "prior": _blank()}
+    per_machine: dict = defaultdict(lambda: {"current": 0, "prior": 0})
+    drivers = {"downtime": {"current": 0, "prior": 0}, "scrap": {"current": 0, "prior": 0}}
+
+    for r in records:
+        day = r.created_at.date() if r.created_at else None
+        half = _half_of(day, today) if day else None
+        if half is None:
+            continue
+        dm = max(0, (r.planned_minutes or 0) - (r.runtime_minutes or 0))
+        rej = r.rejected_count or 0
+        dt_cost = dm * DOWNTIME_COST_PER_MIN
+        sc_cost = rej * SCRAP_COST_PER_UNIT
+        cost = dt_cost + sc_cost
+
+        daily[day]["cost"] += cost
+        daily[day]["downtime_cost"] += dt_cost
+        daily[day]["scrap_cost"] += sc_cost
+
+        h = halves[half]
+        h["cost"] += cost
+        h["downtime_cost"] += dt_cost
+        h["scrap_cost"] += sc_cost
+        h["records"] += 1
+        if cost > 0:
+            h["loss_records"] += 1
+
+        if r.machine_id is not None:
+            per_machine[r.machine_id][half] += cost
+        drivers["downtime"][half] += dt_cost
+        drivers["scrap"][half] += sc_cost
+
+    series = [{"date": d.isoformat(), "cost": daily[d]["cost"],
+               "downtime_cost": daily[d]["downtime_cost"], "scrap_cost": daily[d]["scrap_cost"]}
+              for d in window]
+    current, prior = halves["current"], halves["prior"]
+
+    delta_cost = current["cost"] - prior["cost"]
+    # Percentage move is only meaningful against a non-zero prior week; a jump from
+    # zero cost is a real worsening but has no finite percentage.
+    delta_pct = round(delta_cost / prior["cost"] * 100) if prior["cost"] else None
+
+    total_loss_records = current["loss_records"] + prior["loss_records"]
+    if current["cost"] == 0 and prior["cost"] == 0:
+        direction = "none"
+    elif delta_cost > MIN_MOVE_COST:
+        direction = "worsening"
+    elif delta_cost < -MIN_MOVE_COST:
+        direction = "improving"
+    else:
+        direction = "steady"
+
+    # A swing built on one or two loss-making jobs is arithmetic, not a trend.
+    thin = 0 < total_loss_records < MIN_TREND_RECORDS
+
+    machines = []
+    for mid, a in per_machine.items():
+        d_cost = a["current"] - a["prior"]
+        machines.append({
+            "machine_id": mid, "name": names.get(mid, f"#{mid}"),
+            "cost": a["current"], "prior_cost": a["prior"], "delta_cost": d_cost,
+        })
+    worsening_machines = sorted((m for m in machines if m["delta_cost"] >= MIN_MOVE_COST),
+                                key=lambda m: m["delta_cost"], reverse=True)[:TOP_N]
+    improving_machines = sorted((m for m in machines if m["delta_cost"] <= -MIN_MOVE_COST),
+                                key=lambda m: m["delta_cost"])[:TOP_N]
+
+    driver_rows = sorted(
+        ({"key": k, "label": k.capitalize(), "cost": v["current"],
+          "prior_cost": v["prior"], "delta_cost": v["current"] - v["prior"]}
+         for k, v in drivers.items() if v["current"] or v["prior"]),
+        key=lambda d: d["delta_cost"], reverse=True,
+    )
+
+    now_cost = current["cost"]
+    worst = worsening_machines[0] if worsening_machines else None
+    pct_txt = f" ({abs(delta_pct)}%)" if delta_pct is not None else ""
+    if direction == "none":
+        verdict, tone = "No cost of losses in the last 14 days.", "good"
+    elif thin:
+        verdict, tone = (f"Cost of losses moved ${delta_cost:+,} to ${now_cost:,} this week, but on "
+                         f"{total_loss_records} loss-making record{'s' if total_loss_records != 1 else ''} "
+                         "in 14 days — too little to call a trend.", "warn")
+    elif direction == "worsening":
+        blame = f" — {worst['name']} drove it (+${worst['delta_cost']:,})" if worst else ""
+        verdict, tone = (f"Cost of losses up ${delta_cost:,}{pct_txt} to ${now_cost:,} "
+                         f"week on week{blame}.", "bad")
+    elif direction == "improving":
+        verdict, tone = (f"Cost of losses down ${abs(delta_cost):,}{pct_txt} to ${now_cost:,} "
+                         "week on week.", "good")
+    else:
+        verdict, tone = (f"Cost of losses steady at ${now_cost:,} (${delta_cost:+,} week on week).", "good")
+
+    return {
+        "days": TREND_WINDOW_DAYS,
+        "half_days": WINDOW_DAYS,
+        "current": current,
+        "prior": prior,
+        "delta_cost": delta_cost,
+        "delta_pct": delta_pct,
+        "direction": direction,
+        "thin_sample": thin,
+        "move_threshold_cost": MIN_MOVE_COST,
+        "downtime_cost_per_min": DOWNTIME_COST_PER_MIN,
+        "scrap_cost_per_unit": SCRAP_COST_PER_UNIT,
+        "series": series,
+        "worsening_machines": worsening_machines,
+        "improving_machines": improving_machines,
+        "drivers": driver_rows,
+        "verdict": verdict,
+        "tone": tone,
     }

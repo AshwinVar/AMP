@@ -24,6 +24,24 @@ MQTT_PORT = int(os.environ.get("MQTT_PORT", "1883"))
 TOPIC = os.environ.get("MQTT_TOPIC", "flowmes/machines")
 
 
+def _non_negative_int(value):
+    """Parse an inbound production count/minute into a non-negative int, or None
+    if it isn't a usable number. A guard on INGEST, mirroring the HTTP path
+    (machines_routes.create_production_record rejects negative minutes/counts,
+    #266) and the utilization clamp above: an edge gateway can publish a
+    non-numeric ("--") or NEGATIVE value, and a negative count is especially
+    corrupting because it can still satisfy good+rejected==total (e.g.
+    -5 + 15 == 10) yet write a negative good_count that drags pooled OEE below
+    zero (pooled_oee's quality = good/total is not floored at 0). None means
+    "no usable value" so the caller skips the production record rather than
+    recording a physically-impossible one or throwing mid-handler."""
+    try:
+        n = int(value)
+    except (TypeError, ValueError):
+        return None
+    return n if n >= 0 else None
+
+
 def get_or_create_machine(db, name: str):
     machine = db.query(models.Machine).filter(
         models.Machine.name == name
@@ -137,18 +155,31 @@ def on_message(client, userdata, msg):
             db.add(event)
             db.commit()
 
-        total_count = int(payload.get("total_count", 0))
-        good_count = int(payload.get("good_count", 0))
-        rejected_count = int(payload.get("rejected_count", 0))
+        # Parse the production numerics defensively — a non-numeric value would
+        # raise mid-handler (dropping the whole message) and a NEGATIVE value is
+        # physically impossible; either one skips the record rather than
+        # corrupting the OEE window (see _non_negative_int / HTTP-ingest parity).
+        total_count = _non_negative_int(payload.get("total_count", 0))
+        good_count = _non_negative_int(payload.get("good_count", 0))
+        rejected_count = _non_negative_int(payload.get("rejected_count", 0))
+        planned_minutes = _non_negative_int(payload.get("planned_minutes", 480))
+        runtime_minutes = _non_negative_int(payload.get("runtime_minutes", 0))
+        ideal_cycle_time_seconds = _non_negative_int(
+            payload.get("ideal_cycle_time_seconds", 60)
+        )
 
-        if total_count > 0 and good_count + rejected_count == total_count:
+        production_valid = None not in (
+            total_count, good_count, rejected_count,
+            planned_minutes, runtime_minutes, ideal_cycle_time_seconds,
+        )
+
+        if (production_valid and total_count > 0
+                and good_count + rejected_count == total_count):
             production = models.ProductionRecord(
                 machine_id=machine.id,
-                planned_minutes=int(payload.get("planned_minutes", 480)),
-                runtime_minutes=int(payload.get("runtime_minutes", 0)),
-                ideal_cycle_time_seconds=int(
-                    payload.get("ideal_cycle_time_seconds", 60)
-                ),
+                planned_minutes=planned_minutes,
+                runtime_minutes=runtime_minutes,
+                ideal_cycle_time_seconds=ideal_cycle_time_seconds,
                 total_count=total_count,
                 good_count=good_count,
                 rejected_count=rejected_count,
@@ -184,9 +215,11 @@ def on_message(client, userdata, msg):
                 "downtime": machine.downtime,
             },
             "production": {
-                "total_count": total_count,
-                "good_count": good_count,
-                "rejected_count": rejected_count,
+                # Coalesce to 0 for the live view — a skipped/garbage reading
+                # recorded nothing, so report nothing rather than a raw None.
+                "total_count": total_count or 0,
+                "good_count": good_count or 0,
+                "rejected_count": rejected_count or 0,
             },
             "timeline": {
                 "old_status": old_status,

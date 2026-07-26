@@ -20,6 +20,7 @@ import schemas
 from auth import get_current_user, require_roles
 from database import SessionLocal
 from events import event_bus, DowntimeStarted
+from machine_status import VALID_MACHINE_STATUSES, normalize_machine_status
 from tenancy import request_tenant
 
 
@@ -67,14 +68,30 @@ def update_machine_status(machine_id: int, status: str, db: Session = Depends(_g
     machine = db.query(models.Machine).filter(models.Machine.id == machine_id).first()
     if machine is None:
         raise HTTPException(status_code=404, detail="Machine not found")
+    # Canonicalise the manual status exactly like the ingest paths (IoT / MQTT /
+    # industrial gateway) already do, through the one shared vocabulary
+    # (machine_status). Every status-based rollup — build_management_summary's
+    # breakdown_count, build_smart_alerts, the Machine-Health twin's bands, the
+    # predictive risk score — matches these EXACT strings, so a raw "RUNNING" /
+    # "faulted" / typo written straight onto machine.status silently removed the
+    # machine from all of them. Unlike a device burst (which the ingest paths
+    # leave the value untouched on rather than reject), a manual UI/API action
+    # gets an honest 400 with the valid set; a recognised-but-noncanonical value
+    # ("running") is stored in its canonical form ("Running").
+    canonical = normalize_machine_status(status)
+    if canonical is None:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid machine status. Must be one of: {', '.join(VALID_MACHINE_STATUSES)}",
+        )
     old_status = machine.status
-    machine.status = status
+    machine.status = canonical
     db.commit()
     db.refresh(machine)
-    if old_status != status:
+    if old_status != canonical:
         db.add(models.MachineEvent(
             machine_id=machine.id, machine_name=machine.name,
-            old_status=old_status, new_status=status,
+            old_status=old_status, new_status=canonical,
             utilization=machine.utilization, source="manual",
         ))
         db.commit()
@@ -139,6 +156,14 @@ def create_production_record(record: schemas.ProductionCreate, db: Session = Dep
     machine = db.query(models.Machine).filter(models.Machine.id == record.machine_id).first()
     if not machine:
         raise HTTPException(status_code=404, detail="Machine not found")
+    # Reject physically-impossible rows at the boundary. Negative minutes/counts
+    # are nonsensical and silently corrupt every window that includes them (a
+    # negative good_count drags good-rate, scrap and OEE). The schema types are
+    # plain ints, so nothing else stops them. (runtime > planned is intentionally
+    # allowed — a job can run over its plan; the OEE/cost math handles it, ADR-0010.)
+    if min(record.planned_minutes, record.runtime_minutes, record.ideal_cycle_time_seconds,
+           record.total_count, record.good_count, record.rejected_count) < 0:
+        raise HTTPException(status_code=400, detail="minutes and counts must be non-negative")
     if record.good_count + record.rejected_count != record.total_count:
         raise HTTPException(status_code=400, detail="good_count + rejected_count must equal total_count")
     new_record = models.ProductionRecord(**record.model_dump())

@@ -12,6 +12,8 @@ from datetime import datetime
 from typing import List
 
 from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy import case, func, or_
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 import models
@@ -112,7 +114,15 @@ def create_customer_order(
     new_order.status = status
 
     db.add(new_order)
-    db.commit()
+    # order_no is GLOBALLY unique but the pre-check above is tenant-scoped, so a
+    # number another tenant already uses passes the check then trips the DB
+    # constraint on commit. Return a clean 409 (and roll back the poisoned
+    # session) instead of an unhandled IntegrityError -> 500.
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(status_code=409, detail="Order number is already in use")
     db.refresh(new_order)
 
     return new_order
@@ -138,6 +148,19 @@ def update_customer_order(
 
     for key, value in data.items():
         setattr(order, key, value)
+
+    # dispatched_quantity is Column(Integer, default=0) WITHOUT nullable=False, so a
+    # row written by raw SQL / a migration / a cleared update can hold a true NULL,
+    # and CustomerOrderUpdate.dispatched_quantity is Optional (omitted -> not
+    # applied). A PATCH that leaves the field alone on such a row then hit
+    # `None > order_quantity` / `None >= order_quantity` and raised TypeError,
+    # 500-ing the update — and even guarding the comparison, response_model
+    # CustomerOrderResponse.dispatched_quantity is `int`, so returning a NULL would
+    # just move the 500 to response serialisation. Materialise the column's own
+    # default of 0 (exactly what /analytics/customer-orders already coalesces this
+    # NULL to) so both the status logic and the response see a real int.
+    if order.dispatched_quantity is None:
+        order.dispatched_quantity = 0
 
     if order.dispatched_quantity > order.order_quantity:
         raise HTTPException(status_code=400, detail="Dispatched quantity cannot exceed order quantity")
@@ -179,33 +202,69 @@ def get_customer_order_analytics(
     db: Session = Depends(_get_db),
     current_user: dict = Depends(get_current_user),
 ):
-    orders = db.query(models.CustomerOrder).all()
-
+    # Aggregate the growing customer_orders table in SQL rather than hydrating
+    # every row into Python just to bucket it with list comprehensions (rule-4
+    # antipattern; the same GROUP BY fix already applied to /analytics/work-orders,
+    # /analytics/production-plans and /analytics/escalations). CustomerOrder is in
+    # SCOPED_MODELS, so the do_orm_execute hook (ADR-0002) tenant-scopes every
+    # aggregate SELECT below exactly as it did the old .all() scan.
     today = datetime.utcnow().date()
 
-    pending = len([row for row in orders if row.status == "Pending"])
-    partial = len([row for row in orders if row.status == "Partial"])
-    dispatched = len([row for row in orders if row.status == "Dispatched"])
-    cancelled = len([row for row in orders if row.status == "Cancelled"])
-    late = len([row for row in orders if row.due_date < today and row.status not in ["Dispatched", "Cancelled"]])
+    status_counts = dict(
+        db.query(models.CustomerOrder.status, func.count())
+        .group_by(models.CustomerOrder.status)
+        .all()
+    )
 
-    total_order_qty = sum(row.order_quantity for row in orders)
-    total_dispatched_qty = sum(row.dispatched_quantity for row in orders)
+    # order_quantity is nullable=False, but SUM over an empty book is still NULL;
+    # dispatched_quantity is Column(Integer, default=0) WITHOUT nullable=False, so a
+    # row written by raw SQL / a migration / a cleared update can be a true NULL,
+    # which the old Python sum() turned into int + None -> TypeError. COALESCE(..,0)
+    # makes both read as the column's own default of 0 (the CSV export already reads
+    # dispatched_quantity as `or 0`).
+    total_orders, total_order_qty, total_dispatched_qty = db.query(
+        func.count(models.CustomerOrder.id),
+        func.coalesce(func.sum(models.CustomerOrder.order_quantity), 0),
+        func.coalesce(func.sum(models.CustomerOrder.dispatched_quantity), 0),
+    ).one()
+    total_order_qty = int(total_order_qty)
+    total_dispatched_qty = int(total_dispatched_qty)
     dispatch_rate = round((total_dispatched_qty / total_order_qty) * 100) if total_order_qty else 0
 
-    priority_counts = {}
-    customer_counts = {}
+    # Late = past due and not already dispatched/cancelled. status is String
+    # default="Pending" (not NOT NULL); the old Python `row.status not in [...]`
+    # counted a NULL-status overdue order as late (None is not in the list), but
+    # SQL's `status NOT IN (...)` is NULL — not TRUE — for a NULL status, so it
+    # would silently drop that row. OR the NULL back in to keep the same basis.
+    late = db.query(func.count(models.CustomerOrder.id)).filter(
+        models.CustomerOrder.due_date < today,
+        or_(
+            models.CustomerOrder.status.is_(None),
+            models.CustomerOrder.status.notin_(["Dispatched", "Cancelled"]),
+        ),
+    ).scalar() or 0
 
-    for row in orders:
-        priority_counts[row.priority] = priority_counts.get(row.priority, 0) + 1
-        customer_counts[row.customer_name] = customer_counts.get(row.customer_name, 0) + row.order_quantity
+    priority_counts = dict(
+        db.query(models.CustomerOrder.priority, func.count())
+        .group_by(models.CustomerOrder.priority)
+        .all()
+    )
+    customer_counts = {
+        name: int(qty)
+        for name, qty in db.query(
+            models.CustomerOrder.customer_name,
+            func.coalesce(func.sum(models.CustomerOrder.order_quantity), 0),
+        )
+        .group_by(models.CustomerOrder.customer_name)
+        .all()
+    }
 
     return {
-        "total_orders": len(orders),
-        "pending": pending,
-        "partial": partial,
-        "dispatched": dispatched,
-        "cancelled": cancelled,
+        "total_orders": total_orders,
+        "pending": status_counts.get("Pending", 0),
+        "partial": status_counts.get("Partial", 0),
+        "dispatched": status_counts.get("Dispatched", 0),
+        "cancelled": status_counts.get("Cancelled", 0),
         "late": late,
         "total_order_qty": total_order_qty,
         "total_dispatched_qty": total_dispatched_qty,
@@ -222,11 +281,22 @@ def generate_late_order_escalations(
 ):
     today = datetime.utcnow().date()
 
+    # "Late" here MUST mean exactly what the /analytics/customer-orders headline
+    # counts as late, or the two disagree: the headline says N late while this
+    # generator raises fewer than N escalations. status is String default="Pending"
+    # (not NOT NULL), so a raw-SQL / migration / cleared write can store NULL, and
+    # SQL's `status NOT IN (...)` is NULL — not TRUE — for a NULL status, which
+    # silently drops an overdue NULL-status order from this scan even though the
+    # analytics endpoint (#295) OR's the NULL back in and counts it as late. Mirror
+    # that predicate exactly so the escalation basis reconciles with the headline.
     late_orders = (
         db.query(models.CustomerOrder)
         .filter(
             models.CustomerOrder.due_date < today,
-            models.CustomerOrder.status.notin_(["Dispatched", "Cancelled"]),
+            or_(
+                models.CustomerOrder.status.is_(None),
+                models.CustomerOrder.status.notin_(["Dispatched", "Cancelled"]),
+            ),
         )
         .all()
     )
@@ -290,7 +360,11 @@ def create_supplier(
 
     new_supplier = models.Supplier(**supplier.model_dump())
     db.add(new_supplier)
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError:  # supplier_code globally unique; tenant-scoped pre-check
+        db.rollback()
+        raise HTTPException(status_code=409, detail="Supplier code is already in use")
     db.refresh(new_supplier)
     return new_supplier
 
@@ -369,7 +443,11 @@ def create_purchase_order(
     new_po.status = status
 
     db.add(new_po)
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError:  # po_no globally unique; tenant-scoped pre-check
+        db.rollback()
+        raise HTTPException(status_code=409, detail="PO number is already in use")
     db.refresh(new_po)
     return new_po
 
@@ -385,10 +463,24 @@ def update_purchase_order(
     if not po:
         raise HTTPException(status_code=404, detail="Purchase order not found")
 
-    old_received = po.received_quantity
+    # received_quantity is Column(Integer, default=0) WITHOUT nullable=False, so a
+    # row written by raw SQL / a migration / a cleared update can hold a true NULL,
+    # and PurchaseOrderUpdate.received_quantity is Optional (omitted -> not applied).
+    # Pre-fix a PATCH against such a row hit `None > order_quantity` and
+    # `received - None` (max()) and raised TypeError, 500-ing the update — even the
+    # normal "receive stock" PATCH, whose new value is fine but whose OLD value is
+    # NULL. /analytics/purchasing already coalesces this exact NULL to its column
+    # default of 0; do the same here (and response_model PurchaseOrderResponse
+    # .received_quantity is `int`, so a NULL would ResponseValidationError-500 on
+    # the way out regardless). Capture old_received BEFORE the payload applies so
+    # the stock-receipt delta stays correct (new - 0 = new, not new - new = 0).
+    old_received = po.received_quantity or 0
 
     for key, value in payload.model_dump(exclude_unset=True).items():
         setattr(po, key, value)
+
+    if po.received_quantity is None:
+        po.received_quantity = 0
 
     if po.received_quantity > po.order_quantity:
         raise HTTPException(status_code=400, detail="Received quantity cannot exceed order quantity")
@@ -403,7 +495,10 @@ def update_purchase_order(
     if received_delta > 0 and po.item_id:
         item = db.query(models.InventoryItem).filter(models.InventoryItem.id == po.item_id).first()
         if item:
-            item.current_stock += received_delta
+            # current_stock is likewise Column(Integer, default=0) WITHOUT
+            # nullable=False; `None += int` would TypeError-500 the receipt on a
+            # legacy NULL-stock item (same guard as subscribers.py / inventory_routes).
+            item.current_stock = (item.current_stock or 0) + received_delta
 
             transaction = models.InventoryTransaction(
                 item_id=item.id,
@@ -439,34 +534,84 @@ def get_purchasing_analytics(
     db: Session = Depends(_get_db),
     current_user: dict = Depends(get_current_user),
 ):
-    suppliers = db.query(models.Supplier).all()
-    pos = db.query(models.PurchaseOrder).all()
     today = datetime.utcnow().date()
 
-    open_count = len([row for row in pos if row.status == "Open"])
-    partial = len([row for row in pos if row.status == "Partial"])
-    received = len([row for row in pos if row.status == "Received"])
-    cancelled = len([row for row in pos if row.status == "Cancelled"])
-    overdue = len([row for row in pos if row.expected_delivery_date < today and row.status not in ["Received", "Cancelled"]])
+    # Resolve supplier names from a single lightweight 2-column fetch of the
+    # (small, bounded) supplier roster — its length is also the supplier count.
+    # An unknown/foreign supplier_id is simply absent from the map and falls back
+    # to the "Supplier {id}" label (a deleted-supplier row keeps its pending).
+    supplier_rows = db.query(models.Supplier.id, models.Supplier.supplier_name).all()
+    supplier_names = {sid: name for sid, name in supplier_rows}
 
-    ordered_qty = sum(row.order_quantity for row in pos)
-    received_qty = sum(row.received_quantity for row in pos)
+    # Roll the GROWING purchase_orders table up in SQL rather than hydrating every
+    # PO row into Python just to bucket/sum it with list comprehensions (rule-4
+    # antipattern; the same GROUP BY fix already applied to /analytics/customer-
+    # orders #295 and the other analytics endpoints). PurchaseOrder is in
+    # SCOPED_MODELS, so the do_orm_execute hook (ADR-0002) tenant-scopes every
+    # aggregate SELECT below exactly as it did the old .all() scan.
+    #
+    # received_quantity is Column(Integer, default=0) WITHOUT nullable=False, so a
+    # row written by raw SQL / a migration / a cleared update can hold a true NULL;
+    # SUM already skips NULLs and COALESCE(..,0) turns an empty book's NULL sum into
+    # 0, matching the old `sum(received_quantity or 0)` (and the CSV export's
+    # `received_quantity or 0`). order_quantity is nullable=False and needs no guard.
+    overdue_case = case((models.PurchaseOrder.expected_delivery_date < today, 1), else_=0)
+    status_rows = db.query(
+        models.PurchaseOrder.status,
+        func.count(models.PurchaseOrder.id),
+        func.coalesce(func.sum(models.PurchaseOrder.order_quantity), 0),
+        func.coalesce(func.sum(models.PurchaseOrder.received_quantity), 0),
+        func.coalesce(func.sum(overdue_case), 0),
+    ).group_by(models.PurchaseOrder.status).all()
+
+    status_counts = {}
+    purchase_orders = 0
+    ordered_qty = 0
+    received_qty = 0
+    overdue = 0
+    for status, count, ordered, received, overdue_in_group in status_rows:
+        status_counts[status] = int(count)
+        purchase_orders += int(count)
+        ordered_qty += int(ordered)
+        received_qty += int(received)
+        # Overdue = past its expected date AND not already Received/Cancelled.
+        # status is String default="Open" (not NOT NULL), so a raw-SQL / migration
+        # / cleared write can store NULL; the old Python `status not in [...]`
+        # counted a NULL-status overdue PO as overdue (None is not in the list),
+        # and the overdue-escalation generator OR's the same NULL back in so the
+        # headline and the generated escalations reconcile (mirrors #298 for
+        # customer orders). SQL groups NULL status into its own row, which this
+        # `not in` includes exactly as before.
+        if status not in ("Received", "Cancelled"):
+            overdue += int(overdue_in_group)
+
     receipt_rate = round((received_qty / ordered_qty) * 100) if ordered_qty else 0
 
+    # Per-supplier outstanding (order minus received, floored at 0 per PO, then
+    # summed) in one GROUP BY supplier_id — at most one row per supplier, not a
+    # Python pass over every PO. Mirrors the per-record floor of the old
+    # `max(order_quantity - (received_quantity or 0), 0)`.
+    per_po_pending = models.PurchaseOrder.order_quantity - func.coalesce(
+        models.PurchaseOrder.received_quantity, 0
+    )
+    pending_case = case((per_po_pending > 0, per_po_pending), else_=0)
+    pending_rows = db.query(
+        models.PurchaseOrder.supplier_id,
+        func.coalesce(func.sum(pending_case), 0),
+    ).group_by(models.PurchaseOrder.supplier_id).all()
+
     supplier_pending = {}
-    for row in pos:
-        supplier = db.query(models.Supplier).filter(models.Supplier.id == row.supplier_id).first()
-        name = supplier.supplier_name if supplier else f"Supplier {row.supplier_id}"
-        pending = max(row.order_quantity - row.received_quantity, 0)
-        supplier_pending[name] = supplier_pending.get(name, 0) + pending
+    for supplier_id, pending in pending_rows:
+        name = supplier_names.get(supplier_id, f"Supplier {supplier_id}")
+        supplier_pending[name] = supplier_pending.get(name, 0) + int(pending)
 
     return {
-        "suppliers": len(suppliers),
-        "purchase_orders": len(pos),
-        "open": open_count,
-        "partial": partial,
-        "received": received,
-        "cancelled": cancelled,
+        "suppliers": len(supplier_names),
+        "purchase_orders": purchase_orders,
+        "open": status_counts.get("Open", 0),
+        "partial": status_counts.get("Partial", 0),
+        "received": status_counts.get("Received", 0),
+        "cancelled": status_counts.get("Cancelled", 0),
         "overdue": overdue,
         "ordered_qty": ordered_qty,
         "received_qty": received_qty,
@@ -482,11 +627,23 @@ def generate_overdue_po_escalations(
 ):
     today = datetime.utcnow().date()
 
+    # "Overdue" here MUST mean exactly what the /analytics/purchasing headline
+    # counts as overdue, or the two disagree: the headline says N overdue while
+    # this generator raises fewer than N escalations. status is String
+    # default="Open" (not NOT NULL), so a raw-SQL / migration / cleared write can
+    # store NULL, and SQL's `status NOT IN (...)` is NULL — not TRUE — for a NULL
+    # status, which silently drops an overdue NULL-status PO from this scan even
+    # though the analytics endpoint counts it as overdue. OR the NULL back in so
+    # the escalation basis reconciles with the headline (mirrors #298 for
+    # customer orders).
     overdue_pos = (
         db.query(models.PurchaseOrder)
         .filter(
             models.PurchaseOrder.expected_delivery_date < today,
-            models.PurchaseOrder.status.notin_(["Received", "Cancelled"]),
+            or_(
+                models.PurchaseOrder.status.is_(None),
+                models.PurchaseOrder.status.notin_(["Received", "Cancelled"]),
+            ),
         )
         .all()
     )

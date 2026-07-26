@@ -142,6 +142,13 @@ _ensure_index("inventory_transactions", "created_at")  # coverage burn-rate wind
 _ensure_index("inventory_transactions", "item_id")     # per-item burn / part-runway drill-down
 _ensure_index("production_plans", "plan_date")      # schedule-adherence window (now filtered in SQL)
 _ensure_index("production_schedules", "scheduled_date")  # schedule-load board window (filtered in SQL)
+_ensure_index("operator_job_executions", "started_at")   # operator-performance window (filtered in SQL)
+_ensure_index("cycle_count_items", "created_at")   # inventory-record-accuracy window (filtered in SQL)
+_ensure_index("cycle_count_items", "item_id")      # scope count lines to the tenant's items (ai/stock_accuracy)
+_ensure_index("escalations", "created_at")               # escalation-queue resolution window (filtered in SQL)
+_ensure_index("customer_orders", "due_date")             # late-order count + escalation generator filter due_date in SQL
+_ensure_index("maintenance_tasks", "planned_date")       # overdue-task count filters planned_date in SQL (/analytics/maintenance)
+_ensure_index("compliance_documents", "review_due_date") # review-due count filters review_due_date in SQL (/analytics/documents)
 tenancy.ensure_tenant_columns(engine)  # ADR-0002: tenant_code on core tables
 # Audit trail + enterprise-inventory: add tenant_code NULLABLE, NO blind backfill.
 # Legacy rows stay NULL (hidden) until an approved, source-based backfill assigns

@@ -84,10 +84,41 @@ def test_predictive_risk_reject_rate_guarded():
     print("PASS calculate_predictive_risk guards zero production")
 
 
+def test_null_utilization_scored_as_column_default_zero():
+    # Machine.utilization is Column(Integer, default=0) WITHOUT nullable=False, so
+    # a row written by raw SQL / a migration / a clearing update can be NULL. The
+    # scorer used to do `None < 40` and raise TypeError, 500-ing the endpoint.
+    # A missing utilization is treated as the column's own default (0), which is
+    # < 40, so only the "low utilization" rule fires (+20) and nothing else.
+    machines = [SimpleNamespace(id=1, name="M1", status="Running", utilization=None)]
+    rows = pe.calculate_predictive_risk(machines, [], [], [], [])
+    assert rows[0]["risk_score"] == 20, rows[0]
+    assert rows[0]["utilization"] == 0                        # display matches what was scored
+    assert "low utilization below 40%" in rows[0]["reasons"]
+    assert rows[0]["risk_level"] == "Low"
+    print("PASS calculate_predictive_risk treats NULL utilization as 0, no crash")
+
+
+def test_null_actual_quantity_counts_as_zero():
+    # WorkOrder.actual_quantity is Column(Integer, default=0) WITHOUT
+    # nullable=False, so it can be NULL. `target - None` used to raise TypeError.
+    # A missing actual is counted as 0, so pressure = 600 - 0 = 600 (>=500) -> +10.
+    machines = [SimpleNamespace(id=1, name="M1", status="Running", utilization=55)]
+    work_orders = [SimpleNamespace(machine_id=1, status="Running",
+                                   target_quantity=600, actual_quantity=None)]
+    rows = pe.calculate_predictive_risk(machines, [], [], [], work_orders)
+    assert rows[0]["work_order_pressure"] == 600, rows[0]
+    assert rows[0]["risk_score"] == 10, rows[0]
+    assert "high active work-order load" in rows[0]["reasons"]
+    print("PASS calculate_predictive_risk treats NULL actual_quantity as 0, no crash")
+
+
 if __name__ == "__main__":
     test_uses_shared_duration_parser()
     test_classify_risk_boundaries()
     test_recommendation_tracks_bands()
     test_calculate_predictive_risk_scores_and_sorts()
     test_predictive_risk_reject_rate_guarded()
+    test_null_utilization_scored_as_column_default_zero()
+    test_null_actual_quantity_counts_as_zero()
     print("ALL PREDICTIVE-ENGINE TESTS PASSED")

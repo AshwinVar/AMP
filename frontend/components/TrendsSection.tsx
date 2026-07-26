@@ -14,19 +14,61 @@ type OpsTrends = {
   agent_actions: Series;
 };
 
+// The shared shape of the week-over-week trend read-models (downtime / quality /
+// cost). Each returns a ready-made plain-English verdict, a tone, and a direction;
+// we render a uniform card from just those three fields so the card never couples
+// to each read-model's metric-specific keys (delta_minutes / delta_pts / delta_cost).
+type TrendVerdict = { direction?: string; verdict?: string; tone?: string };
+
+const TREND_CARDS: { key: string; label: string; path: string }[] = [
+  { key: "oee", label: "OEE", path: "/oee-trend" },
+  { key: "downtime", label: "Downtime", path: "/downtime-trend" },
+  { key: "quality", label: "Quality", path: "/quality-trend" },
+  { key: "cost", label: "Cost of losses", path: "/cost-trend" },
+];
+
 function wk(iso: string) {
   const d = new Date(iso);
   return Number.isNaN(d.getTime()) ? "" : d.toLocaleDateString(undefined, { weekday: "short" });
 }
 
+function toneClasses(tone?: string) {
+  switch (tone) {
+    case "good": return "border-emerald-500/40 bg-emerald-500/10 text-emerald-300";
+    case "warn": return "border-amber-500/40 bg-amber-500/10 text-amber-300";
+    case "bad": return "border-red-500/40 bg-red-500/10 text-red-300";
+    default: return "border-slate-800 bg-slate-900 text-slate-300";
+  }
+}
+
+function directionChip(direction?: string) {
+  switch (direction) {
+    case "improving": return "↘ Improving";
+    case "worsening": return "↗ Worsening";
+    case "steady": return "→ Steady";
+    default: return "— No change";   // covers "none" (downtime/cost) and "unknown" (quality)
+  }
+}
+
 export default function TrendsSection() {
   const [t, setT] = useState<OpsTrends | null>(null);
+  const [verdicts, setVerdicts] = useState<Record<string, TrendVerdict | null>>({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
     setError(null);
+    // The direction cards fetch independently of the bar charts and of each other,
+    // so one slow/failing trend can't blank the rest of the view.
+    Promise.allSettled(TREND_CARDS.map((c) => apiGet<TrendVerdict>(c.path))).then((rs) => {
+      const map: Record<string, TrendVerdict | null> = {};
+      TREND_CARDS.forEach((c, i) => {
+        const r = rs[i];
+        map[c.key] = r.status === "fulfilled" ? r.value : null;
+      });
+      setVerdicts(map);
+    });
     try {
       setT(await apiGet<OpsTrends>("/ops-trends"));
     } catch (e) {
@@ -54,6 +96,15 @@ export default function TrendsSection() {
 
       {error && <div className="rounded-xl border border-red-500/40 bg-red-500/10 text-red-300 p-4">{error}</div>}
 
+      <div className="space-y-3">
+        <h3 className="text-sm font-semibold uppercase tracking-wide text-slate-400">This week vs last week</h3>
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+          {TREND_CARDS.map((c) => (
+            <VerdictCard key={c.key} label={c.label} v={verdicts[c.key]} />
+          ))}
+        </div>
+      </div>
+
       {loading && !t ? (
         <p className="text-slate-400">Loading trends…</p>
       ) : t ? (
@@ -65,6 +116,18 @@ export default function TrendsSection() {
         </div>
       ) : null}
     </section>
+  );
+}
+
+function VerdictCard({ label, v }: { label: string; v: TrendVerdict | null | undefined }) {
+  return (
+    <div className={`rounded-2xl border p-5 ${toneClasses(v?.tone)}`}>
+      <div className="flex items-center justify-between gap-2">
+        <h3 className="text-sm font-semibold uppercase tracking-wide">{label}</h3>
+        <span className="text-xs font-semibold whitespace-nowrap">{directionChip(v?.direction)}</span>
+      </div>
+      <p className="text-sm mt-3 leading-snug">{v?.verdict || "Not enough history to compare yet."}</p>
+    </div>
   );
 }
 

@@ -10,6 +10,8 @@ ADR-0009.
 from typing import List
 
 from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy import or_
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 import models
@@ -107,7 +109,11 @@ def create_quality_inspection(
             defect_category=new_inspection.defect_category,
         ), db)
 
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(status_code=409, detail="Inspection number is already in use")
     db.refresh(new_inspection)
 
     return new_inspection
@@ -133,6 +139,22 @@ def update_quality_inspection(
 
     for key, value in data.items():
         setattr(inspection, key, value)
+
+    # passed/failed/rework/scrap are Column(Integer, default=0) WITHOUT nullable=False,
+    # and QualityInspectionUpdate types each Optional[int]=None — so a client can PATCH
+    # an explicit `{"passed_quantity": null}` (exclude_unset keeps an explicit null) and
+    # a legacy/raw-SQL row can already carry NULL. Left as None, the invariant check
+    # below did `None + failed` (TypeError -> unhandled 500) and, even past that, the
+    # response 500'd anyway because QualityInspectionResponse types these fields as
+    # non-optional int. A NULL count is the column's own default of 0 — coalesce before
+    # the check and the return, the same `or 0` the sibling generate_defect_escalations
+    # (#287) and the analytics rollups already apply to these very columns. This also
+    # heals a pre-existing NULL row on any update. inspected_quantity is nullable=False
+    # and not settable via this schema, so it needs no guard.
+    inspection.passed_quantity = inspection.passed_quantity or 0
+    inspection.failed_quantity = inspection.failed_quantity or 0
+    inspection.rework_quantity = inspection.rework_quantity or 0
+    inspection.scrap_quantity = inspection.scrap_quantity or 0
 
     if inspection.passed_quantity + inspection.failed_quantity > inspection.inspected_quantity:
         raise HTTPException(
@@ -172,17 +194,43 @@ def generate_defect_escalations(
     db: Session = Depends(_get_db),
     current_user: dict = Depends(require_roles(["Admin", "Supervisor"])),
 ):
-    inspections = db.query(models.QualityInspection).all()
+    # Bound the scan in SQL — only inspections that can actually raise an
+    # escalation come back, like the sibling generators (document-review,
+    # maintenance-overdue, late-order) which filter in SQL rather than pulling a
+    # growing table into Python. An escalation fires when inspected_quantity > 0
+    # AND (fail rate >= 10% OR there was scrap). "fail rate >= 10%" is
+    # failed/inspected*100 >= 10, i.e. failed*10 >= inspected (integer-exact, no
+    # rounding), so the SQL predicate matches the Python threshold below exactly.
+    # NULL failed/scrap columns make the predicate false and are simply excluded —
+    # matching the "no escalation" intent, and sidestepping a None comparison.
+    inspections = (
+        db.query(models.QualityInspection)
+        .filter(
+            models.QualityInspection.inspected_quantity > 0,
+            or_(
+                models.QualityInspection.failed_quantity * 10
+                >= models.QualityInspection.inspected_quantity,
+                models.QualityInspection.scrap_quantity > 0,
+            ),
+        )
+        .all()
+    )
     created = 0
 
     for inspection in inspections:
-        if inspection.inspected_quantity <= 0:
-            continue
-
-        fail_rate = (inspection.failed_quantity / inspection.inspected_quantity) * 100
-
-        if fail_rate < 10 and inspection.scrap_quantity <= 0:
-            continue
+        # failed/scrap/rework are Column(Integer, default=0) WITHOUT nullable=False,
+        # so a row written by raw SQL / a migration / an update that clears the field
+        # can legitimately be NULL. The SQL filter above selects a row when
+        # scrap_quantity > 0 REGARDLESS of failed_quantity, so an inspection with
+        # recorded scrap but a NULL failed_quantity reaches here — and the old
+        # `None / inspected_quantity` raised TypeError, 500-ing the whole generator.
+        # A NULL count is the column's own default of 0, so coalesce before dividing
+        # and rendering (matching the _int coalesce used across the engines).
+        failed = inspection.failed_quantity or 0
+        scrap = inspection.scrap_quantity or 0
+        rework = inspection.rework_quantity or 0
+        # inspected_quantity > 0 is guaranteed by the query, so the divide is safe.
+        fail_rate = (failed / inspection.inspected_quantity) * 100
 
         title = f"Quality issue: {inspection.inspection_no}"
 
@@ -209,7 +257,7 @@ def generate_defect_escalations(
             notes=(
                 f"Fail rate {round(fail_rate, 1)}%; "
                 f"defect category {inspection.defect_category or 'N/A'}; "
-                f"scrap {inspection.scrap_quantity}; rework {inspection.rework_quantity}"
+                f"scrap {scrap}; rework {rework}"
             ),
         )
 

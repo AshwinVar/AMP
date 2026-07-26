@@ -84,9 +84,14 @@ def _build_factory_context(db: Session, tenant: str) -> str:
 
     recs = db.query(models.ProductionRecord).order_by(models.ProductionRecord.id.desc()).limit(10).all()
     if recs:
-        from analytics_engine import calculate_oee_from_record
-        oees = [calculate_oee_from_record(r)["oee"] for r in recs]
-        lines.append(f"AVERAGE OEE (last {len(recs)} runs): {round(sum(oees) / len(oees))}%")
+        # Pooled plant OEE over the window (ratio of sums) — the ONE definition
+        # every dashboard uses (ADR-0010 / analytics_engine.pooled_oee). Averaging
+        # per-record OEE (mean of ratios) over-weights tiny runs and would ground
+        # the model in a number that disagrees with the OEE cards; that's the same
+        # bug already fixed in the executive-OEE rollup. Pooling also tolerates
+        # NULL counts, so the context never crashes on a sparse record.
+        from analytics_engine import pooled_oee
+        lines.append(f"PLANT OEE (pooled, last {len(recs)} runs): {pooled_oee(recs)['oee']}%")
 
     downs = db.query(models.DowntimeLog).order_by(models.DowntimeLog.id.desc()).limit(8).all()
     if downs:
@@ -103,18 +108,88 @@ def _build_factory_context(db: Session, tenant: str) -> str:
     # Low stock — tenant aware (GMATS uses its own 4-bucket inventory).
     if tenant == "GMATS":
         items = db.query(models.GmatsItem).filter(models.GmatsItem.tenant_code == "GMATS").all()
-        low = [i for i in items if (i.physical_stock - i.reserved_stock) <= i.reorder_level]
+        # physical_stock / reserved_stock / reorder_level are Column(Integer,
+        # default=0) WITHOUT nullable=False — any can be NULL, and `None - None` /
+        # `None <= None` raised TypeError. As above, this runs outside the copilot's
+        # try/except, so a NULL 500'd /ai/ask & /ai/report; exclude an item whose
+        # availability or level can't be computed rather than crash the context.
+        low = [i for i in items
+               if i.physical_stock is not None and i.reserved_stock is not None
+               and i.reorder_level is not None
+               and (i.physical_stock - i.reserved_stock) <= i.reorder_level]
         if low:
             lines.append("LOW STOCK:")
             for i in low:
                 lines.append(f"- {i.item_name}: available {i.physical_stock - i.reserved_stock} {i.unit} (reorder {i.reorder_level})")
     else:
         items = db.query(models.InventoryItem).all()
-        low = [i for i in items if i.current_stock <= i.reorder_level]
+        # current_stock / reorder_level are Column(Integer, default=0) WITHOUT
+        # nullable=False, so either can be NULL (a raw-SQL / migration / cleared
+        # write), and `None <= None` raised TypeError. _build_factory_context is
+        # called OUTSIDE the /ai/ask & /ai/report try/except that answers from the
+        # honest rules fallback, so that TypeError became an unhandled 500 — the
+        # exact failure the fallback exists to prevent. A NULL level can't say
+        # whether the item is low, so exclude it, matching generate_low_stock_
+        # escalations (whose SQL `current_stock <= reorder_level` yields NULL, and
+        # so excludes the row, when either side is NULL) and the recommendations
+        # generator.
+        low = [i for i in items
+               if i.current_stock is not None and i.reorder_level is not None
+               and i.current_stock <= i.reorder_level]
         if low:
             lines.append("LOW STOCK:")
             for i in low[:15]:
                 lines.append(f"- {i.item_name}: {i.current_stock} {i.unit} (reorder {i.reorder_level})")
+
+    # The raw tables above only cover machines / OEE / downtime / stock, so the
+    # LLM answered "the data doesn't contain that" for cost, orders, quality,
+    # maintenance, WIP and compliance questions. Compose the same read-models the
+    # dashboard uses so the copilot can actually answer the domains it advertises.
+    # Lazy imports avoid the import cycle (these pull in the pillar modules);
+    # best-effort so a hiccup in one summary can't blank the whole context.
+    try:
+        from ai.production import build_production_summary
+        from ai.cost import build_cost_summary
+        from ai.delivery import build_delivery_summary
+        from ai.quality import build_quality_summary
+        from ai.maintenance import build_maintenance_summary
+        from ai.flow import build_flow_summary
+        from ai.compliance import build_compliance_summary
+
+        prod = build_production_summary(db, tenant)
+        if prod["runs"]:
+            lines.append(f"PRODUCTION (7d): {prod['good']:,} good of {prod['total']:,} units "
+                         f"({prod['good_rate']}% good) over {prod['runs']} runs.")
+        cost = build_cost_summary(db, tenant)
+        if cost["has_data"]:
+            worst = cost["by_machine"][0]["name"] if cost["by_machine"] else "-"
+            lines.append(f"COST OF LOSSES (7d): ${cost['loss_cost']:,} total "
+                         f"(downtime ${cost['downtime_cost']:,}, scrap ${cost['scrap_cost']:,}); "
+                         f"costliest machine {worst}.")
+        deliv = build_delivery_summary(db, tenant)
+        if deliv["total"]:
+            lines.append(f"ORDERS/DELIVERY: {deliv['total']} orders, "
+                         f"{deliv['fulfillment_rate']}% fulfilled by units, "
+                         f"{deliv['late']} late, {deliv['at_risk']} at risk.")
+        qual = build_quality_summary(db, tenant)
+        if qual["inspections"]:
+            defect = qual["top_defects"][0]["category"] if qual["top_defects"] else "-"
+            lines.append(f"QUALITY (7d): first-pass yield {qual['first_pass_yield']}%, "
+                         f"fail rate {qual['fail_rate']}%, top defect {defect}.")
+        maint = build_maintenance_summary(db, tenant)
+        if maint["open"]:
+            lines.append(f"MAINTENANCE: {maint['open']} open task(s), {maint['overdue']} overdue, "
+                         f"{maint['pending_approval']} awaiting approval.")
+        flow = build_flow_summary(db, tenant)
+        if flow["total"]:
+            lines.append(f"WORK ORDERS: {flow['wip']} in progress, {flow['finished']} finished "
+                         f"({flow['total']} total).")
+        comp = build_compliance_summary(db, tenant)
+        if comp["total"]:
+            lines.append(f"COMPLIANCE: {comp['total']} controlled documents, "
+                         f"{comp['overdue']} review(s) overdue.")
+    except Exception as e:  # pragma: no cover - defensive; context must never 500 the copilot
+        print(f"[AI COPILOT] context enrichment skipped: {e}")
 
     return "\n".join(lines) if lines else "No factory data available yet."
 

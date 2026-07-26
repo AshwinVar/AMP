@@ -164,6 +164,28 @@ def tenant_config(db: Session = Depends(get_db), current_user: dict = Depends(ge
     return _config_dict(get_or_create_config(db, tenant))
 
 
+@router.get("/modules")
+def list_modules(db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
+    """The module manifest (modules.json) annotated for the caller's tenant: every
+    pack with its views and an ``enabled`` flag set from the tenant's subscription
+    (TenantConfig.enabled_modules). The frontend renders its nav from this, so a
+    module appears in a tenant's AMP only when its pack is in their plan — the
+    single, editable source of truth for the plug-and-play plugin system. Follows
+    the founder's company switcher (effective tenant), like /tenant-config."""
+    import module_manifest
+    import tenancy
+    tenant = tenancy.current_tenant() or current_user.get("tenant", "DEFAULT")
+    cfg = get_or_create_config(db, tenant)
+    enabled_ids = [m for m in (cfg.enabled_modules or "").split(",") if m]
+    return {
+        "tenant": tenant,
+        "plan": cfg.plan,
+        "enabled_modules": enabled_ids,
+        "packs": module_manifest.packs_for_tenant(enabled_ids),
+        "plan_bundles": module_manifest.plan_bundles(),
+    }
+
+
 @router.patch("/tenant-config")
 def update_tenant_config(payload: dict, db: Session = Depends(get_db),
                          current_user: dict = Depends(require_roles(["Admin"]))):
@@ -226,7 +248,38 @@ def update_any_tenant(tenant_code: str, payload: dict, db: Session = Depends(get
         mods = payload["enabled_modules"]
         c.enabled_modules = ",".join(mods) if isinstance(mods, list) else mods
     db.commit()
+    # A licence change must take effect at once — the plan-gate caches each
+    # tenant's packs for ~60s, so drop the stale entry (the self-service
+    # update_tenant_config already does this; this cross-tenant path didn't).
+    import plan_gate
+    plan_gate.invalidate(tenant_code)
     log_audit(db, current_user.get("sub"), "update_tenant_license", "tenant", None, tenant_code)
+    return _config_dict(c)
+
+
+@router.post("/tenant-configs/{tenant_code}/apply-plan")
+def apply_plan(tenant_code: str, payload: dict, db: Session = Depends(get_db),
+               current_user: dict = Depends(require_roles(["Admin"]))):
+    """Platform owner assigns a tenant a subscription plan, setting its module
+    bundle from the manifest (modules.json) in one call — so the tenant's AMP
+    immediately shows exactly that plan's modules. Validates the plan against the
+    manifest, invalidates the plan-gate cache so it takes effect at once, and
+    audits it. Founder (DEFAULT) only: it licenses another company."""
+    if current_user.get("tenant", "DEFAULT") != "DEFAULT":
+        raise HTTPException(status_code=403, detail="Platform owner only")
+    import module_manifest
+    import plan_gate
+    plan = (payload.get("plan") or "").strip().lower()
+    bundles = module_manifest.plan_bundles()
+    if plan not in bundles:
+        raise HTTPException(status_code=400,
+                            detail=f"Unknown plan '{plan}'. Choose one of: {', '.join(sorted(bundles))}")
+    c = get_or_create_config(db, tenant_code)
+    c.plan = plan
+    c.enabled_modules = ",".join(bundles[plan])
+    db.commit()
+    plan_gate.invalidate(tenant_code)
+    log_audit(db, current_user.get("sub"), "apply_plan", "tenant", None, f"{tenant_code}:{plan}")
     return _config_dict(c)
 
 # ── Audit log ─────────────────────────────────────────────────

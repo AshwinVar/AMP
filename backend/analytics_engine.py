@@ -56,7 +56,17 @@ def calculate_oee_from_record(record):
     )
 
     quality = record.good_count / record.total_count if record.total_count else 0
+
+    # Clamp EVERY component to [0, 1], matching pooled_oee (which caps a/p/q the
+    # same way). Only performance was capped here, so the per-record view could
+    # print availability > 100% (a machine that ran past its planned minutes,
+    # runtime > planned) or quality > 100% (good_count > total_count from a
+    # data-entry slip), and its OEE could top 100% — disagreeing with the pooled
+    # headline and violating the honesty rule (a metric can't exceed the bound
+    # the data supports). Reconciles the per-record view with the pooled one.
+    availability = min(availability, 1)
     performance = min(performance, 1)
+    quality = min(quality, 1)
 
     return {
         "availability": round(availability * 100),
@@ -223,9 +233,17 @@ def build_smart_alerts(machines, production_records, downtime_logs):
     for machine in machines:
         if machine.status == "Breakdown":
             add_alert("Breakdown", "Critical", machine.name, f"{machine.name} is currently in breakdown.")
-        if machine.utilization < 40:
+        # utilization is Column(Integer, default=0) WITHOUT nullable=False — a row
+        # written by raw SQL / a migration / an update that clears the field can be
+        # NULL, and `None < 40` raised TypeError, 500-ing every caller (/alerts/smart,
+        # the intelligence-summary export). A NULL means "no utilization recorded",
+        # which is NOT the same as a measured 0%: coercing it to 0 would fabricate a
+        # "critically low at 0%" alert from the column default (ADR-0010 — a default
+        # must never leak into a displayed value). So skip the utilization alert when
+        # there's no reading; the status-based alerts above still fire.
+        if machine.utilization is not None and machine.utilization < 40:
             add_alert("Low Utilization", "High", machine.name, f"{machine.name} utilization is critically low at {machine.utilization}%.")
-        elif machine.utilization < 50:
+        elif machine.utilization is not None and machine.utilization < 50:
             add_alert("Low Utilization", "Medium", machine.name, f"{machine.name} utilization is below 50%.")
 
     latest_by_machine = {}
@@ -249,8 +267,17 @@ def build_smart_alerts(machines, production_records, downtime_logs):
         elif reject_rate > 5:
             add_alert("Quality Loss", "Medium", machine_name, f"{machine_name} reject rate is above 5%.")
 
+    # "Recently" = the 50 most-recent logs by id, selected HERE rather than
+    # trusting the caller's ordering. /alerts/smart passes downtime newest-first
+    # (id desc, limit 100) and the report export oldest-first (.all()), so a
+    # positional [-50:] slice read OPPOSITE windows: on the newest-first caller it
+    # summed the OLDEST 50 and missed the very downtime this alert exists to flag.
+    # Sorting by id here makes "recent" mean recent for both callers.
+    recent_downtime = sorted(
+        downtime_logs, key=lambda log: getattr(log, "id", 0) or 0, reverse=True
+    )[:50]
     downtime_by_machine = defaultdict(int)
-    for log in downtime_logs[-50:]:
+    for log in recent_downtime:
         downtime_by_machine[log.machine_id] += parse_duration_to_minutes(log.duration)
 
     for machine_id, minutes in downtime_by_machine.items():
@@ -299,7 +326,9 @@ def generate_alerts(db: Session):
         if machine.status == "Breakdown":
             add_alert("Breakdown", "High", machine.name, f"{machine.name} is currently in breakdown")
 
-        if machine.utilization < 50:
+        # NULL utilization = no reading (see build_smart_alerts): skip rather than
+        # crash on `None < 50` or fabricate a 0% alert from the column default.
+        if machine.utilization is not None and machine.utilization < 50:
             add_alert("Low Utilization", "Medium", machine.name, f"{machine.name} utilization is below 50%")
 
     latest_by_machine = {}

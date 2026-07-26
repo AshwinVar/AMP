@@ -68,7 +68,34 @@ def test_search_finds_entities_across_types():
     assert search.build_search(db, "DEFAULT", "zzzznope")["results"] == []
 
 
+def test_per_type_results_are_bounded_and_newest_first():
+    """A broad match must not hydrate the whole (growing) table: each type is
+    capped in SQL at LIMIT_PER_TYPE, and the capped page is the NEWEST matches
+    (deterministic id-desc order), not an arbitrary DB-order subset."""
+    db = _fresh_session()
+    # 12 customer orders all matching "WIDGET" — more than LIMIT_PER_TYPE (4).
+    for n in range(1, 13):
+        db.add(models.CustomerOrder(order_no=f"CO-{n:04d}", customer_name="Acme",
+                                    product_name="WIDGET-X", order_quantity=10,
+                                    dispatched_quantity=0, status="Pending",
+                                    due_date=datetime.utcnow().date()))
+    db.commit()
+
+    r = search.build_search(db, "DEFAULT", "WIDGET")
+    orders = [h for h in r["results"] if h["type"] == "customer order"]
+    # Bounded per type, and (with 10 total across types) not more than LIMIT_TOTAL.
+    assert len(orders) == search.LIMIT_PER_TYPE
+    assert len(r["results"]) <= search.LIMIT_TOTAL
+    # Newest first: the four highest ids (the last four inserted), in id-desc order.
+    ids = [h["id"] for h in orders]
+    assert ids == sorted(ids, reverse=True)
+    all_ids = [o.id for o in db.query(models.CustomerOrder).all()]
+    assert set(ids) == set(sorted(all_ids)[-search.LIMIT_PER_TYPE:])
+
+
 if __name__ == "__main__":
     test_search_finds_entities_across_types()
+    test_per_type_results_are_bounded_and_newest_first()
     print("SEARCH OK: one query across machines/work orders/customer orders/inventory/maintenance/"
-          "escalations/documents, typed hits with views; case-insensitive; empty-safe")
+          "escalations/documents, typed hits with views; case-insensitive; empty-safe; "
+          "each type bounded in SQL and newest-first")

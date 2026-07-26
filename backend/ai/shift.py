@@ -15,16 +15,23 @@ name = "shift"
 WINDOW_DAYS = 7
 
 
-def _pct(part, whole):
-    return round(part / whole * 100) if whole else 0
+def _attainment(actual, target):
+    """Actual as a % of target, or None when there's no target to measure
+    against. A shift with no planned output has no attainment — scoring it 0%
+    would flag an unplanned shift as the "worst" performer (ADR-0007: never
+    present a metric the data can't support)."""
+    return round(actual / target * 100) if target else None
 
 
 def _base_shift(shift_name: str) -> str:
-    """Shift entries are logged as "Shift A - 17 Jul"; group by the base name."""
+    """Shift entries are logged as "Shift A - 17 Jul"; group by the base name.
+    None/blank-safe: a missing name collapses to "" rather than crashing the
+    separator scan."""
+    name = (shift_name or "").strip()
     for sep in (" – ", " - ", " — "):   # en dash, hyphen, em dash
-        if sep in shift_name:
-            return shift_name.split(sep)[0].strip()
-    return (shift_name or "").strip()
+        if sep in name:
+            return name.split(sep)[0].strip()
+    return name
 
 
 def build_shift_summary(db, tenant: str) -> dict:
@@ -43,18 +50,24 @@ def build_shift_summary(db, tenant: str) -> dict:
 
     shifts = sorted(
         ({"shift": b, "target": v["target"], "actual": v["actual"], "entries": v["entries"],
-          "attainment": _pct(v["actual"], v["target"])} for b, v in agg.items()),
+          "attainment": _attainment(v["actual"], v["target"])} for b, v in agg.items()),
         key=lambda x: x["shift"],
     )
     total_target = sum(s["target"] for s in shifts)
     total_actual = sum(s["actual"] for s in shifts)
+    # Best/worst rank only the shifts with a target to measure against — an
+    # unplanned shift (no target) has no attainment and must never surface as the
+    # "worst" performer just because its rate defaulted to 0.
+    measurable = [s for s in shifts if s["attainment"] is not None]
     return {
         "days": WINDOW_DAYS,
         "entries": len(rows),
-        "attainment": _pct(total_actual, total_target),
+        # None (not 0%) when nothing had a target in the window: no plan, no
+        # attainment. total_target/total_actual stay the true grand totals.
+        "attainment": _attainment(total_actual, total_target),
         "target": total_target,
         "actual": total_actual,
         "shifts": shifts,
-        "best": max(shifts, key=lambda s: s["attainment"], default=None),
-        "worst": min(shifts, key=lambda s: s["attainment"], default=None),
+        "best": max(measurable, key=lambda s: s["attainment"], default=None),
+        "worst": min(measurable, key=lambda s: s["attainment"], default=None),
     }

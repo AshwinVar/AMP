@@ -8,6 +8,7 @@ argument. Peeled out of main.py per ADR-0009.
 from typing import List
 
 from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 import models
@@ -52,7 +53,11 @@ def create_production_plan(
 
     new_plan = models.ProductionPlan(**plan.model_dump())
     db.add(new_plan)
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(status_code=409, detail="Plan number is already in use")
     db.refresh(new_plan)
     return new_plan
 
@@ -129,7 +134,11 @@ def create_production_schedule(
 
     new_schedule = models.ProductionSchedule(**schedule.model_dump())
     db.add(new_schedule)
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(status_code=409, detail="Schedule number is already in use")
     db.refresh(new_schedule)
     return new_schedule
 

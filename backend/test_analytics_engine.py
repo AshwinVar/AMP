@@ -56,6 +56,29 @@ def test_calculate_oee_zero_guards_and_perf_cap():
     print("PASS calculate_oee_from_record guards divide-by-zero + caps performance")
 
 
+def test_calculate_oee_caps_availability_and_quality():
+    # A machine that ran PAST its planned minutes (runtime 500 > planned 480)
+    # must not report availability above 100% — availability 500/480 = 1.0417
+    # clamps to 1.0 -> 100 (was 104). performance (30*700)/(500*60) = .70 -> 70;
+    # quality 690/700 = .9857 -> 99; oee = 1.0 * .70 * .9857 = .69 -> 69.
+    over_run = ae.calculate_oee_from_record(_rec(
+        runtime_minutes=500, planned_minutes=480,
+        ideal_cycle_time_seconds=30, total_count=700, good_count=690,
+    ))
+    assert over_run["availability"] == 100, over_run
+    assert over_run["oee"] == 69, over_run
+    # good_count 110 > total_count 100 (a data-entry slip): quality 1.10 clamps
+    # to 1.0 -> 100 (was 110). availability 100/100 = 1.0 -> 100; performance
+    # (30*100)/(100*60) = .50 -> 50; oee = 1.0 * .50 * 1.0 = .50 -> 50.
+    over_good = ae.calculate_oee_from_record(_rec(
+        runtime_minutes=100, planned_minutes=100,
+        ideal_cycle_time_seconds=30, total_count=100, good_count=110,
+    ))
+    assert over_good["quality"] == 100, over_good
+    assert over_good["oee"] == 50, over_good
+    print("PASS calculate_oee_from_record caps availability + quality at 100%")
+
+
 def test_build_shift_kpis():
     rows = ae.build_shift_kpis([
         SimpleNamespace(shift_name="A", target_output=100, actual_output=90),
@@ -183,6 +206,77 @@ def test_build_smart_alerts_severity_and_dedup():
     print(f"PASS build_smart_alerts raises the right severities and dedups ({len(alerts)} alerts)")
 
 
+def test_build_smart_alerts_downtime_window_is_recent_not_caller_order():
+    """The 'accumulated downtime recently' alert must reflect the MOST-RECENT
+    logs no matter how the caller ordered the list. /alerts/smart passes them
+    newest-first (id desc, limit 100); a positional [-50:] slice on that read the
+    OLDEST 50 and missed recent downtime, while the report export (.all(),
+    oldest-first) read the newest 50 — the same helper gave opposite windows.
+    Sorting by id inside the helper makes the window order-independent."""
+    machine = SimpleNamespace(id=1, name="CNC-1", status="Running", utilization=95)
+    # 50 recent logs (ids 51..100), 1 min each = 50 min recent -> BELOW the 60 min
+    # threshold, so no alert. 10 OLD logs (ids 1..10), 100 min each = 1000 min,
+    # which WOULD fire if (wrongly) counted. Independently derived: recent = 50.
+    recent = [SimpleNamespace(id=i, machine_id=1, reason="Minor stop", duration="1m")
+              for i in range(51, 101)]
+    old = [SimpleNamespace(id=i, machine_id=1, reason="Breakdown", duration="100m")
+           for i in range(1, 11)]
+    pool = recent + old
+    for label, logs in [
+        ("newest-first", sorted(pool, key=lambda l: l.id, reverse=True)),  # like /alerts/smart
+        ("oldest-first", sorted(pool, key=lambda l: l.id)),                # like the report export
+    ]:
+        alerts = ae.build_smart_alerts([machine], [], logs)
+        fired = any(a["type"] == "Downtime Escalation" for a in alerts)
+        assert not fired, f"{label}: recent 50 logs = 50 min (<60) must NOT fire; the 1000 min is stale"
+
+    # And when the RECENT logs themselves exceed 60 min, it fires in either order:
+    # 50 x 2 min = 100 min recent.
+    heavy = [SimpleNamespace(id=i, machine_id=1, reason="Breakdown", duration="2m")
+             for i in range(51, 101)]
+    for logs in (sorted(heavy, key=lambda l: l.id, reverse=True),
+                 sorted(heavy, key=lambda l: l.id)):
+        alerts = ae.build_smart_alerts([machine], [], logs)
+        assert any(a["type"] == "Downtime Escalation" for a in alerts), "recent 100 min must fire"
+    print("PASS build_smart_alerts downtime window = most-recent 50 logs, order-independent")
+
+
+def test_build_smart_alerts_empty_downtime_is_safe():
+    machine = SimpleNamespace(id=1, name="CNC-1", status="Running", utilization=95)
+    alerts = ae.build_smart_alerts([machine], [], [])
+    assert not any(a["type"] == "Downtime Escalation" for a in alerts)
+    print("PASS build_smart_alerts is safe on empty downtime")
+
+
+def test_build_smart_alerts_null_utilization_is_safe_and_honest():
+    """utilization is Column(Integer, default=0) WITHOUT nullable=False, so a row
+    written by raw SQL / a cleared update can be NULL. `None < 40` used to raise
+    TypeError and 500 /alerts/smart. A NULL means "no reading", which is NOT a
+    measured 0%: the engine must skip the utilization alert (not fabricate a
+    'critically low at 0%' from the column default), while still firing the
+    status-based alerts. Expected counts are derived by hand, not read back."""
+    machines = [
+        SimpleNamespace(id=1, name="No-Reading", status="Running", utilization=None),
+        SimpleNamespace(id=2, name="Breakdown-No-Reading", status="Breakdown", utilization=None),
+        SimpleNamespace(id=3, name="Genuinely-Low", status="Running", utilization=30),
+    ]
+    alerts = ae.build_smart_alerts(machines, [], [])          # no records, no downtime
+    kinds = {(a["machine"], a["type"]) for a in alerts}
+
+    # NULL-utilization machines raise NO "Low Utilization" alert (not a 0% one).
+    assert ("No-Reading", "Low Utilization") not in kinds, kinds
+    assert ("Breakdown-No-Reading", "Low Utilization") not in kinds, kinds
+    # status-based alerts are unaffected by the missing reading.
+    assert ("Breakdown-No-Reading", "Breakdown") in kinds, kinds
+    # a real low reading still fires (util 30 < 40 -> High).
+    assert ("Genuinely-Low", "Low Utilization") in kinds, kinds
+    # exactly two alerts total: the breakdown + the one genuine low-utilization.
+    assert len(alerts) == 2, alerts
+    # no fabricated "0%" leaked into any message.
+    assert not any("at 0%" in a["message"] for a in alerts), alerts
+    print("PASS build_smart_alerts skips the utilization alert on a NULL reading (no crash, no fake 0%)")
+
+
 def test_calculate_fallback_oee_monotonic():
     assert ae.calculate_fallback_oee(80) == round((80 / 100) * 0.9 * 0.95 * 100)
     assert ae.calculate_fallback_oee(90) > ae.calculate_fallback_oee(50)
@@ -193,6 +287,7 @@ if __name__ == "__main__":
     test_parse_duration_to_minutes()
     test_calculate_oee_known_values()
     test_calculate_oee_zero_guards_and_perf_cap()
+    test_calculate_oee_caps_availability_and_quality()
     test_build_shift_kpis()
     test_build_oee_trends_indexes_and_names_machines()
     test_build_management_summary()
@@ -201,5 +296,8 @@ if __name__ == "__main__":
     test_oee_direction_is_one_shared_definition_with_a_dead_band()
     test_build_management_summary_empty_is_safe()
     test_build_smart_alerts_severity_and_dedup()
+    test_build_smart_alerts_downtime_window_is_recent_not_caller_order()
+    test_build_smart_alerts_empty_downtime_is_safe()
+    test_build_smart_alerts_null_utilization_is_safe_and_honest()
     test_calculate_fallback_oee_monotonic()
     print("ALL ANALYTICS-ENGINE TESTS PASSED")

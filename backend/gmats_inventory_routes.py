@@ -59,7 +59,21 @@ def _item_dict(db, item):
         a.alias_name
         for a in db.query(models.GmatsAlias).filter(models.GmatsAlias.item_id == item.id).all()
     ]
-    available = item.physical_stock - item.reserved_stock
+    # physical_stock / reserved_stock / reorder_level / purchase_rate are
+    # Column(Integer, default=0) WITHOUT nullable=False (models.py) — the ORM
+    # default only fills a value the inserter omitted, so a row written by raw SQL,
+    # a migration, or a bulk import that left the cell blank can legitimately be
+    # NULL. `None - None` (available) and `None <= None` (reorder_needed) then raised
+    # TypeError — an unhandled 500 that took out the ENTIRE /gmats/items list (and,
+    # via gmats_summary, the summary card), because this shared serializer runs once
+    # per item and one NULL row poisons the whole response. Coalesce each to the
+    # column's own default of 0 — the same `or 0` guard the core inventory ledger
+    # already applies to its nullable stock columns (inventory_routes, #311). The
+    # response also stops emitting a null for a field the schema treats as an int.
+    physical = item.physical_stock or 0
+    reserved = item.reserved_stock or 0
+    reorder = item.reorder_level or 0
+    available = physical - reserved
     return {
         "id": item.id,
         "tenant_code": item.tenant_code,
@@ -67,15 +81,15 @@ def _item_dict(db, item):
         "item_name": item.item_name,
         "category": item.category,
         "unit": item.unit,
-        "physical_stock": item.physical_stock,
-        "reserved_stock": item.reserved_stock,
+        "physical_stock": physical,
+        "reserved_stock": reserved,
         "available_stock": available,
-        "reorder_level": item.reorder_level,
-        "purchase_rate": item.purchase_rate,
+        "reorder_level": reorder,
+        "purchase_rate": item.purchase_rate or 0,
         "location": item.location,
         "supplier": item.supplier,
         "aliases": aliases,
-        "reorder_needed": available <= item.reorder_level,
+        "reorder_needed": available <= reorder,
     }
 
 # ── Items / Stock ─────────────────────────────────────────────
@@ -92,9 +106,17 @@ def gmats_items(tenant: str = "GMATS", db: Session = Depends(get_db), current_us
 def gmats_summary(tenant: str = "GMATS", db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
     tenant = _effective_tenant(current_user, tenant)
     rows = db.query(models.GmatsItem).filter(models.GmatsItem.tenant_code == tenant).all()
-    physical = sum(r.physical_stock for r in rows)
-    reserved = sum(r.reserved_stock for r in rows)
-    reorder_needed = sum(1 for r in rows if (r.physical_stock - r.reserved_stock) <= r.reorder_level)
+    # physical_stock / reserved_stock / reorder_level are nullable Integers
+    # (default=0, no nullable=False) — coalesce each to 0 so a single NULL row can't
+    # 500 the whole summary via `sum(None ...)` or `None - None`, matching _item_dict
+    # above and the ledger's `or 0` guard (#311). total_available stays the reconciled
+    # (physical - reserved) that /gmats/items reports per item.
+    physical = sum((r.physical_stock or 0) for r in rows)
+    reserved = sum((r.reserved_stock or 0) for r in rows)
+    reorder_needed = sum(
+        1 for r in rows
+        if ((r.physical_stock or 0) - (r.reserved_stock or 0)) <= (r.reorder_level or 0)
+    )
     open_proformas = db.query(models.GmatsProforma).filter(
         models.GmatsProforma.tenant_code == tenant, models.GmatsProforma.status == "Open"
     ).count()
@@ -203,7 +225,14 @@ def gmats_resolve(name: str, tenant: str = "GMATS", db: Session = Depends(get_db
 def gmats_proformas(tenant: str = "GMATS", db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
     tenant = _effective_tenant(current_user, tenant)
     rows = db.query(models.GmatsProforma).filter(models.GmatsProforma.tenant_code == tenant).order_by(models.GmatsProforma.id.desc()).all()
-    items = {i.id: i for i in db.query(models.GmatsItem).all()}
+    # Resolve line item names from THIS tenant's items only. GmatsItem is not in
+    # tenancy.SCOPED_MODELS, so an unfiltered .all() loads every company's items
+    # into memory (an unbounded cross-tenant scan) and would leak a foreign
+    # tenant's item name into this view if a line ever referenced a foreign id.
+    items = {
+        i.id: i
+        for i in db.query(models.GmatsItem).filter(models.GmatsItem.tenant_code == tenant).all()
+    }
     out = []
     for p in rows:
         lines = db.query(models.GmatsProformaLine).filter(models.GmatsProformaLine.proforma_id == p.id).all()
@@ -289,11 +318,30 @@ def gmats_generate_invoice(pid: int, db: Session = Depends(get_db), current_user
         raise HTTPException(status_code=400, detail="Only open proformas can be invoiced")
     _guard_record(current_user, p.tenant_code)
     lines = db.query(models.GmatsProformaLine).filter(models.GmatsProformaLine.proforma_id == pid).all()
+    # Guard the TOTAL physical needed per item BEFORE deducting (summed across
+    # lines, so duplicate lines for one item are covered), then deduct exactly.
+    # gmats_create_min already guards issue this way; without it here, invoicing
+    # more than the physical stock silently under-deducts via max(0, ...), and
+    # gmats_void_invoice later restores the FULL line qty — inflating stock by the
+    # clamped shortfall (phantom stock). An exact deduction makes void a true inverse.
+    from collections import defaultdict
+    needed: dict = defaultdict(int)
     for l in lines:
-        item = db.query(models.GmatsItem).filter(models.GmatsItem.id == l.item_id).first()
+        needed[l.item_id] += l.qty
+    items = {}
+    for item_id, qty in needed.items():
+        item = db.query(models.GmatsItem).filter(models.GmatsItem.id == item_id).first()
         if item:
-            item.physical_stock = max(0, item.physical_stock - l.qty)   # DEDUCT physical
-            item.reserved_stock = max(0, item.reserved_stock - l.qty)   # clear reservation
+            if qty > item.physical_stock:
+                raise HTTPException(status_code=400,
+                                    detail=f"Cannot invoice {qty} {item.unit} of {item.item_name}: "
+                                           f"only {item.physical_stock} physical")
+            items[item_id] = item
+    for l in lines:
+        item = items.get(l.item_id)
+        if item:
+            item.physical_stock -= l.qty                              # exact (guard guarantees >= 0)
+            item.reserved_stock = max(0, item.reserved_stock - l.qty)  # clear reservation
     count = db.query(models.GmatsInvoice).filter(models.GmatsInvoice.tenant_code == p.tenant_code).count()
     inv = models.GmatsInvoice(
         tenant_code=p.tenant_code,
@@ -314,7 +362,12 @@ def gmats_generate_invoice(pid: int, db: Session = Depends(get_db), current_user
 def gmats_min_list(tenant: str = "GMATS", db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
     tenant = _effective_tenant(current_user, tenant)
     rows = db.query(models.GmatsMIN).filter(models.GmatsMIN.tenant_code == tenant).order_by(models.GmatsMIN.id.desc()).all()
-    items = {i.id: i for i in db.query(models.GmatsItem).all()}
+    # Same tenant-scoping as the proforma listing: only resolve names from this
+    # tenant's items, never every company's (see gmats_proformas above).
+    items = {
+        i.id: i
+        for i in db.query(models.GmatsItem).filter(models.GmatsItem.tenant_code == tenant).all()
+    }
     out = []
     for m in rows:
         lines = db.query(models.GmatsMINLine).filter(models.GmatsMINLine.min_id == m.id).all()

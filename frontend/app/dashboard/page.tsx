@@ -61,6 +61,7 @@ import OrdersDispatchSection from "../../components/OrdersDispatchSection";
 import PurchasingSection from "../../components/PurchasingSection";
 import DocumentsSection from "../../components/DocumentsSection";
 import MaintenanceSection from "../../components/MaintenanceSection";
+import MaintenanceForecastCard from "../../components/MaintenanceForecastCard";
 import SchedulingSection from "../../components/SchedulingSection";
 import IoTCommandSection from "../../components/IoTCommandSection";
 import AIInsightsSection from "../../components/AIInsightsSection";
@@ -70,6 +71,7 @@ import AgentActivitySection from "../../components/AgentActivitySection";
 import AgentRoiSection from "../../components/AgentRoiSection";
 import MachineHealthSection from "../../components/MachineHealthSection";
 import SaaSAdminSection from "../../components/SaaSAdminSection";
+import ModuleLicensingPanel from "../../components/ModuleLicensingPanel";
 import CostingSection from "../../components/CostingSection";
 import OperatorTerminalSection from "../../components/OperatorTerminalSection";
 import NotificationsSection from "../../components/NotificationsSection";
@@ -104,9 +106,13 @@ import {
   MODULE_CATALOG,
   PLAN_MODULES,
   getEnabledModules,
-  isViewEnabled,
-  getViewModule,
   canRoleSeeView,
+  navItemsFromPacks,
+  catalogFromPacks,
+  isViewEnabledIn,
+  getViewModuleIn,
+  type NavItem,
+  type ModulesResponse,
   type PlanName,
 } from "../../lib/modules";
 import LockedModuleView from "../../components/LockedModuleView";
@@ -216,7 +222,7 @@ export default function DashboardPage() {
   // highlight + scroll to it when opened from an "⚡ escalated" pill.
   const [focusedEscalationId, setFocusedEscalationId] = useState<number | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
-  const [searchResults, setSearchResults] = useState<typeof NAV_ITEMS>([]);
+  const [searchResults, setSearchResults] = useState<NavItem[]>([]);
   // Global entity search: typed hits (machines, orders, documents, …) from
   // GET /search, each carrying the view that opens it. Debounced.
   type EntityHit = { type: string; id: number; label: string; sublabel: string; view: string };
@@ -530,11 +536,24 @@ export default function DashboardPage() {
   ) as ReturnType<typeof getEnabledModules>;
   const brandName = tenantCfg?.brand_name || "AMP";
 
+  // The plug-and-play nav: rendered from the backend module manifest (GET
+  // /modules, sourced from modules.json) so adding/removing/relabelling a
+  // module needs no frontend change. Falls back to the compiled-in tables when
+  // /modules can't be reached, so the sidebar can never come up empty.
+  const [modules, setModules] = useState<ModulesResponse | null>(null);
+  useEffect(() => {
+    apiGet<ModulesResponse>("/modules").then(setModules).catch(() => {});
+  }, []);
+  const navItems: NavItem[] =
+    modules && modules.packs?.length ? navItemsFromPacks(modules.packs) : NAV_ITEMS;
+  const moduleCatalog =
+    modules && modules.packs?.length ? catalogFromPacks(modules.packs) : MODULE_CATALOG;
+
   // If the licence that just loaded doesn't cover the current view (e.g. a
   // Starter-plan tenant landing on the legacy inventory default), snap to
   // Overview instead of a locked-module screen.
   useEffect(() => {
-    if (tenantCfg && !isViewEnabled(activeView, enabledModules)) setActiveView("overview");
+    if (tenantCfg && !isViewEnabledIn(activeView, enabledModules, navItems)) setActiveView("overview");
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tenantCfg]);
 
@@ -1765,7 +1784,7 @@ export default function DashboardPage() {
   }));
 
   const activeLabel =
-    NAV_ITEMS.find((item) => item.key === activeView)?.label || "Overview";
+    navItems.find((item) => item.key === activeView)?.label || "Overview";
 
   function renderSection(viewKey: string, node: React.ReactNode) {
     if (activeView !== viewKey) return null;
@@ -1781,8 +1800,8 @@ export default function DashboardPage() {
         </div>
       );
     }
-    if (!isViewEnabled(viewKey, enabledModules)) {
-      return <LockedModuleView moduleKey={getViewModule(viewKey)} />;
+    if (!isViewEnabledIn(viewKey, enabledModules, navItems)) {
+      return <LockedModuleView moduleKey={getViewModuleIn(viewKey, navItems)} />;
     }
     return <>{node}</>;
   }
@@ -1800,8 +1819,8 @@ export default function DashboardPage() {
   </div>
 
   <nav className="phase29-nav">
-    {MODULE_CATALOG.map((mod) => {
-      const items = NAV_ITEMS.filter(
+    {moduleCatalog.map((mod) => {
+      const items = navItems.filter(
         (n) => n.module === mod.key && canRoleSeeView(n.key, role, isFounder)
       );
       if (items.length === 0) return null;   // hide groups with nothing for this role
@@ -1860,7 +1879,7 @@ export default function DashboardPage() {
           setSearchQuery(q);
           setSearchResults(
             q.trim().length > 0
-              ? NAV_ITEMS.filter(
+              ? navItems.filter(
                   (n) =>
                     n.label.toLowerCase().includes(q.toLowerCase()) &&
                     canRoleSeeView(n.key, role, isFounder)
@@ -2739,7 +2758,10 @@ export default function DashboardPage() {
       ))}
 
       {renderSection("cmms", (
-        <MaintenanceSection machines={machines} tasks={maintenanceTasks} analytics={maintenanceAnalytics} form={maintenanceForm} setForm={setMaintenanceForm} createTask={createMaintenanceTask} updateTask={updateMaintenanceTask} deleteTask={isAdmin ? deleteMaintenanceTask : undefined} generateOverdueEscalations={isAdminOrSupervisor ? generateMaintenanceOverdueEscalations : async () => {}} getMachineName={getMachineName} />
+        <>
+          <div className="mt-8"><MaintenanceForecastCard /></div>
+          <MaintenanceSection machines={machines} tasks={maintenanceTasks} analytics={maintenanceAnalytics} form={maintenanceForm} setForm={setMaintenanceForm} createTask={createMaintenanceTask} updateTask={updateMaintenanceTask} deleteTask={isAdmin ? deleteMaintenanceTask : undefined} generateOverdueEscalations={isAdminOrSupervisor ? generateMaintenanceOverdueEscalations : async () => {}} getMachineName={getMachineName} />
+        </>
       ))}
 
       {renderSection("scheduling", (
@@ -2760,7 +2782,10 @@ export default function DashboardPage() {
       ))}
 
       {renderSection("saas", (
-        <SaaSAdminSection tenants={tenants} analytics={saasAnalytics} form={tenantForm} setForm={setTenantForm} createTenant={isAdmin ? createTenant : async () => {}} updateTenant={isAdmin ? updateTenant : async () => {}} deleteTenant={isAdmin ? deleteTenant : undefined} provisionAdmin={isAdmin ? provisionAdmin : undefined} adminCreds={adminCreds} clearAdminCreds={() => setAdminCreds(null)} />
+        <>
+          <SaaSAdminSection tenants={tenants} analytics={saasAnalytics} form={tenantForm} setForm={setTenantForm} createTenant={isAdmin ? createTenant : async () => {}} updateTenant={isAdmin ? updateTenant : async () => {}} deleteTenant={isAdmin ? deleteTenant : undefined} provisionAdmin={isAdmin ? provisionAdmin : undefined} adminCreds={adminCreds} clearAdminCreds={() => setAdminCreds(null)} />
+          <div className="mt-8"><ModuleLicensingPanel /></div>
+        </>
       ))}
 
       {renderSection("costing", (

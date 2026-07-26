@@ -67,6 +67,14 @@ def get_downtime_reason(reason: str, db: Session = Depends(_get_db), current_use
     return ai.downtime.build_downtime_reason(db, request_tenant(current_user), reason)
 
 
+@router.get("/downtime-trend")
+def get_downtime_trend(db: Session = Depends(_get_db), current_user: dict = Depends(get_current_user)):
+    # Downtime trend (ADR-0007): this week's lost minutes vs the 7 days before,
+    # with the machines and reasons that moved it — the downtime twin of the
+    # quality trend.
+    return ai.downtime.build_downtime_trend(db, request_tenant(current_user))
+
+
 @router.get("/quality-summary")
 def get_quality_summary(db: Session = Depends(_get_db), current_user: dict = Depends(get_current_user)):
     # Quality summary (ADR-0007): first-pass yield, fail rate, a defect Pareto,
@@ -104,6 +112,15 @@ def get_oee_summary(db: Session = Depends(_get_db), current_user: dict = Depends
     return ai.oee.build_oee_summary(db, request_tenant(current_user))
 
 
+@router.get("/oee-trend")
+def get_oee_trend(db: Session = Depends(_get_db), current_user: dict = Depends(get_current_user)):
+    # OEE trend (ADR-0007): this week's pooled OEE against last week's on the same
+    # output-weighted basis, the direction (shared ±2pt dead-band), and the
+    # components and machines that moved it — the headline direction signal above
+    # the downtime / quality / cost trends.
+    return ai.oee.build_oee_trend(db, request_tenant(current_user))
+
+
 @router.get("/inventory-summary")
 def get_inventory_summary(db: Session = Depends(_get_db), current_user: dict = Depends(get_current_user)):
     # Inventory summary (ADR-0007): supply risk — items at/below reorder level
@@ -126,6 +143,25 @@ def get_inventory_part(item_code: str, db: Session = Depends(_get_db), current_u
     # days of cover behind its summary row, the daily in/out movement, the open
     # POs on order and whether the earliest lands before the projected stockout.
     return ai.coverage.build_part_runway(db, request_tenant(current_user), item_code)
+
+
+@router.get("/stock-health")
+def get_stock_health(db: Session = Depends(_get_db), current_user: dict = Depends(get_current_user)):
+    # Stock health (ADR-0007): the capital-tied-up side of inventory the reorder
+    # and days-of-cover cards never show — items sitting with no movement (dead)
+    # or held far beyond need (overstocked), the units tied up in each, and the
+    # items to review first. Measured in units/days only (the schema has no cost).
+    return ai.stock_health.build_stock_health(db, request_tenant(current_user))
+
+
+@router.get("/stock-accuracy")
+def get_stock_accuracy(db: Session = Depends(_get_db), current_user: dict = Depends(get_current_user)):
+    # Inventory record accuracy (ADR-0007): the cycle-count read-model the reorder
+    # and stock-health cards assume but never check — of the items counted in the
+    # last 90 days, the share whose book matched the shelf (IRA%), how much of the
+    # master has been counted at all, the net/absolute unit variance found, and the
+    # items whose records are furthest off. Measured in units/% only (no unit cost).
+    return ai.stock_accuracy.build_stock_accuracy(db, request_tenant(current_user))
 
 
 @router.get("/flow-summary")
@@ -237,6 +273,15 @@ def get_cost_summary(db: Session = Depends(_get_db), current_user: dict = Depend
     return ai.cost.build_cost_summary(db, request_tenant(current_user))
 
 
+@router.get("/cost-trend")
+def get_cost_trend(db: Session = Depends(_get_db), current_user: dict = Depends(get_current_user)):
+    # Cost-of-losses trend (ADR-0007): this week's loss cost (downtime + scrap at
+    # standard rates) against last week's on the same per-record basis, the
+    # direction, the machines and the driver (downtime vs scrap) that moved it —
+    # the money twin of the downtime and quality trends.
+    return ai.cost.build_cost_trend(db, request_tenant(current_user))
+
+
 @router.get("/handover")
 def get_handover(db: Session = Depends(_get_db), current_user: dict = Depends(get_current_user)):
     # Shift handover (ADR-0007): output + OEE, open work to carry over, attention
@@ -272,6 +317,24 @@ def get_maintenance_execution(db: Session = Depends(_get_db), current_user: dict
     # planned-vs-reactive mix, the overdue backlog with aging, a worst-first
     # per-machine breakdown, and the overdue tasks to chase.
     return ai.maintenance.build_maintenance_execution(db, request_tenant(current_user))
+
+
+@router.get("/maintenance-forecast")
+def get_maintenance_forecast(db: Session = Depends(_get_db), current_user: dict = Depends(get_current_user)):
+    # Maintenance forward schedule (ADR-0007): open tasks due over the next 14 days
+    # laid out day by day, the overdue backlog to clear first, the busiest day, and
+    # the per-machine load — the forward complement to the open-load summary and the
+    # past-compliance execution read-models.
+    return ai.maintenance.build_maintenance_forecast(db, request_tenant(current_user))
+
+
+@router.get("/escalation-summary")
+def get_escalation_summary(db: Session = Depends(_get_db), current_user: dict = Depends(get_current_user)):
+    # Escalation queue (ADR-0005 / ADR-0007): the open backlog — count, severity /
+    # department / source / aging breakdowns and the most urgent to action — plus a
+    # 30-day resolution scorecard (raised, resolved, rate, and the measured average
+    # time to close from the real resolved_at timestamp).
+    return ai.escalations.build_escalation_summary(db, request_tenant(current_user))
 
 
 @router.get("/reliability-summary")
@@ -323,6 +386,23 @@ def global_search(q: str = "", db: Session = Depends(_get_db), current_user: dic
     # orders, inventory, maintenance, escalations and documents — each hit
     # carrying the dashboard view that opens it.
     return ai.search.build_search(db, request_tenant(current_user), q)
+
+
+@router.get("/operator-summary")
+def get_operator_summary(db: Session = Depends(_get_db), current_user: dict = Depends(get_current_user)):
+    # Operator performance (ADR-0007): the labour read-model over the operator
+    # terminal log — per-operator jobs, good/rejected units and quality rate over
+    # the last 7 days, worst quality (on real volume) first, with plant totals.
+    return ai.workforce.build_operator_summary(db, request_tenant(current_user))
+
+
+@router.get("/operator-detail")
+def get_operator_detail(operator: str, db: Session = Depends(_get_db), current_user: dict = Depends(get_current_user)):
+    # Operator drill-down (ADR-0007): for one operator — their good/rejected units
+    # and quality rate against the plant and where they rank among the crew, which
+    # machines they ran (worst quality first), a measured average job time, a daily
+    # good/rejected series, and their recent jobs.
+    return ai.workforce.build_operator_detail(db, request_tenant(current_user), operator)
 
 
 @router.get("/weekly-report")

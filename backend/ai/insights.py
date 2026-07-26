@@ -60,6 +60,13 @@ def _event_to_insight(e) -> Insight:
         payload = json.loads(e.payload) if e.payload else {}
     except (ValueError, TypeError):
         payload = {}
+    # A payload that is valid JSON but not an object (a list, number or bare
+    # string) has no fields to read. Left as-is, the `.get(...)` calls below —
+    # and in _describe_event — would raise AttributeError and 500 the whole
+    # feed for every reader, not just drop the one malformed event. Coerce it
+    # to an empty mapping so a single bad row degrades to a bare title instead.
+    if not isinstance(payload, dict):
+        payload = {}
     title, message = _describe_event(e.event_type, payload)
     return Insight(
         source="event",

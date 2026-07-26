@@ -13,15 +13,15 @@ import main
 EXPECTED = {
     "/insights", "/machine-health", "/mission-control/pulse",
     "/downtime-summary", "/downtime-reason", "/quality-summary", "/quality-trend", "/quality-defect",
-    "/production-summary", "/oee-summary", "/inventory-summary", "/flow-summary",
+    "/production-summary", "/oee-summary", "/oee-trend", "/inventory-summary", "/flow-summary",
     "/shift-summary", "/losses-summary", "/briefing", "/delivery-summary",
-    "/cost-summary", "/handover", "/scorecard", "/twin-overlay",
+    "/cost-summary", "/cost-trend", "/handover", "/scorecard", "/twin-overlay",
     "/maintenance-summary", "/compliance-summary", "/search", "/weekly-report",
     "/copilot/ask", "/copilot/digest", "/recovery-summary", "/reliability-summary",
     "/schedule-summary", "/schedule-shift", "/coverage-summary", "/inventory-part",
-    "/reliability-machine",
+    "/reliability-machine", "/stock-health", "/stock-accuracy",
     "/connectivity-summary", "/connectivity-machine", "/work-order-trace",
-    "/maintenance-execution",
+    "/maintenance-execution", "/maintenance-forecast",
 }
 
 

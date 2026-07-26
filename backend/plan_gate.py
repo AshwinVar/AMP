@@ -17,56 +17,20 @@ Principles:
 """
 import time
 
+import module_manifest
 from database import SessionLocal
 from platform_routes import get_or_create_config
 from tenancy import DEFAULT_TENANT, effective_tenant, tenant_from_token
 
-# Request-path prefix -> module pack. Longest prefix wins. Anything unmapped is
-# treated as core (ungated). Deliberately conservative: only unambiguous
-# premium families are listed, and endpoints woven into the core experience
-# (briefing, escalations, search, scorecard) stay open.
-PATH_PACKS = [
-    # Operations Pack — work orders, planning, scheduling, operator, dispatch
-    ("/work-orders", "operations"),
-    ("/production-plans", "operations"),
-    ("/production-schedules", "operations"),
-    ("/analytics/production-schedules", "operations"),
-    ("/operator", "operations"),
-    ("/analytics/operator-terminal", "operations"),
-    # NOTE: /customer-orders and /delivery-summary stay open — the Overview's
-    # delivery snapshot (core) reads and exports through them.
-    # Factory Pack — maintenance, quality, inventory, purchasing, twin, health
-    ("/maintenance", "factory"),
-    ("/quality", "factory"),
-    ("/inventory", "factory"),
-    ("/suppliers", "factory"),
-    ("/purchase-orders", "factory"),
-    ("/twin-overlay", "factory"),
-    ("/machine-health", "factory"),
-    ("/remnants", "factory"),
-    ("/issue-slips", "factory"),
-    ("/grns", "factory"),
-    ("/cycle-counts", "factory"),
-    ("/bom", "factory"),
-    # Intelligence Pack — IoT, connectivity, AI insights/copilot, agents
-    ("/iot", "intelligence"),
-    ("/analytics/iot-command", "intelligence"),
-    ("/industrial", "intelligence"),
-    ("/ai", "intelligence"),
-    ("/analytics/ai-insights", "intelligence"),
-    ("/copilot", "intelligence"),
-    ("/insights", "intelligence"),
-    ("/agent-actions", "intelligence"),
-    ("/agent-roster", "intelligence"),
-    ("/agent-policy", "intelligence"),
-]
-_ALWAYS_OPEN_PACKS = {"core", "admin"}
-
-_PACK_LABELS = {
-    "operations": "Operations Pack",
-    "factory": "Factory Pack",
-    "intelligence": "Intelligence Pack",
-}
+# Route-prefix -> module pack, derived from the manifest (modules.json) so the
+# API gate and the frontend nav share ONE source of truth — edit modules.json to
+# change what a pack gates. Longest prefix wins; anything unmapped is ungated.
+# Only GATED packs contribute routes; core basics and account admin stay open
+# (endpoints woven into the core experience — briefing, escalations, search,
+# scorecard — are simply not listed under any gated pack).
+PATH_PACKS = module_manifest.path_packs()
+_ALWAYS_OPEN_PACKS = module_manifest.always_open_packs()   # core + admin (gated=false)
+_PACK_LABELS = module_manifest.pack_labels()
 
 _CACHE_TTL_SECONDS = 60
 _licence_cache = {}   # tenant_code -> (frozenset(packs), expires_at)

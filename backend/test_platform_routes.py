@@ -15,6 +15,7 @@ import main
 EXPECTED = {
     "/health", "/audit-logs",
     "/tenant-config", "/tenant-configs", "/tenant-configs/{tenant_code}",
+    "/tenant-configs/{tenant_code}/apply-plan", "/modules",
 }
 
 

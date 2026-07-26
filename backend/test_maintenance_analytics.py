@@ -106,8 +106,58 @@ def test_empty_factory_is_all_zeros_no_crash():
     print("PASS empty factory -> zeros, no divide-by-zero")
 
 
+def test_distinct_unknown_machines_are_not_collapsed_by_group_by():
+    """The GROUP-BY-in-SQL machine breakdown must key on machine_id, then label —
+    two DIFFERENT unknown machine_ids stay two rows ('Machine 77' + 'Machine 88'),
+    never merged into one bucket. Regression guard for the .all()->GROUP BY move."""
+    db = _fresh_session()
+    today = datetime.utcnow().date()
+    db.add_all([
+        _task("MT-A", 77, "Breakdown", "Completed", 10, today),
+        _task("MT-B", 88, "Preventive", "Open", 20, today),
+        _task("MT-C", 88, "Preventive", "Open", 30, today),
+    ])
+    db.commit()
+
+    out = get_maintenance_analytics(db=db, current_user=USER)
+    assert out["machine_counts"] == {"Machine 77": 1, "Machine 88": 2}, out["machine_counts"]
+    # per-machine counts sum to the total (reconciliation across the breakdown)
+    assert sum(out["machine_counts"].values()) == out["total_tasks"] == 3
+    print("PASS distinct unknown machine_ids stay separate buckets, sum to total")
+
+
+def test_total_reconciles_and_overdue_excludes_completed_and_future():
+    """total_tasks counts EVERY row (incl. a status outside the open/in-progress/
+    completed buckets), and 'overdue' is exactly the past-dated, not-completed
+    tasks — a completed-but-past task and a future-dated task are NOT overdue."""
+    db = _fresh_session()
+    today = datetime.utcnow().date()
+    db.add(models.Machine(id=1, name="LATHE-1", status="Running", utilization=70, line="A"))
+    db.add_all([
+        _task("R-1", 1, "Preventive", "Open", 0, today - timedelta(days=5)),        # overdue
+        _task("R-2", 1, "Breakdown", "In Progress", 0, today - timedelta(days=1)),  # overdue
+        _task("R-3", 1, "Preventive", "Completed", 15, today - timedelta(days=2)),  # past but done -> not overdue
+        _task("R-4", 1, "Preventive", "Open", 0, today + timedelta(days=3)),        # future -> not overdue
+        _task("R-5", 1, "Breakdown", "Cancelled", 0, today - timedelta(days=9)),    # unbucketed status, past+not-completed -> overdue
+    ])
+    db.commit()
+
+    out = get_maintenance_analytics(db=db, current_user=USER)
+    assert out["total_tasks"] == 5
+    # open + in_progress + completed do NOT have to equal total (Cancelled is neither)
+    assert out["open"] == 2 and out["in_progress"] == 1 and out["completed"] == 1
+    # overdue = R-1, R-2, R-5 (past-dated AND not completed) = 3
+    assert out["overdue"] == 3, out["overdue"]
+    # only the single completed 15-min repair drives MTTR
+    assert out["avg_repair_minutes"] == 15
+    assert out["total_downtime_minutes"] == 15
+    print("PASS total counts all statuses; overdue = past & not-completed only")
+
+
 if __name__ == "__main__":
     test_mttr_uses_completed_downtime_over_completed_count()
     test_unknown_machine_falls_back_to_id_label()
     test_empty_factory_is_all_zeros_no_crash()
+    test_distinct_unknown_machines_are_not_collapsed_by_group_by()
+    test_total_reconciles_and_overdue_excludes_completed_and_future()
     print("ALL MAINTENANCE ANALYTICS TESTS PASSED")

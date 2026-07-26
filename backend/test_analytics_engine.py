@@ -56,6 +56,29 @@ def test_calculate_oee_zero_guards_and_perf_cap():
     print("PASS calculate_oee_from_record guards divide-by-zero + caps performance")
 
 
+def test_calculate_oee_caps_availability_and_quality():
+    # A machine that ran PAST its planned minutes (runtime 500 > planned 480)
+    # must not report availability above 100% — availability 500/480 = 1.0417
+    # clamps to 1.0 -> 100 (was 104). performance (30*700)/(500*60) = .70 -> 70;
+    # quality 690/700 = .9857 -> 99; oee = 1.0 * .70 * .9857 = .69 -> 69.
+    over_run = ae.calculate_oee_from_record(_rec(
+        runtime_minutes=500, planned_minutes=480,
+        ideal_cycle_time_seconds=30, total_count=700, good_count=690,
+    ))
+    assert over_run["availability"] == 100, over_run
+    assert over_run["oee"] == 69, over_run
+    # good_count 110 > total_count 100 (a data-entry slip): quality 1.10 clamps
+    # to 1.0 -> 100 (was 110). availability 100/100 = 1.0 -> 100; performance
+    # (30*100)/(100*60) = .50 -> 50; oee = 1.0 * .50 * 1.0 = .50 -> 50.
+    over_good = ae.calculate_oee_from_record(_rec(
+        runtime_minutes=100, planned_minutes=100,
+        ideal_cycle_time_seconds=30, total_count=100, good_count=110,
+    ))
+    assert over_good["quality"] == 100, over_good
+    assert over_good["oee"] == 50, over_good
+    print("PASS calculate_oee_from_record caps availability + quality at 100%")
+
+
 def test_build_shift_kpis():
     rows = ae.build_shift_kpis([
         SimpleNamespace(shift_name="A", target_output=100, actual_output=90),
@@ -264,6 +287,7 @@ if __name__ == "__main__":
     test_parse_duration_to_minutes()
     test_calculate_oee_known_values()
     test_calculate_oee_zero_guards_and_perf_cap()
+    test_calculate_oee_caps_availability_and_quality()
     test_build_shift_kpis()
     test_build_oee_trends_indexes_and_names_machines()
     test_build_management_summary()

@@ -260,6 +260,107 @@ def test_customer_order_analytics_survives_null_dispatched_quantity():
     print("PASS customer-order analytics: NULL dispatched_quantity -> 0, totals reconcile (150/40/27%)")
 
 
+def _co_full(no, customer, qty, dispatched, status, priority, due_offset_days):
+    from datetime import timedelta
+
+    return schemas.CustomerOrderCreate(
+        order_no=no, customer_name=customer, product_name="Widget",
+        order_quantity=qty, dispatched_quantity=dispatched,
+        status=status, priority=priority,
+        due_date=datetime.utcnow().date() + timedelta(days=due_offset_days),
+    )
+
+
+def test_customer_order_analytics_buckets_and_reconciles():
+    # A mixed book with past-due / future / dispatched / cancelled orders across
+    # three customers and three priorities. Every expected number below is derived
+    # by hand from the fixture, not read back from the endpoint.
+    db = _iso_session()
+    tok = T.set_current_tenant("TA")
+    try:
+        # no, customer, qty, dispatched, status, priority, due_offset.
+        # NOTE: create_customer_order auto-derives status from dispatched vs order
+        # qty (dispatched>=qty -> Dispatched, dispatched>0 -> Partial), so the
+        # status-controlled rows below carry dispatched=0.
+        orders_routes.create_customer_order(_co_full("CO-1", "Acme", 100, 0, "Pending", "High", -5), db=db, current_user={"tenant": "TA"})
+        orders_routes.create_customer_order(_co_full("CO-2", "Acme", 40, 40, "Pending", "Medium", -10), db=db, current_user={"tenant": "TA"})  # -> Dispatched
+        orders_routes.create_customer_order(_co_full("CO-3", "Beta", 30, 12, "Pending", "Low", 5), db=db, current_user={"tenant": "TA"})  # -> Partial
+        orders_routes.create_customer_order(_co_full("CO-4", "Beta", 20, 0, "Cancelled", "Medium", -3), db=db, current_user={"tenant": "TA"})
+        orders_routes.create_customer_order(_co_full("CO-5", "Gamma", 50, 0, "Pending", "High", -1), db=db, current_user={"tenant": "TA"})
+
+        result = orders_routes.get_customer_order_analytics(db=db, current_user={"tenant": "TA"})
+    finally:
+        T.reset_current_tenant(tok)
+
+    assert result["total_orders"] == 5, result["total_orders"]
+    assert result["pending"] == 2, result["pending"]      # CO-1, CO-5
+    assert result["partial"] == 1, result["partial"]      # CO-3 (12/30 dispatched)
+    assert result["dispatched"] == 1, result["dispatched"]  # CO-2 (40/40 dispatched)
+    assert result["cancelled"] == 1, result["cancelled"]  # CO-4
+    # late = past due AND not Dispatched/Cancelled -> CO-1, CO-5. CO-2/CO-4 are
+    # past due but excluded by status; CO-3 is future.
+    assert result["late"] == 2, result["late"]
+    # order qty = 100+40+30+20+50 = 240; dispatched = 0+40+12+0+0 = 52.
+    assert result["total_order_qty"] == 240, result["total_order_qty"]
+    assert result["total_dispatched_qty"] == 52, result["total_dispatched_qty"]
+    # dispatch_rate = round(52/240*100) = round(21.67) = 22.
+    assert result["dispatch_rate"] == 22, result["dispatch_rate"]
+    assert result["priority_counts"] == {"High": 2, "Medium": 2, "Low": 1}, result["priority_counts"]
+    assert result["customer_counts"] == {"Acme": 140, "Beta": 50, "Gamma": 50}, result["customer_counts"]
+
+    # Reconcile denominators (rule-3): the status buckets partition the book, and
+    # both the per-priority and per-customer breakdowns sum back to the headlines.
+    assert result["pending"] + result["partial"] + result["dispatched"] + result["cancelled"] == result["total_orders"]
+    assert sum(result["priority_counts"].values()) == result["total_orders"]
+    assert sum(result["customer_counts"].values()) == result["total_order_qty"]
+    print("PASS customer-order analytics: SQL buckets reconcile (5 orders, late=2, 22% dispatch)")
+
+
+def test_customer_order_analytics_empty_book():
+    # Empty table: COALESCE(SUM(..),0) must not surface a NULL, dispatch_rate must
+    # guard the zero divisor, and the group-by breakdowns are empty dicts.
+    db = _iso_session()
+    tok = T.set_current_tenant("TA")
+    try:
+        result = orders_routes.get_customer_order_analytics(db=db, current_user={"tenant": "TA"})
+    finally:
+        T.reset_current_tenant(tok)
+
+    assert result["total_orders"] == 0, result["total_orders"]
+    assert result["total_order_qty"] == 0, result["total_order_qty"]
+    assert result["total_dispatched_qty"] == 0, result["total_dispatched_qty"]
+    assert result["dispatch_rate"] == 0, result["dispatch_rate"]
+    assert result["late"] == 0, result["late"]
+    assert result["priority_counts"] == {}, result["priority_counts"]
+    assert result["customer_counts"] == {}, result["customer_counts"]
+    print("PASS customer-order analytics: empty book returns zeroes, no NULL, no divide-by-zero")
+
+
+def test_customer_order_analytics_null_status_overdue_counts_as_late():
+    # status is String default="Pending" (not NOT NULL). SQL's `status NOT IN (...)`
+    # is NULL — not TRUE — for a NULL status, which would silently drop an overdue
+    # NULL-status order from the late count. The OR status IS NULL branch keeps the
+    # old Python `None not in [...]` semantics, so the overdue unknown is still late.
+    db = _iso_session()
+    tok = T.set_current_tenant("TA")
+    try:
+        co = orders_routes.create_customer_order(_co_full("CO-N", "Acme", 10, 0, "Pending", "Medium", -2), db=db, current_user={"tenant": "TA"})
+        db.execute(text("UPDATE customer_orders SET status = NULL WHERE id = :i"), {"i": co.id})
+        db.commit()
+        db.expire_all()
+
+        result = orders_routes.get_customer_order_analytics(db=db, current_user={"tenant": "TA"})
+    finally:
+        T.reset_current_tenant(tok)
+
+    assert result["total_orders"] == 1, result["total_orders"]
+    # NULL status is none of Pending/Partial/Dispatched/Cancelled...
+    assert result["pending"] == 0, result["pending"]
+    # ...but the order is past due and not dispatched/cancelled, so it IS late.
+    assert result["late"] == 1, result["late"]
+    print("PASS customer-order analytics: NULL-status overdue order still counts as late")
+
+
 if __name__ == "__main__":
     test_procurement_paths_owned_by_orders_routes()
     test_duplicate_order_no_across_tenants_is_409_not_500()
@@ -268,4 +369,7 @@ if __name__ == "__main__":
     test_purchasing_analytics_empty_book()
     test_purchasing_analytics_survives_null_received_quantity()
     test_customer_order_analytics_survives_null_dispatched_quantity()
+    test_customer_order_analytics_buckets_and_reconciles()
+    test_customer_order_analytics_empty_book()
+    test_customer_order_analytics_null_status_overdue_counts_as_late()
     print("ALL ORDERS ROUTE TESTS PASSED")

@@ -593,6 +593,118 @@ def test_escalation_analytics_is_tenant_scoped():
     print("PASS escalation analytics: SQL GROUP BY stays tenant-scoped (GMATS sees 2 of 3)")
 
 
+def test_quality_analytics_null_count_columns_are_zero_not_a_crash():
+    # /analytics/quality sums passed / failed / rework / scrap_quantity, which are
+    # Column(Integer, default=0) WITHOUT nullable=False — a raw-SQL / migration /
+    # cleared-field write can store a real NULL. The old raw sum(...) then did
+    # int + None -> TypeError -> 500 the whole quality rollup. Each must coalesce
+    # to the column's own default of 0. inspected_quantity IS nullable=False, so
+    # the denominator stays exact. Every expected number is derived by hand.
+    db = _fresh_session()
+    db.add(models.QualityInspection(inspection_no="Q1", inspector="I", machine_id=1,
+                                    inspected_quantity=100, passed_quantity=80,
+                                    failed_quantity=15, rework_quantity=3, scrap_quantity=2,
+                                    defect_category="Scratch"))
+    # Q2's non-inspected counts are all NULLed below; if they leaked (not coalesced)
+    # these 99s would corrupt every total — so they double as a "not-coalesced" trap.
+    db.add(models.QualityInspection(inspection_no="Q2", inspector="I", machine_id=2,
+                                    inspected_quantity=60, passed_quantity=99,
+                                    failed_quantity=99, rework_quantity=99, scrap_quantity=99,
+                                    defect_category="Dent"))
+    db.commit()
+    # Force genuine SQL NULLs (the ORM would apply default=0 to a None on insert).
+    db.execute(text(
+        "UPDATE quality_inspections SET passed_quantity = NULL, failed_quantity = NULL, "
+        "rework_quantity = NULL, scrap_quantity = NULL WHERE inspection_no = 'Q2'"
+    ))
+    db.commit()
+    db.expire_all()
+
+    out = analytics_routes.get_quality_analytics(db=db, current_user={})
+
+    assert out["total_inspections"] == 2, out
+    assert out["inspected_quantity"] == 160, out            # 100 + 60 (both NOT NULL)
+    assert out["passed_quantity"] == 80, out                # 80 + 0(NULL)
+    assert out["failed_quantity"] == 15, out                # 15 + 0(NULL)
+    assert out["rework_quantity"] == 3, out                 # 3 + 0(NULL)
+    assert out["scrap_quantity"] == 2, out                  # 2 + 0(NULL)
+    assert out["pass_rate"] == 50, out                      # round(80/160*100)
+    assert out["fail_rate"] == 9, out                       # round(15/160*100)=round(9.375)
+    # defect_counts / machine_failures reconcile to `failed` and prove the NULL
+    # became 0 (not the trap 99): Scratch 15, Dent 0.
+    assert out["defect_counts"] == {"Scratch": 15, "Dent": 0}, out
+    assert out["machine_failures"] == {1: 15, 2: 0}, out
+    assert sum(out["defect_counts"].values()) == out["failed_quantity"], out
+    print("PASS quality analytics: NULL passed/failed/rework/scrap -> 0, no crash "
+          "(pass 50% / fail 9%)")
+
+
+def test_quality_analytics_empty_table_is_zero_not_a_crash():
+    db = _fresh_session()
+    out = analytics_routes.get_quality_analytics(db=db, current_user={})
+    assert out["total_inspections"] == 0, out
+    assert out["inspected_quantity"] == 0 and out["failed_quantity"] == 0, out
+    assert out["pass_rate"] == 0 and out["fail_rate"] == 0, out   # 0/0 guarded -> 0
+    assert out["defect_counts"] == {} and out["machine_failures"] == {}, out
+    print("PASS quality analytics: empty table -> zeros, no divide-by-zero")
+
+
+def test_executive_oee_null_quality_columns_in_per_machine_fallback():
+    # When a machine has NO production records but DOES have inspections,
+    # executive-oee falls back to its pooled inspection quality (passed/inspected).
+    # passed_quantity is nullable, so `bucket["passed"] += row.passed_quantity`
+    # did int + None -> TypeError -> 500. It must coalesce to 0.
+    db = _fresh_session()
+    db.add(models.Machine(id=1, name="NoProd", status="Idle", utilization=0))
+    db.add(models.QualityInspection(inspection_no="A", inspector="I", machine_id=1,
+                                    inspected_quantity=100, passed_quantity=90))
+    db.add(models.QualityInspection(inspection_no="B", inspector="I", machine_id=1,
+                                    inspected_quantity=50, passed_quantity=40))
+    db.commit()
+    db.execute(text("UPDATE quality_inspections SET passed_quantity = NULL WHERE inspection_no = 'B'"))
+    db.commit()
+    db.expire_all()
+
+    out = analytics_routes.get_executive_oee(db=db, current_user={})
+    row = next(r for r in out["machine_ranking"] if r["machine_id"] == 1)
+    # bucket: inspected 100+50 = 150; passed 90 + 0(NULL) = 90 -> quality round(90/150*100)=60
+    assert row["quality"] == 60, out
+    # no production anywhere -> pooled plant OEE is 0 (not fabricated)
+    assert out["plant_oee"] == 0, out
+    print("PASS executive-oee: NULL passed_quantity in per-machine fallback -> quality 60, no crash")
+
+
+def test_factory_command_center_null_stock_and_failed_are_zero_not_a_crash():
+    # factory-command-center compares current_stock <= reorder_level (both nullable
+    # Integers) and sums failed_quantity (nullable). A real SQL NULL made
+    # `None <= None` and `sum(... None ...)` 500 the command centre. Coalesce to 0.
+    db = _fresh_session()
+    db.add(models.InventoryItem(item_code="I1", item_name="One", category="raw", unit="pcs",
+                                current_stock=5, reorder_level=10))      # low
+    db.add(models.InventoryItem(item_code="I2", item_name="Two", category="raw", unit="pcs",
+                                current_stock=0, reorder_level=0))       # NULLed -> 0<=0 low
+    db.add(models.InventoryItem(item_code="I3", item_name="Three", category="raw", unit="pcs",
+                                current_stock=100, reorder_level=10))    # not low
+    db.add(models.QualityInspection(inspection_no="Q1", inspector="I", machine_id=1,
+                                    inspected_quantity=100, failed_quantity=20))
+    db.add(models.QualityInspection(inspection_no="Q2", inspector="I", machine_id=1,
+                                    inspected_quantity=50, failed_quantity=7))  # NULLed below
+    db.commit()
+    db.execute(text("UPDATE inventory_items SET current_stock = NULL, reorder_level = NULL WHERE item_code = 'I2'"))
+    db.execute(text("UPDATE quality_inspections SET failed_quantity = NULL WHERE inspection_no = 'Q2'"))
+    db.commit()
+    db.expire_all()
+
+    out = analytics_routes.get_factory_command_center(db=db, current_user={})
+    # low stock: I1 (5<=10) + I2 (0<=0, both NULL->0); I3 (100<=10) not. = 2
+    assert out["low_stock_items"] == 2, out
+    # fail rate: inspected 100+50 = 150 (NOT NULL); failed 20 + 0(NULL) = 20
+    #            -> round(20/150*100) = round(13.33) = 13
+    assert out["quality_fail_rate"] == 13, out
+    print("PASS factory-command-center: NULL stock/reorder + failed_quantity -> 0, no crash "
+          "(2 low-stock / fail 13%)")
+
+
 if __name__ == "__main__":
     test_analytics_paths_owned_by_module()
     test_analytics_summary_is_module_level_and_shared()
@@ -616,4 +728,8 @@ if __name__ == "__main__":
     test_escalation_analytics_buckets_and_reconciled_totals()
     test_escalation_analytics_empty_table_is_zero_not_a_crash()
     test_escalation_analytics_is_tenant_scoped()
+    test_quality_analytics_null_count_columns_are_zero_not_a_crash()
+    test_quality_analytics_empty_table_is_zero_not_a_crash()
+    test_executive_oee_null_quality_columns_in_per_machine_fallback()
+    test_factory_command_center_null_stock_and_failed_are_zero_not_a_crash()
     print("ALL ANALYTICS ROUTE TESTS PASSED")

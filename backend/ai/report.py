@@ -13,6 +13,7 @@ from ai.cost import build_cost_summary
 from ai.delivery import build_delivery_summary
 from ai.briefing import build_briefing
 from ai.compliance import build_compliance_summary
+from ai.maintenance import build_maintenance_forecast, build_maintenance_execution
 
 name = "report"
 
@@ -62,6 +63,20 @@ def build_weekly_report(db, tenant: str) -> dict:
     for c in delivery["by_customer"]:
         lines.append(f"  - {c['customer']}: {c['orders']} orders, {c['fulfillment_rate']}% fulfilled")
     lines.append("")
+
+    # Maintenance: the overdue backlog and what's booked ahead (forecast) plus the
+    # PM-compliance rate (execution). Composed from the same read-models the CMMS
+    # cards use, so the report and the dashboard never disagree. Shown only when
+    # the tenant actually runs maintenance.
+    maint_f = build_maintenance_forecast(db, tenant)
+    maint_e = build_maintenance_execution(db, tenant)
+    if maint_f["scheduled"] or maint_f["overdue"] or maint_e["completed"] or maint_e["backlog"]["open"]:
+        lines.append("## Maintenance")
+        lines.append(f"- {maint_f['overdue']} overdue, {maint_f['scheduled']} scheduled over the next "
+                     f"14 days ({maint_f['due_today']} due today)")
+        if maint_e["compliance_rate"] is not None:
+            lines.append(f"- PM compliance (30d): {maint_e['compliance_rate']}% completed on plan")
+        lines.append("")
 
     comp = build_compliance_summary(db, tenant)
     if comp["total"]:

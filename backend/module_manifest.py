@@ -44,6 +44,23 @@ def always_open_packs():
     return {p["id"] for p in PACKS if not p.get("gated")}
 
 
+def valid_pack_ids():
+    """The set of pack ids the manifest defines — used to validate a tenant's
+    enabled_modules so an unknown/typo'd pack can't be stored."""
+    return {p["id"] for p in PACKS}
+
+
+def plan_bundles():
+    """{plan_name: [pack_id, ...]} — which packs each subscription plan bundles,
+    derived from each pack's ``plans``. The SaaS admin applies one of these to a
+    tenant (POST /tenant-configs/{code}/apply-plan), so assigning a plan sets the
+    exact modules that appear in that tenant's AMP."""
+    return {
+        plan: [p["id"] for p in PACKS if plan in p.get("plans", [])]
+        for plan in MANIFEST.get("plans", [])
+    }
+
+
 def packs_for_tenant(enabled_ids):
     """Every pack annotated ``enabled`` for a tenant whose subscription is
     ``enabled_ids`` (the pack ids from TenantConfig.enabled_modules). This is the

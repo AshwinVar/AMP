@@ -80,9 +80,49 @@ def test_modules_endpoint_reflects_tenant_subscription():
     print("PASS GET /modules reflects the tenant's subscription (intelligence/admin off for Growth)")
 
 
+def test_plan_bundles_and_valid_pack_ids():
+    b = module_manifest.plan_bundles()
+    assert b["starter"] == ["core"]
+    assert b["growth"] == ["core", "operations", "factory"]
+    assert set(b["enterprise"]) == {"core", "operations", "factory", "intelligence", "admin"}
+    assert module_manifest.valid_pack_ids() == {"core", "operations", "factory", "intelligence", "admin"}
+    print("PASS plan bundles + valid pack ids derive from the manifest")
+
+
+def test_apply_plan_sets_the_bundle_and_is_founder_only():
+    engine = create_engine("sqlite://", connect_args={"check_same_thread": False})
+    Base.metadata.create_all(engine)
+    db = sessionmaker(bind=engine)()
+
+    # a client Admin cannot license another company (founder/DEFAULT only)
+    try:
+        platform_routes.apply_plan("ACME", {"plan": "growth"}, db=db,
+                                   current_user={"tenant": "ACME", "sub": "x"})
+        assert False, "a client Admin applying a plan cross-tenant should 403"
+    except Exception as e:
+        assert getattr(e, "status_code", None) == 403, e
+
+    # founder applies Growth -> the tenant gets exactly that manifest bundle
+    res = platform_routes.apply_plan("ACME", {"plan": "growth"}, db=db,
+                                     current_user={"tenant": "DEFAULT", "sub": "founder"})
+    assert res["plan"] == "growth"
+    assert res["enabled_modules"] == ["core", "operations", "factory"]
+
+    # an unknown plan is rejected, not silently stored
+    try:
+        platform_routes.apply_plan("ACME", {"plan": "unlimited"}, db=db,
+                                   current_user={"tenant": "DEFAULT", "sub": "founder"})
+        assert False, "unknown plan should 400"
+    except Exception as e:
+        assert getattr(e, "status_code", None) == 400, e
+    print("PASS apply-plan sets the manifest bundle; founder-only; rejects unknown plans")
+
+
 if __name__ == "__main__":
     test_manifest_reproduces_the_plan_gate_route_map()
     test_pack_for_path_routes_unchanged()
     test_packs_for_tenant_marks_enablement_and_carries_views()
     test_modules_endpoint_reflects_tenant_subscription()
+    test_plan_bundles_and_valid_pack_ids()
+    test_apply_plan_sets_the_bundle_and_is_founder_only()
     print("MODULE MANIFEST OK: one source of truth for the plan-gate and the frontend nav")

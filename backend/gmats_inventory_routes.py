@@ -296,11 +296,30 @@ def gmats_generate_invoice(pid: int, db: Session = Depends(get_db), current_user
         raise HTTPException(status_code=400, detail="Only open proformas can be invoiced")
     _guard_record(current_user, p.tenant_code)
     lines = db.query(models.GmatsProformaLine).filter(models.GmatsProformaLine.proforma_id == pid).all()
+    # Guard the TOTAL physical needed per item BEFORE deducting (summed across
+    # lines, so duplicate lines for one item are covered), then deduct exactly.
+    # gmats_create_min already guards issue this way; without it here, invoicing
+    # more than the physical stock silently under-deducts via max(0, ...), and
+    # gmats_void_invoice later restores the FULL line qty — inflating stock by the
+    # clamped shortfall (phantom stock). An exact deduction makes void a true inverse.
+    from collections import defaultdict
+    needed: dict = defaultdict(int)
     for l in lines:
-        item = db.query(models.GmatsItem).filter(models.GmatsItem.id == l.item_id).first()
+        needed[l.item_id] += l.qty
+    items = {}
+    for item_id, qty in needed.items():
+        item = db.query(models.GmatsItem).filter(models.GmatsItem.id == item_id).first()
         if item:
-            item.physical_stock = max(0, item.physical_stock - l.qty)   # DEDUCT physical
-            item.reserved_stock = max(0, item.reserved_stock - l.qty)   # clear reservation
+            if qty > item.physical_stock:
+                raise HTTPException(status_code=400,
+                                    detail=f"Cannot invoice {qty} {item.unit} of {item.item_name}: "
+                                           f"only {item.physical_stock} physical")
+            items[item_id] = item
+    for l in lines:
+        item = items.get(l.item_id)
+        if item:
+            item.physical_stock -= l.qty                              # exact (guard guarantees >= 0)
+            item.reserved_stock = max(0, item.reserved_stock - l.qty)  # clear reservation
     count = db.query(models.GmatsInvoice).filter(models.GmatsInvoice.tenant_code == p.tenant_code).count()
     inv = models.GmatsInvoice(
         tenant_code=p.tenant_code,

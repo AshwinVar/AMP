@@ -10,12 +10,15 @@ Run:  python backend/test_gmats_inventory_routes.py     (exit 0 = pass)
 """
 import main
 
+from fastapi import HTTPException
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 import gmats_inventory_routes as gmats
 import models
 from database import Base
+
+_ADMIN = {"tenant": "DEFAULT", "role": "Admin", "sub": "founder"}
 
 EXPECTED = {
     "/gmats/items", "/gmats/items/{item_id}", "/gmats/items/{item_id}/aliases",
@@ -121,9 +124,52 @@ def test_listing_names_match_the_items_endpoint():
     print("PASS proforma line name reconciles with the /gmats/items name")
 
 
+def _proforma_with_line(db, qty, physical):
+    db.add(models.GmatsItem(id=1, tenant_code="GMATS", item_code="C1", item_name="Part 1",
+                            physical_stock=physical, reserved_stock=qty, reorder_level=0,
+                            purchase_rate=0, unit="ea"))
+    db.add(models.GmatsProforma(id=1, tenant_code="GMATS", proforma_no="PI-1",
+                                customer_name="Cust", status="Open"))
+    db.add(models.GmatsProformaLine(id=1, proforma_id=1, item_id=1, qty=qty))
+    db.commit()
+
+
+def _stock(db):
+    return db.query(models.GmatsItem).filter(models.GmatsItem.id == 1).first()
+
+
+def test_invoice_rejects_over_issue_instead_of_clamping():
+    # physical 3, invoice line 10: the old code clamped physical to 0 (deducting
+    # only 3) and let the invoice through, so a later void restored the full 10 ->
+    # +7 phantom stock. Now the over-issue is rejected and stock is untouched.
+    db = _db()
+    _proforma_with_line(db, qty=10, physical=3)
+    try:
+        gmats.gmats_generate_invoice(1, db=db, current_user=_ADMIN)
+        assert False, "invoicing more than physical stock should 400"
+    except HTTPException as e:
+        assert e.status_code == 400, e.status_code
+    assert _stock(db).physical_stock == 3    # rejected invoice left stock untouched
+    print("PASS invoice rejects over-issue (no silent clamp that void would over-restore)")
+
+
+def test_invoice_then_void_is_stock_neutral():
+    # With enough stock the invoice deducts exactly and the void restores exactly,
+    # so physical returns to where it started — the deduction/restore are inverses.
+    db = _db()
+    _proforma_with_line(db, qty=4, physical=10)
+    inv = gmats.gmats_generate_invoice(1, db=db, current_user=_ADMIN)
+    assert _stock(db).physical_stock == 6 and _stock(db).reserved_stock == 0   # deducted 4, reservation cleared
+    gmats.gmats_void_invoice(inv["id"], db=db, current_user=_ADMIN)
+    assert _stock(db).physical_stock == 10   # restored EXACTLY 4, not more
+    print("PASS invoice+void is stock-neutral (void is a true inverse of the deduction)")
+
+
 if __name__ == "__main__":
     test_gmats_inventory_paths_registered_once_and_owned()
     test_proforma_listing_resolves_only_same_tenant_item_names()
     test_min_listing_resolves_only_same_tenant_item_names()
     test_listing_names_match_the_items_endpoint()
+    test_invoice_rejects_over_issue_instead_of_clamping()
+    test_invoice_then_void_is_stock_neutral()
     print("ALL GMATS-INVENTORY ROUTE TESTS PASSED")

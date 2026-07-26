@@ -310,6 +310,15 @@ def get_maintenance_execution(db: Session = Depends(_get_db), current_user: dict
     return ai.maintenance.build_maintenance_execution(db, request_tenant(current_user))
 
 
+@router.get("/maintenance-forecast")
+def get_maintenance_forecast(db: Session = Depends(_get_db), current_user: dict = Depends(get_current_user)):
+    # Maintenance forward schedule (ADR-0007): open tasks due over the next 14 days
+    # laid out day by day, the overdue backlog to clear first, the busiest day, and
+    # the per-machine load — the forward complement to the open-load summary and the
+    # past-compliance execution read-models.
+    return ai.maintenance.build_maintenance_forecast(db, request_tenant(current_user))
+
+
 @router.get("/escalation-summary")
 def get_escalation_summary(db: Session = Depends(_get_db), current_user: dict = Depends(get_current_user)):
     # Escalation queue (ADR-0005 / ADR-0007): the open backlog — count, severity /

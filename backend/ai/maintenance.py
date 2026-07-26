@@ -31,6 +31,10 @@ _PRIORITIES = ["Critical", "High", "Medium", "Low"]
 # Execution window — maintenance is a slow-moving, monthly discipline, so the
 # same 30 days the reliability read-model uses (not the 7-day pillar window).
 EXECUTION_WINDOW_DAYS = 30
+# Forecast horizon — a fortnight ahead is the planning window a maintenance
+# planner works to (this week's load plus next week's), long enough to see a
+# crunch forming, short enough that far-future placeholders don't dominate.
+FORECAST_WINDOW_DAYS = 14
 COMPLIANCE_TARGET = 90          # % of completions on or before plan we call healthy
 COMPLIANCE_FLOOR = 70           # below this the discipline has broken down
 MIN_JUDGED = 3                  # fewer dated completions than this and one late job
@@ -235,6 +239,118 @@ def build_maintenance_execution(db, tenant: str) -> dict:
         },
         "by_machine": by_machine[:TOP_N],
         "chase": chase_rows,
+        "verdict": verdict,
+        "tone": tone,
+    }
+
+
+def build_maintenance_forecast(db, tenant: str) -> dict:
+    """The forward maintenance schedule: open tasks due over the next 14 days laid
+    out day by day, with the overdue backlog to clear first, so a planner sees the
+    week ahead and where the crunch is. The forward complement to
+    build_maintenance_summary (the open load right now) and
+    build_maintenance_execution (past PM compliance). A read-model over
+    maintenance_tasks (+ machines for labels), auto-scoped to the tenant (ADR-0002);
+    it adds no storage.
+
+    Only OPEN tasks with a planned date count: an already-completed job isn't
+    future work, and a task with no planned date can't be placed on the calendar.
+    Overdue tasks (planned before today) are carried separately as the backlog to
+    clear, never folded into a future day, so each in-horizon day's count is the
+    work genuinely due that day (the per-day counts sum to `scheduled`)."""
+    today = datetime.utcnow().date()
+    horizon = today + timedelta(days=FORECAST_WINDOW_DAYS - 1)
+    # Bounded in SQL: open tasks with a planned date at or before the horizon — the
+    # far-future backlog isn't scanned on every poll. Overdue (planned < today) is
+    # split out in Python below.
+    tasks = (db.query(models.MaintenanceTask).filter(
+        models.MaintenanceTask.status.in_(OPEN_STATUSES),
+        models.MaintenanceTask.planned_date.isnot(None),
+        models.MaintenanceTask.planned_date <= horizon,
+    ).all())
+    names = {m.id: m.name for m in db.query(models.Machine).all()}
+
+    overdue = [t for t in tasks if t.planned_date < today]
+    upcoming = [t for t in tasks if today <= t.planned_date <= horizon]
+
+    # Per-day load across the horizon (today -> today+13). Urgent = Critical/High,
+    # so the frontend can heat the heavy days.
+    window = [today + timedelta(days=i) for i in range(FORECAST_WINDOW_DAYS)]
+    day_count = {d: 0 for d in window}
+    day_urgent = {d: 0 for d in window}
+    for t in upcoming:
+        day_count[t.planned_date] += 1
+        if (t.priority or "Medium") in ("Critical", "High"):
+            day_urgent[t.planned_date] += 1
+    days = [{"date": d.isoformat(), "count": day_count[d],
+             "urgent": day_urgent[d], "is_today": d == today} for d in window]
+
+    scheduled = len(upcoming)
+    due_today = day_count[today]
+    next_7_cutoff = today + timedelta(days=6)
+    due_next_7 = sum(1 for t in upcoming if t.planned_date <= next_7_cutoff)
+
+    # Busiest day: highest count, earliest date breaking ties.
+    busiest = max(((d, c) for d, c in day_count.items() if c > 0),
+                  key=lambda dc: (dc[1], -(dc[0] - today).days), default=None)
+    peak = {"date": busiest[0].isoformat(), "count": busiest[1]} if busiest else None
+
+    by_priority = Counter(t.priority or "Medium" for t in upcoming)
+    priority_rows = [{"priority": p, "count": by_priority[p]} for p in _PRIORITIES if by_priority.get(p)]
+
+    # Where the load lands: total tasks (overdue + upcoming) per machine, with the
+    # overdue slice called out, busiest machine first.
+    load: dict = defaultdict(lambda: {"total": 0, "overdue": 0})
+    for t in overdue:
+        if t.machine_id is not None:
+            load[t.machine_id]["total"] += 1
+            load[t.machine_id]["overdue"] += 1
+    for t in upcoming:
+        if t.machine_id is not None:
+            load[t.machine_id]["total"] += 1
+    by_machine = sorted(
+        ({"machine_id": mid, "name": names.get(mid, f"#{mid}"),
+          "count": a["total"], "overdue": a["overdue"]} for mid, a in load.items()),
+        key=lambda m: (-m["count"], -m["overdue"], m["machine_id"]))[:TOP_N]
+
+    def _row(t, key, val):
+        return {"task_no": t.task_no, "machine": names.get(t.machine_id, "—"),
+                "task_type": t.task_type, "priority": t.priority or "Medium",
+                "planned_date": t.planned_date.isoformat(), key: val}
+
+    upcoming_sorted = sorted(upcoming, key=lambda t: (t.planned_date, PRIORITY_ORDER.get(t.priority, 2)))
+    upcoming_rows = [_row(t, "days_until", (t.planned_date - today).days) for t in upcoming_sorted[:TOP_N]]
+
+    overdue_sorted = sorted(overdue, key=lambda t: (-(today - t.planned_date).days,
+                                                    PRIORITY_ORDER.get(t.priority, 2)))
+    overdue_rows = [_row(t, "days_overdue", (today - t.planned_date).days) for t in overdue_sorted[:TOP_N]]
+
+    n_over = len(overdue)
+    if not tasks:
+        verdict, tone = "No open maintenance scheduled in the next 14 days.", "good"
+    elif n_over:
+        lead = f"{n_over} task{'s' if n_over != 1 else ''} overdue to clear first"
+        tail = (f", then {scheduled} scheduled over the next 14 days."
+                if scheduled else "; nothing else scheduled in the next 14 days.")
+        verdict = lead + tail
+        tone = "bad" if n_over >= 5 else "warn"
+    else:
+        verdict = f"{scheduled} maintenance task{'s' if scheduled != 1 else ''} scheduled over the next 14 days"
+        verdict += f", {due_today} due today." if due_today else "."
+        tone = "good"
+
+    return {
+        "days": FORECAST_WINDOW_DAYS,
+        "scheduled": scheduled,
+        "overdue": n_over,
+        "due_today": due_today,
+        "due_next_7": due_next_7,
+        "peak": peak,
+        "series": days,
+        "by_priority": priority_rows,
+        "by_machine": by_machine,
+        "upcoming": upcoming_rows,
+        "overdue_tasks": overdue_rows,
         "verdict": verdict,
         "tone": tone,
     }

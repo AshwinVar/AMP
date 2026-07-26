@@ -21,7 +21,7 @@ EXPECTED = {
     "/schedule-summary", "/schedule-shift", "/coverage-summary", "/inventory-part",
     "/reliability-machine", "/stock-health", "/stock-accuracy",
     "/connectivity-summary", "/connectivity-machine", "/work-order-trace",
-    "/maintenance-execution",
+    "/maintenance-execution", "/maintenance-forecast",
 }
 
 

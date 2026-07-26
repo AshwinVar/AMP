@@ -150,6 +150,32 @@ def test_apply_plan_sets_the_bundle_and_is_founder_only():
     print("PASS apply-plan sets the manifest bundle; founder-only; rejects unknown plans")
 
 
+def test_toggle_pack_via_patch_sets_modules_and_is_founder_only():
+    engine = create_engine("sqlite://", connect_args={"check_same_thread": False})
+    Base.metadata.create_all(engine)
+    db = sessionmaker(bind=engine)()
+    platform_routes.get_or_create_config(db, "ACME")
+
+    # a client Admin cannot re-license another company through the cross-tenant path
+    try:
+        platform_routes.update_any_tenant("ACME", {"enabled_modules": ["core"]}, db=db,
+                                          current_user={"tenant": "ACME", "sub": "x"})
+        assert False, "a client Admin toggling another tenant's modules should 403"
+    except Exception as e:
+        assert getattr(e, "status_code", None) == 403, e
+
+    # founder toggles a single pack on -> stored as the enabled_modules CSV, and
+    # the plan-gate's cached licence for that tenant is dropped so it applies now
+    import plan_gate
+    plan_gate._licence_cache["ACME"] = (frozenset({"core"}), 9e18)  # stale cache entry
+    res = platform_routes.update_any_tenant(
+        "ACME", {"enabled_modules": ["core", "operations", "factory", "intelligence", "admin"]},
+        db=db, current_user={"tenant": "DEFAULT", "sub": "founder"})
+    assert set(res["enabled_modules"]) == {"core", "operations", "factory", "intelligence", "admin"}
+    assert "ACME" not in plan_gate._licence_cache, "plan-gate cache must be invalidated on a licence change"
+    print("PASS toggle-pack PATCH sets enabled_modules, invalidates the gate, founder-only")
+
+
 if __name__ == "__main__":
     test_manifest_reproduces_the_plan_gate_route_map()
     test_manifest_views_reproduce_the_frontend_nav()
@@ -158,4 +184,5 @@ if __name__ == "__main__":
     test_modules_endpoint_reflects_tenant_subscription()
     test_plan_bundles_and_valid_pack_ids()
     test_apply_plan_sets_the_bundle_and_is_founder_only()
+    test_toggle_pack_via_patch_sets_modules_and_is_founder_only()
     print("MODULE MANIFEST OK: one source of truth for the plan-gate and the frontend nav")

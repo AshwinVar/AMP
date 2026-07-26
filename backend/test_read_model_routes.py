@@ -13,7 +13,7 @@ import main
 EXPECTED = {
     "/insights", "/machine-health", "/mission-control/pulse",
     "/downtime-summary", "/downtime-reason", "/quality-summary", "/quality-trend", "/quality-defect",
-    "/production-summary", "/oee-summary", "/inventory-summary", "/flow-summary",
+    "/production-summary", "/oee-summary", "/oee-trend", "/inventory-summary", "/flow-summary",
     "/shift-summary", "/losses-summary", "/briefing", "/delivery-summary",
     "/cost-summary", "/cost-trend", "/handover", "/scorecard", "/twin-overlay",
     "/maintenance-summary", "/compliance-summary", "/search", "/weekly-report",

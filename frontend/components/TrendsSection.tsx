@@ -21,6 +21,7 @@ type OpsTrends = {
 type TrendVerdict = { direction?: string; verdict?: string; tone?: string };
 
 const TREND_CARDS: { key: string; label: string; path: string }[] = [
+  { key: "oee", label: "OEE", path: "/oee-trend" },
   { key: "downtime", label: "Downtime", path: "/downtime-trend" },
   { key: "quality", label: "Quality", path: "/quality-trend" },
   { key: "cost", label: "Cost of losses", path: "/cost-trend" },
@@ -97,7 +98,7 @@ export default function TrendsSection() {
 
       <div className="space-y-3">
         <h3 className="text-sm font-semibold uppercase tracking-wide text-slate-400">This week vs last week</h3>
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
           {TREND_CARDS.map((c) => (
             <VerdictCard key={c.key} label={c.label} v={verdicts[c.key]} />
           ))}

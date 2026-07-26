@@ -14,13 +14,14 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 from database import Base
-from ai import cost, downtime, quality
+from ai import cost, downtime, oee, quality
 
 # The tones the Trends card maps to colours (toneClasses in TrendsSection.tsx).
 # Anything else would fall through to the neutral style, hiding a real signal.
 _TONES = {"good", "warn", "bad"}
 
 _TRENDS = [
+    ("oee", oee.build_oee_trend),
     ("downtime", downtime.build_downtime_trend),
     ("quality", quality.build_quality_trend),
     ("cost", cost.build_cost_trend),

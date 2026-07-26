@@ -112,6 +112,15 @@ def get_oee_summary(db: Session = Depends(_get_db), current_user: dict = Depends
     return ai.oee.build_oee_summary(db, request_tenant(current_user))
 
 
+@router.get("/oee-trend")
+def get_oee_trend(db: Session = Depends(_get_db), current_user: dict = Depends(get_current_user)):
+    # OEE trend (ADR-0007): this week's pooled OEE against last week's on the same
+    # output-weighted basis, the direction (shared ±2pt dead-band), and the
+    # components and machines that moved it — the headline direction signal above
+    # the downtime / quality / cost trends.
+    return ai.oee.build_oee_trend(db, request_tenant(current_user))
+
+
 @router.get("/inventory-summary")
 def get_inventory_summary(db: Session = Depends(_get_db), current_user: dict = Depends(get_current_user)):
     # Inventory summary (ADR-0007): supply risk — items at/below reorder level

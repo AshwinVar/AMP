@@ -46,6 +46,13 @@ def _send(status, downtime="30 min", utilization=50):
              "utilization": utilization, "downtime": downtime}))
 
 
+def _send_payload(payload):
+    base = {"machine": "PRESS-01", "status": "Running", "utilization": 50}
+    base.update(payload)
+    with redirect_stdout(io.StringIO()):
+        mqtt_service.on_message(None, None, _Msg(base))
+
+
 def _machine(Session):
     db = Session()
     try:
@@ -132,9 +139,67 @@ def test_out_of_range_utilization_is_clamped():
     print("PASS MQTT clamps utilization into [0, 100] and keeps the last value on garbage")
 
 
+def test_valid_production_counts_are_recorded():
+    # Positive path — a physically-valid reading (good + rejected == total, all
+    # non-negative) IS recorded, so the guard below can't be a blanket reject.
+    Session = _setup()
+    _send_payload({"total_count": 100, "good_count": 95, "rejected_count": 5,
+                   "planned_minutes": 480, "runtime_minutes": 420,
+                   "ideal_cycle_time_seconds": 60})
+
+    db = Session()
+    records = db.query(models.ProductionRecord).all()
+    db.close()
+    assert len(records) == 1, len(records)
+    r = records[0]
+    assert (r.total_count, r.good_count, r.rejected_count) == (100, 95, 5)
+    assert (r.planned_minutes, r.runtime_minutes, r.ideal_cycle_time_seconds) == (480, 420, 60)
+    print("PASS MQTT records a valid production reading")
+
+
+def test_negative_counts_skip_production_but_keep_status():
+    # A glitching gateway can publish NEGATIVE counts that STILL satisfy
+    # good + rejected == total (-5 + 15 == 10), so the equality check alone lets
+    # them through — and a negative good_count drags pooled OEE below zero
+    # (quality = good/total is not floored). The record must be skipped, while
+    # the rest of the message (status) still applies.
+    Session = _setup()
+    _send_payload({"status": "Running", "total_count": 10,
+                   "good_count": -5, "rejected_count": 15})
+
+    db = Session()
+    records = db.query(models.ProductionRecord).all()
+    machine = db.query(models.Machine).filter(models.Machine.name == "PRESS-01").first()
+    db.close()
+    assert len(records) == 0, len(records)          # negative row NOT written
+    assert machine.status == "Running"              # status still applied
+    print("PASS MQTT skips a negative-count production row and still applies status")
+
+
+def test_non_numeric_count_skips_production_not_the_whole_message():
+    # A non-numeric count ("--") used to raise int() mid-handler, aborting the
+    # whole message. Now it's treated as "no usable value": production is skipped
+    # but the machine's status/utilization update still lands.
+    Session = _setup()
+    _send_payload({"status": "Running", "utilization": 77,
+                   "total_count": "--", "good_count": 5, "rejected_count": 0})
+
+    db = Session()
+    records = db.query(models.ProductionRecord).all()
+    machine = db.query(models.Machine).filter(models.Machine.name == "PRESS-01").first()
+    db.close()
+    assert len(records) == 0, len(records)
+    assert machine.status == "Running"
+    assert machine.utilization == 77, machine.utilization
+    print("PASS MQTT survives a non-numeric count and still applies status/utilization")
+
+
 if __name__ == "__main__":
     test_breakdown_logs_once_per_transition_not_per_message()
     test_lowercase_breakdown_is_canonicalised_and_logs_downtime()
     test_unrecognised_status_leaves_machine_untouched()
     test_out_of_range_utilization_is_clamped()
+    test_valid_production_counts_are_recorded()
+    test_negative_counts_skip_production_but_keep_status()
+    test_non_numeric_count_skips_production_not_the_whole_message()
     print("MQTT SERVICE OK: downtime logged once per breakdown event")

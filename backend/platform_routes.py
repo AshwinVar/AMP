@@ -182,6 +182,7 @@ def list_modules(db: Session = Depends(get_db), current_user: dict = Depends(get
         "plan": cfg.plan,
         "enabled_modules": enabled_ids,
         "packs": module_manifest.packs_for_tenant(enabled_ids),
+        "plan_bundles": module_manifest.plan_bundles(),
     }
 
 
@@ -247,7 +248,38 @@ def update_any_tenant(tenant_code: str, payload: dict, db: Session = Depends(get
         mods = payload["enabled_modules"]
         c.enabled_modules = ",".join(mods) if isinstance(mods, list) else mods
     db.commit()
+    # A licence change must take effect at once — the plan-gate caches each
+    # tenant's packs for ~60s, so drop the stale entry (the self-service
+    # update_tenant_config already does this; this cross-tenant path didn't).
+    import plan_gate
+    plan_gate.invalidate(tenant_code)
     log_audit(db, current_user.get("sub"), "update_tenant_license", "tenant", None, tenant_code)
+    return _config_dict(c)
+
+
+@router.post("/tenant-configs/{tenant_code}/apply-plan")
+def apply_plan(tenant_code: str, payload: dict, db: Session = Depends(get_db),
+               current_user: dict = Depends(require_roles(["Admin"]))):
+    """Platform owner assigns a tenant a subscription plan, setting its module
+    bundle from the manifest (modules.json) in one call — so the tenant's AMP
+    immediately shows exactly that plan's modules. Validates the plan against the
+    manifest, invalidates the plan-gate cache so it takes effect at once, and
+    audits it. Founder (DEFAULT) only: it licenses another company."""
+    if current_user.get("tenant", "DEFAULT") != "DEFAULT":
+        raise HTTPException(status_code=403, detail="Platform owner only")
+    import module_manifest
+    import plan_gate
+    plan = (payload.get("plan") or "").strip().lower()
+    bundles = module_manifest.plan_bundles()
+    if plan not in bundles:
+        raise HTTPException(status_code=400,
+                            detail=f"Unknown plan '{plan}'. Choose one of: {', '.join(sorted(bundles))}")
+    c = get_or_create_config(db, tenant_code)
+    c.plan = plan
+    c.enabled_modules = ",".join(bundles[plan])
+    db.commit()
+    plan_gate.invalidate(tenant_code)
+    log_audit(db, current_user.get("sub"), "apply_plan", "tenant", None, f"{tenant_code}:{plan}")
     return _config_dict(c)
 
 # ── Audit log ─────────────────────────────────────────────────

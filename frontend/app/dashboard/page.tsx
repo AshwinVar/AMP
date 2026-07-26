@@ -70,6 +70,7 @@ import AgentActivitySection from "../../components/AgentActivitySection";
 import AgentRoiSection from "../../components/AgentRoiSection";
 import MachineHealthSection from "../../components/MachineHealthSection";
 import SaaSAdminSection from "../../components/SaaSAdminSection";
+import ModuleLicensingPanel from "../../components/ModuleLicensingPanel";
 import CostingSection from "../../components/CostingSection";
 import OperatorTerminalSection from "../../components/OperatorTerminalSection";
 import NotificationsSection from "../../components/NotificationsSection";
@@ -2777,7 +2778,10 @@ export default function DashboardPage() {
       ))}
 
       {renderSection("saas", (
-        <SaaSAdminSection tenants={tenants} analytics={saasAnalytics} form={tenantForm} setForm={setTenantForm} createTenant={isAdmin ? createTenant : async () => {}} updateTenant={isAdmin ? updateTenant : async () => {}} deleteTenant={isAdmin ? deleteTenant : undefined} provisionAdmin={isAdmin ? provisionAdmin : undefined} adminCreds={adminCreds} clearAdminCreds={() => setAdminCreds(null)} />
+        <>
+          <SaaSAdminSection tenants={tenants} analytics={saasAnalytics} form={tenantForm} setForm={setTenantForm} createTenant={isAdmin ? createTenant : async () => {}} updateTenant={isAdmin ? updateTenant : async () => {}} deleteTenant={isAdmin ? deleteTenant : undefined} provisionAdmin={isAdmin ? provisionAdmin : undefined} adminCreds={adminCreds} clearAdminCreds={() => setAdminCreds(null)} />
+          <div className="mt-8"><ModuleLicensingPanel /></div>
+        </>
       ))}
 
       {renderSection("costing", (

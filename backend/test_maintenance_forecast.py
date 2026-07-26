@@ -162,6 +162,22 @@ def test_horizon_boundary_and_machineless_row():
     assert f["by_machine"][0]["count"] == 1
 
 
+def test_forecast_exposes_the_card_contract():
+    # The CMMS forecast card (MaintenanceForecastCard.tsx) renders exactly these
+    # keys; pin them so a read-model edit can't silently break the card.
+    db = _fresh_session()
+    _machines(db)
+    db.commit()
+    f = maintenance.build_maintenance_forecast(db, "DEFAULT")
+    for k in ("days", "scheduled", "overdue", "due_today", "due_next_7", "peak",
+              "series", "by_priority", "by_machine", "upcoming", "overdue_tasks",
+              "verdict", "tone"):
+        assert k in f, f"forecast missing card key {k!r}"
+    # each series bar carries what the 14-day load strip draws
+    assert all({"date", "count", "urgent", "is_today"} <= set(r) for r in f["series"])
+    print("PASS forecast exposes the keys the CMMS forecast card renders")
+
+
 def _run():
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
     for fn in fns:

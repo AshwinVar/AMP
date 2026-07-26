@@ -149,22 +149,29 @@ def create_inventory_transaction(
     if not item:
         raise HTTPException(status_code=404, detail="Inventory item not found")
 
-    # Whether the item was healthy *before* this transaction, so InventoryLow is
-    # raised only on the crossing into low stock (ADR-0003), not on every issue.
-    was_above_reorder = item.current_stock > item.reorder_level
+    # current_stock / reorder_level are Column(Integer, default=0) WITHOUT
+    # nullable=False, so a row written by raw SQL / a migration / a cleared update
+    # can hold a true NULL. This ledger endpoint then did `None > reorder_level`,
+    # `None < quantity` and `None -= quantity` and raised TypeError -> an unhandled
+    # 500 on any transaction against such an item — the same NULL that
+    # recommendations_routes and the low-stock generator already guard for these
+    # exact columns. A transaction must apply to a CONCRETE base, so coalesce the
+    # stock to the column's own default of 0 before the arithmetic; the ledger
+    # write then stores a real integer (the NULL is healed, not propagated).
+    current_stock = item.current_stock or 0
 
     quantity = abs(transaction.quantity)
 
     if transaction.transaction_type == "Issue":
-        if item.current_stock < quantity:
+        if current_stock < quantity:
             raise HTTPException(status_code=400, detail="Insufficient stock")
-        item.current_stock -= quantity
+        item.current_stock = current_stock - quantity
 
     elif transaction.transaction_type == "Return":
-        item.current_stock += quantity
+        item.current_stock = current_stock + quantity
 
     elif transaction.transaction_type == "Receive":
-        item.current_stock += quantity
+        item.current_stock = current_stock + quantity
 
     elif transaction.transaction_type == "Adjust":
         item.current_stock = quantity
@@ -183,16 +190,24 @@ def create_inventory_transaction(
     db.add(new_transaction)
 
     # Widen the event stream: signal when stock crosses its reorder level so the
-    # AI platform can react with a reorder recommendation (ADR-0003).
-    if was_above_reorder and item.current_stock <= item.reorder_level:
-        event_bus.publish(InventoryLow(
-            tenant_code=request_tenant(current_user),
-            item_id=item.id,
-            item_code=item.item_code,
-            item_name=item.item_name,
-            current_stock=item.current_stock,
-            reorder_level=item.reorder_level,
-        ), db)
+    # AI platform can react with a reorder recommendation (ADR-0003). Only when a
+    # reorder level is actually configured: reorder_level can be NULL (see above)
+    # and `stock <= None` is undefined — a NULL level can't say whether the item is
+    # low, so skip the crossing rather than crash or fabricate one (matching the
+    # SQL `current_stock <= reorder_level` low-stock filter, which excludes NULL
+    # levels). `current_stock` is the healthy-before value; item.current_stock is
+    # the post-transaction level, both concrete ints here.
+    if item.reorder_level is not None:
+        was_above_reorder = current_stock > item.reorder_level
+        if was_above_reorder and item.current_stock <= item.reorder_level:
+            event_bus.publish(InventoryLow(
+                tenant_code=request_tenant(current_user),
+                item_id=item.id,
+                item_code=item.item_code,
+                item_name=item.item_name,
+                current_stock=item.current_stock,
+                reorder_level=item.reorder_level,
+            ), db)
 
     db.commit()
     db.refresh(new_transaction)

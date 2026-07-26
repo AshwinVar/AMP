@@ -16,7 +16,7 @@ main's /reports/daily-summary.txt calls it directly; it is registered as
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import func
+from sqlalchemy import func, or_
 from sqlalchemy.orm import Session
 
 import ai
@@ -701,28 +701,58 @@ def get_document_analytics(
     db: Session = Depends(_get_db),
     current_user: dict = Depends(get_current_user),
 ):
-    documents = db.query(models.ComplianceDocument).all()
+    # Aggregate the growing compliance_documents table in SQL rather than hydrating
+    # every row into Python just to bucket it with list comprehensions (rule-4
+    # antipattern, the same GROUP BY fix already applied to /analytics/maintenance
+    # just below, and to /analytics/work-orders, /analytics/escalations, etc.).
+    # ComplianceDocument is in SCOPED_MODELS, so the do_orm_execute hook (ADR-0002)
+    # tenant-scopes each aggregate SELECT exactly as it did the old .all() scan —
+    # same basis, so the parts still reconcile against the whole.
     today = datetime.utcnow().date()
 
-    draft = len([row for row in documents if row.approval_status == "Draft"])
-    approved = len([row for row in documents if row.approval_status == "Approved"])
-    under_review = len([row for row in documents if row.approval_status == "Under Review"])
-    obsolete = len([row for row in documents if row.approval_status == "Obsolete"])
-    review_due = len([row for row in documents if row.review_due_date < today and row.approval_status != "Obsolete"])
+    total_documents = db.query(func.count(models.ComplianceDocument.id)).scalar() or 0
 
-    type_counts = {}
-    department_counts = {}
+    status_counts = dict(
+        db.query(models.ComplianceDocument.approval_status, func.count())
+        .group_by(models.ComplianceDocument.approval_status)
+        .all()
+    )
+    type_counts = {
+        document_type: int(count)
+        for document_type, count in db.query(
+            models.ComplianceDocument.document_type, func.count()
+        ).group_by(models.ComplianceDocument.document_type).all()
+    }
+    department_counts = {
+        department: int(count)
+        for department, count in db.query(
+            models.ComplianceDocument.department, func.count()
+        ).group_by(models.ComplianceDocument.department).all()
+    }
 
-    for row in documents:
-        type_counts[row.document_type] = type_counts.get(row.document_type, 0) + 1
-        department_counts[row.department] = department_counts.get(row.department, 0) + 1
+    # review_due = past its review date and not retired (Obsolete). Filtered in SQL
+    # on the now-indexed review_due_date (see main._ensure_index) so a growing
+    # register never streams every row back just to count the due ones.
+    # approval_status is String default="Draft" (not NOT NULL); the old Python
+    # `row.approval_status != "Obsolete"` counted a NULL-status past-due doc as due
+    # (None != "Obsolete" is True), but SQL's `approval_status != 'Obsolete'` is
+    # NULL — not TRUE — for a NULL status, silently dropping that row. OR the NULL
+    # back in to keep the same basis (the same subtlety as the late-order count,
+    # #295/#298).
+    review_due = db.query(func.count(models.ComplianceDocument.id)).filter(
+        models.ComplianceDocument.review_due_date < today,
+        or_(
+            models.ComplianceDocument.approval_status.is_(None),
+            models.ComplianceDocument.approval_status != "Obsolete",
+        ),
+    ).scalar() or 0
 
     return {
-        "total_documents": len(documents),
-        "draft": draft,
-        "approved": approved,
-        "under_review": under_review,
-        "obsolete": obsolete,
+        "total_documents": total_documents,
+        "draft": status_counts.get("Draft", 0),
+        "approved": status_counts.get("Approved", 0),
+        "under_review": status_counts.get("Under Review", 0),
+        "obsolete": status_counts.get("Obsolete", 0),
         "review_due": review_due,
         "type_counts": type_counts,
         "department_counts": department_counts,

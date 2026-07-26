@@ -12,7 +12,7 @@ from datetime import datetime
 from typing import List
 
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import func, or_
+from sqlalchemy import case, func, or_
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -504,46 +504,84 @@ def get_purchasing_analytics(
     db: Session = Depends(_get_db),
     current_user: dict = Depends(get_current_user),
 ):
-    suppliers = db.query(models.Supplier).all()
-    pos = db.query(models.PurchaseOrder).all()
     today = datetime.utcnow().date()
 
-    open_count = len([row for row in pos if row.status == "Open"])
-    partial = len([row for row in pos if row.status == "Partial"])
-    received = len([row for row in pos if row.status == "Received"])
-    cancelled = len([row for row in pos if row.status == "Cancelled"])
-    overdue = len([row for row in pos if row.expected_delivery_date < today and row.status not in ["Received", "Cancelled"]])
+    # Resolve supplier names from a single lightweight 2-column fetch of the
+    # (small, bounded) supplier roster — its length is also the supplier count.
+    # An unknown/foreign supplier_id is simply absent from the map and falls back
+    # to the "Supplier {id}" label (a deleted-supplier row keeps its pending).
+    supplier_rows = db.query(models.Supplier.id, models.Supplier.supplier_name).all()
+    supplier_names = {sid: name for sid, name in supplier_rows}
 
+    # Roll the GROWING purchase_orders table up in SQL rather than hydrating every
+    # PO row into Python just to bucket/sum it with list comprehensions (rule-4
+    # antipattern; the same GROUP BY fix already applied to /analytics/customer-
+    # orders #295 and the other analytics endpoints). PurchaseOrder is in
+    # SCOPED_MODELS, so the do_orm_execute hook (ADR-0002) tenant-scopes every
+    # aggregate SELECT below exactly as it did the old .all() scan.
+    #
     # received_quantity is Column(Integer, default=0) WITHOUT nullable=False, so a
-    # row written by raw SQL / a migration / a cleared update can be NULL. Summing a
-    # NULL 500'd this endpoint (None in sum()); coalesce to the column's own default
-    # of 0, matching the CSV export's `received_quantity or 0`. order_quantity is
-    # nullable=False and needs no guard.
-    ordered_qty = sum(row.order_quantity for row in pos)
-    received_qty = sum((row.received_quantity or 0) for row in pos)
+    # row written by raw SQL / a migration / a cleared update can hold a true NULL;
+    # SUM already skips NULLs and COALESCE(..,0) turns an empty book's NULL sum into
+    # 0, matching the old `sum(received_quantity or 0)` (and the CSV export's
+    # `received_quantity or 0`). order_quantity is nullable=False and needs no guard.
+    overdue_case = case((models.PurchaseOrder.expected_delivery_date < today, 1), else_=0)
+    status_rows = db.query(
+        models.PurchaseOrder.status,
+        func.count(models.PurchaseOrder.id),
+        func.coalesce(func.sum(models.PurchaseOrder.order_quantity), 0),
+        func.coalesce(func.sum(models.PurchaseOrder.received_quantity), 0),
+        func.coalesce(func.sum(overdue_case), 0),
+    ).group_by(models.PurchaseOrder.status).all()
+
+    status_counts = {}
+    purchase_orders = 0
+    ordered_qty = 0
+    received_qty = 0
+    overdue = 0
+    for status, count, ordered, received, overdue_in_group in status_rows:
+        status_counts[status] = int(count)
+        purchase_orders += int(count)
+        ordered_qty += int(ordered)
+        received_qty += int(received)
+        # Overdue = past its expected date AND not already Received/Cancelled.
+        # status is String default="Open" (not NOT NULL), so a raw-SQL / migration
+        # / cleared write can store NULL; the old Python `status not in [...]`
+        # counted a NULL-status overdue PO as overdue (None is not in the list),
+        # and the overdue-escalation generator OR's the same NULL back in so the
+        # headline and the generated escalations reconcile (mirrors #298 for
+        # customer orders). SQL groups NULL status into its own row, which this
+        # `not in` includes exactly as before.
+        if status not in ("Received", "Cancelled"):
+            overdue += int(overdue_in_group)
+
     receipt_rate = round((received_qty / ordered_qty) * 100) if ordered_qty else 0
 
-    # Resolve supplier names from the suppliers already loaded above, rather than
-    # a per-PO SELECT — that inner lookup was an N+1 that hit the database once
-    # for every purchase order in the book (200 open POs -> 200 extra queries).
-    # Supplier is in SCOPED_MODELS, so the tenant-scoped `.all()` fetch already
-    # holds exactly the suppliers the per-row query could have returned; an
-    # unknown/foreign supplier_id is simply absent from the map and still falls
-    # back to the "Supplier {id}" label — output unchanged, one scan instead of N.
-    supplier_names = {s.id: s.supplier_name for s in suppliers}
+    # Per-supplier outstanding (order minus received, floored at 0 per PO, then
+    # summed) in one GROUP BY supplier_id — at most one row per supplier, not a
+    # Python pass over every PO. Mirrors the per-record floor of the old
+    # `max(order_quantity - (received_quantity or 0), 0)`.
+    per_po_pending = models.PurchaseOrder.order_quantity - func.coalesce(
+        models.PurchaseOrder.received_quantity, 0
+    )
+    pending_case = case((per_po_pending > 0, per_po_pending), else_=0)
+    pending_rows = db.query(
+        models.PurchaseOrder.supplier_id,
+        func.coalesce(func.sum(pending_case), 0),
+    ).group_by(models.PurchaseOrder.supplier_id).all()
+
     supplier_pending = {}
-    for row in pos:
-        name = supplier_names.get(row.supplier_id, f"Supplier {row.supplier_id}")
-        pending = max(row.order_quantity - (row.received_quantity or 0), 0)
-        supplier_pending[name] = supplier_pending.get(name, 0) + pending
+    for supplier_id, pending in pending_rows:
+        name = supplier_names.get(supplier_id, f"Supplier {supplier_id}")
+        supplier_pending[name] = supplier_pending.get(name, 0) + int(pending)
 
     return {
-        "suppliers": len(suppliers),
-        "purchase_orders": len(pos),
-        "open": open_count,
-        "partial": partial,
-        "received": received,
-        "cancelled": cancelled,
+        "suppliers": len(supplier_names),
+        "purchase_orders": purchase_orders,
+        "open": status_counts.get("Open", 0),
+        "partial": status_counts.get("Partial", 0),
+        "received": status_counts.get("Received", 0),
+        "cancelled": status_counts.get("Cancelled", 0),
         "overdue": overdue,
         "ordered_qty": ordered_qty,
         "received_qty": received_qty,
@@ -559,11 +597,23 @@ def generate_overdue_po_escalations(
 ):
     today = datetime.utcnow().date()
 
+    # "Overdue" here MUST mean exactly what the /analytics/purchasing headline
+    # counts as overdue, or the two disagree: the headline says N overdue while
+    # this generator raises fewer than N escalations. status is String
+    # default="Open" (not NOT NULL), so a raw-SQL / migration / cleared write can
+    # store NULL, and SQL's `status NOT IN (...)` is NULL — not TRUE — for a NULL
+    # status, which silently drops an overdue NULL-status PO from this scan even
+    # though the analytics endpoint counts it as overdue. OR the NULL back in so
+    # the escalation basis reconciles with the headline (mirrors #298 for
+    # customer orders).
     overdue_pos = (
         db.query(models.PurchaseOrder)
         .filter(
             models.PurchaseOrder.expected_delivery_date < today,
-            models.PurchaseOrder.status.notin_(["Received", "Cancelled"]),
+            or_(
+                models.PurchaseOrder.status.is_(None),
+                models.PurchaseOrder.status.notin_(["Received", "Cancelled"]),
+            ),
         )
         .all()
     )

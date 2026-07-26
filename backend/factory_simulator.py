@@ -838,13 +838,21 @@ def tick_work_order_progress(db):
 
 
 def tick_shift_entry(db):
-    """Log a shift output record for the current shift."""
-    hour  = datetime.now().hour
-    shift = SHIFTS[hour // 8 % 3]
+    """Log a shift output record for the current shift.
+
+    The date in the label is taken from a LIVE ``datetime.now()`` here, not from
+    the module-level ``today`` (``date.today()`` captured once at import). This is
+    a long-running background tick: on a server that has been up across a date
+    boundary, the stale ``today`` stamped every "live" shift log with the server's
+    start-up date — a displayed label carrying a date the row doesn't have. One
+    ``now`` also drives both the shift bucket and the date, so they can't disagree
+    across a midnight tick."""
+    now   = datetime.now()
+    shift = SHIFTS[now.hour // 8 % 3]
     target = random.randint(280, 450)
     actual = int(target * random.uniform(0.74, 0.97))
     db.add(models.ShiftData(
-        shift_name=f"{shift} – {today.strftime('%d %b')}",
+        shift_name=f"{shift} – {now.strftime('%d %b')}",
         target_output=target, actual_output=actual,
     ))
     db.commit()

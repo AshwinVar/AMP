@@ -77,10 +77,20 @@ def analytics_summary(db: Session = Depends(_get_db), current_user: dict = Depen
         fallback = [calculate_fallback_oee(m.utilization) for m in machines if m.utilization is not None]
         avg_oee = round(sum(fallback) / len(fallback)) if fallback else 0
 
-    avg_shift_efficiency = (
-        round(sum((s.actual_output / s.target_output) * 100 if s.target_output else 0 for s in shifts) / len(shifts))
-        if shifts else 0
-    )
+    # Shift efficiency is POOLED (total actual / total target), the same basis as
+    # build_management_summary's target_achievement and the shift read-model
+    # (ai/shift.py) — never a mean of per-shift ratios. Averaging ratios has two
+    # faults the pooled form fixes: (1) it over-weights a small-target shift (a
+    # 10/10 shift and a 900/1000 shift averaged to 95%, when the plant really made
+    # 910 of 1010 = 90%), and (2) it counted an UNPLANNED shift (target 0) as a
+    # real 0% and divided by its slot, dragging the headline down — the exact
+    # "never score a shift the data can't measure at 0%" honesty rule ai/shift.py
+    # already follows. Pooling adds a 0-target shift's real output to the numerator
+    # and nothing to the denominator, so an unplanned shift neither fabricates a 0%
+    # nor disagrees with the attainment surfaces on the same shifts.
+    total_shift_target = sum(s.target_output or 0 for s in shifts)
+    total_shift_actual = sum(s.actual_output or 0 for s in shifts)
+    avg_shift_efficiency = round((total_shift_actual / total_shift_target) * 100) if total_shift_target else 0
 
     reason_counts = {}
     machine_downtime = {}

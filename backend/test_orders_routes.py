@@ -128,6 +128,18 @@ def _po(no, supplier_id, order_qty, received_qty):
     )
 
 
+def _po_due(no, supplier_id, order_qty, received_qty, days):
+    """A purchase order whose expected_delivery_date is `days` from today
+    (negative -> already overdue)."""
+    from datetime import date, timedelta
+
+    return schemas.PurchaseOrderCreate(
+        po_no=no, supplier_id=supplier_id, item_name="Widget",
+        order_quantity=order_qty, received_quantity=received_qty, unit="ea",
+        expected_delivery_date=date.today() + timedelta(days=days),
+    )
+
+
 def test_purchasing_analytics_supplier_pending_reconciled_and_no_n_plus_1():
     # The supplier-pending breakdown must resolve names from the suppliers already
     # loaded, not a SELECT per PO. This pins BOTH: (a) the numbers are unchanged
@@ -398,6 +410,52 @@ def test_late_order_escalation_generator_reconciles_with_late_headline():
     print("PASS late-order escalation generator reconciles with the late headline (incl. NULL status)")
 
 
+def test_purchasing_analytics_overdue_reconciles_with_generator():
+    # rule-3 reconciliation for the purchase-order side (mirrors #298 for customer
+    # orders). The /analytics/purchasing "overdue" headline counts an overdue PO as
+    # overdue when it is past its expected date AND not Received/Cancelled — and a
+    # NULL-status overdue PO counts too (status is String default="Open", not NOT
+    # NULL; a raw-SQL / migration / cleared write can store NULL, and Python's
+    # `status not in [...]` treats None as overdue). The overdue-escalation
+    # generator MUST use the SAME basis, or the two disagree: the headline says N
+    # overdue while the generator raises fewer escalations. Before the fix the
+    # generator's `status NOT IN (...)` was NULL — not TRUE — for a NULL status,
+    # silently dropping the very PO the headline still counts.
+    #
+    # Fixture is hand-derived: two overdue Open POs + one overdue NULL-status PO ARE
+    # overdue (=3); one future PO and one overdue-but-Received PO are NOT.
+    db = _iso_session()
+    tok = T.set_current_tenant("TA")
+    try:
+        s1 = orders_routes.create_supplier(_supplier("S1", "Acme"), db=db, current_user={"tenant": "TA"})
+        orders_routes.create_purchase_order(_po_due("PO-OD1", s1.id, 10, 0, -3), db=db, current_user={"tenant": "TA"})
+        orders_routes.create_purchase_order(_po_due("PO-OD2", s1.id, 20, 0, -2), db=db, current_user={"tenant": "TA"})
+        orders_routes.create_purchase_order(_po_due("PO-FUT", s1.id, 10, 0, 5), db=db, current_user={"tenant": "TA"})
+        # received == order -> create_purchase_order auto-derives "Received": overdue
+        # by date but must NOT count as overdue nor produce an escalation.
+        orders_routes.create_purchase_order(_po_due("PO-RECV", s1.id, 10, 10, -4), db=db, current_user={"tenant": "TA"})
+        nullpo = orders_routes.create_purchase_order(_po_due("PO-NULL", s1.id, 15, 0, -1), db=db, current_user={"tenant": "TA"})
+        db.execute(text("UPDATE purchase_orders SET status = NULL WHERE id = :i"), {"i": nullpo.id})
+        db.commit()
+        db.expire_all()
+
+        # Headline basis: 3 overdue (OD1 + OD2 + the NULL-status one; FUT and RECV are out).
+        analytics = orders_routes.get_purchasing_analytics(db=db, current_user={"tenant": "TA"})
+        assert analytics["overdue"] == 3, analytics["overdue"]
+
+        # Generator must match that basis exactly: 3 escalations, one for the NULL row.
+        created = orders_routes.generate_overdue_po_escalations(db=db, current_user={"tenant": "TA"})["created"]
+        assert created == analytics["overdue"] == 3, (created, analytics["overdue"])
+        titles = {e.title for e in db.query(models.Escalation).all()}
+        assert "Overdue purchase order: PO-NULL" in titles, titles   # NULL-status overdue is escalated
+        assert "Overdue purchase order: PO-OD1" in titles, titles
+        assert "Overdue purchase order: PO-RECV" not in titles, titles  # Received -> not overdue
+        assert "Overdue purchase order: PO-FUT" not in titles, titles   # future -> not overdue
+    finally:
+        T.reset_current_tenant(tok)
+    print("PASS purchasing overdue headline reconciles with the generator (incl. NULL status)")
+
+
 if __name__ == "__main__":
     test_procurement_paths_owned_by_orders_routes()
     test_duplicate_order_no_across_tenants_is_409_not_500()
@@ -410,4 +468,5 @@ if __name__ == "__main__":
     test_customer_order_analytics_empty_book()
     test_customer_order_analytics_null_status_overdue_counts_as_late()
     test_late_order_escalation_generator_reconciles_with_late_headline()
+    test_purchasing_analytics_overdue_reconciles_with_generator()
     print("ALL ORDERS ROUTE TESTS PASSED")

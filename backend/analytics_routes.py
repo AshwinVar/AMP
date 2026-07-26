@@ -859,42 +859,77 @@ def get_production_schedule_analytics(
     db: Session = Depends(_get_db),
     current_user: dict = Depends(get_current_user),
 ):
-    schedules = db.query(models.ProductionSchedule).all()
+    # Aggregate the growing production_schedules table in SQL rather than hydrating
+    # every row into Python to bucket/sum it with list comprehensions (rule-4
+    # antipattern; the same GROUP BY / COALESCE(SUM) fix already applied to
+    # /analytics/work-orders (#275), /analytics/maintenance (#300),
+    # /analytics/escalations (#288) and /analytics/customer-orders (#295)). This
+    # endpoint kept the N+1 machine lookup dropped (#273) but still pulled the whole
+    # table in. ProductionSchedule is in SCOPED_MODELS, so the do_orm_execute hook
+    # (ADR-0002) tenant-scopes every aggregate SELECT below exactly as it did the
+    # old .all() scan.
+    status_counts = dict(
+        db.query(models.ProductionSchedule.status, func.count())
+        .group_by(models.ProductionSchedule.status)
+        .all()
+    )
 
-    scheduled = len([row for row in schedules if row.status == "Scheduled"])
-    running = len([row for row in schedules if row.status == "Running"])
-    completed = len([row for row in schedules if row.status == "Completed"])
-    delayed = len([row for row in schedules if row.status == "Delayed"])
+    # planned_quantity is nullable=False, but SUM over an empty book is still NULL;
+    # estimated_minutes is Column(Integer, default=480) WITHOUT nullable=False, so a
+    # row written by raw SQL / a migration / a cleared update can be a true NULL,
+    # which the old Python sum() coalesced with `or 0`. COALESCE(.., 0) does the same
+    # in SQL AND never sees an empty-table NULL either.
+    total_schedules, total_quantity, total_minutes = db.query(
+        func.count(models.ProductionSchedule.id),
+        func.coalesce(func.sum(models.ProductionSchedule.planned_quantity), 0),
+        func.coalesce(func.sum(models.ProductionSchedule.estimated_minutes), 0),
+    ).one()
+    total_quantity = int(total_quantity)
+    total_minutes = int(total_minutes)
 
-    total_quantity = sum(row.planned_quantity for row in schedules)
-    # estimated_minutes is nullable (it carries only a column default); a legacy
-    # NULL must read as 0, not crash the summation with a None -> TypeError 500.
-    total_minutes = sum((row.estimated_minutes or 0) for row in schedules)
-
-    # One name lookup for every machine (tenant-scoped like the schedule query
-    # itself), instead of a per-schedule Machine query inside the loop — that was
-    # an N+1 on a growing table, the same anti-pattern the maintenance rollup
-    # already dropped.
+    # Per-machine load minutes: one GROUP BY on machine_id, then a single name
+    # lookup (tenant-scoped like the aggregate itself), then merge by name in Python
+    # so two machine rows that share a name land in one bucket — exactly the
+    # maintenance rollup's shape. An unknown machine_id keeps its "Machine {id}"
+    # fallback label. Minutes coalesce so a NULL estimate reads as 0, keeping the
+    # per-machine load on the same basis as total_minutes (parts sum to the whole).
+    machine_id_minutes = (
+        db.query(models.ProductionSchedule.machine_id,
+                 func.coalesce(func.sum(models.ProductionSchedule.estimated_minutes), 0))
+        .group_by(models.ProductionSchedule.machine_id)
+        .all()
+    )
     machine_names = dict(db.query(models.Machine.id, models.Machine.name).all())
     machine_load = {}
+    for machine_id, minutes in machine_id_minutes:
+        name = machine_names.get(machine_id, f"Machine {machine_id}")
+        machine_load[name] = machine_load.get(name, 0) + int(minutes)
+
+    # Per-shift planned quantity, grouped in SQL on the same planned-quantity basis
+    # as total_quantity (parts sum to the whole).
     shift_load = {}
+    for shift_name, qty in (
+        db.query(models.ProductionSchedule.shift_name,
+                 func.coalesce(func.sum(models.ProductionSchedule.planned_quantity), 0))
+        .group_by(models.ProductionSchedule.shift_name)
+        .all()
+    ):
+        shift_load[shift_name] = shift_load.get(shift_name, 0) + int(qty)
 
-    for row in schedules:
-        machine_name = machine_names.get(row.machine_id, f"Machine {row.machine_id}")
-        machine_load[machine_name] = machine_load.get(machine_name, 0) + (row.estimated_minutes or 0)
-        shift_load[row.shift_name] = shift_load.get(row.shift_name, 0) + row.planned_quantity
-
+    # Heaviest load first; break ties by machine name so the ranking is fully
+    # deterministic (the GROUP BY no longer returns rows in schedule-insertion
+    # order, so a raw stable sort could order equal-load machines arbitrarily).
     bottlenecks = [
         {"machine": name, "load_minutes": minutes}
-        for name, minutes in sorted(machine_load.items(), key=lambda item: item[1], reverse=True)
+        for name, minutes in sorted(machine_load.items(), key=lambda item: (-item[1], item[0]))
     ]
 
     return {
-        "total_schedules": len(schedules),
-        "scheduled": scheduled,
-        "running": running,
-        "completed": completed,
-        "delayed": delayed,
+        "total_schedules": total_schedules,
+        "scheduled": status_counts.get("Scheduled", 0),
+        "running": status_counts.get("Running", 0),
+        "completed": status_counts.get("Completed", 0),
+        "delayed": status_counts.get("Delayed", 0),
         "total_quantity": total_quantity,
         "total_minutes": total_minutes,
         "machine_load": machine_load,

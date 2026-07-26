@@ -2,15 +2,19 @@
 
 The endpoint summarises the booked schedule: status split (scheduled / running /
 completed / delayed), total planned quantity and estimated minutes, per-machine
-load, per-shift load, and a load-ranked bottleneck list. Two things it must get
+load, per-shift load, and a load-ranked bottleneck list. Things it must get
 right, pinned here because the route test only covers registration:
 
-  * Machine names are resolved from ONE lookup, not a per-schedule query inside
-    the loop — that was an N+1 on a growing table (production_schedules), the same
-    anti-pattern the maintenance rollup already dropped.
+  * The growing production_schedules table is aggregated in SQL (GROUP BY /
+    COALESCE(SUM)), not hydrated whole into Python to bucket with comprehensions —
+    the rule-4 anti-pattern the sibling rollups already dropped. Machine names are
+    resolved from ONE lookup, never a per-schedule query.
   * estimated_minutes is a nullable column (it carries only a column default); a
     NULL must read as 0 in both the total and the per-machine load, not crash the
     summation (a None -> TypeError 500).
+  * The headline totals and their per-machine / per-shift breakdowns share one
+    basis, so the parts sum to the whole; a NULL-status row is still counted in
+    total_schedules even though it lands in none of the named status buckets.
 
 Run:  DATABASE_URL="sqlite:///./ci.db" python backend/test_production_schedule_analytics.py
 """
@@ -111,20 +115,90 @@ def test_empty_factory_is_all_zeros_no_crash():
     print("PASS empty factory -> zeros, no crash")
 
 
-def test_machine_names_resolved_without_a_per_row_query():
-    # The per-schedule Machine query inside the loop was an N+1 on a growing table.
-    # Pin that it's gone: the loop must not issue a Machine query per row.
+def test_null_status_counted_in_total_but_not_a_named_bucket():
+    # status is String default="Scheduled" (not NOT NULL), so a raw-SQL / migration
+    # write can store NULL. SQL GROUP BY yields a None key we never read, so a
+    # NULL-status row lands in no named bucket — but func.count(id) still includes
+    # it, exactly like the old `len([... == "Scheduled"])` scan that also skipped it.
+    db = _fresh_session()
+    db.add(models.Machine(id=1, name="CNC-01", status="Running", utilization=70))
+    db.add_all([
+        _sched("PS-1", 1, "A", 100, 480, "Scheduled"),
+        _sched("PS-2", 1, "A", 40, 120, "Running"),
+    ])
+    db.commit()
+    db.execute(text("UPDATE production_schedules SET status = NULL WHERE schedule_no = 'PS-2'"))
+    db.commit()
+    db.expire_all()
+
+    out = get_production_schedule_analytics(db=db, current_user=USER)
+    assert out["total_schedules"] == 2          # NULL-status row still counted
+    assert out["scheduled"] == 1
+    assert out["running"] == 0                   # the row is NULL, not "Running"
+    # totals and their breakdowns still cover every row, NULL status included
+    assert out["total_quantity"] == 140
+    assert out["total_minutes"] == 600
+    assert sum(out["shift_load"].values()) == out["total_quantity"]
+    assert sum(out["machine_load"].values()) == out["total_minutes"]
+    print("PASS NULL status counted in total_schedules but in no named status bucket")
+
+
+def test_breakdowns_reconcile_to_headline_totals():
+    # Independently-derived expected numbers over a larger book, asserting the
+    # per-machine and per-shift parts sum to the headline whole (shared basis).
+    db = _fresh_session()
+    db.add(models.Machine(id=1, name="CNC-01", status="Running", utilization=70))
+    db.add(models.Machine(id=2, name="CNC-02", status="Running", utilization=70))
+    rows = []
+    expected_qty = 0
+    expected_min = 0
+    for i in range(1, 13):
+        machine_id = 1 if i % 2 else 2
+        shift = "A" if i % 3 else "B"
+        qty = 10 * i          # 10..120
+        minutes = 15 * i      # 15..180
+        expected_qty += qty
+        expected_min += minutes
+        rows.append(_sched(f"PS-{i}", machine_id, shift, qty, minutes, "Scheduled"))
+    db.add_all(rows)
+    db.commit()
+
+    out = get_production_schedule_analytics(db=db, current_user=USER)
+    assert out["total_schedules"] == 12
+    assert out["total_quantity"] == expected_qty == 780
+    assert out["total_minutes"] == expected_min == 1170
+    # the parts reconcile to the whole on both bases
+    assert sum(out["shift_load"].values()) == out["total_quantity"]
+    assert sum(out["machine_load"].values()) == out["total_minutes"]
+    # bottlenecks list every loaded machine, heaviest first, and reconcile too
+    assert sum(b["load_minutes"] for b in out["bottlenecks"]) == out["total_minutes"]
+    loads = [b["load_minutes"] for b in out["bottlenecks"]]
+    assert loads == sorted(loads, reverse=True)
+    print("PASS per-machine / per-shift breakdowns reconcile to the headline totals")
+
+
+def test_scan_is_bounded_in_sql_not_hydrated_into_python():
+    # The old code pulled the whole (growing) production_schedules table into Python
+    # (`db.query(models.ProductionSchedule).all()`) and bucketed with list
+    # comprehensions — the rule-4 anti-pattern. Pin that it's now aggregated in SQL.
     src = inspect.getsource(get_production_schedule_analytics)
-    loop_body = src.split("for row in schedules:", 1)[1]
-    assert "db.query(models.Machine)" not in loop_body, \
-        "machine names must come from one lookup, not a per-schedule query in the loop"
-    assert "machine_names" in src, "expected a single machine-name lookup dict"
-    print("PASS machine names resolved from one lookup (no N+1 in the loop)")
+    assert "db.query(models.ProductionSchedule).all()" not in src, \
+        "must not hydrate the whole production_schedules table into Python"
+    assert "for row in schedules" not in src, \
+        "must not loop over a fully-hydrated schedule list"
+    assert ".group_by(models.ProductionSchedule.status)" in src, \
+        "status split must be a SQL GROUP BY"
+    assert "func.coalesce(func.sum(models.ProductionSchedule.planned_quantity)" in src \
+        and "func.coalesce(func.sum(models.ProductionSchedule.estimated_minutes)" in src, \
+        "totals must be NULL-safe SQL SUMs"
+    print("PASS schedule analytics aggregates in SQL (bounded), not a full-table scan")
 
 
 if __name__ == "__main__":
     test_summary_totals_load_and_bottlenecks()
     test_null_estimated_minutes_reads_as_zero_no_crash()
     test_empty_factory_is_all_zeros_no_crash()
-    test_machine_names_resolved_without_a_per_row_query()
+    test_null_status_counted_in_total_but_not_a_named_bucket()
+    test_breakdowns_reconcile_to_headline_totals()
+    test_scan_is_bounded_in_sql_not_hydrated_into_python()
     print("ALL PRODUCTION-SCHEDULE ANALYTICS TESTS PASSED")

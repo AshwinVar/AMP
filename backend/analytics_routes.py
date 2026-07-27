@@ -220,7 +220,22 @@ def get_machine_state_summary(db: Session = Depends(_get_db), current_user: dict
 
 @router.get("/analytics/oee-trends")
 def get_oee_trends(db: Session = Depends(_get_db), current_user: dict = Depends(get_current_user)):
-    records = db.query(models.ProductionRecord).order_by(models.ProductionRecord.id.asc()).limit(200).all()
+    # The most-recent 200 records, then flipped back to chronological order so the
+    # trend still reads oldest -> newest along the chart's x-axis.
+    #
+    # The old query ordered id ASC and then limited to 200 — that pins the window
+    # to the FIRST 200 records ever written. On a growing table (production_records
+    # only ever appends) the "trend" freezes on ancient production the moment the
+    # table passes 200 rows and never shows a recent run again — a trend that can't
+    # move. Ordering id DESC selects the newest 200; reversing restores the
+    # oldest-first order build_oee_trends indexes onto record #1..N.
+    records = (
+        db.query(models.ProductionRecord)
+        .order_by(models.ProductionRecord.id.desc())
+        .limit(200)
+        .all()
+    )
+    records.reverse()
     return build_oee_trends(records)
 
 

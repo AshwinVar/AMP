@@ -1104,6 +1104,68 @@ def test_system_health_counts_are_tenant_scoped():
     print("PASS system-health: SQL counts stay tenant-scoped (GMATS sees only its own)")
 
 
+def _oee_rec(machine_id):
+    # A record whose OEE is derivable by hand: availability 80/100 = 0.8,
+    # performance 60*100/(80*60) = 1.25 -> clamped to 1.0, quality 90/100 = 0.9,
+    # so OEE = 0.8 * 1.0 * 0.9 = 0.72 -> 72%. machine_id tags insertion order.
+    return models.ProductionRecord(
+        machine_id=machine_id, planned_minutes=100, runtime_minutes=80,
+        ideal_cycle_time_seconds=60, total_count=100, good_count=90, rejected_count=10)
+
+
+def test_oee_trends_window_is_recent_200_not_frozen_on_oldest():
+    # /analytics/oee-trends must track RECENT production. The old query ordered
+    # id ASC then limited to 200, pinning the window to the first 200 rows ever
+    # written — so past 200 rows the trend freezes on the oldest data forever.
+    # Insert 205 records tagged 1..205 by insertion order (id 1..205 in sqlite).
+    db = _fresh_session()
+    for k in range(1, 206):
+        db.add(_oee_rec(k))
+    db.commit()
+
+    rows = analytics_routes.get_oee_trends(db=db, current_user={})
+
+    # bounded to the 200-row window
+    assert len(rows) == 200, len(rows)
+    ids = [r["machine_id"] for r in rows]
+    # the window is the NEWEST 200 (ids 6..205); the oldest 5 (ids 1..5) are the
+    # ones dropped — NOT the newest. This is the whole bug: an ASC limit dropped
+    # the newest instead.
+    assert ids == list(range(6, 206)), (ids[:3], ids[-3:])
+    # chronological within the window (oldest-first) so the chart reads left->right
+    assert ids == sorted(ids)
+    assert rows[0]["machine_id"] == 6 and rows[-1]["machine_id"] == 205
+    # x-axis index runs 1..200 over the window
+    assert rows[0]["record"] == 1 and rows[-1]["record"] == 200
+    # the very first records ever written are no longer masquerading as "the trend"
+    assert 1 not in ids and 5 not in ids
+    # OEE is the hand-derived 72% (and the >100% performance is clamped to 100)
+    assert rows[-1]["oee"] == 72 and rows[-1]["performance"] == 100
+    print("PASS oee-trends: recent 200-row window, chronological, not frozen on oldest")
+
+
+def test_oee_trends_small_table_returns_all_oldest_first():
+    # Below the window size, every record is returned oldest -> newest (the trend
+    # direction), and the hand-derived per-record OEE is pinned.
+    db = _fresh_session()
+    for k in range(1, 4):
+        db.add(_oee_rec(k))
+    db.commit()
+    rows = analytics_routes.get_oee_trends(db=db, current_user={})
+    assert [r["machine_id"] for r in rows] == [1, 2, 3], rows
+    assert [r["record"] for r in rows] == [1, 2, 3], rows
+    assert rows[0]["availability"] == 80 and rows[0]["quality"] == 90
+    assert rows[0]["performance"] == 100 and rows[0]["oee"] == 72
+    print("PASS oee-trends: small table returns all records oldest->newest")
+
+
+def test_oee_trends_empty_table_is_empty_not_a_crash():
+    db = _fresh_session()
+    rows = analytics_routes.get_oee_trends(db=db, current_user={})
+    assert rows == [], rows
+    print("PASS oee-trends: empty table -> [] (no crash)")
+
+
 if __name__ == "__main__":
     test_analytics_paths_owned_by_module()
     test_analytics_summary_is_module_level_and_shared()
@@ -1145,4 +1207,7 @@ if __name__ == "__main__":
     test_system_health_empty_tables_are_zero_not_a_crash()
     test_system_health_does_not_hydrate_whole_tables()
     test_system_health_counts_are_tenant_scoped()
+    test_oee_trends_window_is_recent_200_not_frozen_on_oldest()
+    test_oee_trends_small_table_returns_all_oldest_first()
+    test_oee_trends_empty_table_is_empty_not_a_crash()
     print("ALL ANALYTICS ROUTE TESTS PASSED")

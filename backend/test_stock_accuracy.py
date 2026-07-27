@@ -204,6 +204,19 @@ def test_healthy_accuracy_reports_good():
     print("PASS a high-accuracy, full-coverage programme reads good")
 
 
+def test_accuracy_exposes_the_card_contract():
+    # The Inventory stock-integrity card (StockIntegrityCards.tsx) renders exactly
+    # these keys; pin them so a read-model edit can't silently break the card.
+    db = _fresh_session()
+    r = stock_accuracy.build_stock_accuracy(db, "DEFAULT")
+    for k in ("window_days", "target", "total_items", "counted_items",
+              "count_coverage", "accurate_items", "inaccurate_items", "over_items",
+              "under_items", "accuracy_rate", "net_variance_units",
+              "abs_variance_units", "items", "verdict", "tone"):
+        assert k in r, f"stock-accuracy missing card key {k!r}"
+    print("PASS stock-accuracy exposes the keys the card renders")
+
+
 if __name__ == "__main__":
     test_accuracy_split_coverage_and_variance_reconciliation()
     test_variance_recomputed_from_physical_book_not_the_stored_column()
@@ -211,4 +224,5 @@ if __name__ == "__main__":
     test_foreign_item_lines_are_scoped_out()
     test_empty_and_no_counts_are_safe()
     test_healthy_accuracy_reports_good()
+    test_accuracy_exposes_the_card_contract()
     print("\nAll stock-accuracy tests passed.")

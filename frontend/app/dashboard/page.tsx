@@ -63,6 +63,7 @@ import DocumentsSection from "../../components/DocumentsSection";
 import MaintenanceSection from "../../components/MaintenanceSection";
 import MaintenanceForecastCard from "../../components/MaintenanceForecastCard";
 import ScheduleLoadBoard from "../../components/ScheduleLoadBoard";
+import StockIntegrityCards from "../../components/StockIntegrityCards";
 import SchedulingSection from "../../components/SchedulingSection";
 import IoTCommandSection from "../../components/IoTCommandSection";
 import AIInsightsSection from "../../components/AIInsightsSection";
@@ -2631,6 +2632,7 @@ export default function DashboardPage() {
           <GmatsInventory tenant="GMATS" isAdmin={isAdmin} />
         ) : (
         <>
+          <div className="mt-8"><StockIntegrityCards /></div>
           <EnterpriseInventory items={inventoryItems} />
           <InventorySection
             items={inventoryItems}

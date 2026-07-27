@@ -65,6 +65,7 @@ import MaintenanceForecastCard from "../../components/MaintenanceForecastCard";
 import ScheduleLoadBoard from "../../components/ScheduleLoadBoard";
 import StockIntegrityCards from "../../components/StockIntegrityCards";
 import EscalationQueueCard from "../../components/EscalationQueueCard";
+import SupplierPerformanceCard from "../../components/SupplierPerformanceCard";
 import SchedulingSection from "../../components/SchedulingSection";
 import IoTCommandSection from "../../components/IoTCommandSection";
 import AIInsightsSection from "../../components/AIInsightsSection";
@@ -2741,6 +2742,8 @@ export default function DashboardPage() {
       ))}
 
       {renderSection("purchasing", (
+        <>
+        <div className="mt-8"><SupplierPerformanceCard /></div>
         <PurchasingSection
           suppliers={suppliers}
           purchaseOrders={purchaseOrders}
@@ -2758,6 +2761,7 @@ export default function DashboardPage() {
           deletePurchaseOrder={isAdmin ? deletePurchaseOrder : undefined}
           generateOverdueEscalations={isAdminOrSupervisor ? generateOverduePoEscalations : async () => {}}
         />
+        </>
       ))}
 
       {renderSection("documents", (

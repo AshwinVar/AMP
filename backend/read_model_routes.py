@@ -164,6 +164,15 @@ def get_stock_accuracy(db: Session = Depends(_get_db), current_user: dict = Depe
     return ai.stock_accuracy.build_stock_accuracy(db, request_tenant(current_user))
 
 
+@router.get("/wip-aging")
+def get_wip_aging(db: Session = Depends(_get_db), current_user: dict = Depends(get_current_user)):
+    # WIP aging (ADR-0007): the open work-order backlog scored by what the data
+    # honestly measures — age from created_at, lateness against planned_end (no
+    # invented cycle times: the schema has no completion timestamp), an aging
+    # profile, where work stalls per material state, and an oldest-first chase list.
+    return ai.flow.build_wip_aging(db, request_tenant(current_user))
+
+
 @router.get("/supplier-performance")
 def get_supplier_performance(db: Session = Depends(_get_db), current_user: dict = Depends(get_current_user)):
     # Supplier performance (ADR-0007): the buyer's scorecard the PO pipeline never

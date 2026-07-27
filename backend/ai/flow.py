@@ -5,7 +5,16 @@ material state — RAW (queued for the SMT line), SEMI (surface-mounted, now on
 the IC line), FIN (finished) — with counts and quantities, so the exec home can
 draw the RAW -> SMT -> SEMI -> IC -> FIN pipeline. A read-model over work_orders,
 auto-scoped to the tenant (ADR-0002); it adds no storage.
+
+``build_wip_aging`` asks the follow-up question the pipeline snapshot can't:
+*how long has the open work been sitting, and which of it has blown its
+promise?* Age is measured from ``created_at`` (a real timestamp); lateness is
+judged against ``planned_end`` (a real in-data deadline). The schema carries no
+completion timestamp, so this model makes NO cycle-time or throughput claims —
+it scores only the open backlog it can honestly measure (ADR-0007).
 """
+from datetime import datetime
+
 import models
 
 name = "flow"
@@ -36,4 +45,111 @@ def build_flow_summary(db, tenant: str) -> dict:
         "wip": agg["RAW"]["count"] + agg["SEMI"]["count"],   # not yet finished
         "finished": agg["FIN"]["count"],
         "stages": stages,
+    }
+
+
+TOP_N = 8
+STALE_DAYS = 14        # an open WO older than this is festering, not fresh
+# Terminal states — matched lowercased so vocabulary drift ("Complete"/"Closed")
+# can't silently keep a finished order in the open backlog.
+_CLOSED = {"completed", "complete", "done", "closed", "cancelled", "canceled"}
+AGING_BUCKETS = [("0-3 days", 0, 3), ("4-7 days", 4, 7), ("8-14 days", 8, 14), ("15+ days", 15, None)]
+
+
+def _is_closed(status) -> bool:
+    return (status or "").strip().lower() in _CLOSED
+
+
+def _bucket(days: int) -> str:
+    for label, lo, hi in AGING_BUCKETS:
+        if days >= lo and (hi is None or days <= hi):
+            return label
+    return AGING_BUCKETS[0][0]
+
+
+def build_wip_aging(db, tenant: str) -> dict:
+    """The open work-order backlog scored by what the data can honestly measure:
+    each open WO's age (from created_at), whether it has blown its planned_end
+    (late — a real in-data deadline; a WO with no planned_end is reported in
+    ``undated`` rather than assumed on time), an aging profile, a per-material-
+    state breakdown (where work stalls: RAW = intake, SEMI = stuck between
+    lines), and an oldest-first chase list with fill progress. work_orders is
+    auto-scoped (ADR-0002); adds no storage. Empty-safe. The aging buckets and
+    the per-state counts each sum to ``open`` (rule 3, asserted in tests)."""
+    now = datetime.utcnow()
+    today = now.date()
+    open_wos = [w for w in db.query(models.WorkOrder).all() if not _is_closed(w.status)]
+
+    def _age(w) -> int:
+        base = w.created_at or now
+        return max(0, (today - base.date()).days)
+
+    late = [w for w in open_wos if w.planned_end and w.planned_end < now]
+    undated = sum(1 for w in open_wos if not w.planned_end)
+    aging: dict = {}
+    state_agg: dict = {}
+    for w in open_wos:
+        a = _age(w)
+        aging[_bucket(a)] = aging.get(_bucket(a), 0) + 1
+        st = w.material_state if w.material_state in ("RAW", "SEMI", "FIN") else "RAW"
+        s = state_agg.setdefault(st, {"count": 0, "age_sum": 0, "oldest": 0})
+        s["count"] += 1
+        s["age_sum"] += a
+        s["oldest"] = max(s["oldest"], a)
+
+    oldest_days = max((_age(w) for w in open_wos), default=None)
+    stale = sum(1 for w in open_wos if _age(w) > STALE_DAYS)
+
+    chase = sorted(open_wos, key=lambda w: (-_age(w), w.work_order_no or ""))[:TOP_N]
+    chase_rows = [{
+        "work_order_no": w.work_order_no,
+        "part_number": w.part_number,
+        "material_state": w.material_state,
+        "status": w.status,
+        "age_days": _age(w),
+        "late": bool(w.planned_end and w.planned_end < now),
+        "planned_end": w.planned_end.isoformat() if w.planned_end else None,
+        "target_quantity": w.target_quantity or 0,
+        "actual_quantity": w.actual_quantity or 0,
+        "progress": (round((w.actual_quantity or 0) / w.target_quantity * 100)
+                     if w.target_quantity else None),
+    } for w in chase]
+
+    by_state = [{
+        "state": st,
+        "count": s["count"],
+        "avg_age_days": round(s["age_sum"] / s["count"], 1) if s["count"] else 0.0,
+        "oldest_days": s["oldest"],
+    } for st, s in sorted(state_agg.items(), key=lambda kv: kv[0])]
+    aging_rows = [{"bucket": label, "count": aging[label]}
+                  for label, _, _ in AGING_BUCKETS if aging.get(label)]
+
+    n_late = len(late)
+    if not open_wos:
+        verdict, tone = "No open work orders — the backlog is clear.", "good"
+    elif n_late:
+        verdict = (f"{n_late} open work order{'s' if n_late != 1 else ''} past "
+                   f"{'their' if n_late != 1 else 'its'} planned end"
+                   + (f", oldest open {oldest_days} days" if oldest_days else "") + ".")
+        tone = "bad"
+    elif stale:
+        verdict = (f"{stale} work order{'s' if stale != 1 else ''} open longer than "
+                   f"{STALE_DAYS} days (oldest {oldest_days}).")
+        tone = "warn"
+    else:
+        verdict = f"{len(open_wos)} open work order{'s' if len(open_wos) != 1 else ''}, all fresh, none late."
+        tone = "good"
+
+    return {
+        "open": len(open_wos),
+        "late": n_late,
+        "undated": undated,          # open WOs with no planned_end — can't be judged late
+        "stale": stale,
+        "stale_days": STALE_DAYS,
+        "oldest_days": oldest_days,
+        "aging": aging_rows,
+        "by_state": by_state,
+        "chase": chase_rows,
+        "verdict": verdict,
+        "tone": tone,
     }

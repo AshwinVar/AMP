@@ -176,8 +176,21 @@ def test_downtime_reason_drilldown_windowed_reconciled_and_hour_format():
     assert r["by_machine"][1]["name"] == "CNC-02" and r["by_machine"][1]["minutes"] == 90
 
 
+def test_summary_exposes_the_card_contract():
+    # The Downtime view's intelligence card (DowntimeIntelCard.tsx) renders
+    # exactly these keys (rows carry `count`, not `events`); pin them so a
+    # read-model edit can't silently break the card.
+    db = _fresh_session()
+    s = downtime.build_downtime_summary(db, "DEFAULT")
+    for k in ("days", "total_events", "total_minutes", "top_reasons",
+              "by_machine", "by_line", "daily"):
+        assert k in s, f"downtime-summary missing card key {k!r}"
+    print("PASS downtime-summary exposes the keys the intel card renders")
+
+
 if __name__ == "__main__":
     test_downtime_summary_rolls_up_reasons_machines_and_days()
+    test_summary_exposes_the_card_contract()
     test_downtime_summary_ranks_by_minutes_lost_not_event_count()
     test_downtime_reason_drilldown_totals_minutes_machines_and_instances()
     test_downtime_reason_drilldown_windowed_reconciled_and_hour_format()

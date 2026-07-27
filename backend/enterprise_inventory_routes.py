@@ -7,6 +7,7 @@ import io
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
+from sqlalchemy import case, func
 from sqlalchemy.orm import Session
 
 import models
@@ -136,9 +137,15 @@ def issue_slip(sid: int, db: Session = Depends(get_db), current_user: dict = Dep
     item = db.query(models.InventoryItem).filter(models.InventoryItem.id == s.item_id).first()
     if not item:
         raise HTTPException(status_code=404, detail="Item not found")
-    if item.current_stock < s.requested_qty:
-        raise HTTPException(status_code=400, detail=f"Insufficient stock: {item.current_stock} {item.unit} available")
-    item.current_stock -= s.requested_qty
+    # current_stock is Column(Integer, default=0) WITHOUT nullable=False, so a
+    # raw-SQL / migration / cleared-field write can store a true NULL. `None < int`
+    # and `None -= int` raise TypeError -> an unhandled 500 on the issue. A NULL
+    # stock is an empty shelf (0 available) — the same coalesce every sibling path
+    # applies to this column (inventory_routes, subscribers, orders_routes).
+    current_stock = item.current_stock or 0
+    if current_stock < s.requested_qty:
+        raise HTTPException(status_code=400, detail=f"Insufficient stock: {current_stock} {item.unit} available")
+    item.current_stock = current_stock - s.requested_qty
     s.issued_qty = s.requested_qty
     s.status = "Issued"
     s.issued_at = datetime.utcnow()
@@ -239,7 +246,10 @@ def accept_grn(gid: int, db: Session = Depends(get_db), current_user: dict = Dep
         if line.accepted_qty > 0:
             item = db.query(models.InventoryItem).filter(models.InventoryItem.id == line.item_id).first()
             if item:
-                item.current_stock += line.accepted_qty
+                # NULL current_stock (nullable Integer) would TypeError on `+=`;
+                # coalesce an empty shelf to 0 before adding the receipt, the same
+                # guard orders_routes uses on the PO-receipt stock bump.
+                item.current_stock = (item.current_stock or 0) + line.accepted_qty
                 db.add(models.InventoryTransaction(
                     item_id=item.id, transaction_type="Receive",
                     quantity=line.accepted_qty, reference=g.grn_no,
@@ -294,11 +304,17 @@ def create_cycle_count(payload: dict, db: Session = Depends(get_db), current_use
         if not item:
             continue
         physical = int(line["physical_qty"])
+        # book_qty records the on-book stock at count time. A NULL current_stock
+        # (nullable Integer) would both make `physical - None` TypeError AND write
+        # book_qty=NULL, which violates CycleCountItem.book_qty (nullable=False) ->
+        # IntegrityError. Treat a missing stock as an empty shelf (0), consistent
+        # with the issue/receipt paths above.
+        book_qty = item.current_stock or 0
         db.add(models.CycleCountItem(
             count_id=c.id, item_id=item.id,
-            book_qty=item.current_stock,
+            book_qty=book_qty,
             physical_qty=physical,
-            variance=physical - item.current_stock,
+            variance=physical - book_qty,
         ))
     db.commit()
     return {"id": c.id, "count_no": c.count_no}
@@ -327,34 +343,74 @@ def approve_cycle_count(cid: int, db: Session = Depends(get_db), current_user: d
 
 # ── Variance Report ───────────────────────────────────────────
 
+# Transaction types that add to / draw down on-hand stock. Unchanged from the
+# prior Python filter — kept as module constants so the SQL aggregate and the
+# semantics stay in one place.
+_IN_TYPES = ("Receive", "Return")
+_OUT_TYPES = ("Issue", "Adjust")
+
 
 @router.get("/inventory/variance-report")
 def variance_report(db: Session = Depends(get_db), current_user: dict = Depends(require_roles(["Admin", "Supervisor"]))):
     items = db.query(models.InventoryItem).all()
-    txns = db.query(models.InventoryTransaction).all()
+
+    # Received/issued totals per item, summed in SQL. inventory_transactions is on
+    # the growing-table list (rule 4): the old code pulled the WHOLE ledger into
+    # Python and did an O(items x transactions) `t.item_id == item.id` filter per
+    # item. One GROUP BY replaces that (item_id is already indexed — main.py), and
+    # the result set is one row per item (a naturally bounded master table).
+    # InventoryTransaction is tenant-scoped (tenancy.SCOPED_MODELS), so the
+    # do_orm_execute hook still filters the aggregate to the request's tenant
+    # exactly as it did the old .all() scan. quantity is nullable=False, but
+    # coalesce so an item with only one side reads 0 rather than NULL.
+    txn_totals = {
+        item_id: (int(total_in), int(total_out))
+        for item_id, total_in, total_out in (
+            db.query(
+                models.InventoryTransaction.item_id,
+                func.coalesce(func.sum(case(
+                    (models.InventoryTransaction.transaction_type.in_(_IN_TYPES),
+                     models.InventoryTransaction.quantity), else_=0)), 0),
+                func.coalesce(func.sum(case(
+                    (models.InventoryTransaction.transaction_type.in_(_OUT_TYPES),
+                     models.InventoryTransaction.quantity), else_=0)), 0),
+            )
+            .group_by(models.InventoryTransaction.item_id)
+            .all()
+        )
+    }
+
     latest_count_items = {}
     for ci in db.query(models.CycleCountItem).all():
         latest_count_items[ci.item_id] = ci
+
     rows = []
     for item in items:
-        item_txns = [t for t in txns if t.item_id == item.id]
-        total_in = sum(t.quantity for t in item_txns if t.transaction_type in ("Receive", "Return"))
-        total_out = sum(t.quantity for t in item_txns if t.transaction_type in ("Issue", "Adjust"))
+        total_in, total_out = txn_totals.get(item.id, (0, 0))
         last_count = latest_count_items.get(item.id)
+        # current_stock / reorder_level are Column(Integer, default=0) WITHOUT
+        # nullable=False, so either can be a true NULL. The old status ternary did
+        # `None == 0` (falls through) then `None <= reorder_level` (or `int <= None`)
+        # -> TypeError, 500-ing the WHOLE report on a single legacy NULL row (the
+        # loop covers every item). A NULL stock is an empty shelf (0) — the coalesce
+        # every sibling path uses; book_stock reports the same 0 so the displayed
+        # stock and the status derived from it reconcile.
+        stock = item.current_stock or 0
+        level = item.reorder_level or 0
         rows.append({
             "item_id": item.id,
             "item_code": item.item_code,
             "item_name": item.item_name,
             "category": item.category,
             "unit": item.unit,
-            "book_stock": item.current_stock,
+            "book_stock": stock,
             "total_received": total_in,
             "total_issued": total_out,
             "last_physical_count": last_count.physical_qty if last_count else None,
             "last_variance": last_count.variance if last_count else None,
             "status": (
-                "Stockout" if item.current_stock == 0
-                else "Low" if item.current_stock <= item.reorder_level
+                "Stockout" if stock == 0
+                else "Low" if stock <= level
                 else "OK"
             ),
         })

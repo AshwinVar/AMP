@@ -2,7 +2,7 @@
 
 import "../phase29-enterprise.css";
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { apiGet, apiPost, apiPatch, apiDelete, getToken, getUserRole } from "../../lib/api";
 import {
   BarChart,
@@ -71,6 +71,7 @@ import WipAgingCard from "../../components/WipAgingCard";
 import CsvExportsCard from "../../components/CsvExportsCard";
 import CsvImportButton from "../../components/CsvImportButton";
 import TenantAdoptionCard from "../../components/TenantAdoptionCard";
+import BrandingSettingsCard from "../../components/BrandingSettingsCard";
 import SchedulingSection from "../../components/SchedulingSection";
 import IoTCommandSection from "../../components/IoTCommandSection";
 import AIInsightsSection from "../../components/AIInsightsSection";
@@ -528,13 +529,17 @@ export default function DashboardPage() {
     await apiPatch(`/users/${id}/password`, { password });
   }
 
-  // Per-tenant licensing + branding fetched from the platform layer.
+  // Per-tenant licensing + branding fetched from the platform layer. Lifted into
+  // a callback so the Branding settings card can refresh the header live on save.
   const [tenantCfg, setTenantCfg] = useState<{ enabled_modules: string[]; brand_name: string; brand_color: string } | null>(null);
-  useEffect(() => {
+  const reloadTenantCfg = useCallback(() => {
     apiGet<{ enabled_modules: string[]; brand_name: string; brand_color: string }>("/tenant-config")
       .then(setTenantCfg)
       .catch(() => {});
   }, []);
+  useEffect(() => {
+    reloadTenantCfg();
+  }, [reloadTenantCfg]);
 
   // Effective modules come from the tenant's licence; core + admin are always
   // available so no one is locked out of basics or account management.
@@ -2844,7 +2849,10 @@ export default function DashboardPage() {
       ))}
 
       {renderSection("enterprise", (
+        <>
+        {isAdmin && <div className="mt-8"><BrandingSettingsCard onSaved={reloadTenantCfg} /></div>}
         <EnterprisePolishSection auditLogs={auditLogs} reports={reports} health={systemHealth} summary={finalSummary} reportForm={reportForm} setReportForm={setReportForm} createReport={createReport} />
+        </>
       ))}
     </main>
   );

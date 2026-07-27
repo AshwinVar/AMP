@@ -1038,16 +1038,41 @@ def get_iot_command_center(db: Session = Depends(_get_db), current_user: dict = 
 
 @router.get("/analytics/ai-insights")
 def get_ai_insights(db: Session = Depends(_get_db), current_user: dict = Depends(get_current_user)):
-    rows = db.query(models.AIRecommendation).all()
+    # Aggregate the growing ai_recommendations table in SQL, not by hydrating every
+    # row and bucketing it with list comprehensions (rule-4 antipattern, the same
+    # GROUP BY fix already applied to /analytics/work-orders #275,
+    # /analytics/production-plans, /analytics/escalations #288 and the machine-state
+    # summary #328 — this endpoint was simply missed). AIRecommendation is in
+    # SCOPED_MODELS, so the do_orm_execute hook (ADR-0002) tenant-scopes each
+    # aggregate SELECT below exactly as it did the old .all() scan.
+    #
+    # status default "Open" and severity default "Medium" are both nullable (no
+    # nullable=False), so a row written by raw SQL / a migration / a cleared update
+    # can carry a NULL status or severity. The old loop counted such a row in
+    # `total` (len(rows)) but in no bucket (None never == "Open"); GROUP BY keys it
+    # under None, which .get("Open"/... ) never reads, so total stays >= the sum of
+    # either partition — identical semantics, one pass over the table instead of a
+    # full hydrate.
+    status_counts = dict(
+        db.query(models.AIRecommendation.status, func.count())
+        .group_by(models.AIRecommendation.status)
+        .all()
+    )
+    severity_counts = dict(
+        db.query(models.AIRecommendation.severity, func.count())
+        .group_by(models.AIRecommendation.severity)
+        .all()
+    )
+    total = db.query(func.count(models.AIRecommendation.id)).scalar() or 0
     return {
-        "total": len(rows),
-        "open": len([row for row in rows if row.status == "Open"]),
-        "acknowledged": len([row for row in rows if row.status == "Acknowledged"]),
-        "closed": len([row for row in rows if row.status == "Closed"]),
-        "critical": len([row for row in rows if row.severity == "Critical"]),
-        "high": len([row for row in rows if row.severity == "High"]),
-        "medium": len([row for row in rows if row.severity == "Medium"]),
-        "low": len([row for row in rows if row.severity == "Low"]),
+        "total": total,
+        "open": status_counts.get("Open", 0),
+        "acknowledged": status_counts.get("Acknowledged", 0),
+        "closed": status_counts.get("Closed", 0),
+        "critical": severity_counts.get("Critical", 0),
+        "high": severity_counts.get("High", 0),
+        "medium": severity_counts.get("Medium", 0),
+        "low": severity_counts.get("Low", 0),
     }
 
 

@@ -887,6 +887,111 @@ def test_industrial_gateway_empty_tables_are_zero_not_a_crash():
     print("PASS industrial-gateway: empty tables -> zeros / empty list, no crash")
 
 
+def _machine_event(machine_name, new_status):
+    return models.MachineEvent(machine_name=machine_name, new_status=new_status)
+
+
+def test_machine_state_summary_true_totals_and_reconciliation():
+    # /analytics/machine-state-summary tallies state transitions per machine. Every
+    # expected number is derived by hand from the rows below.
+    db = _fresh_session()
+    plan = {
+        "CNC-1": ["Running"] * 5 + ["Idle"] * 3 + ["Breakdown"] * 2 + ["Maintenance"] * 1 + ["Offline"] * 1,
+        "CNC-2": ["Running"] * 2 + ["Offline"] * 1,
+    }
+    for name, statuses in plan.items():
+        db.add_all(_machine_event(name, s) for s in statuses)
+    db.commit()
+
+    rows = analytics_routes.get_machine_state_summary(db=db, current_user={})
+    by_name = {r["machine_name"]: r for r in rows}
+
+    cnc1 = by_name["CNC-1"]
+    assert cnc1["Running"] == 5 and cnc1["Idle"] == 3, cnc1
+    assert cnc1["Breakdown"] == 2 and cnc1["Maintenance"] == 1, cnc1
+    # total_events counts EVERY event incl. the Offline one (not a charted bucket),
+    # so it is the four buckets (11) plus that Offline (1) = 12 — the reconciliation
+    # the old per-row loop kept (total_events >= sum of the four charted buckets).
+    assert cnc1["total_events"] == 12, cnc1
+    assert cnc1["total_events"] - (cnc1["Running"] + cnc1["Idle"] + cnc1["Breakdown"] + cnc1["Maintenance"]) == 1, cnc1
+
+    cnc2 = by_name["CNC-2"]
+    assert cnc2["Running"] == 2 and cnc2["Idle"] == 0, cnc2
+    assert cnc2["Breakdown"] == 0 and cnc2["Maintenance"] == 0, cnc2
+    assert cnc2["total_events"] == 3, cnc2
+
+    # Deterministic order: busiest machine first (CNC-1 = 12 events, CNC-2 = 3).
+    assert [r["machine_name"] for r in rows] == ["CNC-1", "CNC-2"], rows
+    print("PASS machine-state-summary: SQL GROUP BY matches hand totals and reconciles (Offline in total only)")
+
+
+def test_machine_state_summary_counts_all_events_not_a_recent_window():
+    # Regression: the old code loaded only the most-recent 300 events GLOBALLY and
+    # bucketed them in Python, so once machine_events passed 300 rows a quiet machine
+    # dropped off the chart entirely and a busy one showed only its slice of the last
+    # 300 — never its true transition frequency. The SQL GROUP BY reports the TRUE
+    # totals over the whole (tenant-scoped) history.
+    db = _fresh_session()
+    # "Quiet" writes the OLDEST rows (4 events); "Busy" then writes 320 — so the
+    # last-300-by-id window would have excluded Quiet outright and capped Busy at 300.
+    db.add_all(_machine_event("Quiet", "Running") for _ in range(4))
+    db.add_all(_machine_event("Busy", "Idle") for _ in range(320))
+    db.commit()
+
+    rows = analytics_routes.get_machine_state_summary(db=db, current_user={})
+    by_name = {r["machine_name"]: r for r in rows}
+
+    # Quiet survives with its true count (the old 300-cap would have dropped it).
+    assert "Quiet" in by_name, by_name
+    assert by_name["Quiet"]["Running"] == 4 and by_name["Quiet"]["total_events"] == 4, by_name["Quiet"]
+    # Busy shows all 320, not the 300 a recent-window cap would have shown.
+    assert by_name["Busy"]["Idle"] == 320 and by_name["Busy"]["total_events"] == 320, by_name["Busy"]
+    # Busiest first.
+    assert rows[0]["machine_name"] == "Busy", rows
+    print("PASS machine-state-summary: true totals over all events, not a 300-row recent window")
+
+
+def test_machine_state_summary_empty_table_is_zero_not_a_crash():
+    db = _fresh_session()
+    rows = analytics_routes.get_machine_state_summary(db=db, current_user={})
+    assert rows == [], rows
+    print("PASS machine-state-summary: empty table -> [], no crash")
+
+
+def test_machine_state_summary_is_tenant_scoped():
+    # The GROUP BY aggregate that replaced `.all()` must stay tenant-scoped, exactly
+    # like the auto-scoped load it replaced (ADR-0002 do_orm_execute hook). A tenant
+    # must never see another tenant's machine-state tallies.
+    import tenancy as T
+    T.install_scoping()
+    db = _fresh_session()
+    tok = T.set_current_tenant("GMATS")
+    try:
+        db.add_all(_machine_event("GMATS-CNC", s) for s in ["Running", "Running", "Breakdown"])
+        db.commit()
+    finally:
+        T.reset_current_tenant(tok)
+    tok = T.set_current_tenant("DEFAULT")
+    try:
+        db.add_all(_machine_event("DEFAULT-CNC", s) for s in ["Idle", "Maintenance"])
+        db.commit()
+    finally:
+        T.reset_current_tenant(tok)
+
+    tok = T.set_current_tenant("GMATS")
+    try:
+        rows = analytics_routes.get_machine_state_summary(db=db, current_user={"tenant": "GMATS"})
+    finally:
+        T.reset_current_tenant(tok)
+
+    by_name = {r["machine_name"]: r for r in rows}
+    # GMATS sees only its own machine; the DEFAULT tenant's events are invisible.
+    assert set(by_name) == {"GMATS-CNC"}, by_name
+    assert by_name["GMATS-CNC"]["Running"] == 2 and by_name["GMATS-CNC"]["Breakdown"] == 1, by_name
+    assert by_name["GMATS-CNC"]["total_events"] == 3, by_name
+    print("PASS machine-state-summary: SQL GROUP BY stays tenant-scoped (GMATS sees only its own)")
+
+
 if __name__ == "__main__":
     test_analytics_paths_owned_by_module()
     test_analytics_summary_is_module_level_and_shared()
@@ -920,4 +1025,8 @@ if __name__ == "__main__":
     test_industrial_gateway_names_resolved_and_scan_is_bounded()
     test_industrial_gateway_missing_and_null_refs_fall_back_to_same_labels()
     test_industrial_gateway_empty_tables_are_zero_not_a_crash()
+    test_machine_state_summary_true_totals_and_reconciliation()
+    test_machine_state_summary_counts_all_events_not_a_recent_window()
+    test_machine_state_summary_empty_table_is_zero_not_a_crash()
+    test_machine_state_summary_is_tenant_scoped()
     print("ALL ANALYTICS ROUTE TESTS PASSED")

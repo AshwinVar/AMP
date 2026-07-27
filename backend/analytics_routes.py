@@ -180,17 +180,42 @@ def get_machine_timeline(db: Session = Depends(_get_db), current_user: dict = De
 
 @router.get("/analytics/machine-state-summary")
 def get_machine_state_summary(db: Session = Depends(_get_db), current_user: dict = Depends(get_current_user)):
-    events = db.query(models.MachineEvent).order_by(models.MachineEvent.id.desc()).limit(300).all()
+    # "Frequency of state transitions by machine" — a per-machine tally over the
+    # machine_events stream. The old code pulled the most-recent 300 events GLOBALLY
+    # into Python and bucketed them there, which was wrong two ways on a growing
+    # table (rule-4 antipattern, same fix already applied to the sibling command
+    # centres — /analytics/quality #299, /escalations #288, /operator-terminal #285):
+    #   1. Unbounded intent, bounded reality: once machine_events passes 300 rows the
+    #      window is a GLOBAL slice, so a quiet machine drops out of the chart
+    #      entirely and a busy one shows only its share of the last 300 — never its
+    #      true transition frequency the chart's own subtitle promises.
+    #   2. It hydrated a slice of a growing table just to count it in Python.
+    # Aggregate in SQL with GROUP BY instead: one row per (machine, status), so we
+    # materialise only the distinct groups (naturally small) and report TRUE totals
+    # over the whole history. MachineEvent is in SCOPED_MODELS, so the do_orm_execute
+    # hook (ADR-0002) tenant-scopes this aggregate exactly as it did the .all() scan.
+    #
+    # total_events counts EVERY event (incl. Offline / any non-tracked status), so it
+    # stays >= the sum of the four charted buckets — the same reconciliation the old
+    # per-row loop kept (an Offline event bumped total_events but no bucket).
+    tracked = ("Running", "Idle", "Breakdown", "Maintenance")
     summary = {}
-    for event in events:
+    for machine_name, new_status, count in (
+        db.query(models.MachineEvent.machine_name, models.MachineEvent.new_status, func.count())
+        .group_by(models.MachineEvent.machine_name, models.MachineEvent.new_status)
+        .all()
+    ):
         machine = summary.setdefault(
-            event.machine_name,
-            {"machine_name": event.machine_name, "Running": 0, "Idle": 0, "Breakdown": 0, "Maintenance": 0, "total_events": 0},
+            machine_name,
+            {"machine_name": machine_name, "Running": 0, "Idle": 0, "Breakdown": 0, "Maintenance": 0, "total_events": 0},
         )
-        if event.new_status in machine:
-            machine[event.new_status] += 1
-        machine["total_events"] += 1
-    return list(summary.values())
+        count = int(count)
+        if new_status in tracked:
+            machine[new_status] += count
+        machine["total_events"] += count
+    # Deterministic, meaningful order: busiest machines first (the old insertion
+    # order was just "whichever machine had the most recent event", not meaningful).
+    return sorted(summary.values(), key=lambda m: m["total_events"], reverse=True)
 
 
 @router.get("/analytics/oee-trends")

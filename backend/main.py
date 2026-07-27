@@ -132,6 +132,7 @@ _ensure_index("cost_records", "created_at")
 _ensure_index("quality_inspections", "created_at")
 _ensure_index("shift_data", "created_at")
 _ensure_index("machine_events", "created_at")   # risk-window scans (ai/prediction)
+_ensure_index("machine_events", "machine_name")  # per-machine GROUP BY (/analytics/machine-state-summary)
 # The edge-connectivity and inventory read-models poll these on a ~30s refresh and
 # grow fastest of all — iot_telemetry every sim tick, inventory_transactions every
 # issue/receipt — yet were unindexed. Index the columns they filter/group by so the

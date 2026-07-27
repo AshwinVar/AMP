@@ -847,8 +847,18 @@ def tick_work_order_progress(db):
         if wo:
             wo.status = "In Progress"
 
-    if wo and wo.actual_quantity < wo.target_quantity:
-        wo.actual_quantity = min(wo.target_quantity, wo.actual_quantity + random.randint(8, 35))
+    # actual_quantity is Column(Integer, default=0) WITHOUT nullable=False, so a
+    # WorkOrder written by raw SQL / a migration / a cleared update can carry a
+    # true NULL — the same threat model predictive_engine._int already guards for
+    # this exact column. `None < target` / `None + int` raised TypeError HERE, and
+    # because this tick runs first and unconditionally in the background loop
+    # (main._simulation_loop), that rolled back the WHOLE per-tenant tick every
+    # 45s — every other tick's writes of that pass lost with it, the same failure
+    # the utilization-drift fix (#341) cured for the same loop. Coalesce a missing
+    # count to the column's own default 0 (the NULL is healed on write below).
+    actual = (wo.actual_quantity or 0) if wo else 0
+    if wo and actual < wo.target_quantity:
+        wo.actual_quantity = min(wo.target_quantity, actual + random.randint(8, 35))
         if wo.actual_quantity >= wo.target_quantity:
             wo.status = "Completed"
             plan = db.query(models.ProductionPlan).filter(
@@ -914,7 +924,12 @@ def tick_operator(db):
         models.OperatorJobExecution.job_status == "In Progress"
     ).first()
     if job:
-        job.good_count += random.randint(5, 20)
+        # good_count is Column(Integer, default=0) WITHOUT nullable=False, so an
+        # in-progress job written by raw SQL / a migration / a cleared update can
+        # carry a true NULL, and `None += int` raised TypeError — rolling back the
+        # whole per-tenant tick (parity with the actual_quantity / utilization-drift
+        # guards). Coalesce a missing count to the column's own default 0.
+        job.good_count = (job.good_count or 0) + random.randint(5, 20)
         if random.random() < 0.3:
             job.job_status  = "Completed"
             job.completed_at = datetime.utcnow()
@@ -1014,8 +1029,14 @@ def tick_customer_order(db):
     ).first()
     if not order:
         return
+    # dispatched_quantity is Column(Integer, default=0) WITHOUT nullable=False, so
+    # a true NULL (raw SQL / migration / cleared update) made `None + int` raise
+    # TypeError. Coalesce to the column's own default 0 before advancing — same
+    # NULL-count guard as the work-order / operator ticks. (order_quantity is
+    # nullable=False, so it stays a safe int on the other side of min().)
+    dispatched = order.dispatched_quantity or 0
     order.dispatched_quantity = min(order.order_quantity,
-                                    order.dispatched_quantity + random.randint(10, 50))
+                                    dispatched + random.randint(10, 50))
     if order.dispatched_quantity >= order.order_quantity:
         order.status = "Dispatched"
     elif order.dispatched_quantity > 0:

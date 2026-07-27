@@ -67,6 +67,7 @@ import StockIntegrityCards from "../../components/StockIntegrityCards";
 import EscalationQueueCard from "../../components/EscalationQueueCard";
 import SupplierPerformanceCard from "../../components/SupplierPerformanceCard";
 import OperatorPerformanceCards from "../../components/OperatorPerformanceCards";
+import WipAgingCard from "../../components/WipAgingCard";
 import SchedulingSection from "../../components/SchedulingSection";
 import IoTCommandSection from "../../components/IoTCommandSection";
 import AIInsightsSection from "../../components/AIInsightsSection";
@@ -2580,6 +2581,7 @@ export default function DashboardPage() {
 
       {renderSection("workorders", (
         <>
+          <div className="mt-8"><WipAgingCard /></div>
           <WorkOrdersSection
             machines={machines}
             workOrders={workOrders}

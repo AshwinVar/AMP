@@ -51,6 +51,18 @@ def create_production_plan(
     if existing:
         raise HTTPException(status_code=400, detail="Plan number already exists")
 
+    # Reject physically-impossible rows at the boundary — parity with the
+    # production-record (#266), quality (#324) and order/PO ingests, which all
+    # already reject negatives here. planned_quantity / actual_quantity are plain
+    # ints in the schema (no ge=0), so a negative slips past validation and
+    # silently corrupts the plan-attainment read-model (ai/schedule.py): attainment
+    # is actual/planned, so a negative actual drags every pooled rate below its true
+    # value and a negative planned inverts it. (actual > planned is intentionally
+    # allowed — a shift can over-produce its plan, attainment > 100%, unlike an
+    # order that cannot dispatch more than was ordered.)
+    if min(plan.planned_quantity, plan.actual_quantity) < 0:
+        raise HTTPException(status_code=400, detail="quantities must be non-negative")
+
     new_plan = models.ProductionPlan(**plan.model_dump())
     db.add(new_plan)
     try:
@@ -74,6 +86,13 @@ def update_production_plan(
         raise HTTPException(status_code=404, detail="Production plan not found")
 
     if payload.actual_quantity is not None:
+        # Reject a negative actual_quantity PATCH (parity with create and the
+        # order/PO update guards): a negative actual corrupts the attainment
+        # read-model exactly as on create and would be stored as a
+        # physically-impossible value. Checked before it is applied, so a rejected
+        # PATCH never mutates the row.
+        if payload.actual_quantity < 0:
+            raise HTTPException(status_code=400, detail="quantities must be non-negative")
         plan.actual_quantity = payload.actual_quantity
         if plan.actual_quantity >= plan.planned_quantity:
             plan.status = "Completed"

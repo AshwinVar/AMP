@@ -88,6 +88,19 @@ def create_quality_inspection(
         if not production_plan:
             raise HTTPException(status_code=404, detail="Production plan not found")
 
+    # Reject physically-impossible rows at the boundary, the same guard the
+    # production-record ingest already applies (#266). The upper-bound invariant
+    # below only stops passed+failed OVERSHOOTING inspected; it does nothing about
+    # a NEGATIVE count, and a negative one silently corrupts every quality window
+    # that sums these columns — a negative failed_quantity drives the fail rate
+    # (failed/inspected) below zero and the quality rate (good/total) above 100%,
+    # violating the honesty rule (a metric can't exceed the bound the data
+    # supports). The schema types are plain ints, so nothing else stops them.
+    if min(inspection.inspected_quantity, inspection.passed_quantity,
+           inspection.failed_quantity, inspection.rework_quantity,
+           inspection.scrap_quantity) < 0:
+        raise HTTPException(status_code=400, detail="quantities must be non-negative")
+
     if inspection.passed_quantity + inspection.failed_quantity > inspection.inspected_quantity:
         raise HTTPException(
             status_code=400,
@@ -155,6 +168,17 @@ def update_quality_inspection(
     inspection.failed_quantity = inspection.failed_quantity or 0
     inspection.rework_quantity = inspection.rework_quantity or 0
     inspection.scrap_quantity = inspection.scrap_quantity or 0
+
+    # Reject negative counts here too (parity with create / the production-record
+    # ingest #266). A NULL heals to 0 above and is fine; a NEGATIVE patch value
+    # (`{"failed_quantity": -5}`) is physically impossible and would corrupt the
+    # fail/quality-rate windows exactly as it would on create — so a clean 400,
+    # not a stored negative. inspected_quantity isn't settable via this schema and
+    # is nullable=False, so it's always a real int; including it is harmless.
+    if min(inspection.inspected_quantity, inspection.passed_quantity,
+           inspection.failed_quantity, inspection.rework_quantity,
+           inspection.scrap_quantity) < 0:
+        raise HTTPException(status_code=400, detail="quantities must be non-negative")
 
     if inspection.passed_quantity + inspection.failed_quantity > inspection.inspected_quantity:
         raise HTTPException(

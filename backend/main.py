@@ -150,6 +150,10 @@ _ensure_index("customer_orders", "due_date")             # late-order count + es
 _ensure_index("maintenance_tasks", "planned_date")       # overdue-task count filters planned_date in SQL (/analytics/maintenance)
 _ensure_index("compliance_documents", "review_due_date") # review-due count filters review_due_date in SQL (/analytics/documents)
 tenancy.ensure_tenant_columns(engine)  # ADR-0002: tenant_code on core tables
+# Audit trail + enterprise-inventory: add tenant_code NULLABLE, NO blind backfill.
+# Legacy rows stay NULL (hidden) until an approved, source-based backfill assigns
+# them — never silently handed to DEFAULT. (backfill_enterprise_tenants.py)
+tenancy.ensure_tenant_columns(engine, tenancy.FAIL_SAFE_TENANT_TABLES, backfill=False)
 tenancy.install_scoping()              # ADR-0002: auto-enforce tenant scoping
 
 # Optional error monitoring — active only when SENTRY_DSN is set in the env.

@@ -87,6 +87,85 @@ def test_analytics_null_safe_and_reconciled():
     print("PASS analytics is NULL-safe and reconciled (MRR=1500, seats=35)")
 
 
+def _count_selects(engine):
+    """Attach a SELECT counter to an engine, so a test can assert the endpoint
+    issues a BOUNDED number of queries — the proof that the whole-registry .all()
+    scan is gone, not merely that the numbers still add up."""
+    from sqlalchemy import event
+
+    state = {"selects": 0}
+
+    def _before_cursor(conn, cursor, statement, parameters, context, executemany):
+        if statement.lstrip().lower().startswith("select"):
+            state["selects"] += 1
+
+    event.listen(engine, "before_cursor_execute", _before_cursor)
+    return state
+
+
+def test_analytics_scan_is_bounded_not_per_row():
+    # The rollup used to hydrate every CompanyTenant row into Python to count/sum it
+    # (rule-4: an unbounded scan of the growing, polled registry). Aggregating in SQL
+    # must (a) keep the numbers identical and (b) issue a fixed, small number of
+    # SELECTs regardless of how many tenants are registered — the whole point of the
+    # change. We prove (b) by asserting the query count does NOT grow when the
+    # registry does (a fixed cap would silently pass even if a per-row scan crept
+    # back on a bigger registry).
+    def _run(n):
+        engine = create_engine("sqlite://", connect_args={"check_same_thread": False})
+        Base.metadata.create_all(bind=engine)
+        db = sessionmaker(bind=engine)()
+        statuses = ["Trial", "Active", "Past Due", "Cancelled"]
+        for i in range(n):
+            _add(db, f"T{i}", statuses[i % 4], 100, 5)
+        db.commit()
+        state = _count_selects(engine)
+        out = saas_routes.get_saas_analytics(db, FOUNDER)
+        return out, state["selects"]
+
+    small_out, small_selects = _run(4)
+    big_out, big_selects = _run(40)
+
+    # The rollup is a handful of aggregate SELECTs (count, group-by, two sums) — a
+    # constant, well under 10 — and, crucially, the SAME count on a 10x registry.
+    assert small_selects <= 8, small_selects
+    assert big_selects == small_selects, (small_selects, big_selects)
+
+    # And the aggregates are still correct on the 40-row registry: 10 per status,
+    # MRR over Trial+Active only (10 + 10 = 20 rows x £100), seats over all 40 x 5.
+    assert big_out["total_tenants"] == 40, big_out
+    assert big_out["trial"] == big_out["active"] == 10, big_out
+    assert big_out["past_due"] == big_out["cancelled"] == 10, big_out
+    assert big_out["monthly_recurring_revenue"] == 2000, big_out
+    assert big_out["total_seats"] == 200, big_out
+    print(f"PASS analytics scan is bounded ({small_selects} selects, flat as the registry grows)")
+
+
+def test_analytics_registry_scoped_to_client_own_row():
+    # A client workspace (non-DEFAULT claim) must see ONLY its own registry row —
+    # _registry_scope filters by the raw JWT claim. The SQL aggregates must carry
+    # that same scoping the old .all() scan had, so a client's rollup can't leak the
+    # count / MRR / seats of the whole platform.
+    db = _fresh_session()
+    _add(db, "APEX", "Active", 1000, 10)
+    _add(db, "BOLT", "Trial", 500, 5)
+    _add(db, "CRUX", "Cancelled", 2000, 20)
+    db.commit()
+
+    client = {"tenant": "APEX", "sub": "apex-admin"}
+    a = saas_routes.get_saas_analytics(db, client)
+    # APEX only: one Active tenant, its own fee and seats, nothing from BOLT/CRUX.
+    assert a["total_tenants"] == 1, a
+    assert a["active"] == 1 and a["trial"] == 0 and a["cancelled"] == 0, a
+    assert a["monthly_recurring_revenue"] == 1000, a
+    assert a["total_seats"] == 10, a
+
+    # The founder still sees the whole registry — the scoping is claim-driven.
+    f = saas_routes.get_saas_analytics(db, FOUNDER)
+    assert f["total_tenants"] == 3 and f["total_seats"] == 35, f
+    print("PASS analytics is registry-scoped (client sees only its own row; founder sees all)")
+
+
 def test_analytics_empty_registry():
     db = _fresh_session()
     a = saas_routes.get_saas_analytics(db, FOUNDER)
@@ -150,6 +229,8 @@ def test_update_partial_and_valid_numbers_still_work():
 
 if __name__ == "__main__":
     test_analytics_null_safe_and_reconciled()
+    test_analytics_scan_is_bounded_not_per_row()
+    test_analytics_registry_scoped_to_client_own_row()
     test_analytics_empty_registry()
     test_update_rejects_explicit_null_seat_and_fee()
     test_update_partial_and_valid_numbers_still_work()

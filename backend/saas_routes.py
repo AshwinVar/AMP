@@ -17,6 +17,7 @@ import secrets
 from typing import List
 
 from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 import models
@@ -171,20 +172,54 @@ def delete_company_tenant(tenant_id: int, purge: bool = False, db: Session = Dep
 
 
 def get_saas_analytics(db: Session = Depends(_get_db), current_user: dict = Depends(get_current_user)):
-    rows = _registry_scope(db.query(models.CompanyTenant), current_user).all()
+    # Aggregate the registry in SQL rather than hydrating every CompanyTenant row
+    # into Python just to count/sum it (rule-4: bound a growing, polled table).
+    # company_tenants grows with every trial signup and churned/cancelled customer,
+    # and this founder panel is polled by the SaaS dashboard — the old
+    # db.query(CompanyTenant).all() streamed the whole registry back on each poll to
+    # do work SQL does in one pass. Same GROUP-BY / COALESCE(SUM(..),0) fix already
+    # applied across the /analytics/* endpoints (#328/#331/#317/#315). _registry_scope
+    # still filters to the caller's own row for a client workspace (founder sees all),
+    # applied to every aggregate so the scoping is identical to the old .all() scan.
+    def scoped(q):
+        return _registry_scope(q, current_user)
+
+    total_tenants = scoped(db.query(func.count(models.CompanyTenant.id))).scalar() or 0
+
+    # One row per distinct status — a small, naturally-bounded result set. A NULL
+    # subscription_status (String default only) simply lands in a key we never read,
+    # so it's counted in total_tenants but in none of the named buckets — exactly as
+    # the old `status == "Trial"` comparisons treated it (None matches no bucket).
+    status_counts = dict(
+        scoped(db.query(models.CompanyTenant.subscription_status, func.count()))
+        .group_by(models.CompanyTenant.subscription_status)
+        .all()
+    )
+
+    # NULL-safe, same basis as before: the columns carry a Python-side default only
+    # (NOT nullable=False), so a legacy / raw-SQL / migration row can hold a NULL fee
+    # or seat, and a bare SUM over that None used to TypeError-500 the whole rollup.
+    # COALESCE(SUM(..), 0) counts a NULL fee/seat as 0 — never fabricating a figure
+    # the data doesn't hold, a real recorded 0 already contributes 0 — and yields a
+    # clean 0 on an empty registry too. MRR keeps its Trial+Active filter; a NULL
+    # status is outside `IN ('Trial','Active')` exactly as it was outside the old
+    # Python `in [...]` membership test, so both agree on which rows count.
+    mrr = scoped(
+        db.query(func.coalesce(func.sum(models.CompanyTenant.monthly_fee), 0))
+        .filter(models.CompanyTenant.subscription_status.in_(["Trial", "Active"]))
+    ).scalar() or 0
+    total_seats = scoped(
+        db.query(func.coalesce(func.sum(models.CompanyTenant.seats), 0))
+    ).scalar() or 0
+
     return {
-        "total_tenants": len(rows),
-        "trial": len([r for r in rows if r.subscription_status == "Trial"]),
-        "active": len([r for r in rows if r.subscription_status == "Active"]),
-        "past_due": len([r for r in rows if r.subscription_status == "Past Due"]),
-        "cancelled": len([r for r in rows if r.subscription_status == "Cancelled"]),
-        # NULL-safe: a legacy / raw-SQL / migration row can carry a NULL seats or
-        # monthly_fee (the columns are nullable — Python-side default only), and a
-        # bare sum() over a None raised TypeError, 500-ing this whole rollup. A NULL
-        # fee/seat contributes 0 to the total (we can't fabricate a figure the data
-        # doesn't hold); a real recorded 0 already contributes 0, so both agree.
-        "monthly_recurring_revenue": sum((r.monthly_fee or 0) for r in rows if r.subscription_status in ["Trial", "Active"]),
-        "total_seats": sum((r.seats or 0) for r in rows),
+        "total_tenants": int(total_tenants),
+        "trial": status_counts.get("Trial", 0),
+        "active": status_counts.get("Active", 0),
+        "past_due": status_counts.get("Past Due", 0),
+        "cancelled": status_counts.get("Cancelled", 0),
+        "monthly_recurring_revenue": int(mrr),
+        "total_seats": int(total_seats),
     }
 
 

@@ -93,8 +93,20 @@ def test_defect_detail_drills_into_one_category():
     assert none["inspections"] == 0 and none["failed"] == 0 and none["recent"] == []
 
 
+def test_summary_exposes_the_card_contract():
+    # The Quality view's intelligence card (QualityIntelCard.tsx) renders exactly
+    # these keys; pin them so a read-model edit can't silently break the card.
+    db = _fresh_session()
+    s = quality.build_quality_summary(db, "DEFAULT")
+    for k in ("inspections", "inspected", "passed", "failed", "rework", "scrap",
+              "first_pass_yield", "fail_rate", "top_defects", "by_machine", "by_line"):
+        assert k in s, f"quality-summary missing card key {k!r}"
+    print("PASS quality-summary exposes the keys the intel card renders")
+
+
 if __name__ == "__main__":
     test_quality_summary_rolls_up_yield_defects_and_machines()
     test_defect_detail_drills_into_one_category()
+    test_summary_exposes_the_card_contract()
     print("QUALITY OK: first-pass yield + fail rate + defect Pareto + worst machines; empty-safe; "
           "defect drill-down (failed/rework/scrap, machines, inspections)")

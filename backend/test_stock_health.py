@@ -169,9 +169,22 @@ def test_overstock_only_when_no_dead_stock():
     print("PASS overstock-only path warns and prices excess in units over target")
 
 
+def test_health_exposes_the_card_contract():
+    # The Inventory stock-integrity card (StockIntegrityCards.tsx) renders exactly
+    # these keys; pin them so a read-model edit can't silently break the card.
+    db = _fresh_session()
+    r = stock_health.build_stock_health(db, "DEFAULT")
+    for k in ("window_days", "overstock_days", "total_items", "dead", "overstocked",
+              "healthy", "empty", "dead_units", "excess_units", "flagged_items",
+              "flagged_units", "worst", "items", "verdict", "tone"):
+        assert k in r, f"stock-health missing card key {k!r}"
+    print("PASS stock-health exposes the keys the card renders")
+
+
 if __name__ == "__main__":
     test_state_split_and_unit_reconciliation()
     test_movement_outside_the_window_does_not_rescue_a_dead_item()
     test_empty_and_none_fields_are_safe()
     test_overstock_only_when_no_dead_stock()
+    test_health_exposes_the_card_contract()
     print("\nAll stock-health tests passed.")

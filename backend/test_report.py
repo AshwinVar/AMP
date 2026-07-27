@@ -42,6 +42,26 @@ def test_weekly_report_composes_a_markdown_page():
                                   priority="Medium", assigned_to="tech",
                                   planned_date=(now.date() - timedelta(days=5)),
                                   completed_date=(now.date() - timedelta(days=6)), status="Completed"))
+    # Week ahead: one job booked tomorrow (the schedule-load section).
+    db.add(models.ProductionSchedule(schedule_no="SCH-1", machine_id=1, shift_name="Shift A",
+                                     scheduled_date=(now.date() + timedelta(days=1)),
+                                     planned_quantity=100, estimated_minutes=480, status="Scheduled"))
+    # Supply: one overdue PO from a named supplier (the supply section).
+    db.add(models.Supplier(id=9, supplier_code="SUP-9", supplier_name="Acme Metals"))
+    db.add(models.PurchaseOrder(po_no="PO-9", supplier_id=9, item_name="Solder wire", unit="kg",
+                                order_quantity=10, received_quantity=0,
+                                expected_delivery_date=(now.date() - timedelta(days=3)), status="Open"))
+    # Stock integrity: stock with no movement in the window -> dead.
+    db.add(models.InventoryItem(item_code="IT-9", item_name="Bracket", category="Parts",
+                                unit="pcs", current_stock=50, reorder_level=0))
+    # Escalations: one open High + one resolved in 24h (the SLA line).
+    db.add(models.Escalation(title="Reflow oven tripping", severity="High", owner="Ops",
+                             department="Maintenance", status="Open",
+                             created_at=now - timedelta(days=2)))
+    db.add(models.Escalation(title="Sensor drift", severity="Medium", owner="Ops",
+                             department="Quality", status="Resolved",
+                             created_at=now - timedelta(days=3),
+                             resolved_at=now - timedelta(days=2)))
     db.commit()
 
     r = report.build_weekly_report(db, "DEFAULT")
@@ -49,12 +69,23 @@ def test_weekly_report_composes_a_markdown_page():
     md = r["markdown"]
     # the report has the expected sections
     for section in ["# Weekly Plant Report", "## Scorecard", "## Cost of losses",
-                    "## Delivery", "## Maintenance", "## Compliance", "## Needs attention", "## Wins"]:
+                    "## Delivery", "## Maintenance", "## Week ahead", "## Supply",
+                    "## Stock integrity", "## Escalations", "## Compliance",
+                    "## Needs attention", "## Wins"]:
         assert section in md
     assert "1 overdue for review" in md
     # maintenance: the overdue backlog and the PM-compliance rate both render
     assert "1 overdue, 0 scheduled over the next 14 days" in md
     assert "PM compliance (30d): 100% completed on plan" in md
+    # week ahead: the booked job and its minutes
+    assert "1 job (480 min) booked over the next 7 days" in md
+    # supply: the overdue PO with the supplier blamed
+    assert "1 PO overdue — worst: Acme Metals (1)." in md
+    # stock integrity: the dead item and its idle units
+    assert "1 dead item (50 units idle)" in md
+    # escalations: the open queue and the measured SLA
+    assert "1 open (1 high-priority), oldest open 2 days." in md
+    assert "2 raised, 1 resolved (50%), avg 24.0h to close." in md
     # and pulls real figures through
     assert "Plant OEE" in md and "Bugatti" in md and "machine down" in md
     assert "$" in md   # cost of losses rendered as money

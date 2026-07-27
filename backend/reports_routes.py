@@ -80,6 +80,112 @@ def export_shifts_csv(db: Session = Depends(_get_db), current_user: dict = Depen
     return Response(content=output.getvalue(), media_type="text/csv", headers={"Content-Disposition": "attachment; filename=shift_report.csv"})
 
 
+# ── Operational exports ─────────────────────────────────────────────
+# The tables a manufacturer's back office actually lives in — exported in the
+# same shape as the classic three above: role-gated (Admin/Supervisor),
+# auto-scoped to the tenant (ADR-0002), machine/supplier names resolved from one
+# bounded map (never per-row N+1), stable id-ascending order, and an empty table
+# yielding a header-only CSV rather than an error.
+
+
+def _csv(headers, rows, filename):
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow(headers)
+    writer.writerows(rows)
+    return Response(content=output.getvalue(), media_type="text/csv",
+                    headers={"Content-Disposition": f"attachment; filename={filename}"})
+
+
+@router.get("/work-orders.csv")
+def export_work_orders_csv(db: Session = Depends(_get_db),
+                           current_user: dict = Depends(require_roles(["Admin", "Supervisor"]))):
+    rows = db.query(models.WorkOrder).order_by(models.WorkOrder.id.asc()).all()
+    names = _machine_names(db)
+    return _csv(
+        ["id", "work_order_no", "part_number", "batch_number", "machine_id", "machine_name",
+         "target_quantity", "actual_quantity", "status", "material_state",
+         "planned_start", "planned_end", "created_at"],
+        [[w.id, w.work_order_no, w.part_number, w.batch_number, w.machine_id,
+          names.get(w.machine_id) or "", w.target_quantity, w.actual_quantity or 0,
+          w.status, w.material_state, w.planned_start or "", w.planned_end or "", w.created_at]
+         for w in rows],
+        "work_orders.csv")
+
+
+@router.get("/maintenance.csv")
+def export_maintenance_csv(db: Session = Depends(_get_db),
+                           current_user: dict = Depends(require_roles(["Admin", "Supervisor"]))):
+    rows = db.query(models.MaintenanceTask).order_by(models.MaintenanceTask.id.asc()).all()
+    names = _machine_names(db)
+    return _csv(
+        ["id", "task_no", "machine_id", "machine_name", "task_type", "priority", "assigned_to",
+         "planned_date", "completed_date", "downtime_minutes", "spare_parts_used", "status"],
+        [[t.id, t.task_no, t.machine_id, names.get(t.machine_id) or "", t.task_type,
+          t.priority, t.assigned_to, t.planned_date or "", t.completed_date or "",
+          t.downtime_minutes or 0, t.spare_parts_used or "", t.status]
+         for t in rows],
+        "maintenance_tasks.csv")
+
+
+@router.get("/purchase-orders.csv")
+def export_purchase_orders_csv(db: Session = Depends(_get_db),
+                               current_user: dict = Depends(require_roles(["Admin", "Supervisor"]))):
+    rows = db.query(models.PurchaseOrder).order_by(models.PurchaseOrder.id.asc()).all()
+    suppliers = dict(db.query(models.Supplier.id, models.Supplier.supplier_name).all())
+    return _csv(
+        ["id", "po_no", "supplier_id", "supplier_name", "item_name", "order_quantity",
+         "received_quantity", "unit", "expected_delivery_date", "status", "created_at"],
+        [[p.id, p.po_no, p.supplier_id, suppliers.get(p.supplier_id) or "", p.item_name,
+          p.order_quantity, p.received_quantity or 0, p.unit,
+          p.expected_delivery_date or "", p.status, p.created_at]
+         for p in rows],
+        "purchase_orders.csv")
+
+
+@router.get("/inventory.csv")
+def export_inventory_csv(db: Session = Depends(_get_db),
+                         current_user: dict = Depends(require_roles(["Admin", "Supervisor"]))):
+    rows = db.query(models.InventoryItem).order_by(models.InventoryItem.id.asc()).all()
+    return _csv(
+        ["id", "item_code", "item_name", "category", "supplier", "unit",
+         "current_stock", "reorder_level", "location"],
+        [[i.id, i.item_code, i.item_name, i.category, i.supplier or "", i.unit,
+          i.current_stock or 0, i.reorder_level or 0, i.location or ""]
+         for i in rows],
+        "inventory_items.csv")
+
+
+@router.get("/quality.csv")
+def export_quality_csv(db: Session = Depends(_get_db),
+                       current_user: dict = Depends(require_roles(["Admin", "Supervisor"]))):
+    rows = db.query(models.QualityInspection).order_by(models.QualityInspection.id.asc()).all()
+    names = _machine_names(db)
+    return _csv(
+        ["id", "inspection_no", "machine_id", "machine_name", "inspector",
+         "inspected_quantity", "passed_quantity", "failed_quantity", "defect_category",
+         "rework_quantity", "scrap_quantity", "status"],
+        [[q.id, q.inspection_no, q.machine_id, names.get(q.machine_id) or "", q.inspector,
+          q.inspected_quantity, q.passed_quantity or 0, q.failed_quantity or 0,
+          q.defect_category or "", q.rework_quantity or 0, q.scrap_quantity or 0, q.status]
+         for q in rows],
+        "quality_inspections.csv")
+
+
+@router.get("/escalations.csv")
+def export_escalations_csv(db: Session = Depends(_get_db),
+                           current_user: dict = Depends(require_roles(["Admin", "Supervisor"]))):
+    rows = db.query(models.Escalation).order_by(models.Escalation.id.asc()).all()
+    names = _machine_names(db)
+    return _csv(
+        ["id", "title", "severity", "department", "owner", "status", "source",
+         "machine_id", "machine_name", "created_at", "resolved_at"],
+        [[e.id, e.title, e.severity, e.department, e.owner, e.status, e.source,
+          e.machine_id or "", names.get(e.machine_id) or "", e.created_at, e.resolved_at or ""]
+         for e in rows],
+        "escalations.csv")
+
+
 @router.get("/oee.csv")
 def export_oee_csv(db: Session = Depends(_get_db), current_user: dict = Depends(require_roles(["Admin", "Supervisor"]))):
     records = db.query(models.ProductionRecord).order_by(models.ProductionRecord.id.asc()).all()

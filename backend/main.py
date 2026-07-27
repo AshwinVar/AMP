@@ -150,6 +150,7 @@ _ensure_index("cycle_count_items", "item_id")      # scope count lines to the te
 _ensure_index("escalations", "created_at")               # escalation-queue resolution window (filtered in SQL)
 _ensure_index("customer_orders", "due_date")             # late-order count + escalation generator filter due_date in SQL
 _ensure_index("maintenance_tasks", "planned_date")       # overdue-task count filters planned_date in SQL (/analytics/maintenance)
+_ensure_index("work_orders", "status")                   # predictive-risk work-order load filters status IN active in SQL (ai/prediction)
 _ensure_index("compliance_documents", "review_due_date") # review-due count filters review_due_date in SQL (/analytics/documents)
 tenancy.ensure_tenant_columns(engine)  # ADR-0002: tenant_code on core tables
 # Audit trail + enterprise-inventory: add tenant_code NULLABLE, NO blind backfill.

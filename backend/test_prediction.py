@@ -73,8 +73,63 @@ def test_current_state_is_not_windowed():
     print("PASS current state scores regardless of the window")
 
 
+def _wo(machine_id, no, status, target, actual):
+    return models.WorkOrder(
+        work_order_no=no, part_number="P1", batch_number="B1",
+        machine_id=machine_id, target_quantity=target, actual_quantity=actual,
+        status=status, tenant_code="DEFAULT",
+    )
+
+
+def test_work_order_pressure_counts_only_active_orders():
+    """The SQL bound in assess_from_db (status IN active) must produce IDENTICAL
+    risk to the old whole-table scan: Completed/Planned orders are never used, so
+    their outstanding gap must not touch work_order_pressure. Independently
+    derived: Running (800-200)=600 + Delayed (100-50)=50 = 650, and the huge
+    Completed/Planned gaps (5000, 9000) are excluded."""
+    db = _fresh_session()
+    m = models.Machine(name="M1", status="Running", utilization=75, tenant_code="DEFAULT")
+    db.add(m)
+    db.flush()
+    db.add_all([
+        _wo(m.id, "WO-RUN", "Running", 800, 200),      # +600 pressure
+        _wo(m.id, "WO-DLY", "Delayed", 100, 50),        # +50 pressure
+        _wo(m.id, "WO-DONE", "Completed", 5000, 0),     # excluded
+        _wo(m.id, "WO-PLAN", "Planned", 9000, 0),       # excluded
+    ])
+    db.commit()
+
+    row = prediction.assess_from_db(db)[0]
+    assert row["work_order_pressure"] == 650, row["work_order_pressure"]
+    # 650 >= 500, so the high-load reason fires — and it fires from the active
+    # orders alone, not the (much larger) excluded Completed/Planned gaps.
+    assert "high active work-order load" in row["reasons"], row["reasons"]
+    print("PASS work-order pressure counts only active orders (SQL bound is behaviour-preserving)")
+
+
+def test_no_active_work_orders_means_no_pressure():
+    """A machine whose only work orders are Completed/Planned has zero pressure
+    and no work-order-load reason — the excluded rows contribute nothing."""
+    db = _fresh_session()
+    m = models.Machine(name="M1", status="Running", utilization=75, tenant_code="DEFAULT")
+    db.add(m)
+    db.flush()
+    db.add_all([
+        _wo(m.id, "WO-DONE", "Completed", 5000, 0),
+        _wo(m.id, "WO-PLAN", "Planned", 9000, 0),
+    ])
+    db.commit()
+
+    row = prediction.assess_from_db(db)[0]
+    assert row["work_order_pressure"] == 0, row["work_order_pressure"]
+    assert "high active work-order load" not in row["reasons"], row["reasons"]
+    print("PASS inactive work orders contribute no pressure")
+
+
 if __name__ == "__main__":
     test_old_history_washes_out()
     test_recent_history_scores()
     test_current_state_is_not_windowed()
+    test_work_order_pressure_counts_only_active_orders()
+    test_no_active_work_orders_means_no_pressure()
     print("ALL PREDICTION TESTS PASSED")

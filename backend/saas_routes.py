@@ -188,7 +188,71 @@ def get_saas_analytics(db: Session = Depends(_get_db), current_user: dict = Depe
     }
 
 
+def get_tenant_activity(db: Session = Depends(_get_db),
+                        current_user: dict = Depends(require_roles(["Admin"]))):
+    """Founder-only adoption panel: is each client actually USING AMP? Per tenant
+    (the registry rows + the founder's own DEFAULT workspace): user and machine
+    counts, production records and customer orders booked in the last 7 days,
+    the open escalation load, when production was last recorded, and an
+    ``active`` flag (any production or order activity in the window).
+
+    Cross-tenant reads go through the sanctioned mechanism — set_current_tenant
+    per tenant so the ADR-0002 auto-scoping applies to every count (the same
+    pattern the starter-factory seeder uses) — never by disabling scoping. Each
+    tenant costs a handful of SQL COUNT/MAX queries (bounded by the 7-day
+    window), so the panel stays cheap as the registry grows."""
+    from datetime import datetime, timedelta
+    _require_founder(current_user)
+    cutoff = datetime.utcnow() - timedelta(days=7)
+
+    codes = [tenancy.DEFAULT_TENANT] + [
+        t.company_code for t in db.query(models.CompanyTenant)
+        .order_by(models.CompanyTenant.id).all()
+        if t.company_code != tenancy.DEFAULT_TENANT
+    ]
+    rows = []
+    for code in codes:
+        token = tenancy.set_current_tenant(code)
+        try:
+            # User is NOT auto-scoped (ADR-0002 scopes the factory tables; the
+            # /users endpoints filter explicitly) — so filter explicitly here too,
+            # or every tenant's row would count the whole platform's logins.
+            users = db.query(models.User).filter(models.User.tenant_code == code).count()
+            machines = db.query(models.Machine).count()
+            production_7d = (db.query(models.ProductionRecord)
+                             .filter(models.ProductionRecord.created_at >= cutoff).count())
+            orders_7d = (db.query(models.CustomerOrder)
+                         .filter(models.CustomerOrder.created_at >= cutoff).count())
+            open_escalations = (db.query(models.Escalation)
+                                .filter(~models.Escalation.status.in_(
+                                    ("Resolved", "Cancelled", "Closed"))).count())
+            last_production = (db.query(models.ProductionRecord.created_at)
+                               .order_by(models.ProductionRecord.created_at.desc())
+                               .limit(1).scalar())
+        finally:
+            tenancy.reset_current_tenant(token)
+        rows.append({
+            "tenant_code": code,
+            "users": users,
+            "machines": machines,
+            "production_7d": production_7d,
+            "orders_7d": orders_7d,
+            "open_escalations": open_escalations,
+            "last_production_at": last_production.isoformat() if last_production else None,
+            "active": bool(production_7d or orders_7d),
+        })
+    # Quietest tenants first — the churn risks the founder should chase.
+    rows.sort(key=lambda r: (r["active"], r["production_7d"] + r["orders_7d"]))
+    return {
+        "days": 7,
+        "tenants": rows,
+        "active_count": sum(1 for r in rows if r["active"]),
+        "quiet_count": sum(1 for r in rows if not r["active"]),
+    }
+
+
 router = APIRouter(tags=["SaaS Admin"])
+router.get("/saas/tenant-activity")(get_tenant_activity)
 router.get("/saas/tenants", response_model=List[schemas.CompanyTenantResponse])(get_company_tenants)
 router.post("/saas/tenants", response_model=schemas.CompanyTenantResponse)(create_company_tenant)
 router.post("/saas/tenants/{tenant_id}/admin")(create_tenant_admin)

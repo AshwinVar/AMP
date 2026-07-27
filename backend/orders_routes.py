@@ -102,6 +102,16 @@ def create_customer_order(
         if not plan:
             raise HTTPException(status_code=404, detail="Production plan not found")
 
+    # Reject physically-impossible rows at the boundary, the same guard the
+    # production-record (#266) and quality-inspection (#324) ingests already
+    # apply. order_quantity / dispatched_quantity are plain ints in the schema
+    # (no ge=0), so nothing else stops a negative — and a negative dispatched
+    # silently drives the dispatch-rate headline (dispatched/ordered) below 0,
+    # a metric the data can't support. Checked BEFORE the over-dispatch invariant
+    # so a negative order_quantity gets an honest message, not "cannot exceed".
+    if min(order.order_quantity, order.dispatched_quantity) < 0:
+        raise HTTPException(status_code=400, detail="quantities must be non-negative")
+
     if order.dispatched_quantity > order.order_quantity:
         raise HTTPException(status_code=400, detail="Dispatched quantity cannot exceed order quantity")
 
@@ -162,6 +172,14 @@ def update_customer_order(
     # NULL to) so both the status logic and the response see a real int.
     if order.dispatched_quantity is None:
         order.dispatched_quantity = 0
+
+    # Reject a negative dispatched patch (parity with create / the production-record
+    # #266 and quality #324 ingests). A NULL heals to 0 above and is fine; a negative
+    # (`{"dispatched_quantity": -5}`) is physically impossible and would corrupt the
+    # dispatch-rate window exactly as on create — so a clean 400, not a stored
+    # negative. order_quantity isn't settable via this schema, so it needs no guard.
+    if order.dispatched_quantity < 0:
+        raise HTTPException(status_code=400, detail="quantities must be non-negative")
 
     if order.dispatched_quantity > order.order_quantity:
         raise HTTPException(status_code=400, detail="Dispatched quantity cannot exceed order quantity")
@@ -431,6 +449,16 @@ def create_purchase_order(
         if not item:
             raise HTTPException(status_code=404, detail="Inventory item not found")
 
+    # Reject physically-impossible rows at the boundary (parity with the
+    # production-record #266 and quality-inspection #324 ingests). order_quantity /
+    # received_quantity are plain ints in the schema (no ge=0), so nothing else
+    # stops a negative — and a negative received silently drives the receipt-rate
+    # headline (received/ordered) below 0, a metric the data can't support. Checked
+    # BEFORE the over-received invariant so a negative order_quantity gets an honest
+    # message, not "cannot exceed".
+    if min(po.order_quantity, po.received_quantity) < 0:
+        raise HTTPException(status_code=400, detail="quantities must be non-negative")
+
     if po.received_quantity > po.order_quantity:
         raise HTTPException(status_code=400, detail="Received quantity cannot exceed order quantity")
 
@@ -482,6 +510,14 @@ def update_purchase_order(
 
     if po.received_quantity is None:
         po.received_quantity = 0
+
+    # Reject a negative received patch (parity with create / the production-record
+    # #266 and quality #324 ingests). A NULL heals to 0 above and is fine; a negative
+    # (`{"received_quantity": -5}`) is physically impossible and would corrupt the
+    # receipt-rate window — so a clean 400 before the receipt delta and status logic
+    # run. order_quantity isn't settable via this schema, so it needs no guard.
+    if po.received_quantity < 0:
+        raise HTTPException(status_code=400, detail="quantities must be non-negative")
 
     if po.received_quantity > po.order_quantity:
         raise HTTPException(status_code=400, detail="Received quantity cannot exceed order quantity")

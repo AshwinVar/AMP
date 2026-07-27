@@ -585,6 +585,122 @@ def test_update_purchase_order_receive_from_null_stocks_exact_delta():
     print("PASS update purchase order: receive 30 from NULL adds exactly 30 to stock (5 -> 35), delta correct")
 
 
+def test_create_customer_order_rejects_negative_quantities():
+    # Parity with the production-record (#266) and quality (#324) ingests: the
+    # schema types order_quantity / dispatched_quantity as plain ints (no ge=0), so
+    # a negative slips past validation and corrupts the dispatch-rate headline
+    # (dispatched/ordered below 0). A negative dispatched -> clean 400. And a
+    # negative order_quantity must report "non-negative", NOT the misleading
+    # "Dispatched quantity cannot exceed order quantity" (0 > -5 is true) — the
+    # guard runs first.
+    db = _iso_session()
+
+    try:
+        _create_as(db, "TA", schemas.CustomerOrderCreate(
+            order_no="ORD-N1", customer_name="C", product_name="P",
+            order_quantity=10, dispatched_quantity=-5,
+            due_date=datetime.utcnow().date()))
+        assert False, "negative dispatched_quantity should raise"
+    except HTTPException as e:
+        assert e.status_code == 400, e.status_code
+        assert "non-negative" in e.detail, e.detail
+
+    try:
+        _create_as(db, "TA", schemas.CustomerOrderCreate(
+            order_no="ORD-N2", customer_name="C", product_name="P",
+            order_quantity=-10, dispatched_quantity=0,
+            due_date=datetime.utcnow().date()))
+        assert False, "negative order_quantity should raise"
+    except HTTPException as e:
+        assert e.status_code == 400, e.status_code
+        assert "non-negative" in e.detail, e.detail       # not "cannot exceed"
+
+    # Nothing was persisted, and a clean order still works after the rejections.
+    ok = _create_as(db, "TA", _order("ORD-N3"))
+    tok = T.set_current_tenant("TA")
+    assert {o.order_no for o in db.query(models.CustomerOrder).all()} == {"ORD-N3"}, "rejected rows must not persist"
+    T.reset_current_tenant(tok)
+    assert ok.order_no == "ORD-N3"
+    print("PASS create customer order rejects negative quantities (dispatched + order_quantity) -> 400")
+
+
+def test_update_customer_order_rejects_negative_dispatched():
+    # A negative dispatched PATCH (`{"dispatched_quantity": -5}`) is physically
+    # impossible and would corrupt the dispatch-rate window exactly as on create.
+    db = _iso_session()
+    order = _create_as(db, "TA", _order("ORD-U-N1"))       # order_quantity=10
+    tok = T.set_current_tenant("TA")
+    try:
+        try:
+            orders_routes.update_customer_order(
+                order.id, schemas.CustomerOrderUpdate(dispatched_quantity=-5),
+                db=db, current_user={"tenant": "TA"})
+            assert False, "negative dispatched PATCH should raise"
+        except HTTPException as e:
+            assert e.status_code == 400 and "non-negative" in e.detail, (e.status_code, e.detail)
+        # The stored row is untouched (still 0), not left negative.
+        db.expire_all()
+        row = db.query(models.CustomerOrder).filter(models.CustomerOrder.id == order.id).first()
+        assert row.dispatched_quantity == 0, row.dispatched_quantity
+    finally:
+        T.reset_current_tenant(tok)
+    print("PASS update customer order rejects a negative dispatched PATCH -> 400, row unchanged")
+
+
+def test_create_purchase_order_rejects_negative_quantities():
+    # PO parity with the customer-order guard above. A negative received corrupts
+    # the receipt-rate headline; a negative order_quantity must report
+    # "non-negative", not the over-received message.
+    db = _iso_session()
+    tok = T.set_current_tenant("TA")
+    try:
+        s1 = orders_routes.create_supplier(_supplier("S1", "Acme"), db=db, current_user={"tenant": "TA"})
+
+        try:
+            orders_routes.create_purchase_order(_po("PO-N1", s1.id, 100, -5), db=db, current_user={"tenant": "TA"})
+            assert False, "negative received_quantity should raise"
+        except HTTPException as e:
+            assert e.status_code == 400 and "non-negative" in e.detail, (e.status_code, e.detail)
+
+        try:
+            orders_routes.create_purchase_order(_po("PO-N2", s1.id, -100, 0), db=db, current_user={"tenant": "TA"})
+            assert False, "negative order_quantity should raise"
+        except HTTPException as e:
+            assert e.status_code == 400 and "non-negative" in e.detail, (e.status_code, e.detail)  # not "cannot exceed"
+
+        # Rejected POs did not persist; a clean PO still works.
+        ok = orders_routes.create_purchase_order(_po("PO-N3", s1.id, 100, 30), db=db, current_user={"tenant": "TA"})
+        assert {p.po_no for p in db.query(models.PurchaseOrder).all()} == {"PO-N3"}, "rejected POs must not persist"
+        assert ok.po_no == "PO-N3"
+    finally:
+        T.reset_current_tenant(tok)
+    print("PASS create purchase order rejects negative quantities (received + order_quantity) -> 400")
+
+
+def test_update_purchase_order_rejects_negative_received():
+    # A negative received PATCH must 400 before the receipt delta / status logic
+    # run — so no phantom stock movement and no stored negative.
+    db = _iso_session()
+    tok = T.set_current_tenant("TA")
+    try:
+        s1 = orders_routes.create_supplier(_supplier("S1", "Acme"), db=db, current_user={"tenant": "TA"})
+        po = orders_routes.create_purchase_order(_po("PO-U-N1", s1.id, 100, 10), db=db, current_user={"tenant": "TA"})
+        try:
+            orders_routes.update_purchase_order(
+                po.id, schemas.PurchaseOrderUpdate(received_quantity=-5),
+                db=db, current_user={"tenant": "TA"})
+            assert False, "negative received PATCH should raise"
+        except HTTPException as e:
+            assert e.status_code == 400 and "non-negative" in e.detail, (e.status_code, e.detail)
+        db.expire_all()
+        row = db.query(models.PurchaseOrder).filter(models.PurchaseOrder.id == po.id).first()
+        assert row.received_quantity == 10, row.received_quantity     # unchanged, not negative
+        assert db.query(models.InventoryTransaction).count() == 0, "a rejected PATCH must not book a receipt"
+    finally:
+        T.reset_current_tenant(tok)
+    print("PASS update purchase order rejects a negative received PATCH -> 400, no phantom receipt")
+
+
 if __name__ == "__main__":
     test_procurement_paths_owned_by_orders_routes()
     test_duplicate_order_no_across_tenants_is_409_not_500()
@@ -602,4 +718,8 @@ if __name__ == "__main__":
     test_update_customer_order_dispatch_from_null_transitions_partial()
     test_update_purchase_order_survives_null_received_quantity()
     test_update_purchase_order_receive_from_null_stocks_exact_delta()
+    test_create_customer_order_rejects_negative_quantities()
+    test_update_customer_order_rejects_negative_dispatched()
+    test_create_purchase_order_rejects_negative_quantities()
+    test_update_purchase_order_rejects_negative_received()
     print("ALL ORDERS ROUTE TESTS PASSED")

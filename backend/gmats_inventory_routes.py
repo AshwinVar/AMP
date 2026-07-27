@@ -54,6 +54,30 @@ def get_db():
         db.close()
 
 
+def _heal_stock(item):
+    """Coalesce a GmatsItem's nullable stock columns to their default of 0 in
+    place, BEFORE any mutation path does arithmetic on them.
+
+    physical_stock / reserved_stock are Column(Integer, default=0) WITHOUT
+    nullable=False (models.py), so a legacy row written by raw SQL, a migration,
+    or a blank bulk-import cell can hold a true NULL. The read path (_item_dict /
+    gmats_summary) already coalesces these, but the STOCK-MUTATION paths did not
+    — and every one does integer arithmetic on them: `physical += qty` (stock-in
+    / void restore), `physical - reserved` (proforma availability),
+    `qty > physical` (invoice / MIN issue guard), `max(0, reserved - qty)`
+    (reservation release). On a NULL that raised `int + None` / `None - int` /
+    `int > None` TypeError — an unhandled 500 on stock-in, proforma, invoice, MIN
+    and their voids, the exact NULL-count class already fixed on the read side.
+    Coalescing to the column's own default of 0 fixes the arithmetic and, because
+    it writes the value onto the loaded row, heals the row on commit (the same
+    self-heal the quality-inspection / order NULL guards apply)."""
+    if item.physical_stock is None:
+        item.physical_stock = 0
+    if item.reserved_stock is None:
+        item.reserved_stock = 0
+    return item
+
+
 def _item_dict(db, item):
     aliases = [
         a.alias_name
@@ -179,6 +203,7 @@ def gmats_stock_in(item_id: int, payload: dict, db: Session = Depends(get_db), c
     qty = int(payload["qty"])
     if qty <= 0:
         raise HTTPException(status_code=400, detail="Quantity must be positive")
+    _heal_stock(item)
     item.physical_stock += qty
     if payload.get("purchase_rate"):
         item.purchase_rate = int(payload["purchase_rate"])
@@ -260,6 +285,7 @@ def gmats_create_proforma(payload: dict, db: Session = Depends(get_db), current_
         item = db.query(models.GmatsItem).filter(models.GmatsItem.id == int(line["item_id"])).first()
         if not item:
             raise HTTPException(status_code=404, detail="Item not found")
+        _heal_stock(item)
         available = item.physical_stock - item.reserved_stock
         qty = int(line["qty"])
         if qty > available:
@@ -275,6 +301,7 @@ def gmats_create_proforma(payload: dict, db: Session = Depends(get_db), current_
     for line in lines:
         item = db.query(models.GmatsItem).filter(models.GmatsItem.id == int(line["item_id"])).first()
         qty = int(line["qty"])
+        _heal_stock(item)
         item.reserved_stock += qty               # RESERVE — physical unchanged
         db.add(models.GmatsProformaLine(proforma_id=p.id, item_id=item.id, qty=qty))
     db.commit()
@@ -291,6 +318,7 @@ def gmats_cancel_proforma(pid: int, db: Session = Depends(get_db), current_user:
     for l in lines:
         item = db.query(models.GmatsItem).filter(models.GmatsItem.id == l.item_id).first()
         if item:
+            _heal_stock(item)
             item.reserved_stock = max(0, item.reserved_stock - l.qty)   # release reservation
     p.status = "Cancelled"
     db.commit()
@@ -332,6 +360,7 @@ def gmats_generate_invoice(pid: int, db: Session = Depends(get_db), current_user
     for item_id, qty in needed.items():
         item = db.query(models.GmatsItem).filter(models.GmatsItem.id == item_id).first()
         if item:
+            _heal_stock(item)
             if qty > item.physical_stock:
                 raise HTTPException(status_code=400,
                                     detail=f"Cannot invoice {qty} {item.unit} of {item.item_name}: "
@@ -395,6 +424,7 @@ def gmats_create_min(payload: dict, db: Session = Depends(get_db), current_user:
         if not item:
             raise HTTPException(status_code=404, detail="Item not found")
         qty = int(line["qty"])
+        _heal_stock(item)
         if qty > item.physical_stock:
             raise HTTPException(status_code=400, detail=f"Cannot issue {qty} {item.unit} of {item.item_name}: only {item.physical_stock} physical")
     count = db.query(models.GmatsMIN).filter(models.GmatsMIN.tenant_code == tenant).count()
@@ -409,6 +439,7 @@ def gmats_create_min(payload: dict, db: Session = Depends(get_db), current_user:
     for line in lines:
         item = db.query(models.GmatsItem).filter(models.GmatsItem.id == int(line["item_id"])).first()
         qty = int(line["qty"])
+        _heal_stock(item)
         item.physical_stock = max(0, item.physical_stock - qty)   # deduct even though not billed
         db.add(models.GmatsMINLine(min_id=m.id, item_id=item.id, qty=qty))
     db.commit()
@@ -461,6 +492,7 @@ def gmats_void_invoice(inv_id: int, db: Session = Depends(get_db), current_user:
         for l in lines:
             item = db.query(models.GmatsItem).filter(models.GmatsItem.id == l.item_id).first()
             if item:
+                _heal_stock(item)
                 item.physical_stock += l.qty            # restore what the invoice deducted
         p = db.query(models.GmatsProforma).filter(models.GmatsProforma.id == inv.proforma_id).first()
         if p:
@@ -481,6 +513,7 @@ def gmats_void_min(min_id: int, db: Session = Depends(get_db), current_user: dic
     for l in lines:
         item = db.query(models.GmatsItem).filter(models.GmatsItem.id == l.item_id).first()
         if item:
+            _heal_stock(item)
             item.physical_stock += l.qty                # restore the issued spares
     db.flush()
     # Delete children before the parent explicitly (no relationship() to order the flush).

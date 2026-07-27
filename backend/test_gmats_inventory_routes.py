@@ -256,6 +256,138 @@ def test_summary_treats_null_as_zero_and_reconciles():
     print("PASS summary coalesces NULL stock to 0 and reconciles the available total")
 
 
+# --- NULL-stock safety on the WRITE paths. The read path above already heals a
+# NULL physical/reserved column; the STOCK-MUTATION paths (stock-in, proforma,
+# cancel, invoice, MIN, and their voids) each do integer arithmetic on those same
+# columns — `physical += qty`, `physical - reserved`, `max(0, reserved - qty)`,
+# `qty > physical` — and on a genuine NULL raised `int + None` / `None - int`
+# TypeError, an unhandled 500. `_null_cols` forces a real NULL with a raw UPDATE
+# (the ORM default masks an explicit None on insert), exactly the legacy-row
+# scenario the guard exists for. Expected values are derived by hand. ---
+
+
+def _null_cols(db, iid, *columns):
+    assignments = ", ".join(f"{c}=NULL" for c in columns)
+    db.execute(text(f"UPDATE gmats_items SET {assignments} WHERE id=:id"), {"id": iid})
+    db.commit()
+    db.expire_all()
+
+
+def _proforma_status(db, pid):
+    return db.query(models.GmatsProforma).filter(models.GmatsProforma.id == pid).first().status
+
+
+def test_stock_in_heals_null_physical_before_adding():
+    db = _db()
+    _item(db, 1, "GMATS", "Part")                       # physical 10, reserved 0
+    _null_cols(db, 1, "physical_stock", "reserved_stock")
+    out = gmats.gmats_stock_in(1, {"qty": 5}, db=db, current_user=_ADMIN)
+    # NULL physical heals to 0, then + 5 -> 5 (was a `None + 5` 500).
+    assert out["physical_stock"] == 5
+    assert out["reserved_stock"] == 0
+    assert _stock(db).physical_stock == 5               # healed value persisted
+    print("PASS stock-in heals a NULL physical_stock to 0 before adding (no 500)")
+
+
+def test_create_proforma_reserves_against_null_reserved():
+    db = _db()
+    _item(db, 1, "GMATS", "Part")                       # physical 10 (real)
+    _null_cols(db, 1, "reserved_stock")                 # reserved NULL only
+    gmats.gmats_create_proforma(
+        {"tenant": "GMATS", "customer_name": "Cust", "lines": [{"item_id": 1, "qty": 3}]},
+        db=db, current_user=_ADMIN,
+    )
+    it = _stock(db)
+    # available = 10 - 0(healed) = 10 >= 3, so reserve 3: reserved 0(healed) + 3 = 3.
+    assert it.reserved_stock == 3                        # was a `None - None` / `None + 3` 500
+    assert it.physical_stock == 10                       # a reservation never touches physical
+    print("PASS proforma reserves against a NULL reserved_stock (heals to 0, no 500)")
+
+
+def test_create_proforma_null_stock_reports_insufficient_not_500():
+    db = _db()
+    _item(db, 1, "GMATS", "Part")
+    _null_cols(db, 1, "physical_stock", "reserved_stock")
+    try:
+        gmats.gmats_create_proforma(
+            {"tenant": "GMATS", "customer_name": "Cust", "lines": [{"item_id": 1, "qty": 1}]},
+            db=db, current_user=_ADMIN,
+        )
+        assert False, "reserving 1 against 0 available should 400"
+    except HTTPException as e:
+        # An honest 'insufficient available' (available heals to 0), not a None-arithmetic 500.
+        assert e.status_code == 400, e.status_code
+    assert _stock(db).reserved_stock == 0
+    print("PASS proforma against all-NULL stock returns a clean 400, not a 500")
+
+
+def test_cancel_proforma_releases_null_reservation():
+    db = _db()
+    _proforma_with_line(db, qty=5, physical=10)         # reserved set to 5
+    _null_cols(db, 1, "reserved_stock")                 # force NULL after setup
+    gmats.gmats_cancel_proforma(1, db=db, current_user=_ADMIN)
+    # reserved heals 0 then max(0, 0 - 5) = 0 (was a `None - 5` 500).
+    assert _stock(db).reserved_stock == 0
+    assert _proforma_status(db, 1) == "Cancelled"
+    print("PASS cancel releases a NULL reservation to 0 without a 500")
+
+
+def test_generate_invoice_survives_null_reserved():
+    db = _db()
+    _proforma_with_line(db, qty=4, physical=10)         # reserved 4
+    _null_cols(db, 1, "reserved_stock")                 # force NULL after setup
+    gmats.gmats_generate_invoice(1, db=db, current_user=_ADMIN)
+    it = _stock(db)
+    # physical 10 - 4 = 6; reserved heals 0 then max(0, 0 - 4) = 0 (was a `None - 4` 500).
+    assert it.physical_stock == 6
+    assert it.reserved_stock == 0
+    print("PASS invoice deducts and clears a NULL reservation without a 500")
+
+
+def test_create_min_null_physical_reports_insufficient_not_500():
+    db = _db()
+    _item(db, 1, "GMATS", "Spare")
+    _null_cols(db, 1, "physical_stock")
+    try:
+        gmats.gmats_create_min(
+            {"tenant": "GMATS", "customer_name": "Cust", "machine_ref": "Rig",
+             "lines": [{"item_id": 1, "qty": 2}]},
+            db=db, current_user=_ADMIN,
+        )
+        assert False, "issuing 2 from 0 physical should 400"
+    except HTTPException as e:
+        assert e.status_code == 400, e.status_code
+    assert _stock(db).physical_stock == 0               # healed to 0, untouched
+    print("PASS MIN against a NULL physical returns a clean 400, not a 500")
+
+
+def test_void_invoice_restores_onto_null_physical():
+    db = _db()
+    _proforma_with_line(db, qty=4, physical=10)
+    inv = gmats.gmats_generate_invoice(1, db=db, current_user=_ADMIN)   # physical -> 6
+    _null_cols(db, 1, "physical_stock")                 # force NULL before the void restore
+    gmats.gmats_void_invoice(inv["id"], db=db, current_user=_ADMIN)
+    # physical heals 0 then + 4 restored = 4 (was a `None + 4` 500).
+    assert _stock(db).physical_stock == 4
+    print("PASS void invoice restores onto a NULL physical without a 500")
+
+
+def test_void_min_restores_onto_null_physical():
+    db = _db()
+    _item(db, 1, "GMATS", "Spare")                      # physical 10
+    gmats.gmats_create_min(
+        {"tenant": "GMATS", "customer_name": "Cust", "machine_ref": "Rig",
+         "lines": [{"item_id": 1, "qty": 3}]},
+        db=db, current_user=_ADMIN,
+    )                                                   # physical -> 7
+    min_id = db.query(models.GmatsMIN).first().id
+    _null_cols(db, 1, "physical_stock")                 # force NULL before the void restore
+    gmats.gmats_void_min(min_id, db=db, current_user=_ADMIN)
+    # physical heals 0 then + 3 restored = 3 (was a `None + 3` 500).
+    assert _stock(db).physical_stock == 3
+    print("PASS void MIN restores onto a NULL physical without a 500")
+
+
 if __name__ == "__main__":
     test_gmats_inventory_paths_registered_once_and_owned()
     test_proforma_listing_resolves_only_same_tenant_item_names()
@@ -266,4 +398,12 @@ if __name__ == "__main__":
     test_item_dict_coalesces_null_stock_to_zero()
     test_items_list_survives_one_null_row_among_healthy()
     test_summary_treats_null_as_zero_and_reconciles()
+    test_stock_in_heals_null_physical_before_adding()
+    test_create_proforma_reserves_against_null_reserved()
+    test_create_proforma_null_stock_reports_insufficient_not_500()
+    test_cancel_proforma_releases_null_reservation()
+    test_generate_invoice_survives_null_reserved()
+    test_create_min_null_physical_reports_insufficient_not_500()
+    test_void_invoice_restores_onto_null_physical()
+    test_void_min_restores_onto_null_physical()
     print("ALL GMATS-INVENTORY ROUTE TESTS PASSED")

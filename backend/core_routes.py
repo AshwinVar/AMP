@@ -136,17 +136,37 @@ def escalate_briefing(db: Session = Depends(_get_db),
 
 
 @router.post("/auth/refresh")
-def refresh_token(current_user: dict = Depends(get_current_user)):
+def refresh_token(db: Session = Depends(_get_db), current_user: dict = Depends(get_current_user)):
     # Sliding session: a valid (not-yet-expired) token can be exchanged for a
-    # fresh one carrying the same identity claims. The frontend calls this when
-    # the token nears expiry, so an active user is never logged out mid-shift —
-    # while idle sessions still expire naturally.
-    token = create_access_token(data={
-        "sub": current_user.get("sub"),
-        "role": current_user.get("role"),
-        "tenant": current_user.get("tenant", "DEFAULT"),
-    })
-    return {"access_token": token, "token_type": "bearer"}
+    # fresh one, so an active user is never logged out mid-shift — while idle
+    # sessions still expire naturally.
+    #
+    # Security (PR2 of the security tier): the fresh token's claims are
+    # RE-DERIVED FROM THE DATABASE, never copied from the old token. Copying
+    # meant a demoted Admin kept Admin, a deleted user kept a live session, and
+    # a cancelled tenant kept working — indefinitely, four hours at a time.
+    # Refresh now mirrors /login's checks exactly:
+    #   * user gone            -> 401 (the sliding session ends at the next slide)
+    #   * role / tenant change -> the fresh token carries the CURRENT values
+    #   * tenant cancelled or trial expired -> 403, same message as login
+    username = current_user.get("sub")
+    db_user = db.query(models.User).filter(models.User.username == username).first()
+    if not db_user:
+        log_audit(db, username, "refresh_blocked", "user", None, "user no longer exists")
+        raise HTTPException(status_code=401, detail="Account no longer active")
+
+    tenant = getattr(db_user, "tenant_code", None) or tenancy.CLIENT_TENANTS.get(db_user.username.lower(), "DEFAULT")
+    if tenant != tenancy.DEFAULT_TENANT:
+        reg = db.query(models.CompanyTenant).filter(models.CompanyTenant.company_code == tenant).first()
+        if reg and reg.subscription_status == "Cancelled":
+            log_audit(db, db_user.username, "refresh_blocked", "user", db_user.id, f"tenant={tenant} cancelled")
+            raise HTTPException(status_code=403, detail="Subscription inactive — contact your provider")
+        if reg and reg.trial_expired:
+            log_audit(db, db_user.username, "refresh_blocked", "user", db_user.id, f"tenant={tenant} trial expired")
+            raise HTTPException(status_code=403, detail="Trial expired — contact your provider to activate your subscription")
+
+    token = create_access_token(data={"sub": db_user.username, "role": db_user.role, "tenant": tenant})
+    return {"access_token": token, "token_type": "bearer", "role": db_user.role, "tenant": tenant}
 
 
 @router.post("/auth/change-password")

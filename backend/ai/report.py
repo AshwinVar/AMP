@@ -14,6 +14,10 @@ from ai.delivery import build_delivery_summary
 from ai.briefing import build_briefing
 from ai.compliance import build_compliance_summary
 from ai.maintenance import build_maintenance_forecast, build_maintenance_execution
+from ai.escalations import build_escalation_summary
+from ai.schedule_load import build_schedule_load
+from ai.stock_health import build_stock_health
+from ai.supplier_performance import build_supplier_performance
 
 name = "report"
 
@@ -76,6 +80,61 @@ def build_weekly_report(db, tenant: str) -> dict:
                      f"14 days ({maint_f['due_today']} due today)")
         if maint_e["compliance_rate"] is not None:
             lines.append(f"- PM compliance (30d): {maint_e['compliance_rate']}% completed on plan")
+        lines.append("")
+
+    # The week ahead: booked schedule load — shown only when there's a board.
+    sched = build_schedule_load(db, tenant)
+    if sched["scheduled_jobs"] or sched["overdue"]:
+        lines.append("## Week ahead")
+        line = (f"- {sched['scheduled_jobs']} job{'s' if sched['scheduled_jobs'] != 1 else ''} "
+                f"({sched['scheduled_minutes']:,} min) booked over the next {sched['horizon_days']} days")
+        if sched["peak_day"]:
+            line += f"; busiest day {sched['peak_day']['date']} ({sched['peak_day']['jobs']} jobs)"
+        lines.append(line + ".")
+        if sched["overdue"]:
+            lines.append(f"- {sched['overdue']} schedule{'s' if sched['overdue'] != 1 else ''} "
+                         f"past due and still open.")
+        lines.append("")
+
+    # Supply: overdue POs + the plant on-time rate — shown only when POs exist.
+    sup = build_supplier_performance(db, tenant)
+    if sup["orders_considered"]:
+        lines.append("## Supply")
+        line = f"- {sup['orders_considered']} POs in the last {sup['days']} days"
+        if sup["plant_otd"] is not None:
+            line += f" · {sup['plant_otd']}% delivered on time"
+        lines.append(line + ".")
+        if sup["overdue"]:
+            worst = sup["worst"]
+            blame = (f" — worst: {worst['supplier']} ({worst['overdue']})"
+                     if worst and worst["overdue"] else "")
+            lines.append(f"- {sup['overdue']} PO{'s' if sup['overdue'] != 1 else ''} overdue{blame}.")
+        lines.append("")
+
+    # Stock integrity: capital sitting idle — shown only when something is flagged.
+    stock = build_stock_health(db, tenant)
+    if stock["flagged_items"]:
+        lines.append("## Stock integrity")
+        lines.append(f"- {stock['dead']} dead item{'s' if stock['dead'] != 1 else ''} "
+                     f"({stock['dead_units']:,} units idle) · {stock['overstocked']} overstocked "
+                     f"({stock['excess_units']:,} units excess)")
+        lines.append("")
+
+    # Escalations: the queue and how fast it clears — shown only when there is one.
+    esc = build_escalation_summary(db, tenant)
+    if esc["open"] or esc["resolution"]["raised"]:
+        lines.append("## Escalations")
+        line = f"- {esc['open']} open ({esc['urgent_open']} high-priority)"
+        if esc["oldest_open_days"] is not None:
+            line += f", oldest open {esc['oldest_open_days']} day{'s' if esc['oldest_open_days'] != 1 else ''}"
+        lines.append(line + ".")
+        res = esc["resolution"]
+        if res["raised"]:
+            line = (f"- Last {esc['days']} days: {res['raised']} raised, {res['resolved']} resolved"
+                    f" ({res['resolution_rate']}%)")
+            if res["avg_resolution_hours"] is not None:
+                line += f", avg {res['avg_resolution_hours']}h to close"
+            lines.append(line + ".")
         lines.append("")
 
     comp = build_compliance_summary(db, tenant)

@@ -19,7 +19,7 @@ EXPECTED = {
     "/maintenance-summary", "/compliance-summary", "/search", "/weekly-report",
     "/copilot/ask", "/copilot/digest", "/recovery-summary", "/reliability-summary",
     "/schedule-summary", "/schedule-shift", "/coverage-summary", "/inventory-part",
-    "/reliability-machine", "/stock-health", "/stock-accuracy",
+    "/reliability-machine", "/stock-health", "/stock-accuracy", "/supplier-performance",
     "/connectivity-summary", "/connectivity-machine", "/work-order-trace",
     "/maintenance-execution", "/maintenance-forecast",
 }

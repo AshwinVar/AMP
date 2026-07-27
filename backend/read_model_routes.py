@@ -164,6 +164,15 @@ def get_stock_accuracy(db: Session = Depends(_get_db), current_user: dict = Depe
     return ai.stock_accuracy.build_stock_accuracy(db, request_tenant(current_user))
 
 
+@router.get("/supplier-performance")
+def get_supplier_performance(db: Session = Depends(_get_db), current_user: dict = Depends(get_current_user)):
+    # Supplier performance (ADR-0007): the buyer's scorecard the PO pipeline never
+    # rolls up — per supplier over 90 days, the fill rate (pooled, over-receipt
+    # capped), the open + overdue supply the plant is waiting on, and a GRN-timed
+    # on-time rate with average days late. Untimed deliveries reported, never scored.
+    return ai.supplier_performance.build_supplier_performance(db, request_tenant(current_user))
+
+
 @router.get("/flow-summary")
 def get_flow_summary(db: Session = Depends(_get_db), current_user: dict = Depends(get_current_user)):
     # WIP flow (ADR-0007): work orders grouped by material state —

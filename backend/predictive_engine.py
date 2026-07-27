@@ -19,6 +19,14 @@ def _int(value):
     return value if value is not None else 0
 
 
+# The only work-order statuses that carry outstanding demand, so the only ones
+# that contribute to work_order_pressure below. Exposed as the single source of
+# truth (rule-1: don't spell the set out a second way) so the DB loader
+# (ai.prediction) can bound its WorkOrder query to exactly this set in SQL,
+# rather than hydrating the whole (growing) work_orders table and filtering here.
+ACTIVE_WORK_ORDER_STATUSES = ("Running", "Delayed")
+
+
 def classify_risk(score: int):
     if score >= 75:
         return "Critical"
@@ -60,7 +68,10 @@ def calculate_predictive_risk(machines, downtime_logs, production_records, machi
             breakdown_events_by_machine[event.machine_id] += 1
 
     for work_order in work_orders:
-        if work_order.status in ["Running", "Delayed"]:
+        # A defensive re-filter (the DB loader already bounds to these statuses in
+        # SQL): if a caller passes an unfiltered list, only active work orders
+        # count toward pressure — same set as ACTIVE_WORK_ORDER_STATUSES.
+        if work_order.status in ACTIVE_WORK_ORDER_STATUSES:
             work_order_pressure[work_order.machine_id] += max(work_order.target_quantity - _int(work_order.actual_quantity), 0)
 
     rows = []

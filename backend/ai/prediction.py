@@ -17,7 +17,7 @@ unwindowed.
 from datetime import datetime, timedelta
 
 import models
-from predictive_engine import calculate_predictive_risk
+from predictive_engine import ACTIVE_WORK_ORDER_STATUSES, calculate_predictive_risk
 
 name = "prediction"
 
@@ -44,7 +44,18 @@ def assess_from_db(db):
         db.query(models.DowntimeLog).filter(models.DowntimeLog.created_at >= cutoff).all(),
         db.query(models.ProductionRecord).filter(models.ProductionRecord.created_at >= cutoff).all(),
         db.query(models.MachineEvent).filter(models.MachineEvent.created_at >= cutoff).all(),
-        db.query(models.WorkOrder).all(),
+        # Work-order load is point-in-time (unwindowed by date), but only ACTIVE
+        # orders carry outstanding demand — the engine sums pressure over exactly
+        # ACTIVE_WORK_ORDER_STATUSES. Bound that in SQL rather than hydrating the
+        # whole (growing) work_orders table and filtering in Python (rule-4): the
+        # Completed/Planned rows are never used, so this returns identical risk
+        # while reading only the handful of active orders. Filtered on the indexed
+        # work_orders.status column (main.py _ensure_index). WorkOrder is in
+        # SCOPED_MODELS, so this stays tenant-scoped by the ORM hook (ADR-0002)
+        # exactly as the old .all() scan did.
+        db.query(models.WorkOrder)
+        .filter(models.WorkOrder.status.in_(ACTIVE_WORK_ORDER_STATUSES))
+        .all(),
     )
 
 

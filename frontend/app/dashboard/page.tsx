@@ -68,6 +68,7 @@ import EscalationQueueCard from "../../components/EscalationQueueCard";
 import SupplierPerformanceCard from "../../components/SupplierPerformanceCard";
 import OperatorPerformanceCards from "../../components/OperatorPerformanceCards";
 import WipAgingCard from "../../components/WipAgingCard";
+import CsvExportsCard from "../../components/CsvExportsCard";
 import SchedulingSection from "../../components/SchedulingSection";
 import IoTCommandSection from "../../components/IoTCommandSection";
 import AIInsightsSection from "../../components/AIInsightsSection";
@@ -2177,6 +2178,7 @@ export default function DashboardPage() {
         <>
           <div className="mb-8"><HandoverSnapshot /></div>
           <div className="mb-8"><WeeklyReportSnapshot /></div>
+          {isAdminOrSupervisor && <div className="mb-8"><CsvExportsCard /></div>}
         </>
       )}
 

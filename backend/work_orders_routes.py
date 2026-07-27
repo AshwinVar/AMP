@@ -51,6 +51,19 @@ def create_work_order(
     existing = db.query(models.WorkOrder).filter(models.WorkOrder.work_order_no == work_order.work_order_no).first()
     if existing:
         raise HTTPException(status_code=400, detail="Work order number already exists")
+    # Reject physically-impossible rows at the boundary — parity with the
+    # production-record (#266), quality (#324), order/PO (#346) and production-plan
+    # (#351) ingests, which all already reject negatives here. target_quantity is a
+    # plain int and actual_quantity an int defaulting to 0 in the schema (no ge=0),
+    # so a negative slips past validation and corrupts every read-model that
+    # consumes it: /analytics/work-orders achievement (actual/target), the
+    # predictive-risk work-order pressure (target - actual), and — worst — a
+    # completing WO publishes ProductionCompleted with a negative quantity, which
+    # the inventory subscriber turns into a raw-material stock INCREASE and a
+    # finished-goods DECREASE (subscribers.move_bom_on_production_completed). Checked
+    # before the row is written so nothing impossible ever persists.
+    if min(work_order.target_quantity, work_order.actual_quantity) < 0:
+        raise HTTPException(status_code=400, detail="quantities must be non-negative")
     new_work_order = models.WorkOrder(**work_order.model_dump())
     db.add(new_work_order)
     try:
@@ -80,6 +93,14 @@ def update_work_order(
     prev_status = work_order.status
 
     if payload.actual_quantity is not None:
+        # Reject a negative actual_quantity PATCH (parity with create and the
+        # order/PO / production-plan update guards): a negative actual corrupts the
+        # work-order read-models exactly as on create, and if this PATCH (or a later
+        # status->Completed) trips completion it publishes a negative-quantity
+        # ProductionCompleted event that mis-moves inventory. Checked before it is
+        # applied so a rejected PATCH never mutates the row (value + status intact).
+        if payload.actual_quantity < 0:
+            raise HTTPException(status_code=400, detail="quantities must be non-negative")
         work_order.actual_quantity = payload.actual_quantity
         if work_order.actual_quantity >= work_order.target_quantity:
             work_order.status = "Completed"

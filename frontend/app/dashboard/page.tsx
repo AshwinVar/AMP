@@ -66,6 +66,7 @@ import ScheduleLoadBoard from "../../components/ScheduleLoadBoard";
 import StockIntegrityCards from "../../components/StockIntegrityCards";
 import EscalationQueueCard from "../../components/EscalationQueueCard";
 import SupplierPerformanceCard from "../../components/SupplierPerformanceCard";
+import OperatorPerformanceCards from "../../components/OperatorPerformanceCards";
 import SchedulingSection from "../../components/SchedulingSection";
 import IoTCommandSection from "../../components/IoTCommandSection";
 import AIInsightsSection from "../../components/AIInsightsSection";
@@ -2807,7 +2808,10 @@ export default function DashboardPage() {
       ))}
 
       {renderSection("operator", (
+        <>
+        <div className="mt-8"><OperatorPerformanceCards operatorName={userName || undefined} /></div>
         <OperatorTerminalSection machines={machines} workOrders={workOrders} productionPlans={productionPlans} executions={operatorExecutions} analytics={operatorAnalytics} form={operatorForm} setForm={setOperatorForm} createExecution={createOperatorExecution} updateExecution={updateOperatorExecution} deleteExecution={isAdmin ? deleteOperatorExecution : undefined} getMachineName={getMachineName} />
+        </>
       ))}
 
       {renderSection("inbox", (

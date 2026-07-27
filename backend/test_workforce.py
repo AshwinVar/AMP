@@ -306,6 +306,25 @@ def test_detail_none_machine_and_no_units_are_safe():
     assert sum(m["jobs"] for m in d["by_machine"]) == d["jobs"] == 1
 
 
+def test_summary_and_detail_expose_the_card_contract():
+    # The Operator Terminal performance cards (OperatorPerformanceCards.tsx)
+    # render exactly these keys; pin them so a read-model edit can't silently
+    # break the cards.
+    db = _fresh_session()
+    s = workforce.build_operator_summary(db, "DEFAULT")
+    for k in ("days", "operators", "jobs", "completed", "active", "good_units",
+              "rejected_units", "total_units", "quality_rate", "min_units",
+              "by_operator", "needs_attention", "daily"):
+        assert k in s, f"operator-summary missing card key {k!r}"
+    d = workforce.build_operator_detail(db, "DEFAULT", "nobody")
+    for k in ("found", "operator", "days", "jobs", "completed", "active",
+              "good_units", "rejected_units", "total_units", "quality_rate",
+              "plant_quality_rate", "vs_plant", "rank", "operators",
+              "avg_job_minutes", "timed_jobs", "by_machine", "daily", "recent"):
+        assert k in d, f"operator-detail missing card key {k!r}"
+    print("PASS operator summary + detail expose the card contract")
+
+
 if __name__ == "__main__":
     test_rolls_up_per_operator_and_reconciles_to_the_headline()
     test_operator_with_no_units_has_no_rate_and_is_never_worst()
@@ -317,6 +336,7 @@ if __name__ == "__main__":
     test_detail_job_time_is_measured_from_real_timestamps_only()
     test_detail_unknown_operator_is_empty_safe()
     test_detail_none_machine_and_no_units_are_safe()
+    test_summary_and_detail_expose_the_card_contract()
     print("WORKFORCE OK: per-operator rollup reconciles to headline; None rate when no units; "
           "thin-sample never worst; uniformly-good crew flags nobody; true totals not TOP_N; "
           "windowed; empty/None-safe; drill-down reconciles plant rate + rank + per-machine "

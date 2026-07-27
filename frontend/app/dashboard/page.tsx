@@ -64,6 +64,7 @@ import MaintenanceSection from "../../components/MaintenanceSection";
 import MaintenanceForecastCard from "../../components/MaintenanceForecastCard";
 import ScheduleLoadBoard from "../../components/ScheduleLoadBoard";
 import StockIntegrityCards from "../../components/StockIntegrityCards";
+import EscalationQueueCard from "../../components/EscalationQueueCard";
 import SchedulingSection from "../../components/SchedulingSection";
 import IoTCommandSection from "../../components/IoTCommandSection";
 import AIInsightsSection from "../../components/AIInsightsSection";
@@ -2612,6 +2613,8 @@ export default function DashboardPage() {
       ))}
 
       {renderSection("escalations", (
+        <>
+        <div className="mt-8"><EscalationQueueCard onOpen={setFocusedEscalationId} /></div>
         <EscalationSection
           machines={machines}
           escalations={escalations}
@@ -2625,6 +2628,7 @@ export default function DashboardPage() {
           generateFromSmartAlerts={isAdminOrSupervisor ? generateEscalationsFromSmartAlerts : async () => {}}
           getMachineName={getMachineName}
         />
+        </>
       ))}
 
       {renderSection("inventory", (

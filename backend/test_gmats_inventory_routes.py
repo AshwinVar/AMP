@@ -486,6 +486,97 @@ def test_create_min_duplicate_lines_within_stock_then_void_is_neutral():
     print("PASS MIN duplicate lines within stock deduct their sum and void restores exactly")
 
 
+# --- Cross-tenant isolation on the WRITE paths. GmatsItem is not in
+# tenancy.SCOPED_MODELS, so the proforma/MIN CREATE endpoints — which locked the
+# document HEADER to the caller's tenant but resolved line items by a bare id — let
+# a client login reserve/deduct stock on ANOTHER company's item by passing a foreign
+# item_id. The read paths were already tenant-filtered; these pin the same scope on
+# the create paths (a foreign/unknown id is "not found" for this tenant, and the
+# victim's stock is never touched). Expected values are derived by hand. ---
+
+
+def test_create_proforma_rejects_foreign_tenant_item():
+    # ACME client tries to reserve GLOBEX's item (id 2) on its own proforma. The
+    # scoped lookup finds no such item for ACME -> 404, and GLOBEX's reserved_stock
+    # stays 0 (never reserved by a foreign tenant).
+    db = _db()
+    _item(db, 1, "ACME", "Acme Widget")      # physical 10, reserved 0
+    _item(db, 2, "GLOBEX", "Globex Secret")  # physical 10, reserved 0
+    try:
+        gmats.gmats_create_proforma(
+            {"tenant": "ACME", "customer_name": "Cust", "lines": [{"item_id": 2, "qty": 5}]},
+            db=db, current_user=ACME,
+        )
+        assert False, "reserving a foreign tenant's item should 404, not reserve it"
+    except HTTPException as e:
+        assert e.status_code == 404, e.status_code
+    globex = db.query(models.GmatsItem).filter(models.GmatsItem.id == 2).first()
+    assert globex.reserved_stock == 0, f"foreign stock was reserved: {globex.reserved_stock}"
+    # No proforma was persisted (the 404 fired before the header was created).
+    assert db.query(models.GmatsProforma).count() == 0
+    print("PASS proforma create rejects a foreign-tenant item id (victim stock untouched)")
+
+
+def test_create_min_rejects_foreign_tenant_item():
+    # ACME client tries to ISSUE (deduct physical) GLOBEX's item on its own MIN.
+    # Scoped lookup -> 404, and GLOBEX's physical_stock is untouched.
+    db = _db()
+    _item(db, 1, "ACME", "Acme Spare")
+    _item(db, 2, "GLOBEX", "Globex Spare")   # physical 10
+    try:
+        gmats.gmats_create_min(
+            {"tenant": "ACME", "customer_name": "Cust", "machine_ref": "Rig",
+             "lines": [{"item_id": 2, "qty": 4}]},
+            db=db, current_user=ACME,
+        )
+        assert False, "issuing a foreign tenant's item should 404, not deduct it"
+    except HTTPException as e:
+        assert e.status_code == 404, e.status_code
+    globex = db.query(models.GmatsItem).filter(models.GmatsItem.id == 2).first()
+    assert globex.physical_stock == 10, f"foreign stock was deducted: {globex.physical_stock}"
+    assert db.query(models.GmatsMIN).count() == 0
+    print("PASS MIN create rejects a foreign-tenant item id (victim stock untouched)")
+
+
+def test_create_proforma_rejects_mixed_own_and_foreign_lines_atomically():
+    # A proforma mixing ACME's own item (id 1) with GLOBEX's (id 2) must be rejected
+    # WHOLE — the summed validation loop runs before any header/reserve, so the own
+    # item is NOT reserved either. Proves the guard is pre-commit, not partial.
+    db = _db()
+    _item(db, 1, "ACME", "Acme Widget")      # reserved 0
+    _item(db, 2, "GLOBEX", "Globex Secret")  # reserved 0
+    try:
+        gmats.gmats_create_proforma(
+            {"tenant": "ACME", "customer_name": "Cust",
+             "lines": [{"item_id": 1, "qty": 3}, {"item_id": 2, "qty": 3}]},
+            db=db, current_user=ACME,
+        )
+        assert False, "a proforma with any foreign line should 404 wholesale"
+    except HTTPException as e:
+        assert e.status_code == 404, e.status_code
+    acme = db.query(models.GmatsItem).filter(models.GmatsItem.id == 1).first()
+    globex = db.query(models.GmatsItem).filter(models.GmatsItem.id == 2).first()
+    assert acme.reserved_stock == 0, "own item must NOT be reserved when a sibling line is foreign"
+    assert globex.reserved_stock == 0
+    assert db.query(models.GmatsProforma).count() == 0
+    print("PASS proforma with a foreign line is rejected wholesale (own item not reserved)")
+
+
+def test_create_proforma_same_tenant_still_reserves():
+    # Regression guard: the new tenant filter must not break the legitimate
+    # same-tenant path. ACME reserves its own item exactly as before.
+    db = _db()
+    _item(db, 1, "ACME", "Acme Widget")      # physical 10, reserved 0
+    gmats.gmats_create_proforma(
+        {"tenant": "ACME", "customer_name": "Cust", "lines": [{"item_id": 1, "qty": 4}]},
+        db=db, current_user=ACME,
+    )
+    it = db.query(models.GmatsItem).filter(models.GmatsItem.id == 1).first()
+    assert it.reserved_stock == 4 and it.physical_stock == 10
+    assert db.query(models.GmatsProforma).count() == 1
+    print("PASS same-tenant proforma still reserves correctly after the scope fix")
+
+
 if __name__ == "__main__":
     test_gmats_inventory_paths_registered_once_and_owned()
     test_proforma_listing_resolves_only_same_tenant_item_names()
@@ -508,4 +599,8 @@ if __name__ == "__main__":
     test_create_proforma_allows_duplicate_lines_within_stock()
     test_create_min_sums_duplicate_lines_and_rejects_over_issue()
     test_create_min_duplicate_lines_within_stock_then_void_is_neutral()
+    test_create_proforma_rejects_foreign_tenant_item()
+    test_create_min_rejects_foreign_tenant_item()
+    test_create_proforma_rejects_mixed_own_and_foreign_lines_atomically()
+    test_create_proforma_same_tenant_still_reserves()
     print("ALL GMATS-INVENTORY ROUTE TESTS PASSED")

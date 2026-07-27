@@ -294,8 +294,19 @@ def gmats_create_proforma(payload: dict, db: Session = Depends(get_db), current_
     needed: dict = defaultdict(int)
     for line in lines:
         needed[int(line["item_id"])] += int(line["qty"])
+    # Scope the line-item lookup to the document's tenant. GmatsItem is NOT in
+    # tenancy.SCOPED_MODELS (it carries a manual tenant_code, filtered explicitly on
+    # every gmats read endpoint), so a bare id lookup accepts ANY tenant's item — a
+    # client login, locked to its own tenant for the proforma HEADER, could still pass
+    # a foreign item_id and RESERVE stock on another company's row, silently corrupting
+    # that tenant's available stock and defeating this module's isolation promise
+    # (ADR-0002: never mutate a row from a client-supplied id without scoping). The
+    # header is stamped `tenant`, so its lines must belong to `tenant`; a foreign or
+    # unknown id is simply "not found" for this tenant. Mirrors _guard_record on the
+    # single-item mutators and the tenant filter on the read paths.
     for item_id, qty in needed.items():
-        item = db.query(models.GmatsItem).filter(models.GmatsItem.id == item_id).first()
+        item = db.query(models.GmatsItem).filter(
+            models.GmatsItem.id == item_id, models.GmatsItem.tenant_code == tenant).first()
         if not item:
             raise HTTPException(status_code=404, detail="Item not found")
         _heal_stock(item)
@@ -311,7 +322,11 @@ def gmats_create_proforma(payload: dict, db: Session = Depends(get_db), current_
     )
     db.add(p); db.commit(); db.refresh(p)
     for line in lines:
-        item = db.query(models.GmatsItem).filter(models.GmatsItem.id == int(line["item_id"])).first()
+        # Same tenant scope as the validation loop — the reserve must land on THIS
+        # tenant's item, never a foreign one referenced by a guessed id.
+        item = db.query(models.GmatsItem).filter(
+            models.GmatsItem.id == int(line["item_id"]),
+            models.GmatsItem.tenant_code == tenant).first()
         qty = int(line["qty"])
         _heal_stock(item)
         item.reserved_stock += qty               # RESERVE — physical unchanged
@@ -444,8 +459,14 @@ def gmats_create_min(payload: dict, db: Session = Depends(get_db), current_user:
     needed: dict = defaultdict(int)
     for line in lines:
         needed[int(line["item_id"])] += int(line["qty"])
+    # Scope the line-item lookup to the document's tenant (see gmats_create_proforma
+    # for the full rationale): an unscoped by-id lookup let a client login DEDUCT
+    # physical stock from another company's item by passing a foreign id. The MIN
+    # header is stamped `tenant`, so its lines must belong to `tenant`; a foreign or
+    # unknown id is "not found" for this tenant.
     for item_id, qty in needed.items():
-        item = db.query(models.GmatsItem).filter(models.GmatsItem.id == item_id).first()
+        item = db.query(models.GmatsItem).filter(
+            models.GmatsItem.id == item_id, models.GmatsItem.tenant_code == tenant).first()
         if not item:
             raise HTTPException(status_code=404, detail="Item not found")
         _heal_stock(item)
@@ -461,7 +482,11 @@ def gmats_create_min(payload: dict, db: Session = Depends(get_db), current_user:
     )
     db.add(m); db.commit(); db.refresh(m)
     for line in lines:
-        item = db.query(models.GmatsItem).filter(models.GmatsItem.id == int(line["item_id"])).first()
+        # Same tenant scope as the validation loop — the deduction must land on THIS
+        # tenant's item, never a foreign one referenced by a guessed id.
+        item = db.query(models.GmatsItem).filter(
+            models.GmatsItem.id == int(line["item_id"]),
+            models.GmatsItem.tenant_code == tenant).first()
         qty = int(line["qty"])
         _heal_stock(item)
         item.physical_stock -= qty   # exact (the summed guard above keeps it >= 0), so void restores exactly

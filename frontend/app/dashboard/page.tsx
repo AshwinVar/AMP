@@ -73,6 +73,7 @@ import CsvImportButton from "../../components/CsvImportButton";
 import TenantAdoptionCard from "../../components/TenantAdoptionCard";
 import BrandingSettingsCard from "../../components/BrandingSettingsCard";
 import QualityIntelCard from "../../components/QualityIntelCard";
+import DowntimeIntelCard from "../../components/DowntimeIntelCard";
 import SchedulingSection from "../../components/SchedulingSection";
 import IoTCommandSection from "../../components/IoTCommandSection";
 import AIInsightsSection from "../../components/AIInsightsSection";
@@ -2348,6 +2349,9 @@ export default function DashboardPage() {
         </>
       )}
 
+      {activeView === "downtime" && (
+        <div className="mb-6"><DowntimeIntelCard /></div>
+      )}
       {(activeView === "overview" || activeView === "downtime") && (
         <section className="grid grid-cols-1 xl:grid-cols-3 gap-6">
           <form

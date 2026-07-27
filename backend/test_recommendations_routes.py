@@ -62,6 +62,20 @@ def test_generator_is_bounded_to_the_recent_window_in_sql():
     print("PASS generator windows its downtime + quality scans SQL-side")
 
 
+def test_generator_filters_behind_plans_in_sql_not_python():
+    # production_plans is a growing table; only "Behind" plans can raise a delay
+    # rec, so the generator must filter status SQL-side rather than hydrate the
+    # whole table and test plan.status in Python (the rule-4 antipattern). Guards
+    # against a regression back to `db.query(ProductionPlan).all()` + `if
+    # plan.status == "Behind"`.
+    src = inspect.getsource(recommendations_routes.generate_ai_recommendations)
+    assert 'ProductionPlan.status == "Behind"' in src, "plan scan must filter status in SQL"
+    assert "db.query(models.ProductionPlan).all()" not in src, (
+        "plan scan must not hydrate the whole growing production_plans table"
+    )
+    print("PASS generator filters Behind plans SQL-side (no whole-table plan scan)")
+
+
 def test_downtime_rule_scores_recent_only_and_parses_hours():
     # Machine 1: two RECENT downtime logs, one in hour format. 2 hrs 15 min = 135
     # and 1 hr = 60 -> 195 recent minutes, which is > 120 -> a maintenance rec.
@@ -88,6 +102,48 @@ def test_downtime_rule_scores_recent_only_and_parses_hours():
     p1 = next(r for r in maint if r.related_machine_id == 1)
     assert "195 minutes downtime in the last 30 days" in p1.message, p1.message
     print("PASS downtime rule scores the recent window and parses '2 hrs 15 min' as 135")
+
+
+def test_delay_rule_fires_only_for_behind_plans():
+    # The production-delay rec is driven by the plan's point-in-time status flag:
+    # exactly the plans marked "Behind" raise one, and no other status does. Three
+    # plans in — one Behind, one Planned, one Completed — must yield exactly one
+    # Production Delay Prediction, for the Behind plan only. This pins the SQL
+    # status filter to the same set the old Python `if plan.status == "Behind"`
+    # selected (no more, no fewer).
+    from datetime import date
+
+    db = _fresh_session()
+    db.add(models.Machine(id=7, name="Line-A", status="Running", utilization=80))
+    common = dict(machine_id=7, planned_quantity=100, actual_quantity=0,
+                  plan_date=date(2026, 7, 1), shift_name="Day")
+    db.add(models.ProductionPlan(plan_no="PP-BEHIND", work_order_id=1, status="Behind", **common))
+    db.add(models.ProductionPlan(plan_no="PP-PLANNED", work_order_id=2, status="Planned", **common))
+    db.add(models.ProductionPlan(plan_no="PP-DONE", work_order_id=3, status="Completed", **common))
+    db.commit()
+
+    recommendations_routes.generate_ai_recommendations(db=db, current_user={})
+
+    delay = _by_type(db, "Production Delay Prediction")
+    titles = {r.title for r in delay}
+    assert titles == {"Delay risk on plan PP-BEHIND"}, titles
+    assert delay[0].related_machine_id == 7, delay[0].related_machine_id
+    print("PASS delay rule fires for the Behind plan only (Planned/Completed produce none)")
+
+
+def test_delay_rule_is_edge_safe_with_no_behind_plans():
+    # No Behind plans (only other statuses) -> no delay rec, no crash, empty set.
+    from datetime import date
+
+    db = _fresh_session()
+    db.add(models.ProductionPlan(plan_no="PP-OK", work_order_id=1, machine_id=None,
+                                 planned_quantity=50, actual_quantity=50,
+                                 plan_date=date(2026, 7, 1), shift_name="Day",
+                                 status="Completed"))
+    db.commit()
+    recommendations_routes.generate_ai_recommendations(db=db, current_user={})
+    assert _by_type(db, "Production Delay Prediction") == []
+    print("PASS delay rule is edge-safe when no plan is Behind")
 
 
 def test_breakdown_now_fires_even_with_no_recent_downtime():
@@ -202,7 +258,10 @@ def test_generator_survives_null_utilization_stock_and_quality_columns():
 if __name__ == "__main__":
     test_recommendations_paths_owned_by_module()
     test_generator_is_bounded_to_the_recent_window_in_sql()
+    test_generator_filters_behind_plans_in_sql_not_python()
     test_downtime_rule_scores_recent_only_and_parses_hours()
+    test_delay_rule_fires_only_for_behind_plans()
+    test_delay_rule_is_edge_safe_with_no_behind_plans()
     test_breakdown_now_fires_even_with_no_recent_downtime()
     test_quality_fail_rate_uses_the_recent_window_denominator()
     test_generator_is_edge_safe_on_empty_and_zero_inspection()

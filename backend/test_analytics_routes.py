@@ -992,6 +992,118 @@ def test_machine_state_summary_is_tenant_scoped():
     print("PASS machine-state-summary: SQL GROUP BY stays tenant-scoped (GMATS sees only its own)")
 
 
+def test_system_health_counts_are_sql_bounded_and_reconciled():
+    # /analytics/system-health used to pull SIX whole tables into Python — machines,
+    # users, alerts, escalations, notifications AND the unbounded audit_logs — just
+    # to len()/filter them (rule-4 antipattern; audit_logs grows on every login /
+    # mutation, so that scan is the heaviest and most dangerous of the six). The
+    # counts now come from SQL COUNT/filtered-COUNT. Every expected number is derived
+    # by hand, and the NULL-status escalation pins the open-count parity: SQL `status
+    # != 'Resolved'` is NULL (not TRUE) for a NULL status, so without OR-ing the NULL
+    # back in this would silently under-count opens vs the old Python `!=`.
+    db = _fresh_session()
+    db.add(models.Machine(id=1, name="A", status="Running", utilization=70))
+    db.add(models.Machine(id=2, name="B", status="Idle", utilization=0))
+
+    db.add(models.User(username="admin", password="x", role="Admin"))
+    db.add(models.User(username="op", password="x", role="Operator"))
+    db.add(models.User(username="sup", password="x", role="Supervisor"))
+
+    db.add(models.Alert(alert_type="OEE", severity="High", message="m1"))
+    db.add(models.Alert(alert_type="Downtime", severity="Critical", message="m2"))
+
+    # Escalations: one Resolved (excluded), one Open, one In Progress, and one that
+    # will be forced to a genuine NULL status (must count as open).
+    db.add(models.Escalation(id=1, title="E1", severity="High", owner="o", department="d", status="Resolved"))
+    db.add(models.Escalation(id=2, title="E2", severity="High", owner="o", department="d", status="Open"))
+    db.add(models.Escalation(id=3, title="E3", severity="Medium", owner="o", department="d", status="In Progress"))
+    db.add(models.Escalation(id=4, title="E4", severity="Low", owner="o", department="d", status="Open"))
+
+    # Notifications: two Unread, one Read, one forced to NULL (NULL is NOT unread).
+    db.add(models.Notification(id=1, notification_type="Machine", title="N1", message="m", status="Unread"))
+    db.add(models.Notification(id=2, notification_type="Machine", title="N2", message="m", status="Unread"))
+    db.add(models.Notification(id=3, notification_type="Machine", title="N3", message="m", status="Read"))
+    db.add(models.Notification(id=4, notification_type="Machine", title="N4", message="m", status="Read"))
+
+    db.add(models.AuditLog(actor="admin", action="login"))
+    db.add(models.AuditLog(actor="admin", action="change_password"))
+    db.commit()
+
+    # Force genuine SQL NULLs (the ORM would apply the column default on insert).
+    db.execute(text("UPDATE escalations SET status = NULL WHERE id = 4"))
+    db.execute(text("UPDATE notifications SET status = NULL WHERE id = 4"))
+    db.commit()
+    db.expire_all()
+
+    out = analytics_routes.get_system_health(db=db, current_user={})
+
+    assert out["api_status"] == "Healthy" and out["database_status"] == "Connected", out
+    assert out["machines"] == 2, out
+    assert out["users"] == 3, out
+    assert out["alerts"] == 2, out
+    # open = every escalation NOT Resolved: E2 (Open) + E3 (In Progress) + E4
+    # (NULL, counts as open) = 3; the one Resolved (E1) is excluded.
+    assert out["open_escalations"] == 3, out
+    # unread = only status == "Unread": N1 + N2 = 2; N3 (Read) and N4 (NULL) excluded.
+    assert out["unread_notifications"] == 2, out
+    assert out["audit_logs"] == 2, out
+    print("PASS system-health: SQL counts reconcile (2 machines / 3 users / 2 alerts / "
+          "3 open incl. NULL-status / 2 unread / 2 audit rows)")
+
+
+def test_system_health_empty_tables_are_zero_not_a_crash():
+    db = _fresh_session()
+    out = analytics_routes.get_system_health(db=db, current_user={})
+    assert out["machines"] == 0 and out["users"] == 0 and out["alerts"] == 0, out
+    assert out["open_escalations"] == 0 and out["unread_notifications"] == 0, out
+    assert out["audit_logs"] == 0, out
+    # Static status strings still report healthy on an empty database.
+    assert out["api_status"] == "Healthy" and out["database_status"] == "Connected", out
+    assert "MES" in out["modules_enabled"], out
+    print("PASS system-health: empty tables -> zero counts, no crash")
+
+
+def test_system_health_does_not_hydrate_whole_tables():
+    # Regression guard for the rule-4 fix: the endpoint must aggregate in SQL, never
+    # fall back to `.all()` on these growing tables (audit_logs especially).
+    src = inspect.getsource(analytics_routes.get_system_health)
+    assert ".all()" not in src, "system-health must COUNT in SQL, not hydrate whole tables"
+    assert "func.count(" in src, "system-health should use func.count aggregates"
+    print("PASS system-health: counts in SQL (no .all() table hydration)")
+
+
+def test_system_health_counts_are_tenant_scoped():
+    # The scoped counts (machines, alerts, escalations, notifications) must stay
+    # per-tenant exactly as the old `.all()` scans did via the ORM hook (ADR-0002):
+    # a tenant sees only its own rows in the health panel.
+    import tenancy as T
+    db = _fresh_session()
+
+    tok = T.set_current_tenant("DEFAULT")
+    try:
+        db.add(models.Machine(name="DEF-A", status="Running", utilization=50))
+        db.add(models.Alert(alert_type="OEE", severity="High", message="d"))
+        db.commit()
+    finally:
+        T.reset_current_tenant(tok)
+
+    tok = T.set_current_tenant("GMATS")
+    try:
+        db.add(models.Machine(name="GM-A", status="Running", utilization=50))
+        db.add(models.Machine(name="GM-B", status="Idle", utilization=0))
+        db.add(models.Escalation(title="GE", severity="High", owner="o", department="d", status="Open"))
+        db.commit()
+        out = analytics_routes.get_system_health(db=db, current_user={"tenant": "GMATS"})
+    finally:
+        T.reset_current_tenant(tok)
+
+    # GMATS sees only its own two machines and one open escalation; DEFAULT's are invisible.
+    assert out["machines"] == 2, out
+    assert out["alerts"] == 0, out
+    assert out["open_escalations"] == 1, out
+    print("PASS system-health: SQL counts stay tenant-scoped (GMATS sees only its own)")
+
+
 if __name__ == "__main__":
     test_analytics_paths_owned_by_module()
     test_analytics_summary_is_module_level_and_shared()
@@ -1029,4 +1141,8 @@ if __name__ == "__main__":
     test_machine_state_summary_counts_all_events_not_a_recent_window()
     test_machine_state_summary_empty_table_is_zero_not_a_crash()
     test_machine_state_summary_is_tenant_scoped()
+    test_system_health_counts_are_sql_bounded_and_reconciled()
+    test_system_health_empty_tables_are_zero_not_a_crash()
+    test_system_health_does_not_hydrate_whole_tables()
+    test_system_health_counts_are_tenant_scoped()
     print("ALL ANALYTICS ROUTE TESTS PASSED")

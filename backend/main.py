@@ -152,6 +152,24 @@ _ensure_index("customer_orders", "due_date")             # late-order count + es
 _ensure_index("maintenance_tasks", "planned_date")       # overdue-task count filters planned_date in SQL (/analytics/maintenance)
 _ensure_index("work_orders", "status")                   # predictive-risk work-order load filters status IN active in SQL (ai/prediction)
 _ensure_index("compliance_documents", "review_due_date") # review-due count filters review_due_date in SQL (/analytics/documents)
+# Per-machine FK columns the Machine-Health twin filters in SQL (ADR-0006). The
+# /machine-health list (ai.twin.build_twins) fires a per-machine query PER machine
+# — recent downtime, open maintenance tasks, and pending agent actions — and the
+# /machine-health/{id} cockpit (build_machine_detail) adds per-machine production
+# and quality lookups. All of these tables grow continuously, yet a plain
+# ForeignKey column is NOT indexed (SQLAlchemy indexes only the PK), so each
+# per-machine filter was a full-table scan that got slower every week — worst for a
+# HEALTHY machine with no recent rows, where the `machine_id == X` scan reaches the
+# end of the table finding nothing. Index the machine_id / related_machine_id
+# columns these read-models filter on, the same idempotent _ensure_index hardening
+# already applied to iot_telemetry.machine_id and inventory_transactions.item_id.
+# The created_at indexes above still serve the windowed variants; these serve the
+# per-machine scoping on top of the window.
+_ensure_index("downtime_logs", "machine_id")             # twin recent-downtime + cockpit trend/timeline (ai/twin)
+_ensure_index("production_records", "machine_id")        # cockpit throughput window + daily-cap check (ai/twin, factory_simulator)
+_ensure_index("quality_inspections", "machine_id")       # cockpit quality window + /analytics/quality per-machine GROUP BY
+_ensure_index("maintenance_tasks", "machine_id")         # twin open-task count + cockpit timeline (ai/twin)
+_ensure_index("agent_actions", "related_machine_id")     # twin pending-action count + cockpit timeline/open-actions (ai/twin)
 tenancy.ensure_tenant_columns(engine)  # ADR-0002: tenant_code on core tables
 # Audit trail + enterprise-inventory: add tenant_code NULLABLE, NO blind backfill.
 # Legacy rows stay NULL (hidden) until an approved, source-based backfill assigns

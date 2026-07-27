@@ -12,7 +12,7 @@ import main
 
 EXPECTED = {
     "/saas/tenants", "/saas/tenants/{tenant_id}/admin",
-    "/saas/tenants/{tenant_id}", "/analytics/saas",
+    "/saas/tenants/{tenant_id}", "/analytics/saas", "/saas/tenant-activity",
 }
 
 

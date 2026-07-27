@@ -70,6 +70,7 @@ import OperatorPerformanceCards from "../../components/OperatorPerformanceCards"
 import WipAgingCard from "../../components/WipAgingCard";
 import CsvExportsCard from "../../components/CsvExportsCard";
 import CsvImportButton from "../../components/CsvImportButton";
+import TenantAdoptionCard from "../../components/TenantAdoptionCard";
 import SchedulingSection from "../../components/SchedulingSection";
 import IoTCommandSection from "../../components/IoTCommandSection";
 import AIInsightsSection from "../../components/AIInsightsSection";
@@ -2814,6 +2815,7 @@ export default function DashboardPage() {
       {renderSection("saas", (
         <>
           <SaaSAdminSection tenants={tenants} analytics={saasAnalytics} form={tenantForm} setForm={setTenantForm} createTenant={isAdmin ? createTenant : async () => {}} updateTenant={isAdmin ? updateTenant : async () => {}} deleteTenant={isAdmin ? deleteTenant : undefined} provisionAdmin={isAdmin ? provisionAdmin : undefined} adminCreds={adminCreds} clearAdminCreds={() => setAdminCreds(null)} />
+          <div className="mt-8"><TenantAdoptionCard /></div>
           <div className="mt-8"><ModuleLicensingPanel /></div>
         </>
       ))}

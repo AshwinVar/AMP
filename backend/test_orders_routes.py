@@ -23,7 +23,7 @@ from database import Base
 EXPECTED = {
     "/customer-orders", "/customer-orders/export", "/customer-orders/{order_id}",
     "/analytics/customer-orders", "/customer-orders/generate-late-order-escalations",
-    "/suppliers", "/suppliers/{supplier_id}",
+    "/suppliers", "/suppliers/{supplier_id}", "/suppliers/import-csv",
     "/purchase-orders", "/purchase-orders/{po_id}", "/analytics/purchasing",
     "/purchase-orders/generate-overdue-escalations",
 }

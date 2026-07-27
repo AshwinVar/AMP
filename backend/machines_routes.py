@@ -10,9 +10,11 @@ exactly:
     (ADR-0001/0003) before commit, so the event and any AI reaction commit
     atomically with the log.
 """
+import csv
+import io
 from typing import List
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from sqlalchemy.orm import Session
 
 import models
@@ -178,3 +180,56 @@ def create_production_record(record: schemas.ProductionCreate, db: Session = Dep
 @router.get("/machine-events")
 def get_machine_events(db: Session = Depends(_get_db), current_user: dict = Depends(get_current_user)):
     return db.query(models.MachineEvent).order_by(models.MachineEvent.id.desc()).limit(200).all()
+
+
+@router.post("/machines/import-csv")
+async def import_machines_csv(
+    file: UploadFile = File(...),
+    db: Session = Depends(_get_db),
+    current_user: dict = Depends(require_roles(["Admin"])),
+):
+    """Onboarding import: the machine roster from a CSV (the mirror of the
+    /reports exports, in the same style as the inventory Tally import). Upserts
+    by machine NAME within the tenant (machines carry no separate code column),
+    accepts flexible headers (name/Machine, line/Line, status/Status,
+    utilization/Utilization), defaults a new machine to Idle / 0% so the sim or
+    MQTT feed takes over from real signals, and reports per-row errors instead
+    of failing the whole file. Auto-scoped (ADR-0002): the query layer stamps and
+    filters tenant_code, so an import can only ever touch the caller's roster."""
+    content = await file.read()
+    text = content.decode("utf-8-sig")
+    reader = csv.DictReader(io.StringIO(text))
+    created = updated = skipped = 0
+    errors = []
+    for i, row in enumerate(reader, start=2):
+        try:
+            name = (row.get("name") or row.get("Name") or row.get("Machine") or "").strip()
+            if not name:
+                skipped += 1
+                continue
+            line = (row.get("line") or row.get("Line") or "").strip()
+            # Unknown status vocabulary falls back to Idle rather than failing the
+            # row — an import is bulk onboarding, not a live status change (the
+            # PATCH endpoint keeps its strict 400 for manual edits).
+            status = normalize_machine_status(
+                (row.get("status") or row.get("Status") or "Idle").strip() or "Idle") or "Idle"
+            try:
+                utilization = int(float((row.get("utilization") or row.get("Utilization") or "0").strip() or 0))
+            except (TypeError, ValueError):
+                utilization = 0
+            utilization = max(0, min(100, utilization))
+            existing = db.query(models.Machine).filter(models.Machine.name == name).first()
+            if existing:
+                if line:
+                    existing.line = line
+                existing.status = status
+                existing.utilization = utilization
+                updated += 1
+            else:
+                db.add(models.Machine(name=name, status=status,
+                                      utilization=utilization, downtime="0 min", line=line))
+                created += 1
+        except Exception as e:
+            errors.append(f"Row {i}: {str(e)}")
+    db.commit()
+    return {"created": created, "updated": updated, "skipped": skipped, "errors": errors[:10]}

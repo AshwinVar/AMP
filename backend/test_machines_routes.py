@@ -13,6 +13,7 @@ import main
 EXPECTED = {
     "/machines", "/machines/{machine_id}", "/machines/{machine_id}/status",
     "/downtime-logs", "/shifts", "/production-records", "/machine-events",
+    "/machines/import-csv",
 }
 
 

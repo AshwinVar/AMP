@@ -1079,22 +1079,47 @@ def get_operator_terminal_analytics(db: Session = Depends(_get_db), current_user
 
 @router.get("/analytics/system-health")
 def get_system_health(db: Session = Depends(_get_db), current_user: dict = Depends(get_current_user)):
-    machines = db.query(models.Machine).all()
-    users = db.query(models.User).all()
-    alerts = db.query(models.Alert).all()
-    escalations = db.query(models.Escalation).all()
-    notifications = db.query(models.Notification).all()
-    audit_logs = db.query(models.AuditLog).all()
+    # Count in SQL, never hydrate the whole (growing) table into Python just to
+    # take len()/a filtered len() of it (rule-4 antipattern; the same COUNT/GROUP
+    # BY fix already applied to the sibling rollups — /analytics/work-orders,
+    # /escalations #288, /analytics/quality #299). audit_logs in particular grows
+    # without bound (every login / mutation appends a row), so a full-table scan of
+    # it pulled the tenant's entire history into memory on every dashboard poll —
+    # the heaviest of the six scans this endpoint used to do. Each model here is
+    # either in SCOPED_MODELS or global exactly as before, so the do_orm_execute
+    # hook (ADR-0002) tenant-scopes each COUNT precisely as the prior scan was.
+    machines = db.query(func.count(models.Machine.id)).scalar() or 0
+    users = db.query(func.count(models.User.id)).scalar() or 0
+    alerts = db.query(func.count(models.Alert.id)).scalar() or 0
+    # "Open" = every escalation NOT explicitly Resolved. status is
+    # Column(String, default="Open") WITHOUT nullable=False, so a raw-SQL /
+    # migration / cleared write can store NULL. The old Python `row.status !=
+    # "Resolved"` counted a NULL as open (None != "Resolved" is True), but SQL's
+    # `status != 'Resolved'` is NULL — not TRUE — for a NULL status and would
+    # silently drop that row. OR the NULL back in to keep the exact same basis.
+    open_escalations = db.query(func.count(models.Escalation.id)).filter(
+        or_(
+            models.Escalation.status.is_(None),
+            models.Escalation.status != "Resolved",
+        )
+    ).scalar() or 0
+    # "Unread" is an equality match, so a NULL status is excluded either way
+    # (Python `None == "Unread"` and SQL `status = 'Unread'` are both false/NULL)
+    # — parity holds without an extra NULL clause.
+    unread_notifications = db.query(func.count(models.Notification.id)).filter(
+        models.Notification.status == "Unread"
+    ).scalar() or 0
+    audit_logs = db.query(func.count(models.AuditLog.id)).scalar() or 0
 
     return {
         "api_status": "Healthy",
         "database_status": "Connected",
-        "machines": len(machines),
-        "users": len(users),
-        "alerts": len(alerts),
-        "open_escalations": len([row for row in escalations if row.status != "Resolved"]),
-        "unread_notifications": len([row for row in notifications if row.status == "Unread"]),
-        "audit_logs": len(audit_logs),
+        "machines": machines,
+        "users": users,
+        "alerts": alerts,
+        "open_escalations": open_escalations,
+        "unread_notifications": unread_notifications,
+        "audit_logs": audit_logs,
         "modules_enabled": [
             "MES",
             "OEE",

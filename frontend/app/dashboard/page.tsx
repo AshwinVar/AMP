@@ -72,6 +72,7 @@ import CsvExportsCard from "../../components/CsvExportsCard";
 import CsvImportButton from "../../components/CsvImportButton";
 import TenantAdoptionCard from "../../components/TenantAdoptionCard";
 import BrandingSettingsCard from "../../components/BrandingSettingsCard";
+import QualityIntelCard from "../../components/QualityIntelCard";
 import SchedulingSection from "../../components/SchedulingSection";
 import IoTCommandSection from "../../components/IoTCommandSection";
 import AIInsightsSection from "../../components/AIInsightsSection";
@@ -2706,6 +2707,8 @@ export default function DashboardPage() {
       ))}
 
       {renderSection("quality", (
+        <>
+        <div className="mt-8"><QualityIntelCard /></div>
         <QualitySection
           machines={machines}
           workOrders={workOrders}
@@ -2720,6 +2723,7 @@ export default function DashboardPage() {
           generateDefectEscalations={isAdminOrSupervisor ? generateDefectEscalations : async () => {}}
           getMachineName={getMachineName}
         />
+        </>
       ))}
 
       {renderSection("executive", (

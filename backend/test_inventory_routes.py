@@ -171,6 +171,81 @@ def test_receive_above_reorder_publishes_no_event():
     print("PASS receive that stays above reorder publishes no event (50+10=60)")
 
 
+def _update_item(db, item_id, **fields):
+    # Call the PATCH handler directly (the require_roles dependency isn't run on a
+    # direct call, like _txn above). model_validate is how a JSON body with an
+    # explicit `null` deserialises — exclude_unset then KEEPS that null, exactly the
+    # client-injectable path the response-serialisation 500 lived on.
+    tok = T.set_current_tenant(TENANT)
+    try:
+        payload = schemas.InventoryItemUpdate.model_validate(fields)
+        return inventory_routes.update_inventory_item(
+            item_id, payload, db=db, current_user={"tenant": TENANT},
+        )
+    finally:
+        T.reset_current_tenant(tok)
+
+
+def test_update_explicit_null_stock_heals_not_500():
+    # A schema-valid PATCH {"current_stock": null} used to blank the column to NULL
+    # and 500 on the way out (InventoryItemResponse.current_stock is non-optional
+    # int). The null is the column's own default of 0 — so it heals to a concrete 0
+    # and the response serialises cleanly. reorder_level (untouched) is unchanged.
+    db = _iso_session()
+    item = _make_item(db, "P-UPD-NULL", current_stock=42, reorder_level=7)
+    result = _update_item(db, item.id, current_stock=None)
+    assert result.current_stock == 0, result.current_stock
+    assert result.reorder_level == 7, result.reorder_level
+    db.refresh(item)
+    assert item.current_stock == 0 and item.reorder_level == 7
+    print("PASS PATCH {current_stock: null} heals to 0, not a 500")
+
+
+def test_update_legacy_null_row_serialises_zero():
+    # A pre-existing NULL row (raw-SQL / migration) PATCHed on an UNRELATED field
+    # (location) must not 500 on serialisation: the response coalesces both
+    # nullable counts to their default of 0 while applying the real edit.
+    db = _iso_session()
+    item = _make_item(db, "P-UPD-LEGACY", current_stock=0, reorder_level=0)
+    _null_out(db, item.id, ["current_stock", "reorder_level"])
+    result = _update_item(db, item.id, location="Rack B")
+    assert result.current_stock == 0, result.current_stock
+    assert result.reorder_level == 0, result.reorder_level
+    assert result.location == "Rack B", result.location
+    print("PASS PATCH on a legacy NULL row serialises current_stock/reorder_level as 0")
+
+
+def test_update_negative_stock_rejected_400():
+    # A negative stock is physically impossible and corrupts the low-stock
+    # read-model; the update rejects it with a clean 400 (parity with the create
+    # ingests) and does NOT mutate the stored row (uncommitted session discards it).
+    from fastapi import HTTPException
+    db = _iso_session()
+    item = _make_item(db, "P-UPD-NEG", current_stock=50, reorder_level=20)
+    try:
+        _update_item(db, item.id, current_stock=-5)
+        assert False, "a negative current_stock must be rejected, not stored"
+    except HTTPException as exc:
+        assert exc.status_code == 400, exc.status_code
+    # Production rolls the request session back on close after the raise (nothing is
+    # committed); mirror that here so the pending -5 is discarded before we re-read.
+    db.rollback()
+    db.refresh(item)
+    assert item.current_stock == 50, "a rejected update must not mutate the stock"
+    print("PASS PATCH {current_stock: -5} is a clean 400 and leaves the row unchanged")
+
+
+def test_update_normal_edit_still_applies():
+    # Sanity: a normal positive edit still writes through untouched by the guards
+    # (a real 0 stays 0, a healthy value is stored verbatim, `or 0` never zeroes it).
+    db = _iso_session()
+    item = _make_item(db, "P-UPD-OK", current_stock=50, reorder_level=20)
+    result = _update_item(db, item.id, current_stock=80, reorder_level=0)
+    assert result.current_stock == 80, result.current_stock
+    assert result.reorder_level == 0, result.reorder_level
+    print("PASS PATCH normal edit applies (80) and a real 0 reorder level stays 0")
+
+
 if __name__ == "__main__":
     test_inventory_paths_owned_by_module()
     test_low_stock_still_publishes_inventory_low()
@@ -179,4 +254,8 @@ if __name__ == "__main__":
     test_null_reorder_level_skips_crossing_event_without_crashing()
     test_issue_crossing_reorder_still_publishes_inventory_low()
     test_receive_above_reorder_publishes_no_event()
+    test_update_explicit_null_stock_heals_not_500()
+    test_update_legacy_null_row_serialises_zero()
+    test_update_negative_stock_rejected_400()
+    test_update_normal_edit_still_applies()
     print("ALL INVENTORY ROUTE TESTS PASSED")

@@ -69,6 +69,7 @@ import SupplierPerformanceCard from "../../components/SupplierPerformanceCard";
 import OperatorPerformanceCards from "../../components/OperatorPerformanceCards";
 import WipAgingCard from "../../components/WipAgingCard";
 import CsvExportsCard from "../../components/CsvExportsCard";
+import CsvImportButton from "../../components/CsvImportButton";
 import SchedulingSection from "../../components/SchedulingSection";
 import IoTCommandSection from "../../components/IoTCommandSection";
 import AIInsightsSection from "../../components/AIInsightsSection";
@@ -2215,6 +2216,11 @@ export default function DashboardPage() {
 
       {(activeView === "overview" || activeView === "machines") && (
         <>
+          {activeView === "machines" && isAdmin && (
+            <div className="mb-4 flex justify-end">
+              <CsvImportButton label="Import machines CSV" path="/machines/import-csv" />
+            </div>
+          )}
           <form
             onSubmit={addMachine}
             className="mb-8 rounded-2xl bg-slate-900 border border-slate-800 p-5 grid grid-cols-1 md:grid-cols-5 gap-4"
@@ -2748,6 +2754,11 @@ export default function DashboardPage() {
 
       {renderSection("purchasing", (
         <>
+        {isAdmin && (
+          <div className="mt-8 flex justify-end">
+            <CsvImportButton label="Import suppliers CSV" path="/suppliers/import-csv" />
+          </div>
+        )}
         <div className="mt-8"><SupplierPerformanceCard /></div>
         <PurchasingSection
           suppliers={suppliers}

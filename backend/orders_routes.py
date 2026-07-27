@@ -8,10 +8,11 @@ event-bus coupling. `_orders_csv` is module-level (unit-tested by name in
 test_orders_export.py).
 """
 import csv
+import io
 from datetime import datetime
 from typing import List
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from sqlalchemy import case, func, or_
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -687,3 +688,58 @@ def generate_overdue_po_escalations(
 
     db.commit()
     return {"created": created}
+
+
+@router.post("/suppliers/import-csv")
+async def import_suppliers_csv(
+    file: UploadFile = File(...),
+    db: Session = Depends(_get_db),
+    current_user: dict = Depends(require_roles(["Admin"])),
+):
+    """Onboarding import: the supplier directory from a CSV (same style as the
+    inventory Tally import and the machines import). Upserts by supplier_code,
+    accepts flexible headers (supplier_code/Code, supplier_name/Name/Supplier,
+    contact_person/Contact, email/Email, phone/Phone, category/Category,
+    status/Status), requires code + name per row (else skipped), and reports
+    per-row errors instead of failing the whole file. Auto-scoped (ADR-0002)."""
+    content = await file.read()
+    text = content.decode("utf-8-sig")
+    reader = csv.DictReader(io.StringIO(text))
+    created = updated = skipped = 0
+    errors = []
+    for i, row in enumerate(reader, start=2):
+        try:
+            code = (row.get("supplier_code") or row.get("Code") or row.get("Supplier Code") or "").strip()
+            name = (row.get("supplier_name") or row.get("Name") or row.get("Supplier") or "").strip()
+            if not code or not name:
+                skipped += 1
+                continue
+            contact = (row.get("contact_person") or row.get("Contact") or "").strip()
+            email = (row.get("email") or row.get("Email") or "").strip()
+            phone = (row.get("phone") or row.get("Phone") or "").strip()
+            category = (row.get("category") or row.get("Category") or "").strip()
+            status = (row.get("status") or row.get("Status") or "Active").strip() or "Active"
+            existing = db.query(models.Supplier).filter(models.Supplier.supplier_code == code).first()
+            if existing:
+                existing.supplier_name = name
+                if contact:
+                    existing.contact_person = contact
+                if email:
+                    existing.email = email
+                if phone:
+                    existing.phone = phone
+                if category:
+                    existing.category = category
+                existing.status = status
+                updated += 1
+            else:
+                db.add(models.Supplier(
+                    supplier_code=code, supplier_name=name,
+                    contact_person=contact or None, email=email or None,
+                    phone=phone or None, category=category or None, status=status,
+                ))
+                created += 1
+        except Exception as e:
+            errors.append(f"Row {i}: {str(e)}")
+    db.commit()
+    return {"created": created, "updated": updated, "skipped": skipped, "errors": errors[:10]}

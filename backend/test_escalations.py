@@ -197,10 +197,27 @@ def test_clear_queue_reads_good():
     print("PASS an all-closed queue reads clear with an honest scorecard")
 
 
+def test_summary_exposes_the_card_contract():
+    # The Escalations queue card (EscalationQueueCard.tsx) renders exactly these
+    # keys; pin them so a read-model edit can't silently break the card.
+    db = _fresh_session()
+    r = escalations.build_escalation_summary(db, "DEFAULT")
+    for k in ("days", "stale_open_days", "open", "pending_approval", "urgent_open",
+              "agent_raised", "manual_raised", "oldest_open_days", "by_severity",
+              "by_department", "aging", "needs_attention", "queue", "resolution",
+              "verdict", "tone"):
+        assert k in r, f"escalation-summary missing card key {k!r}"
+    for k in ("raised", "resolved", "cancelled", "resolution_rate",
+              "timed_resolutions", "avg_resolution_hours", "worst_resolution_hours"):
+        assert k in r["resolution"], f"resolution scorecard missing key {k!r}"
+    print("PASS escalation-summary exposes the keys the queue card renders")
+
+
 if __name__ == "__main__":
     test_backlog_breakdowns_reconcile_and_rank()
     test_resolution_scorecard_uses_real_timestamps()
     test_window_bound_keeps_old_closed_out_but_old_open_in()
     test_empty_and_none_fields_are_safe()
     test_clear_queue_reads_good()
+    test_summary_exposes_the_card_contract()
     print("\nAll escalation-queue tests passed.")

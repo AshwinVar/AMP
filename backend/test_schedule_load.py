@@ -184,6 +184,19 @@ def test_window_bounds_exclude_old_and_far_future():
     assert r["overdue"] == 0     # the 40-day-old slip is out of the bounded window
 
 
+def test_load_exposes_the_board_card_contract():
+    # The Scheduling load board (ScheduleLoadBoard.tsx) renders exactly these
+    # keys; pin them so a read-model edit can't silently break the card.
+    db = _fresh_session()
+    r = schedule_load.build_schedule_load(db, "DEFAULT")
+    for k in ("horizon_days", "scheduled_jobs", "scheduled_minutes", "by_day",
+              "by_machine", "by_shift", "busiest_machine", "peak_day", "overdue",
+              "delayed", "needs_attention", "chase", "verdict", "tone"):
+        assert k in r, f"schedule-load missing card key {k!r}"
+    assert all({"date", "jobs", "minutes"} <= set(x) for x in r["by_day"])
+    print("PASS schedule-load exposes the keys the load board renders")
+
+
 if __name__ == "__main__":
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
     for t in tests:

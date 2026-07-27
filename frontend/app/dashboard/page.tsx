@@ -62,6 +62,7 @@ import PurchasingSection from "../../components/PurchasingSection";
 import DocumentsSection from "../../components/DocumentsSection";
 import MaintenanceSection from "../../components/MaintenanceSection";
 import MaintenanceForecastCard from "../../components/MaintenanceForecastCard";
+import ScheduleLoadBoard from "../../components/ScheduleLoadBoard";
 import SchedulingSection from "../../components/SchedulingSection";
 import IoTCommandSection from "../../components/IoTCommandSection";
 import AIInsightsSection from "../../components/AIInsightsSection";
@@ -2765,7 +2766,10 @@ export default function DashboardPage() {
       ))}
 
       {renderSection("scheduling", (
-        <SchedulingSection machines={machines} workOrders={workOrders} productionPlans={productionPlans} schedules={productionSchedules} analytics={scheduleAnalytics} form={scheduleForm} setForm={setScheduleForm} createSchedule={isAdminOrSupervisor ? createProductionSchedule : async () => {}} updateSchedule={updateProductionSchedule} deleteSchedule={isAdmin ? deleteProductionSchedule : undefined} getMachineName={getMachineName} />
+        <>
+          <div className="mt-8"><ScheduleLoadBoard /></div>
+          <SchedulingSection machines={machines} workOrders={workOrders} productionPlans={productionPlans} schedules={productionSchedules} analytics={scheduleAnalytics} form={scheduleForm} setForm={setScheduleForm} createSchedule={isAdminOrSupervisor ? createProductionSchedule : async () => {}} updateSchedule={updateProductionSchedule} deleteSchedule={isAdmin ? deleteProductionSchedule : undefined} getMachineName={getMachineName} />
+        </>
       ))}
 
       {renderSection("iot", (

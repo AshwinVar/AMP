@@ -16,7 +16,7 @@ from sqlalchemy.orm import sessionmaker
 import factory_simulator
 import models
 from database import Base
-from factory_simulator import tick_production, tick_shift_entry
+from factory_simulator import drift_utilization, tick_production, tick_shift_entry
 
 
 def _fresh_session():
@@ -96,8 +96,66 @@ def test_shift_entry_is_labelled_with_the_live_date_not_a_stale_import_date():
     print(f"PASS shift entry labelled with the live date ({label!r}, ignored stale {stale_token!r})")
 
 
+def test_utilization_drift_stays_in_the_live_band():
+    """The live drift steps utilization and clamps it to [40, 99]. Numbers are
+    derived by hand: 50 down 5 -> 45; 50 up 5 -> 55; 98 up 5 -> 99 (ceiling); 41
+    down 5 -> 36 -> 40 (floor). The step is exact, the clamp is inclusive."""
+    assert drift_utilization(50, -5) == 45
+    assert drift_utilization(50, 5) == 55
+    assert drift_utilization(98, 5) == 99          # ceiling, not 103
+    assert drift_utilization(41, -5) == 40          # floor, not 36
+    assert drift_utilization(40, -5) == 40          # already at floor, stays
+    print("PASS utilization drift steps then clamps to [40, 99]")
+
+
+def test_utilization_drift_survives_a_null_reading():
+    """utilization is Column(Integer, default=0) WITHOUT nullable=False, so a
+    Running machine can carry a true NULL. The old inline drift did `None + int`
+    and raised TypeError, rolling back the whole per-tenant tick every 45s. A NULL
+    now coalesces to the column default 0, so ANY step in [-5, 5] lands at or
+    below 5 and the floor pins the result to exactly 40 — deterministic, no crash."""
+    for delta in range(-5, 6):
+        assert drift_utilization(None, delta) == 40, delta
+    print("PASS utilization drift treats a NULL reading as the default 0 -> heals to 40, no crash")
+
+
+def test_null_utilization_running_machine_does_not_break_the_sim_write():
+    """End-to-end: the exact loop the background sim runs — drift every Running
+    machine and commit — must survive a NULL-utilization Running machine in the
+    roster (it used to TypeError and roll back the whole tick).
+
+    A true NULL can't be inserted through the ORM (the Column default 0 coerces
+    an explicit None at flush), so we reproduce the real threat model — a row
+    written by raw SQL / a migration — with a direct UPDATE that NULLs the column,
+    exactly the case the fix's comment describes."""
+    import random as _random
+    from sqlalchemy import text
+    db = _fresh_session()
+    db.add(models.Machine(name="Healthy", status="Running", utilization=80, tenant_code="DEFAULT"))
+    db.add(models.Machine(name="NullUtil", status="Running", utilization=50, tenant_code="DEFAULT"))
+    db.commit()
+    # Force a genuine NULL the way raw SQL / a migration would.
+    db.execute(text("UPDATE machines SET utilization = NULL WHERE name = 'NullUtil'"))
+    db.commit()
+    db.expire_all()
+    assert db.query(models.Machine).filter_by(name="NullUtil").one().utilization is None
+
+    running = db.query(models.Machine).filter(models.Machine.status == "Running").all()
+    for m in running:
+        m.utilization = drift_utilization(m.utilization, _random.randint(-5, 5))
+    db.commit()                                     # must not have rolled back
+
+    by_name = {m.name: m for m in db.query(models.Machine).all()}
+    assert 40 <= by_name["NullUtil"].utilization <= 99      # healed from NULL, no crash
+    assert 40 <= by_name["Healthy"].utilization <= 99
+    print("PASS the sim utilization write survives a NULL-utilization Running machine")
+
+
 if __name__ == "__main__":
     test_production_ticks_are_short_slices_at_gated_cadence()
     test_a_machine_cannot_exceed_a_physical_day_of_production()
     test_shift_entry_is_labelled_with_the_live_date_not_a_stale_import_date()
+    test_utilization_drift_stays_in_the_live_band()
+    test_utilization_drift_survives_a_null_reading()
+    test_null_utilization_running_machine_does_not_break_the_sim_write()
     print("ALL SIM CALIBRATION TESTS PASSED")

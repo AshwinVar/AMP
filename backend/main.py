@@ -245,6 +245,7 @@ async def _simulation_loop():
         tick_inventory,
         tick_production,
         tick_machine_status,
+        drift_utilization,
         MACHINES,
     )
     from tenancy import set_current_tenant, reset_current_tenant
@@ -277,7 +278,10 @@ async def _simulation_loop():
                         models.Machine.status == "Running"
                     ).all()
                     for m in machines:
-                        m.utilization = max(40, min(99, m.utilization + random.randint(-5, 5)))
+                        # NULL-guarded drift (see factory_simulator.drift_utilization):
+                        # a Running machine with a NULL utilization used to raise
+                        # `None + int` here, rolling back this whole tenant's tick.
+                        m.utilization = drift_utilization(m.utilization, random.randint(-5, 5))
                     db.commit()
                 except Exception as tick_err:
                     db.rollback()

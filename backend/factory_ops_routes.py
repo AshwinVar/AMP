@@ -10,6 +10,7 @@ from datetime import datetime, timedelta
 from typing import List
 
 from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy import func
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -570,13 +571,31 @@ def generate_system_notifications(db: Session = Depends(_get_db), current_user: 
     for machine in breakdowns:
         add_notification("Machine", "Critical", f"Machine breakdown: {machine.name}", f"{machine.name} is currently in Breakdown state.")
 
-    open_escalations = db.query(models.Escalation).filter(models.Escalation.status != "Resolved").all()
-    if len(open_escalations) > 0:
-        add_notification("Escalation", "Warning", "Open escalations pending", f"{len(open_escalations)} escalation(s) still require action.")
+    # These two notifications only need HOW MANY rows match, not the rows
+    # themselves. Escalations grow without bound (every generator run adds more),
+    # so pulling the whole open-escalation set into Python just to len() it is the
+    # rule-4 antipattern — count in SQL instead (the same bound already applied to
+    # the quality/costing/orders rollups). Escalation and InventoryItem are both in
+    # tenancy.SCOPED_MODELS, so the do_orm_execute hook (ADR-0002) still filters
+    # each COUNT to the request's tenant exactly as it did the old .all() scan. The
+    # low-stock predicate is unchanged (current_stock <= reorder_level), so a NULL
+    # stock/level still drops out via SQL NULL comparison — matching the low-stock
+    # generator and filter used elsewhere.
+    open_escalations = (
+        db.query(func.count(models.Escalation.id))
+        .filter(models.Escalation.status != "Resolved")
+        .scalar()
+    ) or 0
+    if open_escalations > 0:
+        add_notification("Escalation", "Warning", "Open escalations pending", f"{open_escalations} escalation(s) still require action.")
 
-    low_stock = db.query(models.InventoryItem).filter(models.InventoryItem.current_stock <= models.InventoryItem.reorder_level).all()
-    if len(low_stock) > 0:
-        add_notification("Inventory", "Warning", "Low stock items detected", f"{len(low_stock)} item(s) are below reorder level.")
+    low_stock = (
+        db.query(func.count(models.InventoryItem.id))
+        .filter(models.InventoryItem.current_stock <= models.InventoryItem.reorder_level)
+        .scalar()
+    ) or 0
+    if low_stock > 0:
+        add_notification("Inventory", "Warning", "Low stock items detected", f"{low_stock} item(s) are below reorder level.")
 
     db.commit()
     return {"created": created}

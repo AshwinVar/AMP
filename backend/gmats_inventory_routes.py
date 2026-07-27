@@ -280,14 +280,26 @@ def gmats_create_proforma(payload: dict, db: Session = Depends(get_db), current_
     lines = payload.get("lines", [])
     if not lines:
         raise HTTPException(status_code=400, detail="At least one line item required")
-    # validate availability first
+    # Validate the TOTAL reservation per item BEFORE reserving (summed across
+    # lines), then reserve. The old per-line check validated each line against the
+    # full `available` independently, but the reserve loop below adds cumulatively
+    # with no cap — so two lines for the SAME item each passed against the same
+    # availability and then both reserved. A proforma with two 8-unit lines for a
+    # 10-in-stock item reserved 16 against 10, driving reserved_stock past physical
+    # and available_stock negative, silently defeating the "reservation prevents
+    # double-selling" guard this module promises (docstring). Summing per item first
+    # mirrors the already-hardened gmats_generate_invoice (which sums needed-per-item
+    # so duplicate lines for one item are covered).
+    from collections import defaultdict
+    needed: dict = defaultdict(int)
     for line in lines:
-        item = db.query(models.GmatsItem).filter(models.GmatsItem.id == int(line["item_id"])).first()
+        needed[int(line["item_id"])] += int(line["qty"])
+    for item_id, qty in needed.items():
+        item = db.query(models.GmatsItem).filter(models.GmatsItem.id == item_id).first()
         if not item:
             raise HTTPException(status_code=404, detail="Item not found")
         _heal_stock(item)
         available = item.physical_stock - item.reserved_stock
-        qty = int(line["qty"])
         if qty > available:
             raise HTTPException(status_code=400, detail=f"Cannot reserve {qty} {item.unit} of {item.item_name}: only {available} available")
     count = db.query(models.GmatsProforma).filter(models.GmatsProforma.tenant_code == tenant).count()
@@ -419,11 +431,23 @@ def gmats_create_min(payload: dict, db: Session = Depends(get_db), current_user:
     lines = payload.get("lines", [])
     if not lines:
         raise HTTPException(status_code=400, detail="At least one spare line required")
+    # Validate the TOTAL physical needed per item BEFORE issuing (summed across
+    # lines), then deduct exactly — the same guard gmats_generate_invoice uses (and
+    # its comment already CLAIMS "gmats_create_min already guards issue this way",
+    # which until now was untrue). The old per-line check let two lines for one item
+    # each pass against full stock, after which `physical = max(0, physical - qty)`
+    # silently clamped the combined deduction to 0 while writing BOTH lines at full
+    # qty; gmats_void_min then restored the full line qty, inflating stock by the
+    # clamped shortfall (phantom stock). Summing first — and deducting exactly, so
+    # the clamp is no longer needed — makes the void a true inverse of the issue.
+    from collections import defaultdict
+    needed: dict = defaultdict(int)
     for line in lines:
-        item = db.query(models.GmatsItem).filter(models.GmatsItem.id == int(line["item_id"])).first()
+        needed[int(line["item_id"])] += int(line["qty"])
+    for item_id, qty in needed.items():
+        item = db.query(models.GmatsItem).filter(models.GmatsItem.id == item_id).first()
         if not item:
             raise HTTPException(status_code=404, detail="Item not found")
-        qty = int(line["qty"])
         _heal_stock(item)
         if qty > item.physical_stock:
             raise HTTPException(status_code=400, detail=f"Cannot issue {qty} {item.unit} of {item.item_name}: only {item.physical_stock} physical")
@@ -440,7 +464,7 @@ def gmats_create_min(payload: dict, db: Session = Depends(get_db), current_user:
         item = db.query(models.GmatsItem).filter(models.GmatsItem.id == int(line["item_id"])).first()
         qty = int(line["qty"])
         _heal_stock(item)
-        item.physical_stock = max(0, item.physical_stock - qty)   # deduct even though not billed
+        item.physical_stock -= qty   # exact (the summed guard above keeps it >= 0), so void restores exactly
         db.add(models.GmatsMINLine(min_id=m.id, item_id=item.id, qty=qty))
     db.commit()
     return {"id": m.id, "min_no": m.min_no}

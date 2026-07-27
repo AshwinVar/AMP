@@ -388,6 +388,104 @@ def test_void_min_restores_onto_null_physical():
     print("PASS void MIN restores onto a NULL physical without a 500")
 
 
+# --- Duplicate-line safety on the multi-line issue paths. A proforma/MIN may
+# carry two lines for the SAME item. The availability check must validate the
+# SUM of those lines, not each in isolation, or the cumulative reserve/deduct
+# below over-commits stock past what's on the shelf. gmats_generate_invoice was
+# already hardened + tested this way (test_invoice_rejects_over_issue_...); these
+# pin the same guarantee on the proforma and MIN create paths. Expected values
+# are derived by hand. ---
+
+
+def _plain_item(db, iid, physical):
+    db.add(models.GmatsItem(id=iid, tenant_code="GMATS", item_code=f"C{iid}",
+                            item_name=f"Part {iid}", physical_stock=physical,
+                            reserved_stock=0, reorder_level=0, purchase_rate=0, unit="ea"))
+    db.commit()
+
+
+def test_create_proforma_sums_duplicate_lines_and_rejects_over_reserve():
+    # Item has 10 physical / 0 reserved. Two 8-unit lines for it total 16 > 10:
+    # each line passed the OLD per-line check (both saw available=10), then the
+    # reserve loop added 8+8=16, leaving reserved 16 > physical 10 (available -6).
+    # The summed guard rejects the whole proforma and reserves nothing.
+    db = _db()
+    _plain_item(db, 1, physical=10)
+    try:
+        gmats.gmats_create_proforma(
+            {"tenant": "GMATS", "customer_name": "Cust",
+             "lines": [{"item_id": 1, "qty": 8}, {"item_id": 1, "qty": 8}]},
+            db=db, current_user=_ADMIN,
+        )
+        assert False, "two 8-unit lines for a 10-stock item (total 16) should 400"
+    except HTTPException as e:
+        assert e.status_code == 400, e.status_code
+    it = _stock(db)
+    assert it.reserved_stock == 0, f"rejected proforma must reserve nothing, got {it.reserved_stock}"
+    assert it.physical_stock == 10
+    # And no proforma row was persisted (the 400 fired before any was created).
+    assert db.query(models.GmatsProforma).count() == 0
+    print("PASS proforma sums duplicate lines and rejects over-reservation (no negative available)")
+
+
+def test_create_proforma_allows_duplicate_lines_within_stock():
+    # Two lines (3 + 4) for the same item total 7 <= 10 available, so it succeeds
+    # and reserves the SUM: reserved_stock 0 -> 7. Both lines are recorded.
+    db = _db()
+    _plain_item(db, 1, physical=10)
+    gmats.gmats_create_proforma(
+        {"tenant": "GMATS", "customer_name": "Cust",
+         "lines": [{"item_id": 1, "qty": 3}, {"item_id": 1, "qty": 4}]},
+        db=db, current_user=_ADMIN,
+    )
+    it = _stock(db)
+    assert it.reserved_stock == 7, f"expected reserved 3+4=7, got {it.reserved_stock}"
+    assert it.physical_stock == 10                       # reservation never touches physical
+    assert db.query(models.GmatsProformaLine).count() == 2
+    print("PASS proforma allows duplicate lines within stock and reserves their sum")
+
+
+def test_create_min_sums_duplicate_lines_and_rejects_over_issue():
+    # Two 8-unit MIN lines for a 10-stock item total 16 > 10. The OLD code let both
+    # pass the per-line check, then clamped physical to 0 via max(0, ...) while
+    # writing both lines at 8 — a later void would restore 16, inflating stock. The
+    # summed guard rejects the issue and leaves stock untouched.
+    db = _db()
+    _plain_item(db, 1, physical=10)
+    try:
+        gmats.gmats_create_min(
+            {"tenant": "GMATS", "customer_name": "Cust", "machine_ref": "Rig",
+             "lines": [{"item_id": 1, "qty": 8}, {"item_id": 1, "qty": 8}]},
+            db=db, current_user=_ADMIN,
+        )
+        assert False, "two 8-unit MIN lines for a 10-stock item (total 16) should 400"
+    except HTTPException as e:
+        assert e.status_code == 400, e.status_code
+    assert _stock(db).physical_stock == 10               # rejected issue left stock untouched
+    assert db.query(models.GmatsMIN).count() == 0
+    print("PASS MIN sums duplicate lines and rejects over-issue (no phantom-stock on void)")
+
+
+def test_create_min_duplicate_lines_within_stock_then_void_is_neutral():
+    # Two lines (3 + 4) total 7 <= 10, so the MIN issues exactly 7: physical 10 -> 3.
+    # Voiding it restores exactly 7 (both lines at full qty), back to 10 — proving
+    # the exact deduction makes the void a true inverse even with duplicate lines
+    # (the old max(0, ...) clamp would only have bitten past physical, but exact
+    # deduction is what keeps void neutral here).
+    db = _db()
+    _plain_item(db, 1, physical=10)
+    gmats.gmats_create_min(
+        {"tenant": "GMATS", "customer_name": "Cust", "machine_ref": "Rig",
+         "lines": [{"item_id": 1, "qty": 3}, {"item_id": 1, "qty": 4}]},
+        db=db, current_user=_ADMIN,
+    )
+    assert _stock(db).physical_stock == 3, f"expected 10-(3+4)=3, got {_stock(db).physical_stock}"
+    min_id = db.query(models.GmatsMIN).first().id
+    gmats.gmats_void_min(min_id, db=db, current_user=_ADMIN)
+    assert _stock(db).physical_stock == 10               # restored exactly 7, back to start
+    print("PASS MIN duplicate lines within stock deduct their sum and void restores exactly")
+
+
 if __name__ == "__main__":
     test_gmats_inventory_paths_registered_once_and_owned()
     test_proforma_listing_resolves_only_same_tenant_item_names()
@@ -406,4 +504,8 @@ if __name__ == "__main__":
     test_create_min_null_physical_reports_insufficient_not_500()
     test_void_invoice_restores_onto_null_physical()
     test_void_min_restores_onto_null_physical()
+    test_create_proforma_sums_duplicate_lines_and_rejects_over_reserve()
+    test_create_proforma_allows_duplicate_lines_within_stock()
+    test_create_min_sums_duplicate_lines_and_rejects_over_issue()
+    test_create_min_duplicate_lines_within_stock_then_void_is_neutral()
     print("ALL GMATS-INVENTORY ROUTE TESTS PASSED")

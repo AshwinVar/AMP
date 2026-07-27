@@ -72,7 +72,21 @@ def generate_ai_recommendations(db: Session = Depends(_get_db), current_user: di
         .all()
     )
     inventory_items = db.query(models.InventoryItem).all()
-    production_plans = db.query(models.ProductionPlan).all()
+    # production_plans grows continuously (one per machine/shift/day), and the only
+    # plans that can raise a delay rec are the ones currently flagged "Behind" — so
+    # filter that SQL-side instead of hydrating the whole table and testing
+    # plan.status in Python (the rule-4 antipattern the downtime/quality scans above
+    # already avoid, and the sibling generators — late-order, overdue-PO,
+    # document-review — all apply in SQL). "Behind" is point-in-time state (like a
+    # live breakdown), so — unlike accumulated downtime — it stays unwindowed by
+    # date, matching this file's rule that current-state signals aren't windowed.
+    # ProductionPlan is in tenancy.SCOPED_MODELS, so this SELECT stays tenant-scoped
+    # by the ORM hook (ADR-0002) exactly as the old .all() scan did.
+    behind_plans = (
+        db.query(models.ProductionPlan)
+        .filter(models.ProductionPlan.status == "Behind")
+        .all()
+    )
     quality_rows = (
         db.query(models.QualityInspection)
         .filter(models.QualityInspection.created_at >= cutoff)
@@ -122,9 +136,8 @@ def generate_ai_recommendations(db: Session = Depends(_get_db), current_user: di
         if item.current_stock is not None and item.reorder_level is not None and item.current_stock <= item.reorder_level:
             add_rec("Inventory Forecast", "High" if item.current_stock == 0 else "Medium", f"Inventory replenishment recommended for {item.item_code}", f"{item.item_name} is at {item.current_stock} {item.unit}; reorder level is {item.reorder_level}.", None, 82)
 
-    for plan in production_plans:
-        if plan.status == "Behind":
-            add_rec("Production Delay Prediction", "High", f"Delay risk on plan {plan.plan_no}", f"Plan {plan.plan_no} is behind schedule. Review capacity/materials.", plan.machine_id, 80)
+    for plan in behind_plans:
+        add_rec("Production Delay Prediction", "High", f"Delay risk on plan {plan.plan_no}", f"Plan {plan.plan_no} is behind schedule. Review capacity/materials.", plan.machine_id, 80)
 
     # inspected_quantity is nullable=False, but failed_quantity is
     # Column(Integer, default=0) WITHOUT nullable=False — a NULL (raw write /

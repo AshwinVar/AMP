@@ -142,6 +142,7 @@ _ensure_index("iot_telemetry", "machine_id")        # per-machine + DARK-vs-STAL
 _ensure_index("inventory_transactions", "created_at")  # coverage burn-rate window
 _ensure_index("inventory_transactions", "item_id")     # per-item burn / part-runway drill-down
 _ensure_index("production_plans", "plan_date")      # schedule-adherence window (now filtered in SQL)
+_ensure_index("production_plans", "status")         # delay-rec generator filters status=='Behind' in SQL (/ai/generate-recommendations)
 _ensure_index("production_schedules", "scheduled_date")  # schedule-load board window (filtered in SQL)
 _ensure_index("operator_job_executions", "started_at")   # operator-performance window (filtered in SQL)
 _ensure_index("cycle_count_items", "created_at")   # inventory-record-accuracy window (filtered in SQL)

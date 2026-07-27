@@ -810,6 +810,30 @@ def seed_all(db):
 # LIVE SIMULATION TICKS
 # ─────────────────────────────────────────────────────────────────
 
+# The live band the sim keeps a Running machine's utilization inside.
+UTILIZATION_DRIFT_FLOOR = 40
+UTILIZATION_DRIFT_CEILING = 99
+
+
+def drift_utilization(current, delta):
+    """Step a Running machine's utilization by ``delta``, clamped to the live
+    [40, 99] band. Pure so the sim loop stays unit-testable.
+
+    ``Machine.utilization`` is ``Column(Integer, default=0)`` WITHOUT
+    ``nullable=False`` — the ORM default only fills a value the inserter omitted,
+    so a row written by raw SQL, a migration, or an update that clears the field
+    can legitimately be NULL. The sim loop's inline ``machine.utilization +
+    random.randint(...)`` then did ``None + int`` and raised ``TypeError``, which
+    rolled back the WHOLE per-tenant tick — the production / quality / shift /
+    operator / inventory / IoT writes of that pass were all lost, silently, every
+    45 seconds for as long as that machine stayed Running. Coalesce a missing
+    reading to 0 (the column's own default) exactly as every other utilization
+    site does (build_smart_alerts, generate_alerts, predictive_engine, the
+    exec-OEE fallback), then clamp: a Running machine with no reading heals to the
+    40 floor rather than freezing the simulation."""
+    return max(UTILIZATION_DRIFT_FLOOR, min(UTILIZATION_DRIFT_CEILING, (current or 0) + delta))
+
+
 def tick_work_order_progress(db):
     """Advance the next In Progress WO. Flip Planned → In Progress if none."""
     wo = db.query(models.WorkOrder).filter(

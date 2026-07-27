@@ -94,6 +94,28 @@ def update_inventory_item(
     for key, value in data.items():
         setattr(item, key, value)
 
+    # current_stock / reorder_level are Column(Integer, default=0) WITHOUT
+    # nullable=False, and InventoryItemUpdate types each Optional[int]=None — so a
+    # client can PATCH an explicit `{"current_stock": null}` (exclude_unset keeps an
+    # explicit null) and a legacy / raw-SQL / migration row can already carry NULL.
+    # Left as None, the response 500s because InventoryItemResponse types these
+    # fields as non-optional int (ResponseValidationError int <- None). A NULL
+    # stock/level is the column's own default of 0 — coalesce before the return, the
+    # same heal the sibling create_inventory_transaction (and the orders #323 /
+    # quality #324 PATCH responses) already apply; this also heals a pre-existing
+    # NULL row touched by an unrelated field.
+    item.current_stock = item.current_stock or 0
+    item.reorder_level = item.reorder_level or 0
+
+    # Reject a negative stock/level (parity with the create-path ingests: production
+    # #266, quality #324, orders). A NULL heals to 0 above; a NEGATIVE patch value
+    # (`{"current_stock": -5}`) is physically impossible and corrupts the low-stock
+    # read-model — generate_low_stock_escalations would label a -5 item "Medium"
+    # (current_stock == 0 is false) and print "Current stock -5" — so a clean 400,
+    # not a stored negative.
+    if min(item.current_stock, item.reorder_level) < 0:
+        raise HTTPException(status_code=400, detail="current_stock and reorder_level must be non-negative")
+
     db.commit()
     db.refresh(item)
 

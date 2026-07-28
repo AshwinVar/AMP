@@ -120,6 +120,7 @@ export async function apiGet<T>(path: string): Promise<T> {
 }
 
 export async function apiPost<T>(path: string, body: unknown): Promise<T> {
+  maybeRefreshToken();
   const res = await fetch(`${API_URL}${path}`, {
     method: "POST",
     headers: getAuthHeaders(),
@@ -128,6 +129,9 @@ export async function apiPost<T>(path: string, body: unknown): Promise<T> {
   });
 
   if (!res.ok) {
+    if (res.status === 401) handleUnauthorized();
+    // The raw body is surfaced deliberately: CsvImportButton reads `detail`
+    // from it to show the backend's actionable 400 (#371).
     const text = await res.text();
     throw new Error(text || `Failed request: ${path}`);
   }
@@ -136,6 +140,7 @@ export async function apiPost<T>(path: string, body: unknown): Promise<T> {
 }
 
 export async function apiPut<T>(path: string, body: unknown): Promise<T> {
+  maybeRefreshToken();
   const res = await fetch(`${API_URL}${path}`, {
     method: "PUT",
     headers: getAuthHeaders(),
@@ -144,6 +149,7 @@ export async function apiPut<T>(path: string, body: unknown): Promise<T> {
   });
 
   if (!res.ok) {
+    if (res.status === 401) handleUnauthorized();
     const text = await res.text();
     throw new Error(text || `Failed request: ${path}`);
   }
@@ -152,6 +158,7 @@ export async function apiPut<T>(path: string, body: unknown): Promise<T> {
 }
 
 export async function apiPatch<T>(path: string, body?: unknown): Promise<T> {
+  maybeRefreshToken();
   const res = await fetch(`${API_URL}${path}`, {
     method: "PATCH",
     headers: getAuthHeaders(),
@@ -160,6 +167,7 @@ export async function apiPatch<T>(path: string, body?: unknown): Promise<T> {
   });
 
   if (!res.ok) {
+    if (res.status === 401) handleUnauthorized();
     const text = await res.text();
     throw new Error(`Failed request: ${path} | ${res.status} | ${text}`);
   }
@@ -168,6 +176,7 @@ export async function apiPatch<T>(path: string, body?: unknown): Promise<T> {
 }
 
 export async function apiDelete(path: string): Promise<void> {
+  maybeRefreshToken();
   const res = await fetch(`${API_URL}${path}`, {
     method: "DELETE",
     headers: getAuthHeaders(),
@@ -175,6 +184,7 @@ export async function apiDelete(path: string): Promise<void> {
   });
 
   if (!res.ok) {
+    if (res.status === 401) handleUnauthorized();
     const text = await res.text();
     throw new Error(`Failed request: ${path} | ${res.status} | ${text}`);
   }

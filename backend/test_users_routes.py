@@ -144,6 +144,57 @@ def test_missing_user_is_404_not_500():
     print("PASS unknown user id -> 404 (guard runs after the existence check)")
 
 
+def _self_admin_db():
+    """One workspace (ACME) whose only Admin is the caller (id=1)."""
+    engine = create_engine("sqlite://", connect_args={"check_same_thread": False})
+    Base.metadata.create_all(bind=engine)
+    db = sessionmaker(bind=engine)()
+    db.add(models.User(id=1, username="acme_admin", password="x", role="Admin", tenant_code="ACME"))
+    db.add(models.User(id=3, username="acme_admin2", password="x", role="Admin", tenant_code="ACME"))
+    db.commit()
+    return db
+
+
+def test_admin_cannot_demote_their_own_account():
+    # The lockout vector: an Admin demoting THEMSELF to a non-Admin role removes the
+    # last Admin and locks the workspace out of every Admin-gated action, with no
+    # non-Admin path to undo it. Mirrors delete_user's "cannot delete your own
+    # account" guard, which is what otherwise guarantees >= 1 Admin survives.
+    db = _self_admin_db()
+    for role in ("Operator", "Supervisor"):
+        try:
+            users_routes.update_user_role(1, schemas.UserRoleUpdate(role=role),
+                                          db=db, current_user=ACME_ADMIN)
+            assert False, f"self-demotion to {role} must be forbidden"
+        except HTTPException as e:
+            assert e.status_code == 400, f"self-demotion should 400, got {e.status_code}"
+    # The caller's own row is untouched — still Admin, workspace not locked out.
+    assert _user(db, 1).role == "Admin"
+    print("PASS an Admin cannot demote their own account (400), role unchanged")
+
+
+def test_admin_may_still_rescope_another_admin():
+    # Only SELF-demotion is refused: demoting a DIFFERENT Admin is allowed (the
+    # caller remains an Admin, so the workspace keeps an Admin). Guards against the
+    # fix over-reaching into ordinary role management.
+    db = _self_admin_db()
+    out = users_routes.update_user_role(3, schemas.UserRoleUpdate(role="Operator"),
+                                        db=db, current_user=ACME_ADMIN)
+    assert out.role == "Operator"
+    assert _user(db, 1).role == "Admin"          # caller still Admin
+    print("PASS an Admin may still re-scope ANOTHER Admin's role")
+
+
+def test_admin_self_noop_to_admin_is_allowed():
+    # A self "change" that keeps the Admin role is a harmless no-op and must NOT be
+    # blocked — only a role that would REMOVE Admin is refused.
+    db = _self_admin_db()
+    out = users_routes.update_user_role(1, schemas.UserRoleUpdate(role="Admin"),
+                                        db=db, current_user=ACME_ADMIN)
+    assert out.role == "Admin"
+    print("PASS a self no-op to Admin is allowed (only self-demotion is blocked)")
+
+
 if __name__ == "__main__":
     test_users_paths_owned_by_module()
     test_valid_roles_moved_with_module()
@@ -152,4 +203,7 @@ if __name__ == "__main__":
     test_role_change_works_in_tenant_and_403s_across_tenants()
     test_delete_and_password_reset_enforce_the_same_tenant_boundary()
     test_missing_user_is_404_not_500()
+    test_admin_cannot_demote_their_own_account()
+    test_admin_may_still_rescope_another_admin()
+    test_admin_self_noop_to_admin_is_allowed()
     print("ALL USERS ROUTE TESTS PASSED")

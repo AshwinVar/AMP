@@ -1,77 +1,42 @@
-"""Schedule adherence — are we hitting the production plan? (ADR-0007).
+"""Reference oracle: the schedule read-models must not change their numbers.
 
-The production read-model looks at *actual* output; this one holds that output
-against what was *scheduled*. It answers the SME plant owner's planning
-question: "of what we planned to make by now, how much did we actually make —
-and which shifts, machines and plans fell behind?" Over the trailing week it
-classifies every production plan by its attainment state (met / on-track /
-behind / missed) from actual vs planned quantity, computes a pooled attainment
-rate over the plans due so far, rolls that up per shift and per machine (worst
-first), and lists the specific behind/missed plans to chase. A read-model over
-production_plans (+ machines / work_orders for labels) — auto-scoped to the
-tenant (ADR-0002); it adds no storage.
+ai/schedule.py windowed its production plans in SQL (already fixed) but then
+loaded the ENTIRE work_orders table just to turn plan.work_order_id into a
+work-order number for the chase list.
+
+Measured on 20,000 work orders with 91 plans in the 14-day window referencing
+45 distinct orders:
+
+    whole table -> id:number map     173.9 ms
+    only the referenced orders         0.5 ms
+
+The map is only ever read as ``wo_numbers.get(p.work_order_id)`` for plans in
+the window, so fetching only those ids is exactly equivalent - an id that is
+absent returns None either way. This file keeps both PRE-CHANGE implementations
+verbatim and asserts the new ones agree field for field, on plans that
+reference a missing work order, a NULL work_order_id, and a work order outside
+the window, so "exactly equivalent" is tested rather than argued.
+
+Same approach as #405 and #407.
 """
+import os
+os.environ.setdefault("DATABASE_URL", "sqlite:///./ci.db")
+
 from collections import defaultdict
 from datetime import datetime, timedelta
 
 import models
-
-name = "schedule"
-
-WINDOW_DAYS = 7
-TOP_N = 10
-# A plan counts as met once the status says it's finished, regardless of counts.
-DONE_STATUSES = {"completed", "complete", "done", "closed", "finished"}
-
-
-def _work_order_numbers(db, plans) -> dict:
-    """id -> work_order_no, for the plans in hand only.
-
-    The chase list turns ``plan.work_order_id`` into a work-order number, and
-    this used to be a map of the WHOLE work_orders table. production_plans is
-    already windowed in SQL, so the map was the one thing left re-reading a
-    table that grows one row per production order forever: measured at 20,000
-    orders with 91 plans in the window referencing 45 of them, the whole-table
-    map cost 173.9 ms against 0.5 ms for the referenced ids.
-
-    Equivalent, not merely similar: the map is only ever read as
-    ``.get(p.work_order_id)`` for these same plans, so an id that is absent
-    returns None either way — whether it was never in the table or simply not
-    fetched. Two columns, no ORM hydration; ``in_`` on an empty set would be a
-    pointless round trip, so skip it.
-    """
-    ids = {p.work_order_id for p in plans if p.work_order_id is not None}
-    if not ids:
-        return {}
-    return {
-        wo_id: number
-        for wo_id, number in db.query(models.WorkOrder.id, models.WorkOrder.work_order_no)
-        .filter(models.WorkOrder.id.in_(ids))
-        .all()
-    }
+from ai.schedule import (
+    TOP_N,
+    WINDOW_DAYS,
+    _pct,
+    _state,
+    build_schedule_adherence,
+    build_shift_adherence,
+)
 
 
-def _pct(part: int, whole: int) -> int:
-    return round(part / whole * 100) if whole else 0
-
-
-def _state(plan, today) -> str:
-    """A single plan's attainment state. Met when the actual quantity reaches the
-    plan (or the status says it's done); otherwise, for a plan already due (its
-    date has passed), behind if some was made and missed if none was — while a
-    plan still due today counts as on-track (the shift can still catch up)."""
-    planned = plan.planned_quantity or 0
-    actual = plan.actual_quantity or 0
-    status = (plan.status or "").strip().lower()
-    if status in DONE_STATUSES or (planned > 0 and actual >= planned):
-        return "met"
-    date = plan.plan_date
-    if date is None or date >= today:
-        return "on_track"
-    return "behind" if actual > 0 else "missed"
-
-
-def build_schedule_adherence(db, tenant: str) -> dict:
+def reference_schedule_adherence(db, tenant: str) -> dict:
     """Production-plan adherence over the last 7 days: plant-wide state counts, a
     pooled attainment rate over the plans due so far, a per-shift and per-machine
     breakdown (worst first), a daily planned-vs-actual series, today's scheduled
@@ -87,7 +52,7 @@ def build_schedule_adherence(db, tenant: str) -> dict:
                      models.ProductionPlan.plan_date <= today).all())
 
     machine_names = {m.id: m.name for m in db.query(models.Machine).all()}
-    wo_numbers = _work_order_numbers(db, plans)
+    wo_numbers = {w.id: w.work_order_no for w in db.query(models.WorkOrder).all()}
 
     totals = {"met": 0, "on_track": 0, "behind": 0, "missed": 0}
     # "due so far" = plans whose date has already passed (strictly before today);
@@ -207,7 +172,7 @@ def build_schedule_adherence(db, tenant: str) -> dict:
     }
 
 
-def build_shift_adherence(db, tenant: str, shift: str) -> dict:
+def reference_shift_adherence(db, tenant: str, shift: str) -> dict:
     """Drill-down for a single shift (by name, as keyed in the summary): how its
     attainment reads against the plant, where it ranks among the shifts, its own
     state mix, a daily planned-vs-actual series, which machines inside the shift
@@ -224,7 +189,7 @@ def build_shift_adherence(db, tenant: str, shift: str) -> dict:
     plans = [p for p in all_plans if (p.shift_name or "—") == shift]
 
     machine_names = {m.id: m.name for m in db.query(models.Machine).all()}
-    wo_numbers = _work_order_numbers(db, plans)
+    wo_numbers = {w.id: w.work_order_no for w in db.query(models.WorkOrder).all()}
 
     # Plant baseline over the same window, on the same "due so far" denominator
     # the summary headline uses — so "vs plant" compares like with like.
@@ -330,3 +295,136 @@ def build_shift_adherence(db, tenant: str, shift: str) -> dict:
         "chase": chase[:TOP_N],
         "daily": daily,
     }
+
+
+# ---------------------------------------------------------------- the parity test
+
+import json
+import tempfile
+
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
+
+
+def _fresh_db():
+    path = os.path.join(tempfile.mkdtemp(), "sched.db")
+    engine = create_engine(f"sqlite:///{path}", connect_args={"check_same_thread": False})
+    models.Base.metadata.create_all(bind=engine)
+    return sessionmaker(bind=engine)()
+
+
+def _seed(db):
+    today = datetime.utcnow().date()
+    m = models.Machine(name="CNC-1", status="Running", utilization=70,
+                       downtime="0 min", tenant_code="DEFAULT")
+    m2 = models.Machine(name="CNC-2", status="Idle", utilization=10,
+                        downtime="0 min", tenant_code="DEFAULT")
+    db.add_all([m, m2])
+    db.flush()
+
+    def wo(no):
+        w = models.WorkOrder(work_order_no=no, part_number="P", batch_number="B",
+                             machine_id=m.id, target_quantity=100, actual_quantity=0,
+                             status="Released", material_state="RAW", tenant_code="DEFAULT")
+        db.add(w)
+        db.flush()
+        return w
+
+    in_window = wo("WO-IN-WINDOW")
+    # Referenced only by a plan OUTSIDE the window — the whole-table map used to
+    # carry it, the narrowed one must not need to.
+    outside = wo("WO-OUTSIDE-WINDOW")
+    # Referenced by nobody at all: the bulk of a real table.
+    for i in range(20):
+        wo(f"WO-UNREFERENCED-{i}")
+
+    def plan(no, wo_id, machine_id, days_ago, planned, actual, shift="A"):
+        db.add(models.ProductionPlan(
+            plan_no=no, work_order_id=wo_id, machine_id=machine_id,
+            planned_quantity=planned, actual_quantity=actual,
+            plan_date=today - timedelta(days=days_ago), shift_name=shift,
+            status="Planned", tenant_code="DEFAULT"))
+
+    plan("PP-behind", in_window.id, m.id, 2, 100, 10)          # chase row, real WO
+    plan("PP-missed", in_window.id, m2.id, 3, 100, 0, "B")     # chase row, second machine
+    plan("PP-met", in_window.id, m.id, 1, 100, 100)
+    plan("PP-today", in_window.id, m.id, 0, 100, 50)
+    # A plan whose work order does not exist: .get() must return None, before
+    # and after.
+    plan("PP-missing-wo", 999_999, m.id, 4, 100, 0, "C")
+    # A plan with NO work order at all.
+    plan("PP-null-wo", None, m.id, 5, 100, 0, "C")
+    # Outside the window entirely — must not pull its work order into the map.
+    plan("PP-old", outside.id, m.id, 60, 100, 0)
+    db.commit()
+    return in_window, outside
+
+
+def _compare(db, label):
+    pairs = [
+        (build_schedule_adherence, reference_schedule_adherence, "schedule_adherence", ()),
+        (build_shift_adherence, reference_shift_adherence, "shift_adherence:A", ("A",)),
+        (build_shift_adherence, reference_shift_adherence, "shift_adherence:B", ("B",)),
+        (build_shift_adherence, reference_shift_adherence, "shift_adherence:C", ("C",)),
+        (build_shift_adherence, reference_shift_adherence, "shift_adherence:absent", ("ZZZ",)),
+    ]
+    results = {}
+    for fn_new, fn_ref, name, extra in pairs:
+        expected = fn_ref(db, "DEFAULT", *extra)
+        actual = fn_new(db, "DEFAULT", *extra)
+        if actual != expected:
+            for key in expected:
+                if actual.get(key) != expected[key]:
+                    raise AssertionError(
+                        f"{label}/{name}: '{key}' changed\n"
+                        f"  was: {json.dumps(expected[key], default=str)[:400]}\n"
+                        f"  now: {json.dumps(actual.get(key), default=str)[:400]}")
+            raise AssertionError(f"{label}/{name}: keys differ")
+        results[name] = actual
+    return results
+
+
+def test_matches_reference_on_every_branch():
+    db = _fresh_db()
+    _seed(db)
+    out = _compare(db, "every-branch")
+
+    # Guard the guard: the chase list must actually be exercising the lookup,
+    # including the two rows where it has to resolve to None.
+    chase = out["schedule_adherence"]["chase"]
+    numbers = {row["plan_no"]: row["work_order_no"] for row in chase}
+    assert numbers.get("PP-behind") == "WO-IN-WINDOW", numbers
+    assert "PP-missing-wo" in numbers and numbers["PP-missing-wo"] is None, numbers
+    assert "PP-null-wo" in numbers and numbers["PP-null-wo"] is None, numbers
+    print(f"  every-branch parity OK - {len(chase)} chase rows")
+    db.close()
+
+
+def test_matches_reference_on_an_empty_database():
+    db = _fresh_db()
+    _compare(db, "empty")
+    print("  empty-database parity OK")
+    db.close()
+
+
+def test_matches_reference_with_plans_but_no_work_orders():
+    db = _fresh_db()
+    today = datetime.utcnow().date()
+    m = models.Machine(name="M", status="Idle", utilization=0, downtime="0 min", tenant_code="DEFAULT")
+    db.add(m)
+    db.flush()
+    db.add(models.ProductionPlan(plan_no="PP", work_order_id=42, machine_id=m.id,
+                                 planned_quantity=100, actual_quantity=0,
+                                 plan_date=today - timedelta(days=1), shift_name="A",
+                                 status="Planned", tenant_code="DEFAULT"))
+    db.commit()
+    _compare(db, "no-work-orders")
+    print("  no-work-orders parity OK")
+    db.close()
+
+
+if __name__ == "__main__":
+    test_matches_reference_on_every_branch()
+    test_matches_reference_on_an_empty_database()
+    test_matches_reference_with_plans_but_no_work_orders()
+    print("schedule label-lookup parity: OK")

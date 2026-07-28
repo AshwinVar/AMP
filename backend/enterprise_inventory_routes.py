@@ -531,9 +531,34 @@ def variance_report(db: Session = Depends(get_db), current_user: dict = Depends(
         )
     }
 
-    latest_count_items = {}
-    for ci in db.query(models.CycleCountItem).all():
-        latest_count_items[ci.item_id] = ci
+    # The latest cycle-count line per item, picked DETERMINISTICALLY by max(id) in
+    # SQL — not by hydrating the whole (growing) cycle_count_items table and letting
+    # a Python last-write-wins depend on the scan's row order. On SQLite a table scan
+    # happens to come back id-ascending, so the old dict-overwrite kept the highest-id
+    # (latest) line; on PostgreSQL (production) a seqscan has NO guaranteed order, so
+    # it could keep a STALE earlier count and report the wrong physical_qty / variance
+    # for that item — a value the data doesn't support (rule 2). Selecting the max-id
+    # line per item_id fixes that AND bounds the scan (rule 4): the result set is one
+    # row per counted item (a naturally bounded set), served by the existing
+    # cycle_count_items(item_id) index (main.py). Tenant-safe: CycleCountItem is in
+    # tenancy.SCOPED_MODELS so the outer select is tenant-filtered by the ORM hook, and
+    # item_id is a FK to the globally-unique inventory_items.id (never shared across
+    # tenants), so a per-item max(id) is inherently the caller's own latest line — a
+    # foreign row can never match the scoped outer filter (proven by
+    # test_variance_report_is_tenant_isolated).
+    latest_ci_ids = (
+        db.query(func.max(models.CycleCountItem.id))
+        .group_by(models.CycleCountItem.item_id)
+        .scalar_subquery()
+    )
+    latest_count_items = {
+        ci.item_id: ci
+        for ci in (
+            db.query(models.CycleCountItem)
+            .filter(models.CycleCountItem.id.in_(latest_ci_ids))
+            .all()
+        )
+    }
 
     rows = []
     for item in items:

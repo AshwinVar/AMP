@@ -11,6 +11,7 @@ from sqlalchemy import case, func
 from sqlalchemy.orm import Session
 
 import models
+from csv_safe import read_upload_text
 from auth import get_current_user, require_roles
 from database import SessionLocal
 
@@ -425,8 +426,7 @@ async def import_inventory_csv(
     db: Session = Depends(get_db),
     current_user: dict = Depends(require_roles(["Admin"])),
 ):
-    content = await file.read()
-    text = content.decode("utf-8-sig")
+    text, encoding = await read_upload_text(file)
     reader = csv_lib.DictReader(io.StringIO(text))
     created = updated = skipped = 0
     errors = []
@@ -465,4 +465,5 @@ async def import_inventory_csv(
         except Exception as e:
             errors.append(f"Row {i}: {str(e)}")
     db.commit()
-    return {"created": created, "updated": updated, "skipped": skipped, "errors": errors[:10]}
+    return {"created": created, "updated": updated, "skipped": skipped,
+            "errors": errors[:10], "encoding": encoding}

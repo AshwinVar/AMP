@@ -3,7 +3,14 @@
 import { useRef, useState } from "react";
 import { API_URL, getDownloadHeaders } from "../lib/api";
 
-type ImportResult = { created: number; updated: number; skipped: number; errors: string[] };
+type ImportResult = {
+  created: number;
+  updated: number;
+  skipped: number;
+  errors: string[];
+  // How the backend decoded the file. Absent on older deployments.
+  encoding?: string;
+};
 
 // One-click CSV onboarding: pick a file, POST it multipart to the given import
 // endpoint (auth + founder-preview headers), and show the created/updated/
@@ -30,13 +37,22 @@ export default function CsvImportButton({ label, path }: { label: string; path: 
         body: form,
         cache: "no-store",
       });
-      if (!res.ok) throw new Error(`${res.status}`);
+      if (!res.ok) {
+        // The backend rejects a bad upload with a 400 that says what to fix
+        // ("This looks like an Excel workbook… Save As and pick CSV"). Showing
+        // our own generic line instead would throw that away.
+        const detail = await res.json().then((b) => b?.detail).catch(() => null);
+        throw new Error(typeof detail === "string" && detail ? detail : `Import failed (${res.status}).`);
+      }
       const r = (await res.json()) as ImportResult;
       const errNote = r.errors.length ? ` · ${r.errors.length} row error${r.errors.length === 1 ? "" : "s"}` : "";
-      setResult(`${r.created} created · ${r.updated} updated · ${r.skipped} skipped${errNote}`);
-    } catch {
+      // Flag a non-UTF-8 file: it imported fine, but if the accents look wrong
+      // this is why, and re-saving as CSV UTF-8 fixes it.
+      const encNote = r.encoding && r.encoding !== "utf-8-sig" ? ` · read as ${r.encoding}` : "";
+      setResult(`${r.created} created · ${r.updated} updated · ${r.skipped} skipped${errNote}${encNote}`);
+    } catch (e) {
       setError(true);
-      setResult("Import failed — check the file and your permissions.");
+      setResult(e instanceof Error ? e.message : "Import failed — check the file and your permissions.");
     } finally {
       setBusy(false);
       if (inputRef.current) inputRef.current.value = "";

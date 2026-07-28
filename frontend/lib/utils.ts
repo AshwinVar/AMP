@@ -8,9 +8,9 @@ export const BTN_CLASS =
 // decimal-hour bug. It now has one home: lib/duration.ts, ported from
 // backend/duration.py and pinned against it by lib/duration.test.ts.
 
-export function calculateOEE(utilization: number) {
-  return Math.round((utilization / 100) * 0.9 * 0.95 * 100);
-}
+// calculateOEE lived here too — the same utilization-only estimate, unused.
+// It now has one home, lib/oee.ts, as `fallbackOee`: a labelled last resort for
+// machines with no production data, not something to print as "OEE".
 
 export function getStatusStyle(status: string) {
   switch (status) {

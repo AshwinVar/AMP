@@ -49,14 +49,26 @@ def get_remnants(db: Session = Depends(get_db), current_user: dict = Depends(get
 
 @router.post("/remnants")
 def create_remnant(payload: dict, db: Session = Depends(get_db), current_user: dict = Depends(require_roles(["Admin", "Supervisor"]))):
+    # Same raw-`payload: dict` boundary as the GRN/cycle-count handlers (#379):
+    # nothing validates the body, so a missing key, "", null or "abc" reached
+    # int() and raised — a bare 500 (and a missing "unit" KeyError'd, or a null
+    # unit tripped the NOT NULL constraint into an IntegrityError 500). Validate
+    # every field through the shared _int_field first so malformed input is a 400
+    # naming the field, exactly like the sibling receipt handlers.
+    item_id = _int_field(payload, "item_id", "Remnant")
+    original_qty = _int_field(payload, "original_qty", "Remnant")
+    remaining_qty = _int_field(payload, "remaining_qty", "Remnant")
+    unit = str(payload.get("unit") or "").strip()
+    if not unit:
+        raise HTTPException(status_code=400, detail="Remnant: 'unit' is required")
     count = db.query(models.Remnant).count()
     r = models.Remnant(
         tag_no=payload.get("tag_no") or f"REM-{1000 + count + 1}",
-        item_id=int(payload["item_id"]),
+        item_id=item_id,
         source_reference=payload.get("source_reference", ""),
-        original_qty=int(payload["original_qty"]),
-        remaining_qty=int(payload["remaining_qty"]),
-        unit=payload["unit"],
+        original_qty=original_qty,
+        remaining_qty=remaining_qty,
+        unit=unit,
         location=payload.get("location", ""),
         status="Available",
         notes=payload.get("notes", ""),
@@ -71,7 +83,11 @@ def update_remnant_status(rid: int, payload: dict, db: Session = Depends(get_db)
     if not r:
         raise HTTPException(status_code=404, detail="Remnant not found")
     r.status = payload.get("status", r.status)
-    r.remaining_qty = int(payload.get("remaining_qty", r.remaining_qty))
+    # required=False: an absent/blank remaining_qty keeps the current value (as the
+    # old `.get(..., r.remaining_qty)` default did); a present but non-numeric one
+    # is a 400, not the bare 500 that int("abc") used to raise.
+    r.remaining_qty = _int_field(payload, "remaining_qty", "Remnant",
+                                 required=False, default=r.remaining_qty or 0)
     db.commit()
     return {"ok": True}
 
@@ -99,13 +115,21 @@ def get_issue_slips(db: Session = Depends(get_db), current_user: dict = Depends(
 
 @router.post("/issue-slips")
 def create_issue_slip(payload: dict, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
+    # Raw `payload: dict` boundary (see create_remnant / #379): validate the
+    # numeric fields through the shared _int_field so a missing/blank/non-numeric
+    # item_id or requested_qty is a 400 naming the field, not a bare int() 500.
+    item_id = _int_field(payload, "item_id", "Issue slip")
+    requested_qty = _int_field(payload, "requested_qty", "Issue slip")
+    # remnant_id is optional (a slip may draw from general stock): parse only when
+    # supplied, still validated so "abc" is a 400 rather than a 500.
+    remnant_id = _int_field(payload, "remnant_id", "Issue slip") if payload.get("remnant_id") else None
     count = db.query(models.MaterialIssueSlip).count()
     s = models.MaterialIssueSlip(
         slip_no=f"MIS-{5000 + count + 1}",
-        item_id=int(payload["item_id"]),
-        remnant_id=int(payload["remnant_id"]) if payload.get("remnant_id") else None,
+        item_id=item_id,
+        remnant_id=remnant_id,
         work_order_ref=payload.get("work_order_ref", ""),
-        requested_qty=int(payload["requested_qty"]),
+        requested_qty=requested_qty,
         requested_by=payload.get("requested_by", current_user.get("sub", "Operator")),
         status="Pending",
         notes=payload.get("notes", ""),

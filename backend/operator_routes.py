@@ -44,6 +44,18 @@ def create_operator_execution(execution: schemas.OperatorJobExecutionCreate, db:
     if not machine:
         raise HTTPException(status_code=404, detail="Machine not found")
 
+    # Reject physically-impossible rows at the boundary — the same guard every
+    # other counted ingest already applies (production-record #266, quality #324,
+    # order/PO #346, production-plan #351, work-order #354). good_count /
+    # rejected_count are plain ints in the schema (no ge=0), so a negative slips
+    # past validation and silently corrupts the workforce read-model
+    # (ai/workforce): its quality rate is good / (good + rejected), so a negative
+    # rejected drives an operator's yield ABOVE 100% and a negative good below 0% —
+    # the exact honesty violation (a metric can't exceed the bound the data
+    # supports), and the daily/plant totals it reconciles to go with it.
+    if min(execution.good_count, execution.rejected_count) < 0:
+        raise HTTPException(status_code=400, detail="counts must be non-negative")
+
     row = models.OperatorJobExecution(**execution.model_dump())
     db.add(row)
     try:
@@ -62,6 +74,21 @@ def update_operator_execution(execution_id: int, payload: schemas.OperatorJobExe
         raise HTTPException(status_code=404, detail="Operator execution not found")
     for key, value in payload.model_dump(exclude_unset=True).items():
         setattr(row, key, value)
+
+    # good_count / rejected_count are Column(Integer, default=0) WITHOUT
+    # nullable=False, and OperatorJobExecutionUpdate types each Optional[int]=None —
+    # so a client can PATCH an explicit {"good_count": null} (exclude_unset keeps an
+    # explicit null) and a legacy/raw-SQL row can already carry NULL. Left as None,
+    # the response 500s because OperatorJobExecutionResponse types these fields as
+    # non-optional int; a NEGATIVE patch value corrupts the yield window exactly as
+    # on create. Coalesce a NULL to the column's own default of 0 (also healing a
+    # pre-existing NULL row on any update), then reject a negative — the same guard
+    # the quality-inspection PATCH (#324/#356) and the create path above apply.
+    row.good_count = row.good_count or 0
+    row.rejected_count = row.rejected_count or 0
+    if min(row.good_count, row.rejected_count) < 0:
+        raise HTTPException(status_code=400, detail="counts must be non-negative")
+
     if row.job_status == "Completed" and row.completed_at is None:
         row.completed_at = datetime.utcnow()
     db.commit()

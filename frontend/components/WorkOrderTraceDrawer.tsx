@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { apiGet } from "../lib/api";
+import { useModalFocus } from "../lib/useModalFocus";
 
 // Mirrors the backend work-order traceability read-model (ai/trace.py build_work_order_trace).
 type PlanRow = {
@@ -108,6 +109,10 @@ export default function WorkOrderTraceDrawer({
     load();
   }, [load]);
 
+  // Keep Tab inside the drawer while it is open, and hand focus back to
+  // whatever opened it on close.
+  const dialogRef = useModalFocus<HTMLDivElement>();
+
   // Close on Escape for keyboard users.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -121,8 +126,10 @@ export default function WorkOrderTraceDrawer({
     <div className="fixed inset-0 z-50 flex justify-end">
       <div className="absolute inset-0 bg-black/60" onClick={onClose} aria-hidden="true" />
       <div
+        ref={dialogRef}
         role="dialog"
         aria-modal="true"
+        tabIndex={-1}
         className="relative w-full max-w-xl bg-slate-950 border-l border-slate-800 h-full overflow-y-auto p-6"
       >
         <div className="flex items-start justify-between gap-3">

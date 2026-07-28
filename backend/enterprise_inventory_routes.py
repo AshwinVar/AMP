@@ -206,8 +206,69 @@ def get_grns(db: Session = Depends(get_db), current_user: dict = Depends(get_cur
     return result
 
 
+# Beyond this a quantity is a typo or a float that overflowed, not a real
+# receipt. The shipped UI sends Number(input) with no cap, and JS turns a long
+# digit string into 1e+23 — which int() happily widens and SQLite then rejects
+# with an OverflowError mid-write.
+_MAX_QTY = 1_000_000_000
+
+
+def _int_field(line: dict, key: str, where: str, *, required: bool = True, default: int = 0) -> int:
+    """A client-supplied quantity, or a 400 naming the line and field.
+
+    These handlers take a raw `payload: dict` rather than a Pydantic schema, so
+    nothing validates the body before it arrives — a missing key, "", null or
+    "abc" all reached int() and raised, which FastAPI turns into a bare 500.
+    Negative quantities are refused for consistency with the order/PO/production
+    ingest rule (#346)."""
+    raw = line.get(key)
+    if raw is None or (isinstance(raw, str) and not raw.strip()):
+        if required:
+            raise HTTPException(status_code=400, detail=f"{where}: '{key}' is required")
+        return default
+    try:
+        value = int(raw)
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=400,
+                            detail=f"{where}: '{key}' must be a whole number (got {raw!r})")
+    if value < 0:
+        raise HTTPException(status_code=400, detail=f"{where}: '{key}' cannot be negative")
+    if value > _MAX_QTY:
+        raise HTTPException(status_code=400,
+                            detail=f"{where}: '{key}' is unrealistically large ({value})")
+    return value
+
+
 @router.post("/grns")
 def create_grn(payload: dict, db: Session = Depends(get_db), current_user: dict = Depends(require_roles(["Admin", "Supervisor"]))):
+    """Record a goods receipt. Header and lines are written in ONE transaction.
+
+    This used to commit the header, then parse the lines — so one malformed line
+    (a missing accepted_qty, a blank field, a JSON null) raised out of the loop as
+    a 500 while the header stayed committed. That left a zero-line GRN in the
+    receipt history that accept_grn would still happily mark "Accepted": a
+    goods receipt on record against which no goods ever moved, and which each
+    retry duplicated. Lines are now validated BEFORE anything is written, and the
+    header is flushed (not committed) so a failure rolls the whole thing back."""
+    if not str(payload.get("supplier_name") or "").strip():
+        raise HTTPException(status_code=400, detail="supplier_name is required")
+
+    # Validate every line first — nothing is written until all of them parse.
+    parsed = []
+    for i, line in enumerate(payload.get("items", []), start=1):
+        where = f"Line {i}"
+        if not isinstance(line, dict):
+            raise HTTPException(status_code=400, detail=f"{where}: expected an object")
+        parsed.append(dict(
+            item_id=_int_field(line, "item_id", where),
+            lot_no=line.get("lot_no", ""),
+            ordered_qty=_int_field(line, "ordered_qty", where, required=False),
+            received_qty=_int_field(line, "received_qty", where),
+            accepted_qty=_int_field(line, "accepted_qty", where),
+            rejected_qty=_int_field(line, "rejected_qty", where, required=False),
+            inspection_status=line.get("inspection_status", "Accepted"),
+        ))
+
     count = db.query(models.GoodsReceiptNote).count()
     g = models.GoodsReceiptNote(
         grn_no=f"GRN-{3000 + count + 1}",
@@ -217,17 +278,11 @@ def create_grn(payload: dict, db: Session = Depends(get_db), current_user: dict 
         status="Draft",
         notes=payload.get("notes", ""),
     )
-    db.add(g); db.commit(); db.refresh(g)
-    for line in payload.get("items", []):
-        db.add(models.GRNItem(
-            grn_id=g.id, item_id=int(line["item_id"]),
-            lot_no=line.get("lot_no", ""),
-            ordered_qty=int(line.get("ordered_qty", 0)),
-            received_qty=int(line["received_qty"]),
-            accepted_qty=int(line["accepted_qty"]),
-            rejected_qty=int(line.get("rejected_qty", 0)),
-            inspection_status=line.get("inspection_status", "Accepted"),
-        ))
+    # flush, not commit — g.id is assigned but the row is still inside the
+    # transaction, so anything below that fails takes the header down with it.
+    db.add(g); db.flush()
+    for row in parsed:
+        db.add(models.GRNItem(grn_id=g.id, **row))
     db.commit()
     return {"id": g.id, "grn_no": g.grn_no}
 
@@ -292,6 +347,20 @@ def get_cycle_counts(db: Session = Depends(get_db), current_user: dict = Depends
 
 @router.post("/cycle-counts")
 def create_cycle_count(payload: dict, db: Session = Depends(get_db), current_user: dict = Depends(require_roles(["Admin", "Supervisor"]))):
+    """Record a physical stock count. Header and lines are written in ONE
+    transaction, for the same reason as create_grn above: this used to commit the
+    header before parsing lines, so a blank physical_qty raised a 500 and left a
+    zero-line Draft count that approve_cycle_count would still mark "Approved" —
+    a completed stock reconciliation on record that adjusted nothing."""
+    # Validate every line first — nothing is written until all of them parse.
+    parsed = []
+    for i, line in enumerate(payload.get("items", []), start=1):
+        where = f"Line {i}"
+        if not isinstance(line, dict):
+            raise HTTPException(status_code=400, detail=f"{where}: expected an object")
+        parsed.append((_int_field(line, "item_id", where),
+                       _int_field(line, "physical_qty", where)))
+
     count = db.query(models.CycleCount).count()
     c = models.CycleCount(
         count_no=f"CC-{2000 + count + 1}",
@@ -299,12 +368,11 @@ def create_cycle_count(payload: dict, db: Session = Depends(get_db), current_use
         status="Draft",
         notes=payload.get("notes", ""),
     )
-    db.add(c); db.commit(); db.refresh(c)
-    for line in payload.get("items", []):
-        item = db.query(models.InventoryItem).filter(models.InventoryItem.id == int(line["item_id"])).first()
+    db.add(c); db.flush()          # see create_grn: flush keeps this in the transaction
+    for item_id, physical in parsed:
+        item = db.query(models.InventoryItem).filter(models.InventoryItem.id == item_id).first()
         if not item:
             continue
-        physical = int(line["physical_qty"])
         # book_qty records the on-book stock at count time. A NULL current_stock
         # (nullable Integer) would both make `physical - None` TypeError AND write
         # book_qty=NULL, which violates CycleCountItem.book_qty (nullable=False) ->

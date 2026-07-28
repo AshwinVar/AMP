@@ -42,6 +42,7 @@ export default function EscalationSection({
   form,
   setForm,
   createEscalation,
+  creating = false,
   updateEscalation,
   deleteEscalation,
   generateFromSmartAlerts,
@@ -64,6 +65,8 @@ export default function EscalationSection({
   };
   setForm: (value: any) => void;
   createEscalation: (e: React.FormEvent) => void;
+  /** true while a create is in flight — blocks the double-click duplicate. */
+  creating?: boolean;
   updateEscalation: (
     id: number,
     status: string,
@@ -178,9 +181,10 @@ export default function EscalationSection({
 
         <button
           type="submit"
-          className="rounded-xl bg-white text-slate-950 font-semibold px-4 py-3"
+          disabled={creating}
+          className="rounded-xl bg-white text-slate-950 font-semibold px-4 py-3 disabled:opacity-50"
         >
-          Create
+          {creating ? "Creating…" : "Create"}
         </button>
       </form>
 

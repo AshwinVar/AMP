@@ -4,6 +4,7 @@ import "../phase29-enterprise.css";
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { apiGet, apiPost, apiPatch, apiDelete, getToken, getUserRole } from "../../lib/api";
+import { useInFlight } from "../../lib/useInFlight";
 import {
   BarChart,
   Bar,
@@ -911,9 +912,13 @@ export default function DashboardPage() {
     }
   }
 
+  const { run: runOnce, busy: isBusy } = useInFlight();
+
   async function addDowntimeLog(e: React.FormEvent) {
     e.preventDefault();
-
+    // downtime_logs has no unique key, so a double-click would post twice and
+    // double-count the minutes into OEE and cost-of-losses.
+    await runOnce("downtime-log", async () => {
     try {
       await apiPost<DowntimeLog>("/downtime-logs", {
         machine_id: Number(selectedMachineId),
@@ -931,11 +936,13 @@ export default function DashboardPage() {
     } catch (error) {
       console.error(error);
     }
+    });
   }
 
   async function addShift(e: React.FormEvent) {
     e.preventDefault();
-
+    // shift_data has no unique key either — a duplicate row double-counts output.
+    await runOnce("shift", async () => {
     try {
       await apiPost<Shift>("/shifts", {
         shift_name: shiftName,
@@ -951,6 +958,7 @@ export default function DashboardPage() {
     } catch (error) {
       console.error(error);
     }
+    });
   }
 
   async function createWorkOrder(e: React.FormEvent) {
@@ -1069,7 +1077,8 @@ export default function DashboardPage() {
 
   async function createEscalation(e: React.FormEvent) {
     e.preventDefault();
-
+    // escalations has no unique key — a double-click duplicates the queue item.
+    await runOnce("escalation", async () => {
     try {
       await apiPost<Escalation>("/escalations", {
         ...escalationForm,
@@ -1094,6 +1103,7 @@ export default function DashboardPage() {
       console.error(error);
       alert("Failed to create escalation.");
     }
+    });
   }
 
   async function updateEscalation(
@@ -2414,9 +2424,10 @@ export default function DashboardPage() {
 
               <button
                 type="submit"
-                className="w-full rounded-xl bg-white text-slate-950 font-semibold px-4 py-3"
+                disabled={isBusy("downtime-log")}
+                className="w-full rounded-xl bg-white text-slate-950 font-semibold px-4 py-3 disabled:opacity-50"
               >
-                Save Downtime Log
+                {isBusy("downtime-log") ? "Saving…" : "Save Downtime Log"}
               </button>
             </div>
           </form>
@@ -2504,9 +2515,10 @@ export default function DashboardPage() {
 
               <button
                 type="submit"
-                className="w-full rounded-xl bg-white text-slate-950 font-semibold px-4 py-3"
+                disabled={isBusy("shift")}
+                className="w-full rounded-xl bg-white text-slate-950 font-semibold px-4 py-3 disabled:opacity-50"
               >
-                Save Shift Data
+                {isBusy("shift") ? "Saving…" : "Save Shift Data"}
               </button>
             </div>
           </form>
@@ -2658,6 +2670,7 @@ export default function DashboardPage() {
           form={escalationForm}
           setForm={setEscalationForm}
           createEscalation={createEscalation}
+          creating={isBusy("escalation")}
           updateEscalation={updateEscalation}
           deleteEscalation={isAdmin ? deleteEscalation : undefined}
           generateFromSmartAlerts={isAdminOrSupervisor ? generateEscalationsFromSmartAlerts : async () => {}}

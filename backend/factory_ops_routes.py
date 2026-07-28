@@ -10,7 +10,7 @@ from datetime import datetime, timedelta
 from typing import List
 
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import func
+from sqlalchemy import func, or_
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -420,11 +420,22 @@ def generate_maintenance_overdue_escalations(
     current_user: dict = Depends(require_roles(["Admin", "Supervisor"])),
 ):
     today = datetime.utcnow().date()
+    # Overdue = planned in the past and not yet finished — the SAME set the
+    # /analytics/maintenance 'overdue' count reports, so the two must agree (a
+    # metric spelled out once, rule against re-defining it a second way). status is
+    # String default="Open" (not NOT NULL): a raw-SQL / migration / cleared-field row
+    # can hold a NULL, and SQL's `status != 'Completed'` is NULL — not TRUE — for it,
+    # silently dropping an unfinished, past-dated task. OR the NULL back in (a NULL
+    # status is not-Completed, i.e. still overdue), matching the analytics count and
+    # the late-order / review-due NULL-status convention (#295/#298).
     tasks = (
         db.query(models.MaintenanceTask)
         .filter(
             models.MaintenanceTask.planned_date < today,
-            models.MaintenanceTask.status != "Completed",
+            or_(
+                models.MaintenanceTask.status.is_(None),
+                models.MaintenanceTask.status != "Completed",
+            ),
         )
         .all()
     )

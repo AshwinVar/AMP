@@ -6,6 +6,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { apiGet, apiPost, apiPatch, apiDelete, getToken, getUserRole } from "../../lib/api";
 import { useInFlight } from "../../lib/useInFlight";
 import { parseDurationToMinutes } from "../../lib/duration";
+import { readMachineOee } from "../../lib/oee";
 import {
   BarChart,
   Bar,
@@ -197,14 +198,6 @@ function getStatusStyle(status: string) {
     default:
       return "bg-gray-500/20 text-gray-400 border-gray-500/40";
   }
-}
-
-function calculateOEE(utilization: number) {
-  const availability = utilization / 100;
-  const performance = 0.9;
-  const quality = 0.95;
-
-  return Math.round(availability * performance * quality * 100);
 }
 
 export default function DashboardPage() {
@@ -2321,7 +2314,14 @@ export default function DashboardPage() {
             <h2 className="text-2xl font-semibold mb-4">Machine Status</h2>
 
             <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
-              {machines.map((machine) => (
+              {machines.map((machine) => {
+                const oeeReading = readMachineOee(
+                  machine.id,
+                  executiveOee?.machine_ranking,
+                  machine.utilization
+                );
+
+                return (
                 <div
                   key={machine.id}
                   className="rounded-2xl bg-slate-900 border border-slate-800 p-5"
@@ -2348,10 +2348,17 @@ export default function DashboardPage() {
 
                     <p className="text-sm mt-2">{machine.utilization}%</p>
 
-                    <p className="text-sm text-slate-400 mt-3">Estimated OEE</p>
-                    <p className="text-lg font-semibold mt-1">
-                      {calculateOEE(machine.utilization)}%
+                    <p className="text-sm text-slate-400 mt-3">
+                      {oeeReading?.measured === false ? "Estimated OEE" : "OEE"}
                     </p>
+                    <p className="text-lg font-semibold mt-1">
+                      {oeeReading ? `${oeeReading.oee}%` : "—"}
+                    </p>
+                    {oeeReading?.measured === false && (
+                      <p className="text-xs text-slate-500 mt-1">
+                        No production data yet — estimated from utilization.
+                      </p>
+                    )}
                   </div>
 
                   <div className="mt-5">
@@ -2381,7 +2388,8 @@ export default function DashboardPage() {
                     Delete Machine
                   </button>
                 </div>
-              ))}
+                );
+              })}
             </div>
           </section>
         </>

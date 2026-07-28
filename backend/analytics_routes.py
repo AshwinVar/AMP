@@ -895,10 +895,19 @@ def get_maintenance_analytics(
 
     # Overdue = planned in the past and not yet finished. Filtered in SQL (on the
     # now-indexed planned_date, see main._ensure_index) so a growing backlog never
-    # streams every row back just to count the late ones.
+    # streams every row back just to count the late ones. status is String
+    # default="Open" (not NOT NULL), so a raw-SQL / migration / cleared-field row can
+    # hold a NULL: SQL's `status != 'Completed'` is NULL — not TRUE — for that row and
+    # would silently DROP an unfinished, past-dated task from the count. OR the NULL
+    # back in (a NULL status is not-Completed, i.e. still overdue) to keep the same
+    # basis as the escalation generator that acts on this very set, and matching the
+    # late-order / review-due / open-escalation NULL-status convention (#295/#298).
     overdue = db.query(func.count(models.MaintenanceTask.id)).filter(
         models.MaintenanceTask.planned_date < today,
-        models.MaintenanceTask.status != "Completed",
+        or_(
+            models.MaintenanceTask.status.is_(None),
+            models.MaintenanceTask.status != "Completed",
+        ),
     ).scalar() or 0
 
     # total_downtime_minutes is the honest sum over EVERY task (an open task can

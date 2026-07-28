@@ -154,10 +154,47 @@ def test_total_reconciles_and_overdue_excludes_completed_and_future():
     print("PASS total counts all statuses; overdue = past & not-completed only")
 
 
+def test_overdue_counts_a_null_status_past_dated_task():
+    """A past-dated task whose status column is a genuine NULL is unfinished and
+    must count as overdue. status is String default="Open" (not NOT NULL), so a
+    raw-SQL / migration / cleared-field row can hold a real NULL. The bare SQL
+    `status != 'Completed'` predicate is NULL — not TRUE — for a NULL status and
+    silently dropped it (three-valued logic), undercounting the backlog even though
+    a Cancelled task in the same shape IS counted. Regression guard for the
+    or_(status IS NULL, ...) fix; the escalation generator uses the same set."""
+    db = _fresh_session()
+    today = datetime.utcnow().date()
+    db.add(models.Machine(id=1, name="GRIND-1", status="Running", utilization=55, line="A"))
+    db.add_all([
+        _task("N-1", 1, "Preventive", "Open", 0, today - timedelta(days=4)),        # overdue
+        _task("N-2", 1, "Breakdown", "Completed", 20, today - timedelta(days=2)),   # past but done -> not overdue
+        _task("N-3", 1, "Preventive", "Open", 0, today - timedelta(days=1)),        # NULL'd below -> overdue
+        _task("N-4", 1, "Breakdown", "Open", 0, today + timedelta(days=2)),         # NULL'd below but FUTURE -> not overdue
+    ])
+    db.commit()
+    # Force genuine NULLs (the ORM's column default=0/"Open" would refill an
+    # explicit None) — the exact raw/migration state the guard exists for.
+    db.execute(text("UPDATE maintenance_tasks SET status = NULL WHERE task_no IN ('N-3', 'N-4')"))
+    db.commit()
+    db.expire_all()
+
+    out = get_maintenance_analytics(db=db, current_user=USER)
+
+    # overdue = N-1 (Open, past) + N-3 (NULL, past) = 2. N-2 is completed; N-4 is
+    # NULL but future. The old bare `status != 'Completed'` dropped N-3 -> 1.
+    assert out["overdue"] == 2, out["overdue"]
+    # N-3/N-4 were NULL'd, so only N-1 stays "Open"; the NULL statuses fall outside
+    # every named bucket (a NULL lands in its own GROUP BY key we never read).
+    assert out["open"] == 1 and out["completed"] == 1
+    assert out["total_tasks"] == 4
+    print("PASS overdue counts a NULL-status past-dated task (2, not 1); future NULL excluded")
+
+
 if __name__ == "__main__":
     test_mttr_uses_completed_downtime_over_completed_count()
     test_unknown_machine_falls_back_to_id_label()
     test_empty_factory_is_all_zeros_no_crash()
     test_distinct_unknown_machines_are_not_collapsed_by_group_by()
     test_total_reconciles_and_overdue_excludes_completed_and_future()
+    test_overdue_counts_a_null_status_past_dated_task()
     print("ALL MAINTENANCE ANALYTICS TESTS PASSED")

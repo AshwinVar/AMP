@@ -24,6 +24,25 @@ def _coalesce_null_count(value):
     return 0 if value is None else value
 
 
+def _coalesce_null_text(default: str):
+    """Factory: heal a NULL text column to its declared default on the way OUT.
+
+    The string-column twin of ``_coalesce_null_count``. ``Machine.downtime``
+    (``default="0 min"``) and ``Machine.line`` (``default=""``) are declared
+    ``Column(String, default=...)`` WITHOUT ``nullable=False``, so the ORM default
+    only fills a value the *inserter* omitted — a row written by raw SQL, a
+    migration, or an update that cleared the field can legitimately hold NULL.
+    ``MachineResponse`` types both as a non-optional ``str``, so a single such NULL
+    row raised Pydantic ``ValidationError`` and 500-ed the WHOLE ``GET /machines``
+    roster — one bad row hiding every good machine, on the core endpoint every
+    dashboard polls. Coalesce a NULL to the column's declared default (the honest
+    "no value recorded" reading); a real recorded value is untouched.
+    """
+    def _coalesce(value):
+        return default if value is None else value
+    return _coalesce
+
+
 class MachineBase(BaseModel):
     name: str
     status: str
@@ -38,6 +57,17 @@ class MachineCreate(MachineBase):
 class MachineResponse(MachineBase):
     id: int
     line: str = ""
+
+    # utilization / downtime / line are Column(..., default=...) WITHOUT
+    # nullable=False, so a raw-SQL / migration / cleared-field row can hold NULL.
+    # These are typed non-optional here, so one such row raised ValidationError and
+    # 500-ed the entire GET /machines list (the roster every dashboard reads) —
+    # the same response-serialisation NULL class already healed on the
+    # production-plan / operator-execution lists (#375). Coalesce each NULL to the
+    # column's own declared default on the way out; a real value is untouched.
+    _heal_utilization = field_validator("utilization", mode="before")(_coalesce_null_count)
+    _heal_downtime = field_validator("downtime", mode="before")(_coalesce_null_text("0 min"))
+    _heal_line = field_validator("line", mode="before")(_coalesce_null_text(""))
 
     class Config:
         from_attributes = True

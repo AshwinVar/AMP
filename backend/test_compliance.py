@@ -100,8 +100,19 @@ def test_all_obsolete_register_has_zero_review_load():
     assert {"status": "Obsolete", "count": 2} in s["by_status"]
 
 
+def test_summary_exposes_the_card_contract():
+    # The Documents view's compliance card (ComplianceIntelCard.tsx) renders
+    # exactly these keys; pin them so a read-model edit can't silently break it.
+    db = _fresh_session()
+    s = compliance.build_compliance_summary(db, "DEFAULT")
+    for k in ("total", "overdue", "due_soon", "pending_approval", "by_status", "documents"):
+        assert k in s, f"compliance-summary missing card key {k!r}"
+    print("PASS compliance-summary exposes the keys the intel card renders")
+
+
 if __name__ == "__main__":
     test_compliance_summary_rolls_up_the_review_load()
+    test_summary_exposes_the_card_contract()
     test_obsolete_docs_carry_no_review_or_approval_debt()
     test_all_obsolete_register_has_zero_review_load()
     print("COMPLIANCE OK: review load (overdue/due-soon/pending-approval) excludes retired "

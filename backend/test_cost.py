@@ -135,8 +135,21 @@ def test_machine_cost_is_the_full_uncapped_map_not_just_top_n():
     print("PASS machine_cost is the full uncapped per-machine map (ranks past TOP_N keep real cost)")
 
 
+def test_summary_exposes_the_card_contract():
+    # The Costing view's intel card (CostIntelCard.tsx) renders exactly these
+    # keys; pin them so a read-model edit can't silently break it.
+    db = _fresh_session()
+    s = cost.build_cost_summary(db, "DEFAULT")
+    for k in ("has_data", "days", "loss_cost", "downtime_cost", "scrap_cost",
+              "downtime_minutes", "rejected_units", "biggest", "by_line",
+              "by_machine", "daily"):
+        assert k in s, f"cost-summary missing card key {k!r}"
+    print("PASS cost-summary exposes the keys the intel card renders")
+
+
 if __name__ == "__main__":
     test_downtime_minutes_floors_per_record_not_on_the_net()
+    test_summary_exposes_the_card_contract()
     test_headline_downtime_reconciles_with_breakdown_when_a_job_runs_over()
     test_cost_prices_downtime_and_scrap_and_rolls_up_recorded()
     test_machine_cost_is_the_full_uncapped_map_not_just_top_n()

@@ -15,6 +15,7 @@ EXPECTED = {
     "/documents", "/documents/{document_id}", "/documents/generate-review-escalations",
     "/maintenance/tasks", "/maintenance/tasks/{task_id}", "/maintenance/generate-overdue-escalations",
     "/notifications", "/notifications/{notification_id}", "/notifications/generate-system-notifications",
+    "/notifications/read-all",
 }
 
 

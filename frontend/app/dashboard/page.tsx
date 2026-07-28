@@ -1744,6 +1744,11 @@ export default function DashboardPage() {
     catch (error) { console.error(error); alert("Failed to update notification."); }
   }
 
+  async function markAllNotificationsRead() {
+    try { await apiPost<{ marked: number }>("/notifications/read-all", {}); fetchAll(); }
+    catch (error) { console.error(error); alert("Failed to mark notifications read."); }
+  }
+
   async function createReport(e: React.FormEvent) {
     e.preventDefault();
     try {
@@ -2869,7 +2874,7 @@ export default function DashboardPage() {
       ))}
 
       {renderSection("notifications", (
-        <NotificationsSection notifications={notifications} generateNotifications={generateSystemNotifications} updateNotification={updateNotification} />
+        <NotificationsSection notifications={notifications} generateNotifications={generateSystemNotifications} updateNotification={updateNotification} markAllRead={markAllNotificationsRead} />
       ))}
 
       {renderSection("enterprise", (

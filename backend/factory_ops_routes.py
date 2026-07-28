@@ -549,6 +549,28 @@ def update_notification(notification_id: int, payload: schemas.NotificationUpdat
     return row
 
 
+@router.post("/notifications/read-all")
+def mark_all_notifications_read(db: Session = Depends(_get_db),
+                                current_user: dict = Depends(require_roles(["Admin", "Supervisor", "Operator"]))):
+    """Clear the whole unread pile in one tap — the mirror of the per-item PATCH
+    above, for the everyday case of an inbox full of stale Info notices. Returns
+    the number of rows it actually flipped, so the UI can report honestly.
+
+    Tenant scoping is EXPLICIT here on purpose: the ADR-0002 auto-scoping hook
+    only rewrites SELECTs (``state.is_select``), and this is a bulk UPDATE — so
+    without the explicit ``tenant_code`` filter one tenant's "mark all read"
+    would silently clear every OTHER tenant's inbox too. The per-item PATCH
+    above is safe because it reads the row first (a SELECT, hence scoped)."""
+    from tenancy import request_tenant
+    tenant = request_tenant(current_user)
+    marked = (db.query(models.Notification)
+              .filter(models.Notification.tenant_code == tenant,
+                      models.Notification.status != "Read")
+              .update({models.Notification.status: "Read"}, synchronize_session=False))
+    db.commit()
+    return {"marked": marked}
+
+
 @router.post("/notifications/generate-system-notifications")
 def generate_system_notifications(db: Session = Depends(_get_db), current_user: dict = Depends(require_roles(["Admin", "Supervisor"]))):
     created = 0

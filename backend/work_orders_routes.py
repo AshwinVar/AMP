@@ -111,13 +111,31 @@ def update_work_order(
     # BOM movement is now a subscriber (subscribers.py / ADR-0001); it runs
     # synchronously on this same DB session, so it still commits atomically below.
     if prev_status != "Completed" and work_order.status == "Completed":
+        # The BOM movement (subscribers.move_bom_on_production_completed) consumes
+        # raw material and receives finished goods for THIS quantity, so it must be
+        # what was actually produced. `actual_quantity or target_quantity` was the
+        # falsy-zero trap: actual_quantity is Column(Integer, default=0), and a
+        # genuine 0 — a status-only "Completed" PATCH before any output was logged,
+        # or a batch marked complete after being fully scrapped — is falsy, so the
+        # expression fell through to target_quantity. The subscriber then moved the
+        # WHOLE order's worth of BOM as if every unit had been made, fabricating
+        # inventory movement the production data does not support (ADR-0010: never
+        # invent a number the data can't back). A recorded 0 is real data — move 0.
+        # An explicit-None check keeps the only legitimate fallback: a raw NULL
+        # actual_quantity (raw-SQL / migration / cleared field) has no recorded
+        # output at all, so it falls back to the order's target as before.
+        completed_quantity = (
+            work_order.actual_quantity
+            if work_order.actual_quantity is not None
+            else work_order.target_quantity
+        )
         event_bus.publish(
             ProductionCompleted(
                 tenant_code=request_tenant(current_user),
                 work_order_id=work_order.id,
                 work_order_no=work_order.work_order_no,
                 part_number=work_order.part_number,
-                quantity=work_order.actual_quantity or work_order.target_quantity,
+                quantity=completed_quantity,
                 machine_id=work_order.machine_id,
             ),
             db,

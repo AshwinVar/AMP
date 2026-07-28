@@ -76,6 +76,8 @@ import QualityIntelCard from "../../components/QualityIntelCard";
 import DowntimeIntelCard from "../../components/DowntimeIntelCard";
 import DeliveryIntelCard from "../../components/DeliveryIntelCard";
 import ScheduleAdherenceCard from "../../components/ScheduleAdherenceCard";
+import ComplianceIntelCard from "../../components/ComplianceIntelCard";
+import CostIntelCard from "../../components/CostIntelCard";
 import SchedulingSection from "../../components/SchedulingSection";
 import IoTCommandSection from "../../components/IoTCommandSection";
 import AIInsightsSection from "../../components/AIInsightsSection";
@@ -2803,7 +2805,10 @@ export default function DashboardPage() {
       ))}
 
       {renderSection("documents", (
+        <>
+        <div className="mt-8"><ComplianceIntelCard /></div>
         <DocumentsSection documents={documents} analytics={documentAnalytics} form={documentForm} setForm={setDocumentForm} createDocument={isAdminOrSupervisor ? createDocument : async () => {}} updateDocument={isAdminOrSupervisor ? updateDocument : async () => {}} deleteDocument={isAdmin ? deleteDocument : undefined} generateReviewEscalations={isAdminOrSupervisor ? generateDocumentReviewEscalations : async () => {}} />
+        </>
       ))}
 
       {renderSection("cmms", (
@@ -2842,7 +2847,10 @@ export default function DashboardPage() {
       ))}
 
       {renderSection("costing", (
+        <>
+        <div className="mt-8"><CostIntelCard /></div>
         <CostingSection costs={costRecords} analytics={costingAnalytics} form={costForm} setForm={setCostForm} createCost={isAdminOrSupervisor ? createCost : async () => {}} updateCost={isAdminOrSupervisor ? updateCost : async () => {}} deleteCost={isAdmin ? deleteCost : undefined} />
+        </>
       ))}
 
       {renderSection("operator", (

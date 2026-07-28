@@ -15,6 +15,8 @@ it scores only the open backlog it can honestly measure (ADR-0007).
 """
 from datetime import datetime
 
+from sqlalchemy import func
+
 import models
 
 name = "flow"
@@ -31,17 +33,30 @@ def build_flow_summary(db, tenant: str) -> dict:
     """Work orders grouped by material state (RAW -> SEMI -> FIN) with counts and
     quantities, so the UI can draw the two-line WIP pipeline. work_orders is
     auto-scoped (ADR-0002)."""
-    wos = db.query(models.WorkOrder).all()
+    # Counts and sums per material state — pure aggregation, so it belongs in the
+    # database rather than hydrating every order ever raised. work_orders grows
+    # one row per production order forever; this view only ever shows six
+    # numbers. The state fold stays in Python because it runs over the handful of
+    # groups that come back, not over the table.
+    grouped = db.query(
+        models.WorkOrder.material_state,
+        func.count(models.WorkOrder.id),
+        func.coalesce(func.sum(models.WorkOrder.target_quantity), 0),
+        func.coalesce(func.sum(models.WorkOrder.actual_quantity), 0),
+    ).group_by(models.WorkOrder.material_state).all()
+
     agg = {s["key"]: {"count": 0, "target": 0, "actual": 0} for s in _STAGES}
-    for w in wos:
-        key = w.material_state if w.material_state in agg else "RAW"
-        agg[key]["count"] += 1
-        agg[key]["target"] += w.target_quantity or 0
-        agg[key]["actual"] += w.actual_quantity or 0
+    total = 0
+    for state, count, target, actual in grouped:
+        key = state if state in agg else "RAW"   # unknown / NULL state reads as intake
+        agg[key]["count"] += count
+        agg[key]["target"] += target
+        agg[key]["actual"] += actual
+        total += count
 
     stages = [{**s, **agg[s["key"]]} for s in _STAGES]
     return {
-        "total": len(wos),
+        "total": total,
         "wip": agg["RAW"]["count"] + agg["SEMI"]["count"],   # not yet finished
         "finished": agg["FIN"]["count"],
         "stages": stages,
@@ -78,7 +93,34 @@ def build_wip_aging(db, tenant: str) -> dict:
     the per-state counts each sum to ``open`` (rule 3, asserted in tests)."""
     now = datetime.utcnow()
     today = now.date()
-    open_wos = [w for w in db.query(models.WorkOrder).all() if not _is_closed(w.status)]
+    # Open WIP is bounded by how much work is actually in the plant; work_orders
+    # is not, and grows forever. Narrow to the open ones in SQL rather than
+    # hydrating every order ever raised to discard almost all of them.
+    #
+    # The SQL predicate is deliberately WIDER than _is_closed, not equal to it,
+    # because the only mistake that changes the numbers is dropping a row Python
+    # would have KEPT. Two things make that easy to get wrong:
+    #
+    #   * coalesce is not cosmetic. `NULL NOT IN (...)` is UNKNOWN, not TRUE, so
+    #     without it a work order whose status is NULL — which a migration, raw
+    #     SQL, or an update that cleared the field can leave behind — silently
+    #     disappears from the open backlog. Verified: removing the coalesce drops
+    #     `open` from 7 to 6 in the parity fixture.
+    #   * SQL trim() removes spaces while Python .strip() removes all whitespace,
+    #     so "\tCompleted" is closed to Python and not-obviously-closed to SQL.
+    #
+    # Erring wide covers both: SQL only has to drop the bulk, and _is_closed
+    # below still makes every final call over the small result it returns.
+    maybe_open = (
+        db.query(models.WorkOrder)
+        .filter(
+            func.lower(func.trim(func.coalesce(models.WorkOrder.status, ""))).notin_(
+                sorted(_CLOSED)
+            )
+        )
+        .all()
+    )
+    open_wos = [w for w in maybe_open if not _is_closed(w.status)]
 
     def _age(w) -> int:
         base = w.created_at or now

@@ -139,6 +139,20 @@ def get_shifts(db: Session = Depends(_get_db), current_user: dict = Depends(get_
 @router.post("/shifts", response_model=schemas.ShiftResponse)
 def create_shift(shift: schemas.ShiftCreate, db: Session = Depends(_get_db),
                  current_user: dict = Depends(require_roles(["Admin", "Supervisor"]))):
+    # Reject physically-impossible rows at the boundary — the same non-negative
+    # guard every other counted ingest already applies (production-record #266,
+    # quality #324, order/PO #346, production-plan #351, work-order #354, operator
+    # #374). target_output / actual_output are plain ints in the schema (no ge=0),
+    # so a negative slips past validation and silently corrupts every shift metric
+    # that divides them: build_shift_kpis' efficiency is actual/target, so a
+    # negative target inverts it into a negative percentage and a negative actual
+    # prints a below-zero efficiency — a rate the data can't support (ADR-0010
+    # honesty). The pooled shift attainment (analytics_summary, executive-oee,
+    # build_management_summary sum these) goes with it. A target of 0 is a
+    # legitimate UNPLANNED shift (the pooled efficiency already handles it), so only
+    # negatives are rejected — never zero.
+    if min(shift.target_output, shift.actual_output) < 0:
+        raise HTTPException(status_code=400, detail="target_output and actual_output must be non-negative")
     new_shift = models.ShiftData(**shift.model_dump())
     db.add(new_shift)
     db.commit()

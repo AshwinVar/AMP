@@ -1056,6 +1056,38 @@ def test_industrial_gateway_empty_tables_are_zero_not_a_crash():
     print("PASS industrial-gateway: empty tables -> zeros / empty list, no crash")
 
 
+def test_industrial_gateway_signals_count_is_true_total_past_the_500_window():
+    # The regression the fix targets: industrial_signals is a growing table (the
+    # adapter poll appends every tick and only trims back to ~1,000 rows), while
+    # the endpoint hydrates only the last 500 for the latest-signal display. The
+    # "signals" KPI must be the TRUE total, not the length of that 500-row window
+    # (which froze at 500 forever) — the same true-total basis the sibling
+    # /analytics/iot-command endpoint already reports for its telemetry count, and
+    # the same basis as this endpoint's own device/mapping headcounts.
+    db = _fresh_session()
+    db.add(models.Machine(id=1, name="Press-01", status="Running", utilization=80))
+    db.add(models.IndustrialDevice(id=10, device_code="D10", device_name="PLC-North", status="Online"))
+    # 650 signals — well past the 500-row display window. Independently counted:
+    # exactly 650 rows exist, all on device 10 / machine 1.
+    db.add_all([
+        models.IndustrialSignal(device_id=10, machine_id=1, signal_name=f"temp{i}",
+                                signal_value=str(i), numeric_value=i, quality="Good")
+        for i in range(650)
+    ])
+    db.commit()
+
+    out = analytics_routes.get_industrial_gateway_analytics(db=db, current_user={})
+
+    # true total ingested — NOT the 500-row display cap
+    assert out["signals"] == 650, out
+    # the display list is still capped: only the last 500 rows were scanned, so at
+    # most 30 distinct (device, signal) pairs are surfaced.
+    assert len(out["latest_signals"]) <= 30, out
+    # sibling headcounts stay their own true totals, independent of the window
+    assert out["devices"] == 1 and out["online_devices"] == 1, out
+    print("PASS industrial-gateway: signals is a true total (650) past the 500-row window")
+
+
 def _machine_event(machine_name, new_status):
     return models.MachineEvent(machine_name=machine_name, new_status=new_status)
 
@@ -1373,6 +1405,7 @@ if __name__ == "__main__":
     test_industrial_gateway_names_resolved_and_scan_is_bounded()
     test_industrial_gateway_missing_and_null_refs_fall_back_to_same_labels()
     test_industrial_gateway_empty_tables_are_zero_not_a_crash()
+    test_industrial_gateway_signals_count_is_true_total_past_the_500_window()
     test_machine_state_summary_true_totals_and_reconciliation()
     test_machine_state_summary_counts_all_events_not_a_recent_window()
     test_machine_state_summary_empty_table_is_zero_not_a_crash()

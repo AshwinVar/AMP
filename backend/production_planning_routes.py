@@ -151,6 +151,21 @@ def create_production_schedule(
         if not plan:
             raise HTTPException(status_code=404, detail="Production plan not found")
 
+    # Reject physically-impossible rows at the boundary — parity with every other
+    # counted ingest (production-record #266, production-plan #351, work-order #354,
+    # quality #324, order/PO #346, operator #374, shift #377); production_schedules
+    # was the one counted ingest still missing this guard. planned_quantity /
+    # estimated_minutes are plain ints in the schema (no ge=0), so a negative slips
+    # past validation and silently corrupts the forward schedule-load board
+    # (ai/schedule_load.py sums estimated_minutes into the headline booked minutes,
+    # the per-day / per-machine / per-shift load and the busiest-machine + peak-day
+    # ranking) and the /analytics/production-schedules SQL rollup (SUM of both) —
+    # dragging a headline or a per-machine bucket below its true value, a figure the
+    # data can't support (ADR-0010 honesty). Nothing here is an "over-produce" field
+    # (unlike a plan's actual_quantity), so both must simply be non-negative.
+    if min(schedule.planned_quantity, schedule.estimated_minutes) < 0:
+        raise HTTPException(status_code=400, detail="planned_quantity and estimated_minutes must be non-negative")
+
     new_schedule = models.ProductionSchedule(**schedule.model_dump())
     db.add(new_schedule)
     try:
@@ -173,7 +188,17 @@ def update_production_schedule(
     if not schedule:
         raise HTTPException(status_code=404, detail="Production schedule not found")
 
-    for key, value in payload.model_dump(exclude_unset=True).items():
+    data = payload.model_dump(exclude_unset=True)
+
+    # Reject a negative planned_quantity / estimated_minutes PATCH (parity with create
+    # and the production-plan / order / work-order update guards): a negative would
+    # corrupt the schedule-load board and the analytics rollup exactly as on create.
+    # Checked BEFORE the values are applied, so a rejected PATCH never mutates the row.
+    for field in ("planned_quantity", "estimated_minutes"):
+        if data.get(field) is not None and data[field] < 0:
+            raise HTTPException(status_code=400, detail="planned_quantity and estimated_minutes must be non-negative")
+
+    for key, value in data.items():
         setattr(schedule, key, value)
 
     db.commit()

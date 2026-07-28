@@ -245,6 +245,103 @@ def test_status_only_patch_on_a_null_row_does_not_500():
     print("PASS status-only PATCH on a NULL actual_quantity row succeeds (heals to 0)")
 
 
+def _schedule(no, machine_id, planned, minutes):
+    return schemas.ProductionScheduleCreate(
+        schedule_no=no, machine_id=machine_id, shift_name="A",
+        scheduled_date=date.today(), planned_quantity=planned, estimated_minutes=minutes,
+    )
+
+
+def _create_schedule_as(db, tenant, payload):
+    tok = T.set_current_tenant(tenant)
+    try:
+        return PP.create_production_schedule(payload, db=db, current_user={"tenant": tenant})
+    finally:
+        T.reset_current_tenant(tok)
+
+
+def test_create_production_schedule_happy_path():
+    # A clean schedule persists with both quantities intact.
+    db = _iso_session()
+    machine, _ = _seed_machine_and_wo(db, "TA")
+    ok = _create_schedule_as(db, "TA", _schedule("SCH-1", machine.id, 200, 480))
+    assert ok.schedule_no == "SCH-1", ok.schedule_no
+    assert ok.planned_quantity == 200 and ok.estimated_minutes == 480, (ok.planned_quantity, ok.estimated_minutes)
+    print("PASS create production schedule: clean row persists with both quantities")
+
+
+def test_create_production_schedule_rejects_negative_quantities():
+    # The one counted ingest that was missing the boundary guard. planned_quantity /
+    # estimated_minutes are plain ints (no ge=0), so a negative slips past validation
+    # and corrupts the forward schedule-load board (ai/schedule_load.py sums
+    # estimated_minutes) and the /analytics/production-schedules SQL rollup. A
+    # negative in EITHER field must be a clean 400, and nothing may persist.
+    db = _iso_session()
+    machine, _ = _seed_machine_and_wo(db, "TA")
+
+    try:
+        _create_schedule_as(db, "TA", _schedule("SCH-N1", machine.id, 200, -60))
+        assert False, "negative estimated_minutes should raise"
+    except HTTPException as e:
+        assert e.status_code == 400 and "non-negative" in e.detail, (e.status_code, e.detail)
+
+    try:
+        _create_schedule_as(db, "TA", _schedule("SCH-N2", machine.id, -200, 480))
+        assert False, "negative planned_quantity should raise"
+    except HTTPException as e:
+        assert e.status_code == 400 and "non-negative" in e.detail, (e.status_code, e.detail)
+
+    # A clean schedule still works after the rejections, and only it persisted.
+    ok = _create_schedule_as(db, "TA", _schedule("SCH-N3", machine.id, 200, 480))
+    tok = T.set_current_tenant("TA")
+    assert {s.schedule_no for s in db.query(models.ProductionSchedule).all()} == {"SCH-N3"}, "rejected rows must not persist"
+    T.reset_current_tenant(tok)
+    assert ok.schedule_no == "SCH-N3"
+    print("PASS create production schedule rejects negative planned/estimated -> 400, nothing persisted")
+
+
+def test_update_production_schedule_rejects_negative_quantities():
+    # A negative planned_quantity / estimated_minutes PATCH is physically impossible
+    # and would corrupt the schedule-load board exactly as on create — a clean 400
+    # checked BEFORE the value is applied, so the stored row is untouched.
+    db = _iso_session()
+    machine, _ = _seed_machine_and_wo(db, "TA")
+    sch = _create_schedule_as(db, "TA", _schedule("SCH-U1", machine.id, 200, 480))
+    tok = T.set_current_tenant("TA")
+    try:
+        for bad in (schemas.ProductionScheduleUpdate(estimated_minutes=-30),
+                    schemas.ProductionScheduleUpdate(planned_quantity=-10)):
+            try:
+                PP.update_production_schedule(sch.id, bad, db=db, current_user={"tenant": "TA"})
+                assert False, "negative PATCH should raise"
+            except HTTPException as e:
+                assert e.status_code == 400 and "non-negative" in e.detail, (e.status_code, e.detail)
+        db.expire_all()
+        row = db.query(models.ProductionSchedule).filter(models.ProductionSchedule.id == sch.id).first()
+        # unchanged, not negative
+        assert row.planned_quantity == 200 and row.estimated_minutes == 480, (row.planned_quantity, row.estimated_minutes)
+    finally:
+        T.reset_current_tenant(tok)
+    print("PASS update production schedule rejects a negative PATCH -> 400, row unchanged")
+
+
+def test_update_production_schedule_applies_valid_change():
+    # The normal transition still fires: a non-negative PATCH applies as before.
+    db = _iso_session()
+    machine, _ = _seed_machine_and_wo(db, "TA")
+    sch = _create_schedule_as(db, "TA", _schedule("SCH-U2", machine.id, 200, 480))
+    tok = T.set_current_tenant("TA")
+    try:
+        updated = PP.update_production_schedule(
+            sch.id, schemas.ProductionScheduleUpdate(estimated_minutes=360, status="In Progress"),
+            db=db, current_user={"tenant": "TA"})
+        assert updated.estimated_minutes == 360, updated.estimated_minutes
+        assert updated.status == "In Progress", updated.status
+    finally:
+        T.reset_current_tenant(tok)
+    print("PASS update production schedule: valid change applied")
+
+
 if __name__ == "__main__":
     test_planning_paths_owned_by_module()
     test_create_production_plan_happy_path_and_over_attainment_allowed()
@@ -253,4 +350,8 @@ if __name__ == "__main__":
     test_update_production_plan_completes_on_reaching_plan()
     test_get_production_plans_survives_a_null_actual_quantity_row()
     test_status_only_patch_on_a_null_row_does_not_500()
+    test_create_production_schedule_happy_path()
+    test_create_production_schedule_rejects_negative_quantities()
+    test_update_production_schedule_rejects_negative_quantities()
+    test_update_production_schedule_applies_valid_change()
     print("ALL PRODUCTION-PLANNING ROUTE TESTS PASSED")

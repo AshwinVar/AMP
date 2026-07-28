@@ -18,6 +18,8 @@ from ai.escalations import build_escalation_summary
 from ai.schedule_load import build_schedule_load
 from ai.stock_health import build_stock_health
 from ai.supplier_performance import build_supplier_performance
+from ai.flow import build_wip_aging
+from ai.workforce import build_operator_summary
 
 name = "report"
 
@@ -109,6 +111,36 @@ def build_weekly_report(db, tenant: str) -> dict:
             blame = (f" — worst: {worst['supplier']} ({worst['overdue']})"
                      if worst and worst["overdue"] else "")
             lines.append(f"- {sup['overdue']} PO{'s' if sup['overdue'] != 1 else ''} overdue{blame}.")
+        lines.append("")
+
+    # Work in progress: the open work-order backlog and its promises — shown only
+    # when there is one. Same read-model as the Work Orders backlog card (#340).
+    wip = build_wip_aging(db, tenant)
+    if wip["open"]:
+        lines.append("## Work in progress")
+        line = f"- {wip['open']} open work order{'s' if wip['open'] != 1 else ''}"
+        if wip["late"]:
+            line += f", {wip['late']} past planned end"
+        if wip["oldest_days"] is not None:
+            line += f", oldest open {wip['oldest_days']} day{'s' if wip['oldest_days'] != 1 else ''}"
+        lines.append(line + ".")
+        lines.append("")
+
+    # Crew: who ran the jobs and the pooled quality rate — shown only when jobs
+    # were booked. Same read-model as the Operator Terminal cards (#338).
+    crew = build_operator_summary(db, tenant)
+    if crew["jobs"]:
+        lines.append("## Crew")
+        line = (f"- {crew['operators']} operator{'s' if crew['operators'] != 1 else ''} ran "
+                f"{crew['jobs']} job{'s' if crew['jobs'] != 1 else ''} "
+                f"({crew['completed']} completed)")
+        if crew["quality_rate"] is not None:
+            line += f" at {crew['quality_rate']}% quality"
+        lines.append(line + ".")
+        if crew["needs_attention"]:
+            na = crew["needs_attention"]
+            lines.append(f"- Look at {na['operator']} first — "
+                         f"{na['quality_rate']}% on {na['units']:,} units.")
         lines.append("")
 
     # Stock integrity: capital sitting idle — shown only when something is flagged.

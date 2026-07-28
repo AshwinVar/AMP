@@ -54,6 +54,20 @@ def test_weekly_report_composes_a_markdown_page():
     # Stock integrity: stock with no movement in the window -> dead.
     db.add(models.InventoryItem(item_code="IT-9", item_name="Bracket", category="Parts",
                                 unit="pcs", current_stock=50, reorder_level=0))
+    # Work in progress: one open WO past its planned end, 4 days old.
+    wo = models.WorkOrder(work_order_no="WO-R1", part_number="P-9", batch_number="B-9",
+                          target_quantity=100, actual_quantity=20, status="Planned",
+                          material_state="RAW",
+                          planned_end=now - timedelta(days=1))
+    wo.created_at = now - timedelta(days=4)
+    db.add(wo)
+    # Crew: one operator, two jobs (one completed), 90% pooled quality.
+    for i, (status, good, rej) in enumerate([("Completed", 45, 5), ("Started", 45, 5)]):
+        ex = models.OperatorJobExecution(execution_no=f"EX-{i}", operator_name="lee",
+                                         machine_id=1, job_status=status,
+                                         good_count=good, rejected_count=rej)
+        ex.started_at = now - timedelta(days=1)
+        db.add(ex)
     # Escalations: one open High + one resolved in 24h (the SLA line).
     db.add(models.Escalation(title="Reflow oven tripping", severity="High", owner="Ops",
                              department="Maintenance", status="Open",
@@ -70,9 +84,14 @@ def test_weekly_report_composes_a_markdown_page():
     # the report has the expected sections
     for section in ["# Weekly Plant Report", "## Scorecard", "## Cost of losses",
                     "## Delivery", "## Maintenance", "## Week ahead", "## Supply",
+                    "## Work in progress", "## Crew",
                     "## Stock integrity", "## Escalations", "## Compliance",
                     "## Needs attention", "## Wins"]:
         assert section in md
+    # WIP: the open late WO with its age
+    assert "1 open work order, 1 past planned end, oldest open 4 days." in md
+    # Crew: pooled quality 90/100 across the two jobs
+    assert "1 operator ran 2 jobs (1 completed) at 90% quality." in md
     assert "1 overdue for review" in md
     # maintenance: the overdue backlog and the PM-compliance rate both render
     assert "1 overdue, 0 scheduled over the next 14 days" in md

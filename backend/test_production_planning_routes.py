@@ -14,6 +14,8 @@ from fastapi import HTTPException
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker
 
+import schemas as _schemas_mod  # noqa: F401  (response-model heal lives in schemas)
+
 import main
 import models
 import production_planning_routes as PP
@@ -176,10 +178,79 @@ def test_update_production_plan_completes_on_reaching_plan():
     print("PASS update production plan: actual reaching planned -> Completed (value applied)")
 
 
+def _null_out_actual(db, plan_id):
+    """Force a legacy/raw-SQL NULL into the nullable-default-0 actual_quantity
+    column — the exact state the ORM default never fills (it only covers an
+    inserter that OMITS the field) but a migration or a cleared write can leave."""
+    db.execute(
+        text("UPDATE production_plans SET actual_quantity = NULL WHERE id = :id"),
+        {"id": plan_id},
+    )
+    db.commit()
+    db.expire_all()
+
+
+def test_get_production_plans_survives_a_null_actual_quantity_row():
+    # A single row with actual_quantity = NULL used to 500 the WHOLE list:
+    # ProductionPlanResponse types actual_quantity as a non-optional int, so the
+    # NULL raised ValidationError during response serialisation and hid every good
+    # row behind it. The response model now coalesces a NULL to the column's own
+    # default of 0 (honest: NULL = "no value recorded", declared default is 0).
+    db = _iso_session()
+    machine, wo = _seed_machine_and_wo(db, "TA")
+    good = _create_as(db, "TA", _plan("PLN-OK", machine.id, wo.id, 100, 42))
+    legacy = _create_as(db, "TA", _plan("PLN-NULL", machine.id, wo.id, 100, 0))
+    _null_out_actual(db, legacy.id)
+
+    tok = T.set_current_tenant("TA")
+    try:
+        rows = PP.get_production_plans(db=db, current_user={"tenant": "TA"})
+        # Serialise EXACTLY as FastAPI does (response_model + from_attributes); this
+        # is the step that used to raise on the NULL row.
+        serialised = {
+            r.plan_no: schemas.ProductionPlanResponse.model_validate(r)
+            for r in rows
+        }
+    finally:
+        T.reset_current_tenant(tok)
+
+    assert set(serialised) == {"PLN-OK", "PLN-NULL"}, set(serialised)
+    # The NULL row heals to 0, the real value is preserved untouched.
+    assert serialised["PLN-NULL"].actual_quantity == 0, serialised["PLN-NULL"].actual_quantity
+    assert serialised["PLN-OK"].actual_quantity == 42, serialised["PLN-OK"].actual_quantity
+    print("PASS GET /production-plans survives a NULL actual_quantity row (heals to 0, real value kept)")
+
+
+def test_status_only_patch_on_a_null_row_does_not_500():
+    # A status-only PATCH never touches actual_quantity (the actual_quantity block
+    # is skipped), so on a legacy NULL row it returned the row unchanged and the
+    # response serialisation 500ed. The heal keeps the status transition working
+    # and returns actual_quantity as 0.
+    db = _iso_session()
+    machine, wo = _seed_machine_and_wo(db, "TA")
+    plan = _create_as(db, "TA", _plan("PLN-SP", machine.id, wo.id, 100, 0))
+    _null_out_actual(db, plan.id)
+
+    tok = T.set_current_tenant("TA")
+    try:
+        updated = PP.update_production_plan(
+            plan.id, schemas.ProductionPlanUpdate(status="On Hold"),
+            db=db, current_user={"tenant": "TA"})
+        serialised = schemas.ProductionPlanResponse.model_validate(updated)
+    finally:
+        T.reset_current_tenant(tok)
+
+    assert serialised.status == "On Hold", serialised.status
+    assert serialised.actual_quantity == 0, serialised.actual_quantity
+    print("PASS status-only PATCH on a NULL actual_quantity row succeeds (heals to 0)")
+
+
 if __name__ == "__main__":
     test_planning_paths_owned_by_module()
     test_create_production_plan_happy_path_and_over_attainment_allowed()
     test_create_production_plan_rejects_negative_quantities()
     test_update_production_plan_rejects_negative_actual()
     test_update_production_plan_completes_on_reaching_plan()
+    test_get_production_plans_survives_a_null_actual_quantity_row()
+    test_status_only_patch_on_a_null_row_does_not_500()
     print("ALL PRODUCTION-PLANNING ROUTE TESTS PASSED")

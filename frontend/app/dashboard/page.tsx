@@ -7,6 +7,7 @@ import { apiGet, apiPost, apiPatch, apiDelete, getToken, getUserRole } from "../
 import { useInFlight } from "../../lib/useInFlight";
 import { parseDurationToMinutes } from "../../lib/duration";
 import { readMachineOee } from "../../lib/oee";
+import { usePolling } from "../../lib/usePolling";
 import {
   BarChart,
   Bar,
@@ -759,19 +760,12 @@ export default function DashboardPage() {
   }
 
   useEffect(() => {
-    if (!getToken()) {
-      window.location.href = "/login";
-      return;
-    }
-
-    fetchAll();
-
-    const interval = setInterval(() => {
-      fetchAll();
-    }, 3000);
-
-    return () => clearInterval(interval);
+    if (!getToken()) window.location.href = "/login";
   }, []);
+
+  // Each round is ~47 requests, so a round that outruns the interval must not
+  // have the next one stacked on top of it (see lib/usePolling.ts).
+  usePolling(fetchAll, 3000, Boolean(getToken()));
 
   useEffect(() => {
     if (!getToken()) return;

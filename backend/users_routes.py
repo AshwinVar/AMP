@@ -118,6 +118,19 @@ def update_user_role(
 
     _same_tenant_or_403(user, current_user)
 
+    # You cannot strip your OWN Admin role. delete_user already refuses "You cannot
+    # delete your own account", which is what guarantees a workspace keeps at least
+    # one Admin (an Admin can delete every OTHER user, never themselves). Without the
+    # same guard here that guarantee is trivially bypassed: every caller of this
+    # endpoint is an Admin (the router-level require_roles(["Admin"]) gate), so an
+    # Admin demoting themselves to Operator/Supervisor removes the last Admin and
+    # locks the whole workspace out of every Admin-gated action — user management,
+    # licensing, branding — with no non-Admin path left to undo it. Re-scoping the
+    # role of ANOTHER Admin is still allowed (the caller remains an Admin), so only
+    # self-demotion is refused; a self no-op to "Admin" is harmless and stays allowed.
+    if user.username == current_user.get("sub") and payload.role != "Admin":
+        raise HTTPException(status_code=400, detail="You cannot remove your own Admin role")
+
     user.role = payload.role
     db.commit()
     db.refresh(user)

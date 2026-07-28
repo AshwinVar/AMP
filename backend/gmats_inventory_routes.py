@@ -22,6 +22,7 @@ from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from sqlalchemy.orm import Session
 
 import models
+from payload_fields import int_field, str_field
 from csv_safe import read_upload_text
 from auth import get_current_user, require_roles
 from database import SessionLocal
@@ -159,15 +160,15 @@ def gmats_summary(tenant: str = "GMATS", db: Session = Depends(get_db), current_
 def gmats_create_item(payload: dict, db: Session = Depends(get_db), current_user: dict = Depends(require_roles(["Admin", "Supervisor"]))):
     item = models.GmatsItem(
         tenant_code=_effective_tenant(current_user, payload.get("tenant")),
-        item_code=payload["item_code"],
-        item_name=payload["item_name"],
+        item_code=str_field(payload, "item_code"),
+        item_name=str_field(payload, "item_name"),
         category=payload.get("category", "General"),
         unit=payload.get("unit", "Nos"),
-        physical_stock=int(payload.get("physical_stock", 0)),
+        physical_stock=int_field(payload, "physical_stock", required=False),
         reserved_stock=0,
-        reorder_level=int(payload.get("reorder_level", 0)),
+        reorder_level=int_field(payload, "reorder_level", required=False),
         location=payload.get("location", ""),
-        purchase_rate=int(payload.get("purchase_rate", 0)),
+        purchase_rate=int_field(payload, "purchase_rate", required=False),
         supplier=payload.get("supplier", ""),
     )
     db.add(item); db.commit(); db.refresh(item)
@@ -185,11 +186,11 @@ def gmats_update_item(item_id: int, payload: dict, db: Session = Depends(get_db)
         raise HTTPException(status_code=404, detail="Item not found")
     _guard_record(current_user, item.tenant_code)
     if "reorder_level" in payload:
-        item.reorder_level = int(payload["reorder_level"])
+        item.reorder_level = int_field(payload, "reorder_level")
     if "purchase_rate" in payload:
-        item.purchase_rate = int(payload["purchase_rate"])
+        item.purchase_rate = int_field(payload, "purchase_rate")
     if "location" in payload:
-        item.location = payload["location"]
+        item.location = str_field(payload, "location", required=False)
     db.commit()
     return _item_dict(db, item)
 
@@ -201,13 +202,11 @@ def gmats_stock_in(item_id: int, payload: dict, db: Session = Depends(get_db), c
     if not item:
         raise HTTPException(status_code=404, detail="Item not found")
     _guard_record(current_user, item.tenant_code)
-    qty = int(payload["qty"])
-    if qty <= 0:
-        raise HTTPException(status_code=400, detail="Quantity must be positive")
+    qty = int_field(payload, "qty", minimum=1)
     _heal_stock(item)
     item.physical_stock += qty
     if payload.get("purchase_rate"):
-        item.purchase_rate = int(payload["purchase_rate"])
+        item.purchase_rate = int_field(payload, "purchase_rate")
     db.commit()
     return _item_dict(db, item)
 
@@ -220,7 +219,7 @@ def gmats_add_alias(item_id: int, payload: dict, db: Session = Depends(get_db), 
     if not item:
         raise HTTPException(status_code=404, detail="Item not found")
     _guard_record(current_user, item.tenant_code)
-    name = payload["alias_name"].strip()
+    name = str_field(payload, "alias_name")
     if name:
         db.add(models.GmatsAlias(tenant_code=item.tenant_code, item_id=item.id, alias_name=name))
         db.commit()
@@ -305,10 +304,10 @@ def gmats_create_proforma(payload: dict, db: Session = Depends(get_db), current_
         # negative reserve is never cleanly reversed. Zero is a meaningless no-op line.
         # This runs before any header/reserve write, so a bad line rejects the whole
         # proforma and reserves nothing (same pre-commit atomicity the summed guard has).
-        qty = int(line["qty"])
+        qty = int_field(line, "qty")
         if qty <= 0:
             raise HTTPException(status_code=400, detail="Quantity must be positive")
-        needed[int(line["item_id"])] += qty
+        needed[int_field(line, "item_id")] += qty
     # Scope the line-item lookup to the document's tenant. GmatsItem is NOT in
     # tenancy.SCOPED_MODELS (it carries a manual tenant_code, filtered explicitly on
     # every gmats read endpoint), so a bare id lookup accepts ANY tenant's item — a
@@ -332,7 +331,7 @@ def gmats_create_proforma(payload: dict, db: Session = Depends(get_db), current_
     p = models.GmatsProforma(
         tenant_code=tenant,
         proforma_no=f"PI-{1000 + count + 1}",
-        customer_name=payload["customer_name"],
+        customer_name=str_field(payload, "customer_name"),
         status="Open",
     )
     db.add(p); db.commit(); db.refresh(p)
@@ -340,9 +339,9 @@ def gmats_create_proforma(payload: dict, db: Session = Depends(get_db), current_
         # Same tenant scope as the validation loop — the reserve must land on THIS
         # tenant's item, never a foreign one referenced by a guessed id.
         item = db.query(models.GmatsItem).filter(
-            models.GmatsItem.id == int(line["item_id"]),
+            models.GmatsItem.id == int_field(line, "item_id"),
             models.GmatsItem.tenant_code == tenant).first()
-        qty = int(line["qty"])
+        qty = int_field(line, "qty")
         _heal_stock(item)
         item.reserved_stock += qty               # RESERVE — physical unchanged
         db.add(models.GmatsProformaLine(proforma_id=p.id, item_id=item.id, qty=qty))
@@ -480,10 +479,10 @@ def gmats_create_min(payload: dict, db: Session = Depends(get_db), current_user:
         # the stock-corruption class the duplicate-line summing fix (#350) closed on the
         # over-issue side. Zero is a meaningless no-op line. Runs before any write, so a
         # bad line rejects the whole MIN and issues nothing.
-        qty = int(line["qty"])
+        qty = int_field(line, "qty")
         if qty <= 0:
             raise HTTPException(status_code=400, detail="Quantity must be positive")
-        needed[int(line["item_id"])] += qty
+        needed[int_field(line, "item_id")] += qty
     # Scope the line-item lookup to the document's tenant (see gmats_create_proforma
     # for the full rationale): an unscoped by-id lookup let a client login DEDUCT
     # physical stock from another company's item by passing a foreign id. The MIN
@@ -501,7 +500,7 @@ def gmats_create_min(payload: dict, db: Session = Depends(get_db), current_user:
     m = models.GmatsMIN(
         tenant_code=tenant,
         min_no=f"MIN-{4000 + count + 1}",
-        customer_name=payload["customer_name"],
+        customer_name=str_field(payload, "customer_name"),
         machine_ref=payload.get("machine_ref", ""),
         status="Issued",
     )
@@ -510,9 +509,9 @@ def gmats_create_min(payload: dict, db: Session = Depends(get_db), current_user:
         # Same tenant scope as the validation loop — the deduction must land on THIS
         # tenant's item, never a foreign one referenced by a guessed id.
         item = db.query(models.GmatsItem).filter(
-            models.GmatsItem.id == int(line["item_id"]),
+            models.GmatsItem.id == int_field(line, "item_id"),
             models.GmatsItem.tenant_code == tenant).first()
-        qty = int(line["qty"])
+        qty = int_field(line, "qty")
         _heal_stock(item)
         item.physical_stock -= qty   # exact (the summed guard above keeps it >= 0), so void restores exactly
         db.add(models.GmatsMINLine(min_id=m.id, item_id=item.id, qty=qty))
@@ -530,13 +529,13 @@ def gmats_correct_item(item_id: int, payload: dict, db: Session = Depends(get_db
         raise HTTPException(status_code=404, detail="Item not found")
     _guard_record(current_user, item.tenant_code)
     if "physical_stock" in payload:
-        item.physical_stock = max(0, int(payload["physical_stock"]))
+        item.physical_stock = int_field(payload, "physical_stock")
     if "reserved_stock" in payload:
-        item.reserved_stock = max(0, int(payload["reserved_stock"]))
+        item.reserved_stock = int_field(payload, "reserved_stock")
     if "reorder_level" in payload:
-        item.reorder_level = int(payload["reorder_level"])
+        item.reorder_level = int_field(payload, "reorder_level")
     if "purchase_rate" in payload:
-        item.purchase_rate = int(payload["purchase_rate"])
+        item.purchase_rate = int_field(payload, "purchase_rate")
     db.commit()
     return _item_dict(db, item)
 

@@ -614,9 +614,25 @@ def generate_system_notifications(db: Session = Depends(_get_db), current_user: 
     # low-stock predicate is unchanged (current_stock <= reorder_level), so a NULL
     # stock/level still drops out via SQL NULL comparison — matching the low-stock
     # generator and filter used elsewhere.
+    #
+    # "Open" = every escalation NOT explicitly Resolved, on the SAME basis as the
+    # /analytics/system-health and /analytics/final-executive-summary headline
+    # (get_system_health) so the notification's "N escalation(s) still require
+    # action" reconciles with the open-escalations count the tenant already sees on
+    # the dashboard. status is Column(String, default="Open") WITHOUT nullable=False,
+    # so a raw-SQL / migration / cleared write can store NULL. A bare
+    # `status != 'Resolved'` is NULL — not TRUE — for that row in SQL, so it was
+    # silently dropped here while the headline OR'd it back in and counted it as
+    # open: the notification then undercounted the very backlog it exists to flag.
+    # OR the NULL in to keep the exact same basis.
     open_escalations = (
         db.query(func.count(models.Escalation.id))
-        .filter(models.Escalation.status != "Resolved")
+        .filter(
+            or_(
+                models.Escalation.status.is_(None),
+                models.Escalation.status != "Resolved",
+            )
+        )
         .scalar()
     ) or 0
     if open_escalations > 0:

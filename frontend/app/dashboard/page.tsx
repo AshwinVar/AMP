@@ -8,6 +8,7 @@ import { useInFlight } from "../../lib/useInFlight";
 import { parseDurationToMinutes } from "../../lib/duration";
 import { readMachineOee } from "../../lib/oee";
 import { usePolling } from "../../lib/usePolling";
+import { ActionError, useActionError } from "../../lib/useActionError";
 import {
   BarChart,
   Bar,
@@ -496,7 +497,7 @@ export default function DashboardPage() {
       await apiPatch(`/users/${id}/role`, { role });
       loadUsers();
     } catch (error) {
-      console.error(error);
+      report(error, "update user role");
     }
   }
 
@@ -505,7 +506,7 @@ export default function DashboardPage() {
       await apiDelete(`/users/${id}`);
       loadUsers();
     } catch (error) {
-      console.error(error);
+      report(error, "delete user account");
     }
   }
 
@@ -859,7 +860,7 @@ export default function DashboardPage() {
 
       fetchAll();
     } catch (error) {
-      console.error(error);
+      report(error, "add machine");
     }
     });
   }
@@ -869,7 +870,7 @@ export default function DashboardPage() {
       await apiDelete(`/machines/${id}`);
       fetchAll();
     } catch (error) {
-      console.error(error);
+      report(error, "delete machine");
     }
   }
 
@@ -880,11 +881,21 @@ export default function DashboardPage() {
       );
       fetchAll();
     } catch (error) {
-      console.error(error);
+      report(error, "update machine status");
     }
   }
 
   const { run: runOnce, busy: isBusy } = useInFlight();
+
+  // Every write reports its failure here instead of into the console, so a save
+  // that did not happen cannot pass for one that did (see lib/useActionError).
+  const { error: actionError, report, clear: clearActionError } = useActionError();
+
+  // A failure belongs to the screen it happened on; carrying it into the next
+  // view would just be a stale banner over unrelated work.
+  useEffect(() => {
+    clearActionError();
+  }, [activeView, clearActionError]);
 
   async function addDowntimeLog(e: React.FormEvent) {
     e.preventDefault();
@@ -906,7 +917,7 @@ export default function DashboardPage() {
 
       fetchAll();
     } catch (error) {
-      console.error(error);
+      report(error, "add downtime log");
     }
     });
   }
@@ -928,7 +939,7 @@ export default function DashboardPage() {
 
       fetchAll();
     } catch (error) {
-      console.error(error);
+      report(error, "add shift");
     }
     });
   }
@@ -957,8 +968,7 @@ export default function DashboardPage() {
 
       fetchAll();
     } catch (error) {
-      console.error(error);
-      alert("Failed to create work order. Check backend logs.");
+      report(error, "create work order");
     }
     });
   }
@@ -976,8 +986,7 @@ export default function DashboardPage() {
 
       fetchAll();
     } catch (error) {
-      console.error(error);
-      alert("Failed to update work order.");
+      report(error, "update work order");
     }
   }
 
@@ -986,8 +995,7 @@ export default function DashboardPage() {
       await apiDelete(`/work-orders/${id}`);
       fetchAll();
     } catch (error) {
-      console.error(error);
-      alert("Failed to delete work order.");
+      report(error, "delete work order");
     }
   }
 
@@ -1017,8 +1025,7 @@ export default function DashboardPage() {
 
       fetchAll();
     } catch (error) {
-      console.error(error);
-      alert("Failed to create production plan. Check backend logs.");
+      report(error, "create production plan");
     }
     });
   }
@@ -1036,8 +1043,7 @@ export default function DashboardPage() {
 
       fetchAll();
     } catch (error) {
-      console.error(error);
-      alert("Failed to update production plan.");
+      report(error, "update production plan");
     }
   }
 
@@ -1046,8 +1052,7 @@ export default function DashboardPage() {
       await apiDelete(`/production-plans/${id}`);
       fetchAll();
     } catch (error) {
-      console.error(error);
-      alert("Failed to delete production plan.");
+      report(error, "delete production plan");
     }
   }
 
@@ -1076,8 +1081,7 @@ export default function DashboardPage() {
 
       fetchAll();
     } catch (error) {
-      console.error(error);
-      alert("Failed to create escalation.");
+      report(error, "create escalation");
     }
     });
   }
@@ -1099,8 +1103,7 @@ export default function DashboardPage() {
 
       fetchAll();
     } catch (error) {
-      console.error(error);
-      alert("Failed to update escalation.");
+      report(error, "update escalation");
     }
   }
 
@@ -1109,8 +1112,7 @@ export default function DashboardPage() {
       await apiDelete(`/escalations/${id}`);
       fetchAll();
     } catch (error) {
-      console.error(error);
-      alert("Failed to delete escalation.");
+      report(error, "delete escalation");
     }
   }
 
@@ -1119,8 +1121,7 @@ export default function DashboardPage() {
       await apiPost<{ created: number }>("/escalations/from-smart-alerts", {});
       fetchAll();
     } catch (error) {
-      console.error(error);
-      alert("Failed to generate smart escalations.");
+      report(error, "generate escalations from smart alerts");
     }
   }
 
@@ -1144,8 +1145,7 @@ export default function DashboardPage() {
 
       fetchAll();
     } catch (error) {
-      console.error(error);
-      alert("Failed to create inventory item.");
+      report(error, "create inventory item");
     }
     });
   }
@@ -1163,8 +1163,7 @@ export default function DashboardPage() {
 
       fetchAll();
     } catch (error) {
-      console.error(error);
-      alert("Failed to update inventory item.");
+      report(error, "update inventory item");
     }
   }
 
@@ -1173,8 +1172,7 @@ export default function DashboardPage() {
       await apiDelete(`/inventory/items/${id}`);
       fetchAll();
     } catch (error) {
-      console.error(error);
-      alert("Failed to delete inventory item.");
+      report(error, "delete inventory item");
     }
   }
 
@@ -1199,8 +1197,7 @@ export default function DashboardPage() {
 
       fetchAll();
     } catch (error) {
-      console.error(error);
-      alert("Failed to post inventory transaction.");
+      report(error, "create inventory transaction");
     }
     });
   }
@@ -1210,8 +1207,7 @@ export default function DashboardPage() {
       await apiPost<{ created: number }>("/inventory/generate-low-stock-escalations", {});
       fetchAll();
     } catch (error) {
-      console.error(error);
-      alert("Failed to generate low stock escalations.");
+      report(error, "generate low stock escalations");
     }
   }
 
@@ -1250,8 +1246,7 @@ export default function DashboardPage() {
 
       fetchAll();
     } catch (error) {
-      console.error(error);
-      alert("Failed to create quality inspection.");
+      report(error, "create quality inspection");
     }
     });
   }
@@ -1279,8 +1274,7 @@ export default function DashboardPage() {
 
       fetchAll();
     } catch (error) {
-      console.error(error);
-      alert("Failed to update quality inspection.");
+      report(error, "update quality inspection");
     }
   }
 
@@ -1289,8 +1283,7 @@ export default function DashboardPage() {
       await apiDelete(`/quality/inspections/${id}`);
       fetchAll();
     } catch (error) {
-      console.error(error);
-      alert("Failed to delete quality inspection.");
+      report(error, "delete quality inspection");
     }
   }
 
@@ -1299,8 +1292,7 @@ export default function DashboardPage() {
       await apiPost<{ created: number }>("/quality/generate-defect-escalations", {});
       fetchAll();
     } catch (error) {
-      console.error(error);
-      alert("Failed to generate quality escalations.");
+      report(error, "generate defect escalations");
     }
   }
 
@@ -1327,8 +1319,7 @@ export default function DashboardPage() {
 
       fetchAll();
     } catch (error) {
-      console.error(error);
-      alert("Failed to create factory layout node.");
+      report(error, "create factory node");
     }
     });
   }
@@ -1343,8 +1334,7 @@ export default function DashboardPage() {
 
       fetchAll();
     } catch (error) {
-      console.error(error);
-      alert("Failed to update factory layout node.");
+      report(error, "update factory node");
     }
   }
 
@@ -1353,8 +1343,7 @@ export default function DashboardPage() {
       await apiDelete(`/factory-layout/nodes/${id}`);
       fetchAll();
     } catch (error) {
-      console.error(error);
-      alert("Failed to delete factory layout node.");
+      report(error, "delete factory node");
     }
   }
 
@@ -1363,8 +1352,7 @@ export default function DashboardPage() {
       await apiPost<{ created: number }>("/factory-layout/auto-generate", {});
       fetchAll();
     } catch (error) {
-      console.error(error);
-      alert("Failed to auto-generate factory layout.");
+      report(error, "auto generate factory layout");
     }
   }
 
@@ -1401,8 +1389,7 @@ export default function DashboardPage() {
 
       fetchAll();
     } catch (error) {
-      console.error(error);
-      alert("Failed to create customer order.");
+      report(error, "create customer order");
     }
     });
   }
@@ -1422,8 +1409,7 @@ export default function DashboardPage() {
 
       fetchAll();
     } catch (error) {
-      console.error(error);
-      alert("Failed to update customer order.");
+      report(error, "update customer order");
     }
   }
 
@@ -1432,8 +1418,7 @@ export default function DashboardPage() {
       await apiDelete(`/customer-orders/${id}`);
       fetchAll();
     } catch (error) {
-      console.error(error);
-      alert("Failed to delete customer order.");
+      report(error, "delete customer order");
     }
   }
 
@@ -1442,8 +1427,7 @@ export default function DashboardPage() {
       await apiPost<{ created: number }>("/customer-orders/generate-late-order-escalations", {});
       fetchAll();
     } catch (error) {
-      console.error(error);
-      alert("Failed to generate late order escalations.");
+      report(error, "generate late order escalations");
     }
   }
 
@@ -1466,8 +1450,7 @@ export default function DashboardPage() {
 
       fetchAll();
     } catch (error) {
-      console.error(error);
-      alert("Failed to create supplier.");
+      report(error, "create supplier");
     }
     });
   }
@@ -1477,8 +1460,7 @@ export default function DashboardPage() {
       await apiPatch<Supplier>(`/suppliers/${id}`, { status });
       fetchAll();
     } catch (error) {
-      console.error(error);
-      alert("Failed to update supplier.");
+      report(error, "update supplier");
     }
   }
 
@@ -1487,8 +1469,7 @@ export default function DashboardPage() {
       await apiDelete(`/suppliers/${id}`);
       fetchAll();
     } catch (error) {
-      console.error(error);
-      alert("Failed to delete supplier.");
+      report(error, "delete supplier");
     }
   }
 
@@ -1520,8 +1501,7 @@ export default function DashboardPage() {
 
       fetchAll();
     } catch (error) {
-      console.error(error);
-      alert("Failed to create purchase order.");
+      report(error, "create purchase order");
     }
     });
   }
@@ -1535,8 +1515,7 @@ export default function DashboardPage() {
 
       fetchAll();
     } catch (error) {
-      console.error(error);
-      alert("Failed to update purchase order.");
+      report(error, "update purchase order");
     }
   }
 
@@ -1545,8 +1524,7 @@ export default function DashboardPage() {
       await apiDelete(`/purchase-orders/${id}`);
       fetchAll();
     } catch (error) {
-      console.error(error);
-      alert("Failed to delete purchase order.");
+      report(error, "delete purchase order");
     }
   }
 
@@ -1555,8 +1533,7 @@ export default function DashboardPage() {
       await apiPost<{ created: number }>("/purchase-orders/generate-overdue-escalations", {});
       fetchAll();
     } catch (error) {
-      console.error(error);
-      alert("Failed to generate overdue PO escalations.");
+      report(error, "generate overdue PO escalations");
     }
   }
 
@@ -1567,23 +1544,23 @@ export default function DashboardPage() {
       await apiPost<ComplianceDocument>("/documents", documentForm);
       setDocumentForm({ document_no: "", title: "", document_type: "SOP", department: "Production", version: "1.0", owner: "QA Lead", approval_status: "Draft", review_due_date: new Date().toISOString().slice(0,10), storage_link: "", notes: "" });
       fetchAll();
-    } catch (error) { console.error(error); alert("Failed to create document."); }
+    } catch (error) { report(error, "create document"); }
     });
   }
 
   async function updateDocument(id: number, approvalStatus: string, version?: string) {
     try { await apiPatch<ComplianceDocument>(`/documents/${id}`, { approval_status: approvalStatus, version }); fetchAll(); }
-    catch (error) { console.error(error); alert("Failed to update document."); }
+    catch (error) { report(error, "update document"); }
   }
 
   async function deleteDocument(id: number) {
     try { await apiDelete(`/documents/${id}`); fetchAll(); }
-    catch (error) { console.error(error); alert("Failed to delete document."); }
+    catch (error) { report(error, "delete document"); }
   }
 
   async function generateDocumentReviewEscalations() {
     try { await apiPost<{ created: number }>("/documents/generate-review-escalations", {}); fetchAll(); }
-    catch (error) { console.error(error); alert("Failed to generate document escalations."); }
+    catch (error) { report(error, "generate document review escalations"); }
   }
 
   async function createMaintenanceTask(e: React.FormEvent) {
@@ -1593,23 +1570,23 @@ export default function DashboardPage() {
       await apiPost<MaintenanceTask>("/maintenance/tasks", { ...maintenanceForm, machine_id: Number(maintenanceForm.machine_id), downtime_minutes: Number(maintenanceForm.downtime_minutes) });
       setMaintenanceForm({ task_no: "", machine_id: "", task_type: "Preventive", priority: "Medium", assigned_to: "Maintenance", planned_date: new Date().toISOString().slice(0,10), downtime_minutes: 0, spare_parts_used: "", status: "Open", notes: "" });
       fetchAll();
-    } catch (error) { console.error(error); alert("Failed to create maintenance task."); }
+    } catch (error) { report(error, "create maintenance task"); }
     });
   }
 
   async function updateMaintenanceTask(id: number, status: string, downtime?: number) {
     try { await apiPatch<MaintenanceTask>(`/maintenance/tasks/${id}`, { status, downtime_minutes: downtime }); fetchAll(); }
-    catch (error) { console.error(error); alert("Failed to update maintenance task."); }
+    catch (error) { report(error, "update maintenance task"); }
   }
 
   async function deleteMaintenanceTask(id: number) {
     try { await apiDelete(`/maintenance/tasks/${id}`); fetchAll(); }
-    catch (error) { console.error(error); alert("Failed to delete maintenance task."); }
+    catch (error) { report(error, "delete maintenance task"); }
   }
 
   async function generateMaintenanceOverdueEscalations() {
     try { await apiPost<{ created: number }>("/maintenance/generate-overdue-escalations", {}); fetchAll(); }
-    catch (error) { console.error(error); alert("Failed to generate maintenance escalations."); }
+    catch (error) { report(error, "generate maintenance overdue escalations"); }
   }
 
   async function createProductionSchedule(e: React.FormEvent) {
@@ -1619,18 +1596,18 @@ export default function DashboardPage() {
       await apiPost<ProductionSchedule>("/production-schedules", { ...scheduleForm, work_order_id: scheduleForm.work_order_id ? Number(scheduleForm.work_order_id) : null, production_plan_id: scheduleForm.production_plan_id ? Number(scheduleForm.production_plan_id) : null, machine_id: Number(scheduleForm.machine_id), planned_quantity: Number(scheduleForm.planned_quantity), estimated_minutes: Number(scheduleForm.estimated_minutes) });
       setScheduleForm({ schedule_no: "", work_order_id: "", production_plan_id: "", machine_id: "", shift_name: "Shift A", scheduled_date: new Date().toISOString().slice(0,10), priority: "Medium", planned_quantity: 0, estimated_minutes: 480, status: "Scheduled", notes: "" });
       fetchAll();
-    } catch (error) { console.error(error); alert("Failed to create production schedule."); }
+    } catch (error) { report(error, "create production schedule"); }
     });
   }
 
   async function updateProductionSchedule(id: number, status: string, priority?: string) {
     try { await apiPatch<ProductionSchedule>(`/production-schedules/${id}`, { status, priority }); fetchAll(); }
-    catch (error) { console.error(error); alert("Failed to update schedule."); }
+    catch (error) { report(error, "update production schedule"); }
   }
 
   async function deleteProductionSchedule(id: number) {
     try { await apiDelete(`/production-schedules/${id}`); fetchAll(); }
-    catch (error) { console.error(error); alert("Failed to delete schedule."); }
+    catch (error) { report(error, "delete production schedule"); }
   }
 
   async function createIotTelemetry(e: React.FormEvent) {
@@ -1640,31 +1617,31 @@ export default function DashboardPage() {
       await apiPost<IoTTelemetry>("/iot/telemetry", { ...iotForm, machine_id: Number(iotForm.machine_id), numeric_value: Number(iotForm.numeric_value) });
       setIotForm({ machine_id: "", signal_name: "status", signal_value: "Running", numeric_value: 0, unit: "", source: "Manual" });
       fetchAll();
-    } catch (error) { console.error(error); alert("Failed to post IoT signal."); }
+    } catch (error) { report(error, "create IoT telemetry"); }
     });
   }
 
   async function generateAiRecommendations() {
     try { await apiPost<{ created: number }>("/ai/generate-recommendations", {}); fetchAll(); }
-    catch (error) { console.error(error); alert("Failed to generate AI recommendations."); }
+    catch (error) { report(error, "generate AI recommendations"); }
   }
 
   async function updateAiRecommendation(id: number, status: string) {
     try { await apiPatch<AIRecommendation>(`/ai/recommendations/${id}`, { status }); fetchAll(); }
-    catch (error) { console.error(error); alert("Failed to update AI recommendation."); }
+    catch (error) { report(error, "update AI recommendation"); }
   }
 
   async function createTenant(e: React.FormEvent) {
     e.preventDefault();
     await runOnce("tenant", async () => {
     try { await apiPost<CompanyTenant>("/saas/tenants", tenantForm); setTenantForm({ company_code: "", company_name: "", industry: "", plan_name: "Starter", subscription_status: "Trial", seats: 5, monthly_fee: 0 }); fetchAll(); }
-    catch (error) { console.error(error); alert("Failed to create tenant."); }
+    catch (error) { report(error, "create tenant"); }
     });
   }
 
   async function updateTenant(id: number, status: string) {
     try { await apiPatch<CompanyTenant>(`/saas/tenants/${id}`, { subscription_status: status }); fetchAll(); }
-    catch (error) { console.error(error); alert("Failed to update tenant."); }
+    catch (error) { report(error, "update tenant"); }
   }
 
   async function deleteTenant(id: number) {
@@ -1677,7 +1654,7 @@ export default function DashboardPage() {
       `OK = wipe everything (cannot be undone)\nCancel = keep the data, remove only the registry entry`
     );
     try { await apiDelete(`/saas/tenants/${id}${purge ? "?purge=true" : ""}`); fetchAll(); }
-    catch (error) { console.error(error); alert("Failed to delete tenant."); }
+    catch (error) { report(error, "delete tenant"); }
   }
 
   // Self-service password rotation (pairs with provisioned temp passwords).
@@ -1704,8 +1681,7 @@ export default function DashboardPage() {
       setAdminCreds(await apiPost<{ username: string; temporary_password: string; company_code: string }>(`/saas/tenants/${id}/admin`, {}));
       fetchAll();
     } catch (error) {
-      console.error(error);
-      alert("Failed to create the admin login (it may already exist).");
+      report(error, "provision admin");
     }
   }
 
@@ -1713,18 +1689,18 @@ export default function DashboardPage() {
     e.preventDefault();
     await runOnce("cost", async () => {
     try { await apiPost<CostRecord>("/cost-records", costForm); setCostForm({ cost_no: "", cost_type: "Material", reference_type: "", reference_id: 0, description: "", amount: 0, department: "Production" }); fetchAll(); }
-    catch (error) { console.error(error); alert("Failed to create cost."); }
+    catch (error) { report(error, "create cost"); }
     });
   }
 
   async function updateCost(id: number, amount: number) {
     try { await apiPatch<CostRecord>(`/cost-records/${id}`, { amount }); fetchAll(); }
-    catch (error) { console.error(error); alert("Failed to update cost."); }
+    catch (error) { report(error, "update cost"); }
   }
 
   async function deleteCost(id: number) {
     try { await apiDelete(`/cost-records/${id}`); fetchAll(); }
-    catch (error) { console.error(error); alert("Failed to delete cost."); }
+    catch (error) { report(error, "delete cost"); }
   }
 
   async function createOperatorExecution(e: React.FormEvent) {
@@ -1734,33 +1710,33 @@ export default function DashboardPage() {
       await apiPost<OperatorJobExecution>("/operator/executions", { ...operatorForm, machine_id: Number(operatorForm.machine_id), work_order_id: operatorForm.work_order_id ? Number(operatorForm.work_order_id) : null, production_plan_id: operatorForm.production_plan_id ? Number(operatorForm.production_plan_id) : null, good_count: Number(operatorForm.good_count), rejected_count: Number(operatorForm.rejected_count) });
       setOperatorForm({ execution_no: "", operator_name: "", machine_id: "", work_order_id: "", production_plan_id: "", job_status: "Started", good_count: 0, rejected_count: 0, notes: "" });
       fetchAll();
-    } catch (error) { console.error(error); alert("Failed to create operator execution."); }
+    } catch (error) { report(error, "create operator execution"); }
     });
   }
 
   async function updateOperatorExecution(id: number, status: string, good: number, reject: number) {
     try { await apiPatch<OperatorJobExecution>(`/operator/executions/${id}`, { job_status: status, good_count: good, rejected_count: reject }); fetchAll(); }
-    catch (error) { console.error(error); alert("Failed to update operator job."); }
+    catch (error) { report(error, "update operator execution"); }
   }
 
   async function deleteOperatorExecution(id: number) {
     try { await apiDelete(`/operator/executions/${id}`); fetchAll(); }
-    catch (error) { console.error(error); alert("Failed to delete operator job."); }
+    catch (error) { report(error, "delete operator execution"); }
   }
 
   async function generateSystemNotifications() {
     try { await apiPost<{ created: number }>("/notifications/generate-system-notifications", {}); fetchAll(); }
-    catch (error) { console.error(error); alert("Failed to generate notifications."); }
+    catch (error) { report(error, "generate system notifications"); }
   }
 
   async function updateNotification(id: number, status: string) {
     try { await apiPatch<NotificationItem>(`/notifications/${id}`, { status }); fetchAll(); }
-    catch (error) { console.error(error); alert("Failed to update notification."); }
+    catch (error) { report(error, "update notification"); }
   }
 
   async function markAllNotificationsRead() {
     try { await apiPost<{ marked: number }>("/notifications/read-all", {}); fetchAll(); }
-    catch (error) { console.error(error); alert("Failed to mark notifications read."); }
+    catch (error) { report(error, "mark all notifications read"); }
   }
 
   async function createReport(e: React.FormEvent) {
@@ -1771,7 +1747,7 @@ export default function DashboardPage() {
       await apiPost<AuditLog>("/audit-logs", { actor: reportForm.requested_by, action: "Generated report request", entity_type: "Report", details: reportForm.report_type });
       setReportForm({ report_no: "", report_type: "Executive Summary", requested_by: "Admin", format: "PDF", status: "Generated", notes: "" });
       fetchAll();
-    } catch (error) { console.error(error); alert("Failed to create report request."); }
+    } catch (error) { report(error, "create report"); }
     });
   }
 
@@ -2049,6 +2025,8 @@ export default function DashboardPage() {
     </button>
   </div>
 </header>
+
+      <ActionError message={actionError} onDismiss={clearActionError} />
 
       {activeView === "overview" && (
         <>

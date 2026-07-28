@@ -5,6 +5,7 @@ import "../phase29-enterprise.css";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { apiGet, apiPost, apiPatch, apiDelete, getToken, getUserRole } from "../../lib/api";
 import { useInFlight } from "../../lib/useInFlight";
+import { parseDurationToMinutes } from "../../lib/duration";
 import {
   BarChart,
   Bar,
@@ -196,24 +197,6 @@ function getStatusStyle(status: string) {
     default:
       return "bg-gray-500/20 text-gray-400 border-gray-500/40";
   }
-}
-
-function parseDurationToMinutes(value: string) {
-  const lower = String(value || "").toLowerCase();
-  let total = 0;
-
-  const hourMatch = lower.match(/(\d+)\s*h/);
-  const minuteMatch = lower.match(/(\d+)\s*m/);
-
-  if (hourMatch) total += Number(hourMatch[1]) * 60;
-  if (minuteMatch) total += Number(minuteMatch[1]);
-
-  if (!hourMatch && !minuteMatch) {
-    const plainNumber = Number(lower.replace(/\D/g, ""));
-    total += Number.isNaN(plainNumber) ? 0 : plainNumber;
-  }
-
-  return total;
 }
 
 function calculateOEE(utilization: number) {

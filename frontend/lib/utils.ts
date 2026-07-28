@@ -4,23 +4,9 @@ export const INPUT_CLASS =
 export const BTN_CLASS =
   "rounded-xl bg-white text-slate-950 font-semibold px-4 py-3 hover:opacity-90 transition";
 
-export function parseDurationToMinutes(value: string) {
-  const lower = value.toLowerCase();
-  let total = 0;
-
-  const hourMatch = lower.match(/(\d+)\s*h/);
-  const minuteMatch = lower.match(/(\d+)\s*m/);
-
-  if (hourMatch) total += Number(hourMatch[1]) * 60;
-  if (minuteMatch) total += Number(minuteMatch[1]);
-
-  if (!hourMatch && !minuteMatch) {
-    const plainNumber = Number(lower.replace(/\D/g, ""));
-    total += isNaN(plainNumber) ? 0 : plainNumber;
-  }
-
-  return total;
-}
+// parseDurationToMinutes used to live here too, as a third copy with the same
+// decimal-hour bug. It now has one home: lib/duration.ts, ported from
+// backend/duration.py and pinned against it by lib/duration.test.ts.
 
 export function calculateOEE(utilization: number) {
   return Math.round((utilization / 100) * 0.9 * 0.95 * 100);

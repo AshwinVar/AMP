@@ -2,6 +2,11 @@
 import React, { useEffect, useState, useRef } from "react";
 import { apiGet, apiPost, apiPatch, API_URL, getAuthHeaders } from "../lib/api";
 
+// How many history rows to fetch at a time. The GRN and cycle-count endpoints
+// page (default 50, hard cap 200) because both tables only ever grow — see
+// backend/enterprise_inventory_routes.py.
+const PAGE = 50;
+
 // ── Types ─────────────────────────────────────────────────────────
 
 interface InventoryItem {
@@ -319,8 +324,19 @@ function GRNTab({ items }: { items: InventoryItem[] }) {
   const [grnItems, setGrnItems] = useState([{ item_id: "", received_qty: "", accepted_qty: "", rejected_qty: "0", lot_no: "", inspection_status: "Accepted" }]);
   const [loading, setLoading] = useState(false);
 
-  const load = () => apiGet<GRN[]>("/grns").then(setRows).catch(() => {});
-  useEffect(() => { load(); }, []);
+  const [shown, setShown] = useState(PAGE);
+  const [error, setError] = useState<string | null>(null);
+
+  // Paged: the receipt table only grows, and the endpoint caps a page at 200.
+  // Swallowing the error here (the old `.catch(() => {})`) made a failed or
+  // timed-out request look identical to "no GRNs yet".
+  const load = (limit = shown) =>
+    apiGet<GRN[]>(`/grns?limit=${limit}&offset=0`)
+      .then((r) => { setRows(r); setError(null); })
+      .catch(() => setError("Could not load receipt history."));
+  useEffect(() => { load(PAGE); }, []);
+
+  const loadMore = () => { const next = shown + PAGE; setShown(next); load(next); };
 
   const addLine = () => setGrnItems(prev => [...prev, { item_id: "", received_qty: "", accepted_qty: "", rejected_qty: "0", lot_no: "", inspection_status: "Accepted" }]);
   const updateLine = (i: number, field: string, val: string) => setGrnItems(prev => prev.map((row, idx) => idx === i ? { ...row, [field]: val } : row));
@@ -375,7 +391,8 @@ function GRNTab({ items }: { items: InventoryItem[] }) {
       </form>
 
       <div className="space-y-4">
-        {rows.length === 0 && <p className="text-slate-400 text-sm">No GRNs yet.</p>}
+        {error && <p className="text-red-400 text-sm">{error}</p>}
+        {!error && rows.length === 0 && <p className="text-slate-400 text-sm">No GRNs yet.</p>}
         {rows.map(g => (
           <div key={g.id} className="rounded-2xl bg-slate-900 border border-slate-800 p-5">
             <div className="flex items-center justify-between mb-3">
@@ -412,6 +429,11 @@ function GRNTab({ items }: { items: InventoryItem[] }) {
             </div>
           </div>
         ))}
+        {rows.length >= shown && (
+          <button type="button" onClick={loadMore} className="text-sm text-slate-400 border border-slate-700 rounded-xl px-4 py-2 hover:border-slate-500">
+            Load older receipts
+          </button>
+        )}
       </div>
     </div>
   );
@@ -426,8 +448,18 @@ function CycleCountTab({ items }: { items: InventoryItem[] }) {
   const [selectedItems, setSelectedItems] = useState<number[]>([]);
   const [loading, setLoading] = useState(false);
 
-  const load = () => apiGet<CycleCount[]>("/cycle-counts").then(setRows).catch(() => {});
-  useEffect(() => { load(); }, []);
+  const [shown, setShown] = useState(PAGE);
+  const [error, setError] = useState<string | null>(null);
+
+  // Paged for the same reason as the GRN history: the select-all checkbox below
+  // makes counts containing every SKU, so this table grows fast.
+  const load = (limit = shown) =>
+    apiGet<CycleCount[]>(`/cycle-counts?limit=${limit}&offset=0`)
+      .then((r) => { setRows(r); setError(null); })
+      .catch(() => setError("Could not load cycle-count history."));
+  useEffect(() => { load(PAGE); }, []);
+
+  const loadMore = () => { const next = shown + PAGE; setShown(next); load(next); };
 
   const toggleItem = (id: number) => setSelectedItems(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]);
 
@@ -505,6 +537,7 @@ function CycleCountTab({ items }: { items: InventoryItem[] }) {
       </form>
 
       <div className="space-y-4">
+        {error && <p className="text-red-400 text-sm">{error}</p>}
         {rows.map(c => (
           <div key={c.id} className="rounded-2xl bg-slate-900 border border-slate-800 p-5">
             <div className="flex items-center justify-between mb-3">
@@ -540,6 +573,11 @@ function CycleCountTab({ items }: { items: InventoryItem[] }) {
             </div>
           </div>
         ))}
+        {rows.length >= shown && (
+          <button type="button" onClick={loadMore} className="text-sm text-slate-400 border border-slate-700 rounded-xl px-4 py-2 hover:border-slate-500">
+            Load older counts
+          </button>
+        )}
       </div>
     </div>
   );

@@ -13,6 +13,7 @@ from sqlalchemy.orm import Session
 
 import models
 from csv_safe import read_upload_text
+from payload_fields import int_field, str_field
 from auth import get_current_user, require_roles
 from database import SessionLocal
 
@@ -56,12 +57,10 @@ def create_remnant(payload: dict, db: Session = Depends(get_db), current_user: d
     # unit tripped the NOT NULL constraint into an IntegrityError 500). Validate
     # every field through the shared _int_field first so malformed input is a 400
     # naming the field, exactly like the sibling receipt handlers.
-    item_id = _int_field(payload, "item_id", "Remnant")
-    original_qty = _int_field(payload, "original_qty", "Remnant")
-    remaining_qty = _int_field(payload, "remaining_qty", "Remnant")
-    unit = str(payload.get("unit") or "").strip()
-    if not unit:
-        raise HTTPException(status_code=400, detail="Remnant: 'unit' is required")
+    item_id = int_field(payload, "item_id", "Remnant")
+    original_qty = int_field(payload, "original_qty", "Remnant")
+    remaining_qty = int_field(payload, "remaining_qty", "Remnant")
+    unit = str_field(payload, "unit", "Remnant")
     count = db.query(models.Remnant).count()
     r = models.Remnant(
         tag_no=payload.get("tag_no") or f"REM-{1000 + count + 1}",
@@ -87,7 +86,7 @@ def update_remnant_status(rid: int, payload: dict, db: Session = Depends(get_db)
     # required=False: an absent/blank remaining_qty keeps the current value (as the
     # old `.get(..., r.remaining_qty)` default did); a present but non-numeric one
     # is a 400, not the bare 500 that int("abc") used to raise.
-    r.remaining_qty = _int_field(payload, "remaining_qty", "Remnant",
+    r.remaining_qty = int_field(payload, "remaining_qty", "Remnant",
                                  required=False, default=r.remaining_qty or 0)
     db.commit()
     return {"ok": True}
@@ -119,11 +118,11 @@ def create_issue_slip(payload: dict, db: Session = Depends(get_db), current_user
     # Raw `payload: dict` boundary (see create_remnant / #379): validate the
     # numeric fields through the shared _int_field so a missing/blank/non-numeric
     # item_id or requested_qty is a 400 naming the field, not a bare int() 500.
-    item_id = _int_field(payload, "item_id", "Issue slip")
-    requested_qty = _int_field(payload, "requested_qty", "Issue slip")
+    item_id = int_field(payload, "item_id", "Issue slip")
+    requested_qty = int_field(payload, "requested_qty", "Issue slip")
     # remnant_id is optional (a slip may draw from general stock): parse only when
     # supplied, still validated so "abc" is a 400 rather than a 500.
-    remnant_id = _int_field(payload, "remnant_id", "Issue slip") if payload.get("remnant_id") else None
+    remnant_id = int_field(payload, "remnant_id", "Issue slip") if payload.get("remnant_id") else None
     count = db.query(models.MaterialIssueSlip).count()
     s = models.MaterialIssueSlip(
         slip_no=f"MIS-{5000 + count + 1}",
@@ -311,39 +310,6 @@ def get_grns(limit: int = _PAGE_DEFAULT, offset: int = 0,
     return result
 
 
-# Beyond this a quantity is a typo or a float that overflowed, not a real
-# receipt. The shipped UI sends Number(input) with no cap, and JS turns a long
-# digit string into 1e+23 — which int() happily widens and SQLite then rejects
-# with an OverflowError mid-write.
-_MAX_QTY = 1_000_000_000
-
-
-def _int_field(line: dict, key: str, where: str, *, required: bool = True, default: int = 0) -> int:
-    """A client-supplied quantity, or a 400 naming the line and field.
-
-    These handlers take a raw `payload: dict` rather than a Pydantic schema, so
-    nothing validates the body before it arrives — a missing key, "", null or
-    "abc" all reached int() and raised, which FastAPI turns into a bare 500.
-    Negative quantities are refused for consistency with the order/PO/production
-    ingest rule (#346)."""
-    raw = line.get(key)
-    if raw is None or (isinstance(raw, str) and not raw.strip()):
-        if required:
-            raise HTTPException(status_code=400, detail=f"{where}: '{key}' is required")
-        return default
-    try:
-        value = int(raw)
-    except (TypeError, ValueError):
-        raise HTTPException(status_code=400,
-                            detail=f"{where}: '{key}' must be a whole number (got {raw!r})")
-    if value < 0:
-        raise HTTPException(status_code=400, detail=f"{where}: '{key}' cannot be negative")
-    if value > _MAX_QTY:
-        raise HTTPException(status_code=400,
-                            detail=f"{where}: '{key}' is unrealistically large ({value})")
-    return value
-
-
 @router.post("/grns")
 def create_grn(payload: dict, db: Session = Depends(get_db), current_user: dict = Depends(require_roles(["Admin", "Supervisor"]))):
     """Record a goods receipt. Header and lines are written in ONE transaction.
@@ -355,8 +321,7 @@ def create_grn(payload: dict, db: Session = Depends(get_db), current_user: dict 
     goods receipt on record against which no goods ever moved, and which each
     retry duplicated. Lines are now validated BEFORE anything is written, and the
     header is flushed (not committed) so a failure rolls the whole thing back."""
-    if not str(payload.get("supplier_name") or "").strip():
-        raise HTTPException(status_code=400, detail="supplier_name is required")
+    supplier_name = str_field(payload, "supplier_name")
 
     # Validate every line first — nothing is written until all of them parse.
     parsed = []
@@ -365,12 +330,12 @@ def create_grn(payload: dict, db: Session = Depends(get_db), current_user: dict 
         if not isinstance(line, dict):
             raise HTTPException(status_code=400, detail=f"{where}: expected an object")
         parsed.append(dict(
-            item_id=_int_field(line, "item_id", where),
+            item_id=int_field(line, "item_id", where),
             lot_no=line.get("lot_no", ""),
-            ordered_qty=_int_field(line, "ordered_qty", where, required=False),
-            received_qty=_int_field(line, "received_qty", where),
-            accepted_qty=_int_field(line, "accepted_qty", where),
-            rejected_qty=_int_field(line, "rejected_qty", where, required=False),
+            ordered_qty=int_field(line, "ordered_qty", where, required=False),
+            received_qty=int_field(line, "received_qty", where),
+            accepted_qty=int_field(line, "accepted_qty", where),
+            rejected_qty=int_field(line, "rejected_qty", where, required=False),
             inspection_status=line.get("inspection_status", "Accepted"),
         ))
 
@@ -378,7 +343,7 @@ def create_grn(payload: dict, db: Session = Depends(get_db), current_user: dict 
     g = models.GoodsReceiptNote(
         grn_no=f"GRN-{3000 + count + 1}",
         purchase_order_ref=payload.get("purchase_order_ref", ""),
-        supplier_name=payload["supplier_name"],
+        supplier_name=supplier_name,
         received_by=payload.get("received_by", current_user.get("sub", "Admin")),
         status="Draft",
         notes=payload.get("notes", ""),
@@ -475,8 +440,8 @@ def create_cycle_count(payload: dict, db: Session = Depends(get_db), current_use
         where = f"Line {i}"
         if not isinstance(line, dict):
             raise HTTPException(status_code=400, detail=f"{where}: expected an object")
-        parsed.append((_int_field(line, "item_id", where),
-                       _int_field(line, "physical_qty", where)))
+        parsed.append((int_field(line, "item_id", where),
+                       int_field(line, "physical_qty", where)))
 
     count = db.query(models.CycleCount).count()
     c = models.CycleCount(

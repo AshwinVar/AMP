@@ -293,7 +293,21 @@ def gmats_create_proforma(payload: dict, db: Session = Depends(get_db), current_
     from collections import defaultdict
     needed: dict = defaultdict(int)
     for line in lines:
-        needed[int(line["item_id"])] += int(line["qty"])
+        # Reject a non-positive line qty at the boundary — parity with gmats_stock_in's
+        # `qty <= 0` guard and the negative-count guards on every other ingest
+        # (production #266, quality #324, orders #346). qty is a bare int off the
+        # payload with nothing else stopping it, and a negative one slips the
+        # availability check below (a negative is never > available) and is then
+        # applied line-by-line as `reserved_stock += qty`, DECREASING reserved and
+        # inflating available past physical — silently defeating the reservation guard
+        # this module promises. A later cancel does `max(0, reserved - qty)`, so the
+        # negative reserve is never cleanly reversed. Zero is a meaningless no-op line.
+        # This runs before any header/reserve write, so a bad line rejects the whole
+        # proforma and reserves nothing (same pre-commit atomicity the summed guard has).
+        qty = int(line["qty"])
+        if qty <= 0:
+            raise HTTPException(status_code=400, detail="Quantity must be positive")
+        needed[int(line["item_id"])] += qty
     # Scope the line-item lookup to the document's tenant. GmatsItem is NOT in
     # tenancy.SCOPED_MODELS (it carries a manual tenant_code, filtered explicitly on
     # every gmats read endpoint), so a bare id lookup accepts ANY tenant's item — a
@@ -458,7 +472,17 @@ def gmats_create_min(payload: dict, db: Session = Depends(get_db), current_user:
     from collections import defaultdict
     needed: dict = defaultdict(int)
     for line in lines:
-        needed[int(line["item_id"])] += int(line["qty"])
+        # Reject a non-positive line qty at the boundary — parity with gmats_stock_in
+        # and the create_proforma guard above. A negative qty slips the physical check
+        # below (never > physical) and is then applied as `physical_stock -= qty`,
+        # INCREASING physical — phantom stock conjured from a negative issue, exactly
+        # the stock-corruption class the duplicate-line summing fix (#350) closed on the
+        # over-issue side. Zero is a meaningless no-op line. Runs before any write, so a
+        # bad line rejects the whole MIN and issues nothing.
+        qty = int(line["qty"])
+        if qty <= 0:
+            raise HTTPException(status_code=400, detail="Quantity must be positive")
+        needed[int(line["item_id"])] += qty
     # Scope the line-item lookup to the document's tenant (see gmats_create_proforma
     # for the full rationale): an unscoped by-id lookup let a client login DEDUCT
     # physical stock from another company's item by passing a foreign id. The MIN

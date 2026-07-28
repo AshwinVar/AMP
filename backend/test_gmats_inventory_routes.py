@@ -577,6 +577,129 @@ def test_create_proforma_same_tenant_still_reserves():
     print("PASS same-tenant proforma still reserves correctly after the scope fix")
 
 
+# --- Non-positive line-quantity safety on the create paths. qty comes straight off
+# the payload as a bare int, and (unlike gmats_stock_in, which guards `qty <= 0`) the
+# proforma/MIN create paths had no lower bound. A negative qty is never > available /
+# > physical, so it slipped the guard and was then applied line-by-line: `reserved +=
+# qty` drove reserved negative (available past physical) on a proforma, and `physical
+# -= qty` INCREASED physical (phantom stock) on a MIN. These pin a clean 400 and prove
+# nothing is written. Expected values are derived by hand. ---
+
+
+def test_create_proforma_rejects_negative_line_qty():
+    # Item has 10 physical / 0 reserved. A -5 line is never > available (10), so it
+    # used to slip through and run `reserved_stock += -5` -> reserved -5, making
+    # available 10-(-5)=15 > physical (phantom availability). The guard 400s first.
+    db = _db()
+    _plain_item(db, 1, physical=10)
+    try:
+        gmats.gmats_create_proforma(
+            {"tenant": "GMATS", "customer_name": "Cust",
+             "lines": [{"item_id": 1, "qty": -5}]},
+            db=db, current_user=_ADMIN,
+        )
+        assert False, "a negative proforma line qty should 400"
+    except HTTPException as e:
+        assert e.status_code == 400, e.status_code
+    it = _stock(db)
+    assert it.reserved_stock == 0, f"rejected proforma must reserve nothing, got {it.reserved_stock}"
+    assert it.physical_stock == 10
+    assert db.query(models.GmatsProforma).count() == 0
+    print("PASS proforma rejects a negative line qty (no negative reserve, no phantom availability)")
+
+
+def test_create_proforma_rejects_zero_line_qty():
+    # A zero-qty line is a meaningless no-op; reject it rather than persist an empty line.
+    db = _db()
+    _plain_item(db, 1, physical=10)
+    try:
+        gmats.gmats_create_proforma(
+            {"tenant": "GMATS", "customer_name": "Cust",
+             "lines": [{"item_id": 1, "qty": 0}]},
+            db=db, current_user=_ADMIN,
+        )
+        assert False, "a zero proforma line qty should 400"
+    except HTTPException as e:
+        assert e.status_code == 400, e.status_code
+    assert db.query(models.GmatsProforma).count() == 0
+    print("PASS proforma rejects a zero line qty")
+
+
+def test_create_proforma_rejects_a_negative_line_mixed_with_a_valid_one_atomically():
+    # Two lines for the same item: +8 then -3. Summed that is 5 (<= 10 available), so a
+    # sum-only check would PASS — but the apply loop runs each line as-is, and the -3
+    # would drive reserved down after the +8. The per-line guard rejects the whole
+    # proforma before any write, so reserved stays 0 and no row is persisted.
+    db = _db()
+    _plain_item(db, 1, physical=10)
+    try:
+        gmats.gmats_create_proforma(
+            {"tenant": "GMATS", "customer_name": "Cust",
+             "lines": [{"item_id": 1, "qty": 8}, {"item_id": 1, "qty": -3}]},
+            db=db, current_user=_ADMIN,
+        )
+        assert False, "a proforma with any negative line should 400 wholesale"
+    except HTTPException as e:
+        assert e.status_code == 400, e.status_code
+    it = _stock(db)
+    assert it.reserved_stock == 0, f"the valid +8 line must NOT reserve when a sibling is negative, got {it.reserved_stock}"
+    assert it.physical_stock == 10
+    assert db.query(models.GmatsProforma).count() == 0
+    print("PASS proforma with a negative line is rejected wholesale (valid sibling not reserved)")
+
+
+def test_create_min_rejects_negative_line_qty():
+    # Item has 10 physical. A -4 MIN line is never > physical (10), so it used to slip
+    # the guard and run `physical_stock -= -4` -> physical 14 (phantom stock conjured
+    # from nothing). The guard 400s first and leaves physical untouched at 10.
+    db = _db()
+    _plain_item(db, 1, physical=10)
+    try:
+        gmats.gmats_create_min(
+            {"tenant": "GMATS", "customer_name": "Cust", "machine_ref": "Rig",
+             "lines": [{"item_id": 1, "qty": -4}]},
+            db=db, current_user=_ADMIN,
+        )
+        assert False, "a negative MIN line qty should 400"
+    except HTTPException as e:
+        assert e.status_code == 400, e.status_code
+    assert _stock(db).physical_stock == 10, "rejected MIN must not inflate physical stock"
+    assert db.query(models.GmatsMIN).count() == 0
+    print("PASS MIN rejects a negative line qty (no phantom stock)")
+
+
+def test_create_min_rejects_zero_line_qty():
+    db = _db()
+    _plain_item(db, 1, physical=10)
+    try:
+        gmats.gmats_create_min(
+            {"tenant": "GMATS", "customer_name": "Cust", "machine_ref": "Rig",
+             "lines": [{"item_id": 1, "qty": 0}]},
+            db=db, current_user=_ADMIN,
+        )
+        assert False, "a zero MIN line qty should 400"
+    except HTTPException as e:
+        assert e.status_code == 400, e.status_code
+    assert _stock(db).physical_stock == 10
+    assert db.query(models.GmatsMIN).count() == 0
+    print("PASS MIN rejects a zero line qty")
+
+
+def test_create_min_positive_line_still_issues():
+    # Regression guard: the new qty guard must not break the legitimate positive path.
+    # A 3-unit issue deducts exactly: physical 10 -> 7.
+    db = _db()
+    _plain_item(db, 1, physical=10)
+    gmats.gmats_create_min(
+        {"tenant": "GMATS", "customer_name": "Cust", "machine_ref": "Rig",
+         "lines": [{"item_id": 1, "qty": 3}]},
+        db=db, current_user=_ADMIN,
+    )
+    assert _stock(db).physical_stock == 7, f"expected 10-3=7, got {_stock(db).physical_stock}"
+    assert db.query(models.GmatsMIN).count() == 1
+    print("PASS MIN still issues a positive line correctly after the qty guard")
+
+
 if __name__ == "__main__":
     test_gmats_inventory_paths_registered_once_and_owned()
     test_proforma_listing_resolves_only_same_tenant_item_names()
@@ -603,4 +726,10 @@ if __name__ == "__main__":
     test_create_min_rejects_foreign_tenant_item()
     test_create_proforma_rejects_mixed_own_and_foreign_lines_atomically()
     test_create_proforma_same_tenant_still_reserves()
+    test_create_proforma_rejects_negative_line_qty()
+    test_create_proforma_rejects_zero_line_qty()
+    test_create_proforma_rejects_a_negative_line_mixed_with_a_valid_one_atomically()
+    test_create_min_rejects_negative_line_qty()
+    test_create_min_rejects_zero_line_qty()
+    test_create_min_positive_line_still_issues()
     print("ALL GMATS-INVENTORY ROUTE TESTS PASSED")

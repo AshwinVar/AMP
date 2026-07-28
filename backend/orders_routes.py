@@ -32,17 +32,18 @@ def _get_db():
 
 
 def _orders_csv(db) -> str:
-    """The tenant's order book as CSV text (auto-scoped, ADR-0002)."""
-    import io
-    buf = io.StringIO()
-    w = csv.writer(buf)
-    w.writerow(["Order No", "Customer", "Product", "Order Qty", "Dispatched Qty",
-                "Status", "Priority", "Due Date"])
-    for o in db.query(models.CustomerOrder).order_by(models.CustomerOrder.due_date).all():
-        w.writerow([o.order_no, o.customer_name, o.product_name, o.order_quantity or 0,
-                    o.dispatched_quantity or 0, o.status, o.priority or "",
-                    o.due_date.isoformat() if o.due_date else ""])
-    return buf.getvalue()
+    """The tenant's order book as CSV text (auto-scoped, ADR-0002).
+
+    Customer and product names are user-typed, so this goes through csv_safe
+    rather than csv.writer directly — see that module on formula injection."""
+    from csv_safe import csv_text
+    return csv_text(
+        ["Order No", "Customer", "Product", "Order Qty", "Dispatched Qty",
+         "Status", "Priority", "Due Date"],
+        [[o.order_no, o.customer_name, o.product_name, o.order_quantity or 0,
+          o.dispatched_quantity or 0, o.status, o.priority or "",
+          o.due_date.isoformat() if o.due_date else ""]
+         for o in db.query(models.CustomerOrder).order_by(models.CustomerOrder.due_date).all()])
 
 
 router = APIRouter(tags=["Orders & Procurement"])

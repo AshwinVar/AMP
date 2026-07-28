@@ -10,8 +10,6 @@ Note: /reports/daily-summary.txt deliberately stays in main; it calls the
 /analytics/summary endpoint function directly, which will move only when the
 analytics-summary compute is factored out of main into the shared engine.
 """
-import csv
-import io
 from datetime import datetime
 from typing import List
 
@@ -21,6 +19,7 @@ from sqlalchemy.orm import Session
 
 import models
 import schemas
+from csv_safe import csv_response
 from analytics_engine import (
     build_management_summary,
     build_shift_kpis,
@@ -60,24 +59,26 @@ def _machine_names(db) -> dict:
 def export_downtime_csv(db: Session = Depends(_get_db), current_user: dict = Depends(require_roles(["Admin", "Supervisor"]))):
     logs = db.query(models.DowntimeLog).order_by(models.DowntimeLog.id.asc()).all()
     names = _machine_names(db)
-    output = io.StringIO()
-    writer = csv.writer(output)
-    writer.writerow(["id", "machine_id", "machine_name", "reason", "duration", "notes", "created_at"])
-    for log in logs:
-        writer.writerow([log.id, log.machine_id, names.get(log.machine_id) or "", log.reason, log.duration, log.notes or "", log.created_at])
-    return Response(content=output.getvalue(), media_type="text/csv", headers={"Content-Disposition": "attachment; filename=downtime_report.csv"})
+    return _csv(
+        ["id", "machine_id", "machine_name", "reason", "duration", "notes", "created_at"],
+        [[log.id, log.machine_id, names.get(log.machine_id) or "", log.reason,
+          log.duration, log.notes or "", log.created_at] for log in logs],
+        "downtime_report.csv")
 
 
 @router.get("/shifts.csv")
 def export_shifts_csv(db: Session = Depends(_get_db), current_user: dict = Depends(require_roles(["Admin", "Supervisor"]))):
     shifts = db.query(models.ShiftData).all()
-    output = io.StringIO()
-    writer = csv.writer(output)
-    writer.writerow(["id", "shift_name", "target_output", "actual_output", "efficiency_percent", "created_at"])
-    for shift in shifts:
+
+    def _row(shift):
         efficiency = round((shift.actual_output / shift.target_output) * 100) if shift.target_output else 0
-        writer.writerow([shift.id, shift.shift_name, shift.target_output, shift.actual_output, efficiency, shift.created_at])
-    return Response(content=output.getvalue(), media_type="text/csv", headers={"Content-Disposition": "attachment; filename=shift_report.csv"})
+        return [shift.id, shift.shift_name, shift.target_output, shift.actual_output,
+                efficiency, shift.created_at]
+
+    return _csv(
+        ["id", "shift_name", "target_output", "actual_output", "efficiency_percent", "created_at"],
+        [_row(s) for s in shifts],
+        "shift_report.csv")
 
 
 # ── Operational exports ─────────────────────────────────────────────
@@ -89,12 +90,9 @@ def export_shifts_csv(db: Session = Depends(_get_db), current_user: dict = Depen
 
 
 def _csv(headers, rows, filename):
-    output = io.StringIO()
-    writer = csv.writer(output)
-    writer.writerow(headers)
-    writer.writerows(rows)
-    return Response(content=output.getvalue(), media_type="text/csv",
-                    headers={"Content-Disposition": f"attachment; filename={filename}"})
+    """Thin alias for the shared writer — every export goes through csv_safe so
+    a user-typed cell can never reach a spreadsheet as a live formula."""
+    return csv_response(headers, rows, filename)
 
 
 @router.get("/work-orders.csv")
@@ -190,13 +188,20 @@ def export_escalations_csv(db: Session = Depends(_get_db),
 def export_oee_csv(db: Session = Depends(_get_db), current_user: dict = Depends(require_roles(["Admin", "Supervisor"]))):
     records = db.query(models.ProductionRecord).order_by(models.ProductionRecord.id.asc()).all()
     names = _machine_names(db)
-    output = io.StringIO()
-    writer = csv.writer(output)
-    writer.writerow(["id", "machine_id", "machine_name", "availability", "performance", "quality", "oee", "planned_minutes", "runtime_minutes", "total_count", "good_count", "rejected_count", "created_at"])
-    for record in records:
+
+    def _row(record):
         oee = calculate_oee_from_record(record)
-        writer.writerow([record.id, record.machine_id, names.get(record.machine_id) or "", oee["availability"], oee["performance"], oee["quality"], oee["oee"], record.planned_minutes, record.runtime_minutes, record.total_count, record.good_count, record.rejected_count, record.created_at])
-    return Response(content=output.getvalue(), media_type="text/csv", headers={"Content-Disposition": "attachment; filename=oee_report.csv"})
+        return [record.id, record.machine_id, names.get(record.machine_id) or "",
+                oee["availability"], oee["performance"], oee["quality"], oee["oee"],
+                record.planned_minutes, record.runtime_minutes, record.total_count,
+                record.good_count, record.rejected_count, record.created_at]
+
+    return _csv(
+        ["id", "machine_id", "machine_name", "availability", "performance", "quality",
+         "oee", "planned_minutes", "runtime_minutes", "total_count", "good_count",
+         "rejected_count", "created_at"],
+        [_row(r) for r in records],
+        "oee_report.csv")
 
 
 @router.get("/intelligence-summary.txt")

@@ -256,8 +256,24 @@ def test_shift_drilldown_machine_tiebreak_by_attainment():
     print("PASS shift drill-down breaks machine ties by attainment")
 
 
+def test_summary_exposes_the_card_contract():
+    # The Production Plan adherence card (ScheduleAdherenceCard.tsx) renders
+    # exactly these keys; pin them so a read-model edit can't silently break it.
+    db = _fresh_session()
+    s = schedule.build_schedule_adherence(db, "DEFAULT")
+    for k in ("days", "total", "met", "on_track", "behind", "missed",
+              "planned_units", "actual_units", "attainment_rate", "by_shift",
+              "by_machine", "chase", "daily", "today"):
+        assert k in s, f"schedule-summary missing card key {k!r}"
+    for k in ("plans", "planned", "actual", "attainment_rate"):
+        assert k in s["today"], f"today block missing key {k!r}"
+    assert all({"date", "planned", "actual", "attainment_rate"} <= set(r) for r in s["daily"])
+    print("PASS schedule-summary exposes the keys the adherence card renders")
+
+
 if __name__ == "__main__":
     test_schedule_classifies_plans_and_rolls_up()
+    test_summary_exposes_the_card_contract()
     test_schedule_shortfall_ordering_and_empty_safe()
     test_shift_drilldown_reads_against_the_plant()
     test_shift_drilldown_unknown_shift_is_empty_safe()

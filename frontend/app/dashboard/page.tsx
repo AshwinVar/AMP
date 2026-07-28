@@ -75,6 +75,7 @@ import BrandingSettingsCard from "../../components/BrandingSettingsCard";
 import QualityIntelCard from "../../components/QualityIntelCard";
 import DowntimeIntelCard from "../../components/DowntimeIntelCard";
 import DeliveryIntelCard from "../../components/DeliveryIntelCard";
+import ScheduleAdherenceCard from "../../components/ScheduleAdherenceCard";
 import SchedulingSection from "../../components/SchedulingSection";
 import IoTCommandSection from "../../components/IoTCommandSection";
 import AIInsightsSection from "../../components/AIInsightsSection";
@@ -2618,6 +2619,8 @@ export default function DashboardPage() {
       ))}
 
       {renderSection("planning", (
+        <>
+        <div className="mt-8"><ScheduleAdherenceCard /></div>
         <ProductionPlanSection
           machines={machines}
           workOrders={workOrders}
@@ -2630,6 +2633,7 @@ export default function DashboardPage() {
           deletePlan={isAdmin ? deleteProductionPlan : undefined}
           getMachineName={getMachineName}
         />
+        </>
       ))}
 
       {renderSection("maintenance_ai", (

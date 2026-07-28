@@ -18,6 +18,10 @@ import { useEffect, useRef } from "react";
  * (#385), the guard has to be a ref — a state flag would not have been updated
  * yet when the next tick fires.
  */
+function isHidden() {
+  return typeof document !== "undefined" && document.visibilityState === "hidden";
+}
+
 export function usePolling(
   run: () => Promise<void> | void,
   intervalMs: number,
@@ -35,6 +39,12 @@ export function usePolling(
     let cancelled = false;
 
     const tick = async () => {
+      if (cancelled) return;
+      // Nobody is reading a hidden tab. The dashboard's round is ~47 requests,
+      // so continuing at full rate behind other tabs spends real capacity on a
+      // screen no one can see — and it is invisible either way, which is why it
+      // went unnoticed.
+      if (isHidden()) return;
       if (inFlight.current) return; // previous round still going — skip this one
       inFlight.current = true;
       try {
@@ -49,14 +59,23 @@ export function usePolling(
       }
     };
 
+    // Coming back to the tab means whatever is on screen is as stale as the
+    // time spent away; refresh it before the user reads it rather than making
+    // them wait out the interval.
+    const onVisibilityChange = () => {
+      if (!isHidden()) void tick();
+    };
+
     void tick();
     const id = setInterval(() => {
       if (!cancelled) void tick();
     }, intervalMs);
+    document.addEventListener("visibilitychange", onVisibilityChange);
 
     return () => {
       cancelled = true;
       clearInterval(id);
+      document.removeEventListener("visibilitychange", onVisibilityChange);
     };
   }, [intervalMs, enabled]);
 }

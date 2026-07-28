@@ -86,20 +86,33 @@ def pooled_oee(records) -> dict:
     (calculate_oee_from_record above stays the per-record view — used for alert
     thresholds on a single machine's latest run, where pooling makes no sense.)
     """
-    planned = sum(r.planned_minutes or 0 for r in records)
-    runtime = sum(r.runtime_minutes or 0 for r in records)
-    total = sum(r.total_count or 0 for r in records)
-    good = sum(r.good_count or 0 for r in records)
-    ideal_s = sum((r.ideal_cycle_time_seconds or 0) * (r.total_count or 0) for r in records)
+    return pooled_oee_from_sums(
+        planned=sum(r.planned_minutes or 0 for r in records),
+        runtime=sum(r.runtime_minutes or 0 for r in records),
+        total=sum(r.total_count or 0 for r in records),
+        good=sum(r.good_count or 0 for r in records),
+        ideal_seconds=sum((r.ideal_cycle_time_seconds or 0) * (r.total_count or 0) for r in records),
+        has_data=len(records) > 0,
+    )
+
+
+def pooled_oee_from_sums(planned, runtime, total, good, ideal_seconds, has_data) -> dict:
+    """The same pooling, for callers that already have the sums.
+
+    A caller that aggregates in SQL (GROUP BY rather than hydrating every row
+    into Python) has the five totals and no record list. Rather than let it
+    re-derive the formula — which is how two surfaces end up disagreeing — it
+    calls this, and ``pooled_oee`` above delegates here too. One definition.
+    """
     a = min(runtime / planned, 1.0) if planned else 0.0
-    p = min(ideal_s / (runtime * 60), 1.0) if runtime else 0.0
+    p = min(ideal_seconds / (runtime * 60), 1.0) if runtime else 0.0
     q = min(good / total, 1.0) if total else 0.0
     return {
         "oee": round(a * p * q * 100),
         "availability": round(a * 100),
         "performance": round(p * 100),
         "quality": round(q * 100),
-        "has_data": len(records) > 0,
+        "has_data": has_data,
     }
 
 

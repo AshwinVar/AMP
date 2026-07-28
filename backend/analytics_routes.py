@@ -33,6 +33,7 @@ from analytics_engine import (
     generate_alerts,
     parse_duration_to_minutes,
     pooled_oee,
+    pooled_oee_from_sums,
 )
 from auth import get_current_user, require_roles
 from database import SessionLocal
@@ -522,17 +523,54 @@ def get_executive_oee(
     db: Session = Depends(_get_db),
     current_user: dict = Depends(get_current_user),
 ):
+    # The machine roster and the shift list are bounded reference sets — a plant
+    # has dozens of machines, and every shift row is returned in `shift_oee`, so
+    # reading them whole is what the response needs anyway.
     machines = db.query(models.Machine).all()
-    downtime_logs = db.query(models.DowntimeLog).all()
-    production_records = db.query(models.ProductionRecord).all()
     shifts = db.query(models.ShiftData).all()
-    quality_rows = db.query(models.QualityInspection).all()
+
+    # downtime_logs carries a FREE-TEXT duration ("2 hrs 15 min") that only
+    # parse_duration_to_minutes can read — there is no SQL SUM for it — so this
+    # is the one scan that genuinely cannot move into SQL, exactly as documented
+    # on /analytics/factory-command-center.
+    downtime_logs = db.query(models.DowntimeLog).all()
 
     machine_map = {machine.id: machine.name for machine in machines}
 
-    production_by_machine = {}
-    for record in production_records:
-        production_by_machine.setdefault(record.machine_id, []).append(record)
+    # Production and quality used to be hydrated whole and summed in Python: at a
+    # year of a twenty-machine plant that was 7,300 ORM objects per call, on an
+    # endpoint the dashboard polls. Both are pure sums, so they belong in the
+    # database — the same fix already applied to /analytics/final-executive-summary
+    # (#370), /analytics/factory-command-center (#372) and the sibling rollups.
+    # Every model here is in tenancy.SCOPED_MODELS, so the do_orm_execute hook
+    # (ADR-0002) tenant-scopes these aggregate SELECTs exactly as it did the
+    # .all() scans they replace.
+    #
+    # coalesce keeps the arithmetic total: SUM over no rows is NULL, and these
+    # counted columns are Column(Integer, default=0) WITHOUT nullable=False, so a
+    # raw-SQL or migration row can hold NULL. The old Python `sum(...)` over a
+    # NULL raised TypeError and 500-ed the whole rollup; 0 is the column's own
+    # declared default and the reading the sibling response models already take.
+    production_totals = (
+        db.query(
+            models.ProductionRecord.machine_id,
+            func.coalesce(func.sum(models.ProductionRecord.planned_minutes), 0),
+            func.coalesce(func.sum(models.ProductionRecord.runtime_minutes), 0),
+            func.coalesce(
+                func.sum(
+                    models.ProductionRecord.ideal_cycle_time_seconds
+                    * models.ProductionRecord.total_count
+                ),
+                0,
+            ),
+            func.coalesce(func.sum(models.ProductionRecord.total_count), 0),
+            func.coalesce(func.sum(models.ProductionRecord.good_count), 0),
+            func.coalesce(func.sum(models.ProductionRecord.rejected_count), 0),
+        )
+        .group_by(models.ProductionRecord.machine_id)
+        .all()
+    )
+    production_by_machine = {row[0]: row[1:] for row in production_totals}
 
     downtime_by_machine = {}
     reason_counts = {}
@@ -542,36 +580,32 @@ def get_executive_oee(
         downtime_by_machine[log.machine_id] = downtime_by_machine.get(log.machine_id, 0) + minutes
         reason_counts[log.reason] = reason_counts.get(log.reason, 0) + minutes
 
-    quality_by_machine = {}
-    for row in quality_rows:
-        if not row.machine_id:
-            continue
-        bucket = quality_by_machine.setdefault(
-            row.machine_id,
-            {"inspected": 0, "passed": 0, "failed": 0, "scrap": 0, "rework": 0},
+    # Only `inspected` and `passed` are ever read (the no-production quality
+    # fallback below); the old loop also summed failed/scrap/rework and threw
+    # them away. passed_quantity is a nullable Integer, hence the coalesce.
+    quality_by_machine = {
+        machine_id: {"inspected": inspected, "passed": passed}
+        for machine_id, inspected, passed in db.query(
+            models.QualityInspection.machine_id,
+            func.coalesce(func.sum(models.QualityInspection.inspected_quantity), 0),
+            func.coalesce(func.sum(models.QualityInspection.passed_quantity), 0),
         )
-        # passed / failed / scrap / rework_quantity are nullable Integers (default=0,
-        # no nullable=False) — coalesce to 0 so a real SQL NULL can't 500 the exec
-        # rollup via int + None (inspected_quantity is nullable=False).
-        bucket["inspected"] += row.inspected_quantity
-        bucket["passed"] += row.passed_quantity or 0
-        bucket["failed"] += row.failed_quantity or 0
-        bucket["scrap"] += row.scrap_quantity or 0
-        bucket["rework"] += row.rework_quantity or 0
+        .filter(models.QualityInspection.machine_id.isnot(None))
+        .group_by(models.QualityInspection.machine_id)
+        .all()
+    }
 
     machine_rows = []
 
     for machine in machines:
-        records = production_by_machine.get(machine.id, [])
-        planned_minutes = sum(record.planned_minutes for record in records)
-        runtime_minutes = sum(record.runtime_minutes for record in records)
-        ideal_cycle_total = sum(
-            record.ideal_cycle_time_seconds * record.total_count
-            for record in records
-        )
-        total_count = sum(record.total_count for record in records)
-        good_count = sum(record.good_count for record in records)
-        rejected_count = sum(record.rejected_count for record in records)
+        (
+            planned_minutes,
+            runtime_minutes,
+            ideal_cycle_total,
+            total_count,
+            good_count,
+            rejected_count,
+        ) = production_by_machine.get(machine.id, (0, 0, 0, 0, 0, 0))
 
         if planned_minutes > 0:
             # Cap at 100% like pooled_oee / calculate_oee_from_record cap every
@@ -638,7 +672,18 @@ def get_executive_oee(
     # mean of ratios that over-weighted small runs AND folded in the no-data
     # fallback constants (utilization / 90-or-60 / 95), giving the exec home a
     # plant OEE that contradicted the pooled one shown elsewhere.
-    plant = pooled_oee([rec for recs in production_by_machine.values() for rec in recs])
+    # Pooling is a ratio of sums, so the per-machine totals already gathered add
+    # up to the plant totals — no second pass over the rows, and the formula
+    # still lives in exactly one place (analytics_engine.pooled_oee_from_sums,
+    # which pooled_oee itself now delegates to).
+    plant = pooled_oee_from_sums(
+        planned=sum(totals[0] for totals in production_by_machine.values()),
+        runtime=sum(totals[1] for totals in production_by_machine.values()),
+        ideal_seconds=sum(totals[2] for totals in production_by_machine.values()),
+        total=sum(totals[3] for totals in production_by_machine.values()),
+        good=sum(totals[4] for totals in production_by_machine.values()),
+        has_data=bool(production_by_machine),
+    )
     plant_availability = plant["availability"]
     plant_performance = plant["performance"]
     plant_quality = plant["quality"]
@@ -665,10 +710,28 @@ def get_executive_oee(
             }
         )
 
+    # Ordered by first appearance (min id), because the sort below is stable and
+    # ties would otherwise resolve differently than they did when this loop
+    # walked the table in insertion order. NULL and "" both fold into
+    # "No Defect", so the totals are accumulated rather than assigned.
+    #
+    # The parity test cannot prove this line: SQLite happens to return groups in
+    # an order that already matches, so deleting the order_by leaves it green.
+    # Production is Postgres (psycopg2), where GROUP BY without ORDER BY has no
+    # guaranteed order at all — a HashAggregate can hand back the groups in any
+    # order it likes, and the defect chart would reshuffle between requests.
     quality_defects = {}
-    for row in quality_rows:
-        key = row.defect_category or "No Defect"
-        quality_defects[key] = quality_defects.get(key, 0) + (row.failed_quantity or 0)
+    for category, failed in (
+        db.query(
+            models.QualityInspection.defect_category,
+            func.coalesce(func.sum(models.QualityInspection.failed_quantity), 0),
+        )
+        .group_by(models.QualityInspection.defect_category)
+        .order_by(func.min(models.QualityInspection.id))
+        .all()
+    ):
+        key = category or "No Defect"
+        quality_defects[key] = quality_defects.get(key, 0) + failed
 
     quality_trend = [
         {"defect": defect, "failed_quantity": qty}

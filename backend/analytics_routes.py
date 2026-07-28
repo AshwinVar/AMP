@@ -1301,6 +1301,18 @@ def get_final_executive_summary(db: Session = Depends(_get_db), current_user: di
 @router.get("/analytics/industrial-gateway")
 def get_industrial_gateway_analytics(db: Session = Depends(_get_db), current_user: dict = Depends(get_current_user)):
     devices = db.query(models.IndustrialDevice).all()
+    # The last-500 window is a DISPLAY bound for latest_signals only — it must not
+    # define the "signals" headline count. industrial_signals is a growing table
+    # (industrial_adapters.tick_industrial appends every poll and only trims it
+    # back to ~1,000 rows), so once it holds more than 500 rows the old
+    # `len(signals)` reported a flat 500 — the .limit() cap leaking straight into
+    # the displayed "Signals" KPI, understating the true count while the sibling
+    # "devices"/"mappings" (fully hydrated) stayed true totals (an inconsistent
+    # basis). Report the true total with a bounded SQL COUNT instead, exactly as
+    # the sibling /analytics/iot-command endpoint already does for its telemetry
+    # count. IndustrialSignal is in SCOPED_MODELS, so the do_orm_execute hook
+    # (ADR-0002) tenant-scopes this COUNT exactly as it scopes the window scan.
+    total_signals = db.query(func.count(models.IndustrialSignal.id)).scalar() or 0
     signals = db.query(models.IndustrialSignal).order_by(models.IndustrialSignal.id.desc()).limit(500).all()
     mappings = db.query(models.PlcSignalMapping).all()
 
@@ -1343,7 +1355,7 @@ def get_industrial_gateway_analytics(db: Session = Depends(_get_db), current_use
         "devices": len(devices),
         "online_devices": len([d for d in devices if d.status == "Online"]),
         "offline_devices": len([d for d in devices if d.status == "Offline"]),
-        "signals": len(signals),
+        "signals": total_signals,
         "mappings": len(mappings),
         "enabled_mappings": len([m for m in mappings if m.enabled == "Yes"]),
         "latest_signals": latest[:30],

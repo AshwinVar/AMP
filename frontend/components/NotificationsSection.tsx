@@ -6,11 +6,13 @@ function severityStyle(severity: string) {
   return "border-blue-500/40 bg-blue-500/10 text-blue-300";
 }
 
-export default function NotificationsSection({ notifications, generateNotifications, updateNotification }: {
+export default function NotificationsSection({ notifications, generateNotifications, updateNotification, markAllRead }: {
   notifications: NotificationItem[];
   generateNotifications: () => void;
   updateNotification: (id: number, status: string) => void;
+  markAllRead?: () => void;
 }) {
+  const unread = notifications.filter((n) => n.status !== "Read").length;
   return (
     <section className="mt-8 space-y-6">
       <div className="flex flex-col md:flex-row md:items-end md:justify-between gap-4">
@@ -18,7 +20,18 @@ export default function NotificationsSection({ notifications, generateNotificati
           <h2 className="text-3xl font-bold">Notification Center</h2>
           <p className="text-slate-400 mt-2">Enterprise alerts generated from machines, inventory and escalation risks.</p>
         </div>
-        <button onClick={generateNotifications} className="rounded-xl bg-white text-slate-950 font-semibold px-4 py-3">Generate Notifications</button>
+        <div className="flex items-center gap-3">
+          {markAllRead && unread > 0 && (
+            <button
+              type="button"
+              onClick={markAllRead}
+              className="rounded-xl border border-slate-700 px-4 py-3 text-sm text-slate-300 hover:border-slate-500 hover:bg-slate-800 transition"
+            >
+              Mark all read ({unread})
+            </button>
+          )}
+          <button onClick={generateNotifications} className="rounded-xl bg-white text-slate-950 font-semibold px-4 py-3">Generate Notifications</button>
+        </div>
       </div>
 
       <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">

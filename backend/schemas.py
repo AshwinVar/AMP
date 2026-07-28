@@ -1,6 +1,27 @@
 from datetime import datetime, date
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 from typing import Optional
+
+
+def _coalesce_null_count(value):
+    """Heal a NULL count column to the column's own default of 0 on the way OUT.
+
+    Several counted columns are declared ``Column(Integer, default=0)`` WITHOUT
+    ``nullable=False`` (ProductionPlan.actual_quantity, OperatorJobExecution
+    good_count/rejected_count). The ORM default only fills a value the *inserter*
+    omitted, so a row written by raw SQL, a migration, or a PATCH that cleared the
+    field can legitimately hold NULL. These response models type the same fields
+    as a non-optional ``int``, so a single such NULL row raised Pydantic
+    ``ValidationError`` and 500-ed the WHOLE list endpoint (GET /production-plans,
+    GET /operator/executions) — one bad row hiding every good one.
+
+    NULL here means "no value recorded", and the column's declared default is 0,
+    so coalesce to 0 — the same honest choice the operator-execution PATCH already
+    makes in-handler (``row.good_count = row.good_count or 0``). Applied
+    ``mode="before"`` so it runs on the raw attribute value ahead of int
+    validation. A real recorded 0 is untouched; only NULL is healed.
+    """
+    return 0 if value is None else value
 
 
 class MachineBase(BaseModel):
@@ -193,6 +214,10 @@ class ProductionPlanResponse(BaseModel):
     shift_name: str
     status: str
     created_at: Optional[datetime] = None
+
+    _heal_actual_quantity = field_validator("actual_quantity", mode="before")(
+        _coalesce_null_count
+    )
 
     class Config:
         from_attributes = True
@@ -783,6 +808,10 @@ class OperatorJobExecutionResponse(BaseModel):
     notes: Optional[str] = None
     started_at: Optional[datetime] = None
     completed_at: Optional[datetime] = None
+
+    _heal_counts = field_validator("good_count", "rejected_count", mode="before")(
+        _coalesce_null_count
+    )
 
     class Config:
         from_attributes = True

@@ -117,10 +117,39 @@ def test_patch_heals_preexisting_null_row_on_any_update():
     print("PASS a pre-existing NULL good_count heals to 0 on any update")
 
 
+def test_list_endpoint_survives_a_preexisting_null_count_row():
+    # The PATCH healed NULL counts, but GET /operator/executions returned rows
+    # straight through OperatorJobExecutionResponse (non-optional int fields), so a
+    # single legacy/raw-SQL NULL row 500ed the WHOLE list — hiding every good row.
+    # The response model now coalesces a NULL count to the column's own default 0.
+    db = _sess()
+    operator_routes.create_operator_execution(_exec(), db=db, current_user=_ADMIN)  # good row
+    operator_routes.create_operator_execution(
+        _exec(execution_no="EX-2", good_count=5, rejected_count=1),
+        db=db, current_user=_ADMIN)
+    legacy = db.query(models.OperatorJobExecution).filter(
+        models.OperatorJobExecution.execution_no == "EX-2").first()
+    legacy.good_count = None          # simulate a pre-existing NULL from raw SQL
+    legacy.rejected_count = None
+    db.commit()
+
+    rows = operator_routes.get_operator_executions(db=db, current_user=_ADMIN)
+    # Serialise EXACTLY as FastAPI does (response_model + from_attributes) — the
+    # step that used to raise on the NULL row.
+    out = {r.execution_no: schemas.OperatorJobExecutionResponse.model_validate(r) for r in rows}
+    assert set(out) == {"EX-1", "EX-2"}, set(out)
+    assert out["EX-2"].good_count == 0 and out["EX-2"].rejected_count == 0, \
+        (out["EX-2"].good_count, out["EX-2"].rejected_count)   # NULL healed
+    assert out["EX-1"].good_count == 90 and out["EX-1"].rejected_count == 10, \
+        (out["EX-1"].good_count, out["EX-1"].rejected_count)   # real values kept
+    print("PASS GET /operator/executions survives a NULL count row (heals to 0, real values kept)")
+
+
 if __name__ == "__main__":
     test_why_it_matters_negative_reject_breaks_yield_honesty()
     test_create_rejects_negative_counts()
     test_patch_rejects_negative_counts()
     test_patch_explicit_null_heals_to_zero()
     test_patch_heals_preexisting_null_row_on_any_update()
+    test_list_endpoint_survives_a_preexisting_null_count_row()
     print("OPERATOR INGEST OK: negatives rejected on create+PATCH; NULL counts healed to 0")

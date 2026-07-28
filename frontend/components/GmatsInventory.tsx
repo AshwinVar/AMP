@@ -1,6 +1,7 @@
 "use client";
 import React, { useEffect, useState } from "react";
 import { apiGet, apiPost, apiPatch, apiDelete, API_URL } from "../lib/api";
+import { LoadError, useLoadError } from "../lib/useLoadError";
 
 // ── Types ─────────────────────────────────────────────────────────
 
@@ -53,9 +54,10 @@ export default function GmatsInventory({ tenant = "GMATS", isAdmin = false }: { 
   const [items, setItems] = useState<GItem[]>([]);
   const [summary, setSummary] = useState<Summary | null>(null);
 
+  const { error, track } = useLoadError();
   const loadItems = () => {
-    apiGet<GItem[]>(`/gmats/items?tenant=${tenant}`).then(setItems).catch(() => {});
-    apiGet<Summary>(`/gmats/summary?tenant=${tenant}`).then(setSummary).catch(() => {});
+    track(apiGet<GItem[]>(`/gmats/items?tenant=${tenant}`), setItems, "the item list");
+    track(apiGet<Summary>(`/gmats/summary?tenant=${tenant}`), setSummary, "the stock summary");
   };
   useEffect(() => { loadItems(); }, [tenant]);
 
@@ -71,6 +73,7 @@ export default function GmatsInventory({ tenant = "GMATS", isAdmin = false }: { 
         <p className="text-slate-400 mt-2 text-sm">
           4-bucket stock (Physical · Reserved · Available) · item aliases · Proforma reservation · Tax-invoice deduction · free-spares issue
         </p>
+        <LoadError message={error} />
       </div>
 
       <div className="grid grid-cols-2 md:grid-cols-6 gap-3">
@@ -410,7 +413,8 @@ function ProformaTab({ tenant, items, reload }: { tenant: string; items: GItem[]
   const [lines, setLines] = useState([{ item_id: "", qty: "" }]);
   const [err, setErr] = useState("");
 
-  const load = () => apiGet<Proforma[]>(`/gmats/proformas?tenant=${tenant}`).then(setRows).catch(() => {});
+  const { error, track } = useLoadError();
+  const load = () => track(apiGet<Proforma[]>(`/gmats/proformas?tenant=${tenant}`), setRows, "proformas");
   useEffect(() => { load(); }, [tenant]);
 
   const addLine = () => setLines((p) => [...p, { item_id: "", qty: "" }]);
@@ -459,6 +463,7 @@ function ProformaTab({ tenant, items, reload }: { tenant: string; items: GItem[]
 
   return (
     <div className="space-y-5">
+      <LoadError message={error} />
       <div className="rounded-2xl bg-slate-900 border border-slate-800 p-5">
         <h3 className="text-lg font-semibold mb-1">Proforma Invoice → reserves stock (prevents double-selling)</h3>
         <p className="text-slate-400 text-sm">
@@ -516,7 +521,8 @@ function ProformaTab({ tenant, items, reload }: { tenant: string; items: GItem[]
 
 function InvoiceTab({ tenant, reload, isAdmin }: { tenant: string; reload: () => void; isAdmin: boolean }) {
   const [rows, setRows] = useState<Invoice[]>([]);
-  const load = () => apiGet<Invoice[]>(`/gmats/invoices?tenant=${tenant}`).then(setRows).catch(() => {});
+  const { error, track } = useLoadError();
+  const load = () => track(apiGet<Invoice[]>(`/gmats/invoices?tenant=${tenant}`), setRows, "invoices");
   useEffect(() => { load(); }, [tenant]);
 
   async function voidInvoice(id: number) {
@@ -527,6 +533,7 @@ function InvoiceTab({ tenant, reload, isAdmin }: { tenant: string; reload: () =>
 
   return (
     <div className="space-y-5">
+      <LoadError message={error} />
       <div className="rounded-2xl bg-slate-900 border border-slate-800 p-5">
         <h3 className="text-lg font-semibold mb-1">Tax Invoice → final stock deduction</h3>
         <p className="text-slate-400 text-sm">
@@ -541,7 +548,7 @@ function InvoiceTab({ tenant, reload, isAdmin }: { tenant: string; reload: () =>
               <tr>{["Invoice No", "From Proforma", "Customer", "Status", "Date", "Actions"].map(h => <th key={h} className="py-3 px-4">{h}</th>)}</tr>
             </thead>
             <tbody>
-              {rows.length === 0 && <tr><td colSpan={6} className="py-6 px-4 text-slate-400">No invoices yet — generate one from the Proforma tab.</td></tr>}
+              {!error && rows.length === 0 && <tr><td colSpan={6} className="py-6 px-4 text-slate-400">No invoices yet — generate one from the Proforma tab.</td></tr>}
               {rows.map((v) => (
                 <tr key={v.id} className="border-b border-slate-800">
                   <td className="py-3 px-4 font-mono font-semibold text-green-400">{v.invoice_no}</td>
@@ -573,7 +580,8 @@ function MinTab({ tenant, items, reload, isAdmin }: { tenant: string; items: GIt
   const [lines, setLines] = useState([{ item_id: "", qty: "" }]);
   const [err, setErr] = useState("");
 
-  const load = () => apiGet<MIN[]>(`/gmats/min?tenant=${tenant}`).then(setRows).catch(() => {});
+  const { error, track } = useLoadError();
+  const load = () => track(apiGet<MIN[]>(`/gmats/min?tenant=${tenant}`), setRows, "material issue notes");
   useEffect(() => { load(); }, [tenant]);
 
   const addLine = () => setLines((p) => [...p, { item_id: "", qty: "" }]);
@@ -606,6 +614,7 @@ function MinTab({ tenant, items, reload, isAdmin }: { tenant: string; items: GIt
 
   return (
     <div className="space-y-5">
+      <LoadError message={error} />
       <div className="rounded-2xl bg-slate-900 border border-slate-800 p-5">
         <div className="flex items-center justify-between gap-3 flex-wrap">
           <div>

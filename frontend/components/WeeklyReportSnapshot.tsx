@@ -27,6 +27,8 @@ export default function WeeklyReportSnapshot() {
   }, []);
 
   useEffect(() => {
+    // Feature detection, deliberately silent: if /ai/status cannot be reached
+    // the AI affordance simply stays hidden. There is no list to mistake for empty.
     apiGet<{ enabled: boolean }>("/ai/status").then((s) => setAiEnabled(!!s.enabled)).catch(() => {});
   }, []);
 

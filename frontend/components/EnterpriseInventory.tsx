@@ -1,6 +1,7 @@
 "use client";
 import React, { useEffect, useState, useRef } from "react";
 import { apiGet, apiPost, apiPatch, API_URL, getAuthHeaders } from "../lib/api";
+import { LoadError, useLoadError } from "../lib/useLoadError";
 
 // How many history rows to fetch at a time. The GRN and cycle-count endpoints
 // page (default 50, hard cap 200) because both tables only ever grow — see
@@ -133,7 +134,8 @@ function RemnantsTab({ items }: { items: InventoryItem[] }) {
   const [form, setForm] = useState({ item_id: "", original_qty: "", remaining_qty: "", unit: "m", location: "", source_reference: "", notes: "" });
   const [loading, setLoading] = useState(false);
 
-  const load = () => apiGet<Remnant[]>("/remnants").then(setRows).catch(() => {});
+  const { error, track } = useLoadError();
+  const load = () => track(apiGet<Remnant[]>("/remnants"), setRows, "remnants");
   useEffect(() => { load(); }, []);
 
   async function submit(e: React.FormEvent) {
@@ -177,6 +179,7 @@ function RemnantsTab({ items }: { items: InventoryItem[] }) {
 
       <div className="rounded-2xl bg-slate-900 border border-slate-800 p-5">
         <h3 className="text-lg font-semibold mb-4">Remnant Register <span className="text-slate-500 text-sm font-normal">({rows.length} entries)</span></h3>
+        <LoadError message={error} />
         <div className="overflow-x-auto rounded-xl border border-slate-800">
           <table className="w-full min-w-[900px] text-left text-sm">
             <thead className="text-slate-400 border-b border-slate-800">
@@ -187,7 +190,7 @@ function RemnantsTab({ items }: { items: InventoryItem[] }) {
               </tr>
             </thead>
             <tbody>
-              {rows.length === 0 && <tr><td colSpan={9} className="py-6 px-4 text-slate-400">No remnants logged yet.</td></tr>}
+              {!error && rows.length === 0 && <tr><td colSpan={9} className="py-6 px-4 text-slate-400">No remnants logged yet.</td></tr>}
               {rows.map(r => (
                 <tr key={r.id} className="border-b border-slate-800">
                   <td className="py-3 px-4 font-mono text-indigo-300">{r.tag_no}</td>
@@ -223,7 +226,8 @@ function IssueSlipsTab({ items }: { items: InventoryItem[] }) {
   const [form, setForm] = useState({ item_id: "", requested_qty: "", work_order_ref: "", requested_by: "", notes: "" });
   const [loading, setLoading] = useState(false);
 
-  const load = () => apiGet<IssueSlip[]>("/issue-slips").then(setRows).catch(() => {});
+  const { error, track } = useLoadError();
+  const load = () => track(apiGet<IssueSlip[]>("/issue-slips"), setRows, "issue slips");
   useEffect(() => { load(); }, []);
 
   async function submit(e: React.FormEvent) {
@@ -271,6 +275,7 @@ function IssueSlipsTab({ items }: { items: InventoryItem[] }) {
 
       <div className="rounded-2xl bg-slate-900 border border-slate-800 p-5">
         <h3 className="text-lg font-semibold mb-4">Issue Slip Register <span className="text-slate-500 text-sm font-normal">({rows.length} slips)</span></h3>
+        <LoadError message={error} />
         <div className="overflow-x-auto rounded-xl border border-slate-800">
           <table className="w-full min-w-[900px] text-left text-sm">
             <thead className="text-slate-400 border-b border-slate-800">
@@ -281,7 +286,7 @@ function IssueSlipsTab({ items }: { items: InventoryItem[] }) {
               </tr>
             </thead>
             <tbody>
-              {rows.length === 0 && <tr><td colSpan={8} className="py-6 px-4 text-slate-400">No issue slips yet.</td></tr>}
+              {!error && rows.length === 0 && <tr><td colSpan={8} className="py-6 px-4 text-slate-400">No issue slips yet.</td></tr>}
               {rows.map(s => (
                 <tr key={s.id} className="border-b border-slate-800">
                   <td className={`py-3 px-4 font-mono font-semibold ${slipColors[s.status] ?? ""}`}>{s.slip_no}</td>
@@ -325,15 +330,11 @@ function GRNTab({ items }: { items: InventoryItem[] }) {
   const [loading, setLoading] = useState(false);
 
   const [shown, setShown] = useState(PAGE);
-  const [error, setError] = useState<string | null>(null);
+  const { error, track } = useLoadError();
 
   // Paged: the receipt table only grows, and the endpoint caps a page at 200.
-  // Swallowing the error here (the old `.catch(() => {})`) made a failed or
-  // timed-out request look identical to "no GRNs yet".
   const load = (limit = shown) =>
-    apiGet<GRN[]>(`/grns?limit=${limit}&offset=0`)
-      .then((r) => { setRows(r); setError(null); })
-      .catch(() => setError("Could not load receipt history."));
+    track(apiGet<GRN[]>(`/grns?limit=${limit}&offset=0`), setRows, "receipt history");
   useEffect(() => { load(PAGE); }, []);
 
   const loadMore = () => { const next = shown + PAGE; setShown(next); load(next); };
@@ -391,7 +392,7 @@ function GRNTab({ items }: { items: InventoryItem[] }) {
       </form>
 
       <div className="space-y-4">
-        {error && <p className="text-red-400 text-sm">{error}</p>}
+        <LoadError message={error} />
         {!error && rows.length === 0 && <p className="text-slate-400 text-sm">No GRNs yet.</p>}
         {rows.map(g => (
           <div key={g.id} className="rounded-2xl bg-slate-900 border border-slate-800 p-5">
@@ -449,14 +450,12 @@ function CycleCountTab({ items }: { items: InventoryItem[] }) {
   const [loading, setLoading] = useState(false);
 
   const [shown, setShown] = useState(PAGE);
-  const [error, setError] = useState<string | null>(null);
+  const { error, track } = useLoadError();
 
   // Paged for the same reason as the GRN history: the select-all checkbox below
   // makes counts containing every SKU, so this table grows fast.
   const load = (limit = shown) =>
-    apiGet<CycleCount[]>(`/cycle-counts?limit=${limit}&offset=0`)
-      .then((r) => { setRows(r); setError(null); })
-      .catch(() => setError("Could not load cycle-count history."));
+    track(apiGet<CycleCount[]>(`/cycle-counts?limit=${limit}&offset=0`), setRows, "cycle-count history");
   useEffect(() => { load(PAGE); }, []);
 
   const loadMore = () => { const next = shown + PAGE; setShown(next); load(next); };
@@ -537,7 +536,7 @@ function CycleCountTab({ items }: { items: InventoryItem[] }) {
       </form>
 
       <div className="space-y-4">
-        {error && <p className="text-red-400 text-sm">{error}</p>}
+        <LoadError message={error} />
         {rows.map(c => (
           <div key={c.id} className="rounded-2xl bg-slate-900 border border-slate-800 p-5">
             <div className="flex items-center justify-between mb-3">
@@ -588,11 +587,11 @@ function CycleCountTab({ items }: { items: InventoryItem[] }) {
 function VarianceReportTab() {
   const [rows, setRows] = useState<VarianceRow[]>([]);
   const [loading, setLoading] = useState(false);
+  const { error, track } = useLoadError();
 
   const load = async () => {
     setLoading(true);
-    const data = await apiGet<VarianceRow[]>("/inventory/variance-report").catch(() => []);
-    setRows(data);
+    await track(apiGet<VarianceRow[]>("/inventory/variance-report"), setRows, "the variance report");
     setLoading(false);
   };
   useEffect(() => { load(); }, []);
@@ -623,6 +622,7 @@ function VarianceReportTab() {
             {loading ? "Loading…" : "Refresh"}
           </button>
         </div>
+        <LoadError message={error} />
         <div className="overflow-x-auto rounded-xl border border-slate-800">
           <table className="w-full min-w-[900px] text-left text-sm">
             <thead className="text-slate-400 border-b border-slate-800">

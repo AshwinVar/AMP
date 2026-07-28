@@ -34,6 +34,8 @@ export default function AICopilot({ onOpen }: { onOpen?: (viewKey: string) => vo
   // answers. The user just asks; the badge on each answer says which spoke.
   const [ai, setAi] = useState<AiStatus>({ enabled: false });
   useEffect(() => {
+    // Feature detection, deliberately silent: if /ai/status cannot be reached
+    // the AI affordance simply stays hidden. There is no list to mistake for empty.
     apiGet<AiStatus>("/ai/status").then(setAi).catch(() => {});
   }, []);
 

@@ -1,6 +1,7 @@
 "use client";
 import React, { useEffect, useState } from "react";
 import { apiGet, apiPost } from "../lib/api";
+import { LoadError, useLoadError } from "../lib/useLoadError";
 
 interface Protocol { key: string; name: string; port: number; library: string; transport: string; desc: string; }
 interface Device {
@@ -19,13 +20,17 @@ export default function IndustrialConnectivity() {
   const [form, setForm] = useState({ device_code: "", device_name: "", protocol: "", ip_address: "" });
   const [msg, setMsg] = useState("");
 
+  const { error, track } = useLoadError();
   const load = () => {
-    apiGet<Protocol[]>("/industrial/protocols").then(setProtocols).catch(() => {});
-    apiGet<Device[]>("/industrial/devices").then(setDevices).catch(() => {});
-    apiGet<Signal[]>("/industrial/signals").then(setSignals).catch(() => {});
+    track(apiGet<Protocol[]>("/industrial/protocols"), setProtocols, "protocols");
+    track(apiGet<Device[]>("/industrial/devices"), setDevices, "devices");
+    track(apiGet<Signal[]>("/industrial/signals"), setSignals, "signals");
   };
   useEffect(() => {
     load();
+    // The 8s refresh deliberately stays silent: one blip should not flash an
+    // error over a page that is already showing good data. The initial load
+    // above is the one that must report failure.
     const t = setInterval(() => apiGet<Signal[]>("/industrial/signals").then(setSignals).catch(() => {}), 8000);
     return () => clearInterval(t);
   }, []);
@@ -113,7 +118,8 @@ export default function IndustrialConnectivity() {
       <div className="rounded-2xl bg-slate-900 border border-slate-800 p-5">
         <h3 className="text-lg font-semibold mb-4">Connected devices <span className="text-slate-500 text-sm font-normal">({devices.length})</span></h3>
         <div className="space-y-3">
-          {devices.length === 0 && <p className="text-slate-400 text-sm">No devices yet.</p>}
+          <LoadError message={error} />
+          {!error && devices.length === 0 && <p className="text-slate-400 text-sm">No devices yet.</p>}
           {devices.map((d) => {
             const latest = latestFor(d.id);
             return (

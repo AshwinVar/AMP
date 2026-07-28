@@ -155,3 +155,139 @@ describe("usePolling", () => {
     expect(second).toHaveBeenCalled();
   });
 });
+
+/**
+ * Polling continued at full rate in a background tab.
+ *
+ * The dashboard's round is ~47 requests every three seconds. A shop-floor
+ * machine with the dashboard parked behind other tabs, or a manager who leaves
+ * it open all day and works elsewhere, kept issuing ~15 requests a second at a
+ * screen nobody was looking at - per tab, for as long as the browser was open.
+ * Nothing about it is visible to the user either way, which is exactly why it
+ * went unnoticed.
+ *
+ * Pausing while hidden changes nothing anyone can perceive: a hidden tab shows
+ * no data, and the moment it comes back the hook refetches immediately rather
+ * than making the user wait out the interval on stale numbers.
+ */
+function setVisibility(state: "visible" | "hidden") {
+  Object.defineProperty(document, "visibilityState", {
+    value: state,
+    configurable: true,
+  });
+  document.dispatchEvent(new Event("visibilitychange"));
+}
+
+describe("usePolling while the tab is hidden", () => {
+  afterEach(() => {
+    Object.defineProperty(document, "visibilityState", {
+      value: "visible",
+      configurable: true,
+    });
+  });
+
+  it("stops polling once the tab is hidden", async () => {
+    const run = vi.fn().mockResolvedValue(undefined);
+    renderHook(() => usePolling(run, 3000));
+    expect(run).toHaveBeenCalledTimes(1);
+
+    await act(async () => setVisibility("hidden"));
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(30_000); // ten rounds' worth
+    });
+
+    expect(run).toHaveBeenCalledTimes(1);
+  });
+
+  it("refetches the moment the tab comes back, without waiting for the interval", async () => {
+    const run = vi.fn().mockResolvedValue(undefined);
+    renderHook(() => usePolling(run, 3000));
+
+    await act(async () => setVisibility("hidden"));
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(30_000);
+    });
+    expect(run).toHaveBeenCalledTimes(1);
+
+    // Whatever is on screen is now half a minute stale; make it current before
+    // the user reads it.
+    await act(async () => setVisibility("visible"));
+    expect(run).toHaveBeenCalledTimes(2);
+  });
+
+  it("resumes the normal cadence after coming back", async () => {
+    const run = vi.fn().mockResolvedValue(undefined);
+    renderHook(() => usePolling(run, 3000));
+
+    await act(async () => setVisibility("hidden"));
+    await act(async () => setVisibility("visible"));
+    const afterReturn = run.mock.calls.length;
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(3000);
+    });
+
+    // A pause that never lifted would be worse than the waste it replaced.
+    expect(run).toHaveBeenCalledTimes(afterReturn + 1);
+  });
+
+  it("does not fetch at all when it mounts in a background tab", async () => {
+    Object.defineProperty(document, "visibilityState", { value: "hidden", configurable: true });
+    const run = vi.fn().mockResolvedValue(undefined);
+    renderHook(() => usePolling(run, 3000));
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(9000);
+    });
+
+    expect(run).toHaveBeenCalledTimes(0);
+  });
+
+  it("stops listening for visibility changes after unmount", async () => {
+    // The `cancelled` flag already stops a leaked listener from *doing*
+    // anything, so behaviour alone cannot tell the two apart. What a leak
+    // actually costs is memory: the listener keeps the effect's closure - and
+    // through it the caller's callback - alive on `document` for the life of
+    // the page. So assert the removal itself.
+    const add = vi.spyOn(document, "addEventListener");
+    const remove = vi.spyOn(document, "removeEventListener");
+
+    const run = vi.fn().mockResolvedValue(undefined);
+    const { unmount } = renderHook(() => usePolling(run, 3000));
+
+    const added = add.mock.calls.filter(([type]) => type === "visibilitychange");
+    expect(added).toHaveLength(1);
+
+    unmount();
+
+    const removed = remove.mock.calls.filter(([type]) => type === "visibilitychange");
+    expect(removed).toHaveLength(1);
+    // Same handler reference, or the removal is a no-op.
+    expect(removed[0][1]).toBe(added[0][1]);
+
+    await act(async () => setVisibility("hidden"));
+    await act(async () => setVisibility("visible"));
+    expect(run).toHaveBeenCalledTimes(1);
+
+    add.mockRestore();
+    remove.mockRestore();
+  });
+
+  it("still refuses to overlap a round that is in flight when the tab returns", async () => {
+    const slow = deferred();
+    const run = vi.fn().mockReturnValue(slow.promise);
+    renderHook(() => usePolling(run, 3000));
+    expect(run).toHaveBeenCalledTimes(1);
+
+    await act(async () => setVisibility("hidden"));
+    await act(async () => setVisibility("visible"));
+
+    // The in-flight guard outranks the come-back refetch.
+    expect(run).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      slow.resolve();
+      await slow.promise;
+    });
+  });
+});

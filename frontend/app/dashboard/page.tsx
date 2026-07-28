@@ -74,6 +74,7 @@ import TenantAdoptionCard from "../../components/TenantAdoptionCard";
 import BrandingSettingsCard from "../../components/BrandingSettingsCard";
 import QualityIntelCard from "../../components/QualityIntelCard";
 import DowntimeIntelCard from "../../components/DowntimeIntelCard";
+import DeliveryIntelCard from "../../components/DeliveryIntelCard";
 import SchedulingSection from "../../components/SchedulingSection";
 import IoTCommandSection from "../../components/IoTCommandSection";
 import AIInsightsSection from "../../components/AIInsightsSection";
@@ -2752,6 +2753,8 @@ export default function DashboardPage() {
       ))}
 
       {renderSection("orders", (
+        <>
+        <div className="mt-8"><DeliveryIntelCard /></div>
         <OrdersDispatchSection
           workOrders={workOrders}
           productionPlans={productionPlans}
@@ -2764,6 +2767,7 @@ export default function DashboardPage() {
           deleteOrder={isAdmin ? deleteCustomerOrder : undefined}
           generateLateOrderEscalations={isAdminOrSupervisor ? generateLateOrderEscalations : async () => {}}
         />
+        </>
       ))}
 
       {renderSection("purchasing", (

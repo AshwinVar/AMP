@@ -160,8 +160,23 @@ def test_customer_detail_is_empty_safe_for_unknown_customer():
     assert d["chase"] == [] and d["recent"] == []
 
 
+def test_summary_exposes_the_card_contract():
+    # The Orders & Dispatch intel card (DeliveryIntelCard.tsx) renders exactly
+    # these keys; pin them so a read-model edit can't silently break the card.
+    db = _fresh_session()
+    s = delivery.build_delivery_summary(db, "DEFAULT")
+    for k in ("total", "delivered", "on_track", "at_risk", "late", "on_track_rate",
+              "resolved", "reliability_rate", "fulfillment_rate", "units_ordered",
+              "units_dispatched", "units_remaining", "units_at_risk", "by_customer",
+              "at_risk_orders", "upcoming"):
+        assert k in s, f"delivery-summary missing card key {k!r}"
+    assert all({"date", "orders"} <= set(r) for r in s["upcoming"])
+    print("PASS delivery-summary exposes the keys the intel card renders")
+
+
 if __name__ == "__main__":
     test_delivery_classifies_orders_and_rolls_up_by_customer()
+    test_summary_exposes_the_card_contract()
     test_customer_detail_scopes_and_scores_one_customer()
     test_customer_detail_exposes_resolved_so_no_due_reads_as_dash_not_zero()
     test_customer_detail_is_empty_safe_for_unknown_customer()

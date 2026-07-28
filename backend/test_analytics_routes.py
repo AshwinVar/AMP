@@ -815,6 +815,43 @@ def test_executive_oee_null_quality_columns_in_per_machine_fallback():
     print("PASS executive-oee: NULL passed_quantity in per-machine fallback -> quality 60, no crash")
 
 
+def test_executive_oee_per_machine_components_capped_at_100():
+    # The per-machine ranking must not print a component the data can't support.
+    # The HTTP ingest rejects negatives and enforces good+rejected==total, but it
+    # does NOT require runtime_minutes <= planned_minutes, so a machine that ran
+    # PAST its planned window (runtime > planned) is a real, reachable input whose
+    # raw availability exceeds 100%. Quality is likewise capped (a data-entry slip
+    # can store good > total). Both are clamped to [0,100] like performance already
+    # is and like pooled_oee / calculate_oee_from_record clamp every component, so a
+    # single machine's OEE can't top 100% or disagree with the capped pooled plant.
+    #
+    # One overtime record (values chosen so every number is hand-derivable):
+    #   availability = min(125/100, 1) * 100          = 100  (raw 125 -> capped)
+    #   performance  = min((60*100)/(125*60), 1) * 100 = 80   (6000/7500 = 0.8)
+    #   quality      = min(110/100, 1) * 100           = 100  (raw 110 -> capped)
+    #   oee          = round(1.0 * 0.8 * 1.0 * 100)     = 80
+    db = _fresh_session()
+    db.add(models.Machine(id=1, name="Overtime", status="Running", utilization=80))
+    db.add(models.ProductionRecord(
+        machine_id=1, planned_minutes=100, runtime_minutes=125,
+        ideal_cycle_time_seconds=60, total_count=100, good_count=110, rejected_count=0))
+    db.commit()
+
+    out = analytics_routes.get_executive_oee(db=db, current_user={})
+    row = next(r for r in out["machine_ranking"] if r["machine_id"] == 1)
+
+    # availability capped at 100 (was 125), quality capped at 100 (was 110)
+    assert row["availability"] == 100, row
+    assert row["quality"] == 100, row
+    assert row["performance"] == 80, row
+    # derived OEE stays within the physical bound
+    assert row["oee"] == 80, row
+    assert row["oee"] <= 100 and row["availability"] <= 100 and row["quality"] <= 100, row
+    # and the pooled plant rollup is itself bounded (pooled_oee caps every component)
+    assert out["plant_oee"] <= 100 and out["plant_availability"] <= 100, out
+    print("PASS executive-oee: per-machine availability/quality capped at 100 (no >100% metric)")
+
+
 def test_factory_command_center_null_stock_and_failed_are_zero_not_a_crash():
     # factory-command-center compares current_stock <= reorder_level (both nullable
     # Integers) and sums failed_quantity (nullable). A real SQL NULL made
@@ -1398,6 +1435,7 @@ if __name__ == "__main__":
     test_quality_analytics_empty_table_is_zero_not_a_crash()
     test_quality_analytics_is_tenant_scoped()
     test_executive_oee_null_quality_columns_in_per_machine_fallback()
+    test_executive_oee_per_machine_components_capped_at_100()
     test_factory_command_center_null_stock_and_failed_are_zero_not_a_crash()
     test_factory_command_center_counts_reconcile_with_independent_numbers()
     test_factory_command_center_does_not_hydrate_growing_tables()

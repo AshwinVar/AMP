@@ -574,7 +574,17 @@ def get_executive_oee(
         rejected_count = sum(record.rejected_count for record in records)
 
         if planned_minutes > 0:
-            availability = round((runtime_minutes / planned_minutes) * 100)
+            # Cap at 100% like pooled_oee / calculate_oee_from_record cap every
+            # component: the HTTP ingest (machines_routes.create_production_record)
+            # rejects negatives and enforces good+rejected==total, but it does NOT
+            # require runtime_minutes <= planned_minutes, so a machine that ran past
+            # its planned window (runtime > planned) computed availability > 100%.
+            # An availability the data can't support (>100%) then inflated THIS
+            # machine's OEE above the physical bound and disagreed with the capped
+            # pooled plant rollup below — the exact honesty/reconciliation rule the
+            # shared OEE definition already follows (performance is clamped the same
+            # way three lines down). min(ratio, 1) before rounding matches pooled_oee.
+            availability = round(min(runtime_minutes / planned_minutes, 1) * 100)
         else:
             # No production for this machine — fall back to its utilization as a
             # rough availability. utilization is nullable, so treat an unset reading
@@ -588,7 +598,12 @@ def get_executive_oee(
             performance = 90 if machine.status == "Running" else 60
 
         if total_count > 0:
-            quality = round((good_count / total_count) * 100)
+            # Clamp to 100% too (same shared OEE definition): the main write paths
+            # enforce good <= total, but a data-entry slip / raw-SQL write can store
+            # good_count > total_count, and an uncapped good/total would print a
+            # quality above 100% — a figure the data can't support. min(ratio, 1)
+            # keeps every normal record unchanged (good <= total -> ratio <= 1).
+            quality = round(min(good_count / total_count, 1) * 100)
         else:
             q = quality_by_machine.get(machine.id)
             if q and q["inspected"] > 0:

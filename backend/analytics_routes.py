@@ -682,31 +682,84 @@ def get_factory_command_center(
     db: Session = Depends(_get_db),
     current_user: dict = Depends(get_current_user),
 ):
+    # The machine roster and the factory-layout nodes are the bounded reference
+    # sets this snapshot is drawn on (a plant has dozens of machines and layout
+    # nodes, not a per-event ledger that grows without limit), so they're read
+    # whole — the same way the sibling /analytics/inventory reads its item
+    # catalogue. The status headline and the zone rollup both need the identical
+    # in-memory machine map, so resolve it once here.
     machines = db.query(models.Machine).all()
-    downtime_logs = db.query(models.DowntimeLog).all()
-    work_orders = db.query(models.WorkOrder).all()
-    production_plans = db.query(models.ProductionPlan).all()
-    escalations = db.query(models.Escalation).all()
-    inventory_items = db.query(models.InventoryItem).all()
-    quality_rows = db.query(models.QualityInspection).all()
     nodes = db.query(models.FactoryLayoutNode).all()
 
+    # Plant downtime total. downtime_logs carries a FREE-TEXT duration
+    # ("2 hrs 15 min") that only parse_duration_to_minutes can read — there is no
+    # SQL SUM for it — so this one total is still summed in Python, exactly as
+    # every other downtime rollup does (build_management_summary, executive-oee).
+    # It is the single scan here that genuinely can't move into SQL; the counts and
+    # the quality sums below all now do, so the endpoint no longer hydrates five
+    # growing tables into Python just to count them.
+    downtime_logs = db.query(models.DowntimeLog).all()
     total_downtime = sum(parse_duration_to_minutes(log.duration) for log in downtime_logs)
+
     running = len([machine for machine in machines if machine.status == "Running"])
     breakdown = len([machine for machine in machines if machine.status == "Breakdown"])
     idle = len([machine for machine in machines if machine.status == "Idle"])
     maintenance = len([machine for machine in machines if machine.status == "Maintenance"])
-    active_work_orders = len([row for row in work_orders if row.status in ["Running", "Planned"]])
-    behind_plans = len([row for row in production_plans if row.status == "Behind"])
-    open_escalations = len([row for row in escalations if row.status != "Resolved"])
-    # current_stock / reorder_level and failed_quantity are nullable Integers
-    # (default=0, no nullable=False); a real SQL NULL made `None <= None` and
-    # `sum(... None ...)` 500 this command centre. Coalesce to the column default
-    # of 0, exactly like the sibling /analytics/inventory (#286) already does.
-    low_stock = len([item for item in inventory_items if (item.current_stock or 0) <= (item.reorder_level or 0)])
 
-    inspected = sum(row.inspected_quantity for row in quality_rows)
-    failed = sum((row.failed_quantity or 0) for row in quality_rows)
+    # The four counts and the quality rate below used to hydrate a whole growing
+    # table into Python just to count/sum it with a list comprehension (rule-4
+    # antipattern) — the same fix already applied to /analytics/work-orders,
+    # /analytics/production-plans, /analytics/escalations and /analytics/quality.
+    # Each model is in tenancy.SCOPED_MODELS, so the do_orm_execute hook (ADR-0002)
+    # tenant-scopes every aggregate SELECT below exactly as it did the old .all()
+    # scan, and each predicate is written to keep the numbers BYTE-IDENTICAL to the
+    # Python versions, including the NULL-status subtleties.
+
+    # active_work_orders: status IN (Running, Planned). A NULL status is not IN the
+    # set (SQL and the old Python `in [...]` agree), so it stays excluded.
+    active_work_orders = db.query(func.count(models.WorkOrder.id)).filter(
+        models.WorkOrder.status.in_(["Running", "Planned"])
+    ).scalar() or 0
+
+    # behind_plans: status == "Behind" (a NULL status is excluded either way).
+    behind_plans = db.query(func.count(models.ProductionPlan.id)).filter(
+        models.ProductionPlan.status == "Behind"
+    ).scalar() or 0
+
+    # open_escalations = not Resolved. status is String default="Open" (not NOT
+    # NULL); the old Python `row.status != "Resolved"` counted a NULL-status row as
+    # open (None != "Resolved" is True), but SQL's `status != 'Resolved'` is NULL —
+    # not TRUE — for a NULL status and would silently drop it. OR the NULL back in
+    # to keep the same basis (the same subtlety as the late-order / review-due
+    # counts, #295/#298).
+    open_escalations = db.query(func.count(models.Escalation.id)).filter(
+        or_(
+            models.Escalation.status.is_(None),
+            models.Escalation.status != "Resolved",
+        )
+    ).scalar() or 0
+
+    # low_stock: current_stock <= reorder_level. Both are Column(Integer, default=0)
+    # WITHOUT nullable=False, so either can be a real SQL NULL; COALESCE(.., 0)
+    # reproduces the old `(current_stock or 0) <= (reorder_level or 0)` exactly (a
+    # NULL reads as the column's own default of 0) without pulling the catalogue
+    # into Python — matching the NULL guard /analytics/inventory (#286) applies.
+    low_stock = db.query(func.count(models.InventoryItem.id)).filter(
+        func.coalesce(models.InventoryItem.current_stock, 0)
+        <= func.coalesce(models.InventoryItem.reorder_level, 0)
+    ).scalar() or 0
+
+    # Quality fail rate over the whole inspection register. inspected_quantity is
+    # nullable=False; failed_quantity is Column(Integer, default=0) WITHOUT
+    # nullable=False, so COALESCE(SUM(failed), 0) guards a real NULL (and the
+    # empty-table NULL) exactly as the old `failed_quantity or 0` did. Numerator and
+    # denominator read the same rows, so the rate reconciles (rule 3); 0/0 -> 0.
+    inspected, failed = db.query(
+        func.coalesce(func.sum(models.QualityInspection.inspected_quantity), 0),
+        func.coalesce(func.sum(models.QualityInspection.failed_quantity), 0),
+    ).one()
+    inspected = int(inspected)
+    failed = int(failed)
     quality_fail_rate = round((failed / inspected) * 100) if inspected else 0
 
     machine_map = {machine.id: machine for machine in machines}

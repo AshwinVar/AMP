@@ -846,6 +846,114 @@ def test_factory_command_center_null_stock_and_failed_are_zero_not_a_crash():
           "(2 low-stock / fail 13%)")
 
 
+def test_factory_command_center_counts_reconcile_with_independent_numbers():
+    # Pin every headline to a hand-derived number after moving the counts/sums into
+    # SQL, including the NULL-status subtleties that must stay byte-identical to the
+    # old Python comprehensions:
+    #   active_work_orders = status IN (Running, Planned): a NULL status excluded.
+    #   behind_plans       = status == "Behind": a NULL status excluded.
+    #   open_escalations   = status != Resolved: a NULL status STILL counts as open
+    #                        (old Python `None != "Resolved"` is True), so it's OR'd
+    #                        back in — dropping it (bare SQL `!=`) would be a regression.
+    #   low_stock          = COALESCE(current_stock,0) <= COALESCE(reorder_level,0).
+    #   quality_fail_rate  = SUM(failed)/SUM(inspected), NULL failed -> 0.
+    # Plus an hour-format downtime fixture ("2 hrs 15 min" -> 135, NOT 2) so the
+    # free-text total (the one scan that stays in Python) is exercised too.
+    db = _fresh_session()
+
+    db.add(models.Machine(id=1, name="M1", status="Running", utilization=80))
+    db.add(models.Machine(id=2, name="M2", status="Breakdown", utilization=0))
+    db.add(models.Machine(id=3, name="M3", status="Idle", utilization=10))
+    db.add(models.Machine(id=4, name="M4", status="Maintenance", utilization=0))
+
+    db.add(models.DowntimeLog(machine_id=2, reason="Breakdown", duration="2 hrs 15 min"))
+    db.add(models.DowntimeLog(machine_id=2, reason="Tool Change", duration="45 min"))
+
+    # Work orders: Running + Planned are active (2); Completed, Delayed, NULL are not.
+    for i, st in enumerate(["Running", "Planned", "Completed", "Delayed", "Running"]):
+        db.add(models.WorkOrder(work_order_no=f"WO{i}", part_number="P", batch_number="B",
+                                machine_id=1, target_quantity=100, status=st))
+    # Production plans: 2 Behind, 1 Running, 1 NULL-status.
+    for i, st in enumerate(["Behind", "Behind", "Running", "Planned"]):
+        db.add(models.ProductionPlan(plan_no=f"PL{i}", planned_quantity=100,
+                                     plan_date=date(2026, 1, 1), shift_name="A", status=st))
+    # Escalations: Open + In Progress + (NULL) are open (3); Resolved is not.
+    for i, st in enumerate(["Open", "In Progress", "Resolved", "Open"]):
+        db.add(models.Escalation(title=f"E{i}", severity="High", owner="o",
+                                 department="d", status=st))
+    # Inventory: I1 low (5<=10), I2 low after NULLing (0<=0), I3 not (100<=10 false).
+    db.add(models.InventoryItem(item_code="I1", item_name="One", category="raw", unit="pcs",
+                                current_stock=5, reorder_level=10))
+    db.add(models.InventoryItem(item_code="I2", item_name="Two", category="raw", unit="pcs",
+                                current_stock=0, reorder_level=0))
+    db.add(models.InventoryItem(item_code="I3", item_name="Three", category="raw", unit="pcs",
+                                current_stock=100, reorder_level=10))
+    # Quality: inspected 100+50=150, failed 20 + NULL(->0) = 20 -> 13%.
+    db.add(models.QualityInspection(inspection_no="Q1", inspector="I", machine_id=1,
+                                    inspected_quantity=100, failed_quantity=20))
+    db.add(models.QualityInspection(inspection_no="Q2", inspector="I", machine_id=1,
+                                    inspected_quantity=50, failed_quantity=7))
+    db.add(models.FactoryLayoutNode(node_name="N1", machine_id=1, zone="Line A"))
+    db.commit()
+    # Turn one work-order, one plan, one escalation, one inspection to a genuine NULL.
+    db.execute(text("UPDATE work_orders SET status = NULL WHERE work_order_no = 'WO4'"))
+    db.execute(text("UPDATE production_plans SET status = NULL WHERE plan_no = 'PL3'"))
+    db.execute(text("UPDATE escalations SET status = NULL WHERE title = 'E3'"))
+    db.execute(text("UPDATE inventory_items SET current_stock = NULL, reorder_level = NULL WHERE item_code = 'I2'"))
+    db.execute(text("UPDATE quality_inspections SET failed_quantity = NULL WHERE inspection_no = 'Q2'"))
+    db.commit()
+    db.expire_all()
+
+    out = analytics_routes.get_factory_command_center(db=db, current_user={})
+
+    assert out["machines"] == 4, out
+    assert out["running"] == 1 and out["breakdown"] == 1, out
+    assert out["idle"] == 1 and out["maintenance"] == 1, out
+    assert out["total_downtime_minutes"] == 180, out          # 135 (2h15) + 45
+    assert out["active_work_orders"] == 2, out                # Running + Planned; NULL/Completed/Delayed out
+    assert out["behind_plans"] == 2, out                      # 2 Behind; NULL out
+    # E0 Open, E1 In Progress, E2 Resolved, E3 Open->NULLed. Open ones:
+    # E0, E1, and E3 (NULL, still counts as open) = 3; E2 Resolved excluded.
+    assert out["open_escalations"] == 3, out
+    assert out["low_stock_items"] == 2, out                   # I1 + I2(NULL->0<=0); I3 out
+    assert out["quality_fail_rate"] == 13, out                # round(20/150*100)
+    print("PASS factory-command-center: SQL counts reconcile with hand-derived numbers "
+          "(WO 2 / behind 2 / open-esc 3 / low-stock 2 / fail 13% / downtime 180)")
+
+
+def test_factory_command_center_does_not_hydrate_growing_tables():
+    # Regression guard for the rule-4 fix: the endpoint must COUNT/SUM the growing
+    # transactional tables in SQL, never `.all()`-hydrate them into Python. The
+    # bounded reference sets it legitimately reads whole — the machine roster, the
+    # layout nodes, and the free-text downtime log (no SQL SUM for "2 hrs 15 min") —
+    # are exempt; the five growing tables below must not be scanned row-by-row.
+    src = inspect.getsource(analytics_routes.get_factory_command_center)
+    for hydration in (
+        "db.query(models.WorkOrder).all()",
+        "db.query(models.ProductionPlan).all()",
+        "db.query(models.Escalation).all()",
+        "db.query(models.InventoryItem).all()",
+        "db.query(models.QualityInspection).all()",
+    ):
+        assert hydration not in src, f"factory-command-center must not hydrate: {hydration}"
+    assert "func.count(" in src, "factory-command-center should COUNT in SQL"
+    print("PASS factory-command-center: growing tables counted in SQL (no .all() hydration)")
+
+
+def test_factory_command_center_empty_tables_are_zero_not_a_crash():
+    # Empty plant: every count/sum is 0 and the 0/0 fail rate is guarded to 0 — the
+    # SQL aggregates must return the column-default 0 (via COALESCE / `or 0`), never
+    # a None -> TypeError 500.
+    db = _fresh_session()
+    out = analytics_routes.get_factory_command_center(db=db, current_user={})
+    assert out["machines"] == 0 and out["total_downtime_minutes"] == 0, out
+    assert out["active_work_orders"] == 0 and out["behind_plans"] == 0, out
+    assert out["open_escalations"] == 0 and out["low_stock_items"] == 0, out
+    assert out["quality_fail_rate"] == 0, out
+    assert out["zone_summary"] == [], out
+    print("PASS factory-command-center: empty tables -> all zeros, no crash")
+
+
 def _count_selects(engine):
     """Attach a SELECT counter to an engine for the life of the returned handle.
 
@@ -1259,6 +1367,9 @@ if __name__ == "__main__":
     test_quality_analytics_is_tenant_scoped()
     test_executive_oee_null_quality_columns_in_per_machine_fallback()
     test_factory_command_center_null_stock_and_failed_are_zero_not_a_crash()
+    test_factory_command_center_counts_reconcile_with_independent_numbers()
+    test_factory_command_center_does_not_hydrate_growing_tables()
+    test_factory_command_center_empty_tables_are_zero_not_a_crash()
     test_industrial_gateway_names_resolved_and_scan_is_bounded()
     test_industrial_gateway_missing_and_null_refs_fall_back_to_same_labels()
     test_industrial_gateway_empty_tables_are_zero_not_a_crash()

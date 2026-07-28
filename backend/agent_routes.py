@@ -43,7 +43,16 @@ def _decide_agent_action(action_id, decision, db, current_user):
     if not action:
         raise HTTPException(status_code=404, detail="Agent action not found")
     if action.status != "Proposed":
-        raise HTTPException(status_code=400, detail=f"Already {action.status.lower()}")
+        # status is Column(String, default="Proposed") WITHOUT nullable=False, so a
+        # row written by raw SQL / a migration / a legacy path can carry a genuine
+        # NULL (the ORM default only fills a value the *inserter* omitted). `None !=
+        # "Proposed"` is True, so this branch is entered, and the old
+        # `action.status.lower()` then raised AttributeError -> an unhandled 500 on
+        # approve/reject instead of a clean 400. Coalesce for display: a NULL status
+        # still isn't "Proposed", so the action can't be decided again — the same
+        # NULL-status hardening the stats endpoint above and the maintenance-overdue
+        # query (factory_ops_routes) already apply.
+        raise HTTPException(status_code=400, detail=f"Already {(action.status or 'decided').lower()}")
     ai.agents.apply_decision(db, action, decision,
                              decided_by=current_user.get("sub") or current_user.get("username"))
     db.commit()

@@ -15,6 +15,7 @@ using the listed library; everything downstream (signals, mappings, dashboards)
 is unchanged.
 """
 import random
+import re
 
 import models
 from fastapi import APIRouter
@@ -49,17 +50,58 @@ _SIGNAL_TEMPLATES = {
 _PROTOCOL_BY_KEY = {p["key"]: p for p in PROTOCOLS}
 
 
+# Protocol-classification aliases. A stored device.protocol is free text — a user
+# onboarding a device types it — so map it to a known protocol key by its aliases.
+# Keys are tried IN THIS ORDER; the first with a matching alias wins, else Modbus.
+#
+# Matching is TOKEN-based, not bare-substring. The previous version tested
+# `key in normalised_protocol` after stripping spaces/hyphens, so the two-letter
+# key "ab" (Allen-Bradley) matched ANY protocol whose name merely CONTAINED the
+# letters a-b — "Fabricated", "Grabber", "Crab", "Modbus lab" all classified as
+# Allen-Bradley, were read through the Rockwell signal templates and stamped with
+# the wrong source_protocol on every tick_industrial poll. Whole-token matching
+# (plus a substring fallback for the long, distinctive aliases, and an "s7"-prefix
+# rule for the Siemens family) keeps every real protocol name resolving exactly as
+# before while dropping the accidental hits.
+_PROTOCOL_ALIASES = (
+    ("opcua",    ("opcua", "opc")),
+    ("s7",       ("s7", "siemens", "simatic")),
+    ("ab",       ("ab", "allen", "bradley", "rockwell",
+                  "allenbradley", "controllogix", "compactlogix")),
+    ("beckhoff", ("beckhoff", "twincat")),
+    ("omron",    ("omron", "fins")),
+    ("modbus",   ("modbus",)),
+)
+
+# Longest alias — a substring fallback only ever fires for aliases this length or
+# more, so a short/ambiguous alias ("ab", "s7", "opc") can only match a whole token.
+_MIN_SUBSTRING_ALIAS = 4
+
+_TOKEN = re.compile(r"[a-z0-9]+")
+
+
 def protocol_for(device) -> str:
     """Map a stored device.protocol string to a known protocol key (default modbus).
-    Normalise away spaces/hyphens so "OPC UA" -> "opcua", "Modbus TCP" -> "modbus"."""
-    p = (device.protocol or "").lower().replace(" ", "").replace("-", "")
-    for key in _SIGNAL_TEMPLATES:
-        if key in p:
+
+    Splits the protocol on any non-alphanumeric run into tokens, so "OPC UA",
+    "OPC-UA" and "opcua" all resolve to opcua, and "Siemens S7"/"S7comm"/"S7-1200"
+    to s7. A short alias only matches a WHOLE token (so "Fabricated" is NOT
+    Allen-Bradley); a distinctive long alias (>= 4 chars) may also match inside a
+    run-together name like "OPCUAServer". Anything unrecognised falls back to
+    Modbus, the ubiquitous default."""
+    raw = (device.protocol or "").lower()
+    tokens = _TOKEN.findall(raw)
+    squashed = "".join(tokens)  # separators removed: "opc-ua" -> "opcua"
+    for key, aliases in _PROTOCOL_ALIASES:
+        # Siemens S7 family: any token that STARTS with "s7" (s7, s7comm, s71200).
+        # "s7" is a distinctive prefix (letter + digit), unlike the ambiguous "ab".
+        if key == "s7" and any(token.startswith("s7") for token in tokens):
             return key
-    if "siemens" in p:
-        return "s7"
-    if "allen" in p or "rockwell" in p:
-        return "ab"
+        for alias in aliases:
+            if alias in tokens:
+                return key
+            if len(alias) >= _MIN_SUBSTRING_ALIAS and alias in squashed:
+                return key
     return "modbus"
 
 

@@ -96,7 +96,9 @@ def test_flexible_headers_and_empty_file_are_safe():
 
     r2 = asyncio.run(orders_routes.import_suppliers_csv(
         file=_Upload("supplier_code,supplier_name\n"), db=db, current_user={}))
-    assert r2 == {"created": 0, "updated": 0, "skipped": 0, "errors": []}
+    # A header-only file still yields a clean zero summary — not an error.
+    # `encoding` reports how the bytes were decoded (see csv_safe.read_upload_text).
+    assert r2 == {"created": 0, "updated": 0, "skipped": 0, "errors": [], "encoding": "utf-8-sig"}
 
 
 if __name__ == "__main__":

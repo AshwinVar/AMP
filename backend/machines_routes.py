@@ -18,6 +18,7 @@ from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from sqlalchemy.orm import Session
 
 import models
+from csv_safe import read_upload_text
 import schemas
 from auth import get_current_user, require_roles
 from database import SessionLocal
@@ -196,8 +197,7 @@ async def import_machines_csv(
     MQTT feed takes over from real signals, and reports per-row errors instead
     of failing the whole file. Auto-scoped (ADR-0002): the query layer stamps and
     filters tenant_code, so an import can only ever touch the caller's roster."""
-    content = await file.read()
-    text = content.decode("utf-8-sig")
+    text, encoding = await read_upload_text(file)
     reader = csv.DictReader(io.StringIO(text))
     created = updated = skipped = 0
     errors = []
@@ -232,4 +232,5 @@ async def import_machines_csv(
         except Exception as e:
             errors.append(f"Row {i}: {str(e)}")
     db.commit()
-    return {"created": created, "updated": updated, "skipped": skipped, "errors": errors[:10]}
+    return {"created": created, "updated": updated, "skipped": skipped,
+            "errors": errors[:10], "encoding": encoding}

@@ -23,60 +23,109 @@ export type LiveEvent = {
 
   source?: string;
 };
-export function connectLiveSocket(
-  onEvent: (event: LiveEvent) => void,
-  onStatus?: (
-    status: "connected" | "disconnected" | "error"
-  ) => void
-) {
+
+export type LiveConnection = {
+  /** Stop for good: cancels any pending retry and closes the socket. */
+  close: () => void;
+};
+
+// Retry schedule. Doubling from a second, capped so a long outage still gets a
+// try every half minute rather than drifting to hours away.
+const BASE_DELAY_MS = 1000;
+const MAX_DELAY_MS = 30_000;
+// Every open tab drops at the same instant when the backend redeploys; without
+// jitter they would all come back in lockstep.
+const JITTER = 0.2;
+
+function socketUrl() {
   const apiBase = process.env.NEXT_PUBLIC_API_URL ?? "http://127.0.0.1:8000";
   const token = typeof window !== "undefined" ? localStorage.getItem("token") : null;
-  const wsUrl =
+
+  // The JWT travels as a query parameter because browsers cannot set auth
+  // headers on a WebSocket handshake; the backend reads ?token= (main.py:445).
+  // That makes this URL a live credential — never log it.
+  return (
     apiBase.replace(/^http/, "ws") +
     "/ws/live" +
-    (token ? `?token=${encodeURIComponent(token)}` : "");
+    (token ? `?token=${encodeURIComponent(token)}` : "")
+  );
+}
 
-  console.log("Connecting WebSocket:", wsUrl);
+/**
+ * Connect to the live feed, and keep it connected.
+ *
+ * The previous version reported `disconnected` and gave up, so the feed stayed
+ * dead until someone reloaded the page. Railway redeploys the backend on every
+ * merge to master and drops every open socket with it, so a screen left up on
+ * the shop floor went quiet after the first deploy of the day — invisibly,
+ * because the 3s poll keeps the numbers moving either way.
+ */
+export function connectLiveSocket(
+  onEvent: (event: LiveEvent) => void,
+  onStatus?: (status: "connected" | "disconnected" | "error") => void,
+): LiveConnection {
+  let socket: WebSocket | null = null;
+  let retryTimer: ReturnType<typeof setTimeout> | null = null;
+  let attempt = 0;
+  let stopped = false;
 
-  const socket = new WebSocket(wsUrl);
+  const scheduleRetry = () => {
+    // One pending retry at a time — a duplicated close event must not fan out
+    // into two sockets.
+    if (stopped || retryTimer !== null) return;
 
-  socket.onopen = () => {
-    console.log("AMP WebSocket connected");
-    onStatus?.("connected");
+    const capped = Math.min(BASE_DELAY_MS * 2 ** attempt, MAX_DELAY_MS);
+    const delay = Math.round(capped * (1 + (Math.random() * 2 - 1) * JITTER));
+    attempt += 1;
+
+    retryTimer = setTimeout(() => {
+      retryTimer = null;
+      open();
+    }, delay);
   };
 
-  socket.onmessage = (message) => {
-    try {
-      const event = JSON.parse(message.data);
+  const open = () => {
+    if (stopped) return;
 
-      console.log("WS EVENT:", event);
+    const ws = new WebSocket(socketUrl());
+    socket = ws;
 
-      onEvent(event);
-    } catch (error) {
-      console.error(
-        "Invalid WebSocket payload",
-        error
-      );
-    }
+    ws.onopen = () => {
+      // A healthy connection earns a fresh budget; otherwise a link that drops
+      // once an hour would climb to the 30s ceiling and stay there.
+      attempt = 0;
+      onStatus?.("connected");
+    };
+
+    ws.onmessage = (message) => {
+      try {
+        onEvent(JSON.parse(message.data));
+      } catch (error) {
+        console.error("Invalid WebSocket payload", error);
+      }
+    };
+
+    ws.onerror = () => {
+      onStatus?.("error");
+    };
+
+    ws.onclose = () => {
+      if (stopped) return;
+      onStatus?.("disconnected");
+      scheduleRetry();
+    };
   };
 
-  socket.onerror = (error) => {
-    console.error(
-      "AMP WebSocket error",
-      error
-    );
+  open();
 
-    onStatus?.("error");
+  return {
+    close: () => {
+      stopped = true;
+      if (retryTimer !== null) {
+        clearTimeout(retryTimer);
+        retryTimer = null;
+      }
+      socket?.close();
+    },
   };
-
-  socket.onclose = (event) => {
-    console.warn(
-      "AMP WebSocket disconnected",
-      event
-    );
-
-    onStatus?.("disconnected");
-  };
-
-  return socket;
 }

@@ -1,153 +1,59 @@
-import json
+"""Standalone MQTT listener — a foreground runner for the ingest handler.
+
+This is the dev / standalone entry point (`python mqtt_listener.py`) for the MQTT
+ingest path. It now reuses the SAME hardened, tested message handler as the
+app-wired service (``mqtt_service.on_message``, which main.py starts in-process at
+boot) instead of keeping a second, divergent copy.
+
+The previous standalone copy had silently drifted out of parity with the wired
+handler and carried real bugs the wired path had already fixed:
+
+  * it called ``broadcast_live_event({...})`` WITHOUT importing it, so every
+    message raised ``NameError`` — swallowed by the broad ``except`` as a
+    misleading "MQTT DB ERROR" — while the live WebSocket feed never fired once
+    (the whole point of the listener). The DB write had already committed, so it
+    looked like an intermittent DB fault rather than a missing import;
+  * it wrote the raw device status straight onto the machine (no
+    ``normalize_machine_status``), so a gateway publishing "running"/"RUNNING"
+    dropped the machine from every status-based rollup and — because the
+    breakdown check was case-sensitive — skipped its DowntimeLog;
+  * it stored utilization unclamped and coerced production counts with a bare
+    ``int()``, so a glitching sensor could persist a >100% / negative utilization
+    or a negative good_count (dragging pooled OEE below zero), and a non-numeric
+    value aborted the whole message.
+
+Rather than re-apply each guard a second time (a second implementation is exactly
+what let this copy rot), the listener delegates to ``mqtt_service`` — one source
+of truth for MQTT ingest. The runtime is guarded under ``__main__`` so importing
+the module is side-effect-free (the old copy connected to a broker and looped at
+import time, which also made it impossible to unit-test).
+"""
 import paho.mqtt.client as mqtt
-from sqlalchemy.orm import Session
 
-from database import SessionLocal
-import models
-
-MQTT_BROKER = "127.0.0.1"
-MQTT_PORT = 1883
-TOPIC = "flowmes/machines"
+import mqtt_service
 
 
-def get_or_create_machine(db: Session, name: str):
-    machine = db.query(models.Machine).filter(
-        models.Machine.name == name
-    ).first()
+def build_client():
+    """Wire an MQTT client to the shared, hardened ingest callbacks.
 
-    if machine:
-        return machine
-
-    machine = models.Machine(
-        name=name,
-        status="Idle",
-        utilization=0,
-        downtime="0 min"
-    )
-
-    db.add(machine)
-    db.commit()
-    db.refresh(machine)
-
-    print(f"CREATED MACHINE → {machine.name}")
-
-    return machine
+    ``on_connect`` subscribes to the configured topic and ``on_message`` is the
+    same handler the app-wired service uses (canonicalises status, clamps
+    utilization, rejects negative/non-numeric counts, and broadcasts the live
+    event), so the standalone and in-process paths can never diverge again.
+    """
+    client = mqtt.Client()
+    client.on_connect = mqtt_service.on_connect
+    client.on_message = mqtt_service.on_message
+    return client
 
 
-def on_connect(client, userdata, flags, rc):
-    print(f"MQTT CONNECTED | result code: {rc}")
-
-    if rc == 0:
-        client.subscribe(TOPIC)
-        print(f"SUBSCRIBED → {TOPIC}")
-    else:
-        print("MQTT connection failed")
+def main():
+    client = build_client()
+    print("CONNECTING TO MQTT BROKER...")
+    client.connect(mqtt_service.MQTT_BROKER, mqtt_service.MQTT_PORT, 60)
+    print("AMP MQTT LISTENER RUNNING...")
+    client.loop_forever()
 
 
-def on_message(client, userdata, msg):
-    print("\nRAW MQTT MESSAGE RECEIVED")
-    print("Topic:", msg.topic)
-    print("Payload:", msg.payload.decode())
-
-    db = SessionLocal()
-
-    try:
-        payload = json.loads(msg.payload.decode())
-
-        machine_name = payload.get("machine")
-        if not machine_name:
-            print("SKIPPED: missing machine")
-            return
-
-        status = payload.get("status", "Idle")
-        utilization = int(payload.get("utilization", 0))
-        downtime_value = payload.get("downtime", "0 min")
-
-        machine = get_or_create_machine(db, machine_name)
-
-        old_status = machine.status
-        old_utilization = machine.utilization
-
-        machine.status = status
-        machine.utilization = utilization
-        machine.downtime = downtime_value
-
-        db.commit()
-        db.refresh(machine)
-
-        total_count = int(payload.get("total_count", 0))
-        good_count = int(payload.get("good_count", 0))
-        rejected_count = int(payload.get("rejected_count", 0))
-
-        if total_count > 0 and good_count + rejected_count == total_count:
-            production = models.ProductionRecord(
-                machine_id=machine.id,
-                planned_minutes=int(payload.get("planned_minutes", 480)),
-                runtime_minutes=int(payload.get("runtime_minutes", 0)),
-                ideal_cycle_time_seconds=int(
-                    payload.get("ideal_cycle_time_seconds", 60)
-                ),
-                total_count=total_count,
-                good_count=good_count,
-                rejected_count=rejected_count,
-            )
-
-            db.add(production)
-
-        # Only on the transition INTO Breakdown — one row per event, not per tick
-        # (see mqtt_service.py for the full rationale). This is the standalone
-        # listener script; mqtt_service.py is the app-wired path.
-        if old_status != status and status == "Breakdown":
-            downtime = models.DowntimeLog(
-                machine_id=machine.id,
-                reason="Breakdown",
-                duration=downtime_value,
-                notes="MQTT auto-generated downtime event"
-            )
-            db.add(downtime)
-
-        db.commit()
-
-        print(
-            f"DB UPDATED → {machine.name} | "
-            f"{old_status} → {status} | "
-            f"{old_utilization}% → {utilization}% | "
-            f"Downtime: {downtime_value}"
-        )
-
-        broadcast_live_event({
-        "event": "machine_update",
-        "machine": {
-        "id": machine.id,
-        "name": machine.name,
-        "status": machine.status,
-        "utilization": machine.utilization,
-        "downtime": machine.downtime,
-        },
-        "production": {
-        "total_count": total_count,
-        "good_count": good_count,
-        "rejected_count": rejected_count,
-        },
-        "source": "mqtt"
-})
-
-
-
-    except Exception as e:
-        db.rollback()
-        print("MQTT DB ERROR:", repr(e))
-
-    finally:
-        db.close()
-
-
-client = mqtt.Client()
-client.on_connect = on_connect
-client.on_message = on_message
-
-print("CONNECTING TO MQTT BROKER...")
-client.connect(MQTT_BROKER, MQTT_PORT, 60)
-
-print("AMP MQTT LISTENER RUNNING...")
-client.loop_forever()
+if __name__ == "__main__":
+    main()

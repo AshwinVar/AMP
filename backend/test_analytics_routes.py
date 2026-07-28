@@ -388,6 +388,67 @@ def test_final_executive_summary_empty_tables_are_zero_not_a_crash():
     print("PASS final-executive-summary: empty tables -> zeros, no divide-by-zero")
 
 
+def test_final_executive_summary_does_not_hydrate_whole_tables():
+    # Regression guard for the rule-4 fix: the endpoint must COUNT/SUM in SQL, never
+    # fall back to `.all()` on these EIGHT growing tables (work_orders,
+    # production_plans, quality_inspections, inventory_items, customer_orders,
+    # purchase_orders, cost_records — plus machines) just to len()/sum() them in
+    # Python. The hand-derived value tests above prove the numbers are unchanged;
+    # this pins that they are produced without whole-table hydration.
+    src = inspect.getsource(analytics_routes.get_final_executive_summary)
+    assert ".all()" not in src, "final-executive-summary must aggregate in SQL, not hydrate whole tables"
+    assert "func.count(" in src, "final-executive-summary should use func.count aggregates"
+    assert "func.sum(" in src, "final-executive-summary should use func.sum aggregates"
+    print("PASS final-executive-summary: counts/sums in SQL (no .all() table hydration)")
+
+
+def test_final_executive_summary_counts_are_tenant_scoped():
+    # Every model this endpoint aggregates is in SCOPED_MODELS, so each SQL COUNT/SUM
+    # must stay per-tenant exactly as the old `.all()` scans did via the ORM hook
+    # (ADR-0002): a tenant sees only its OWN rows in the executive summary. Seed two
+    # tenants and assert GMATS's summary excludes DEFAULT's rows entirely.
+    import tenancy as T
+    db = _fresh_session()
+
+    tok = T.set_current_tenant("DEFAULT")
+    try:
+        db.add(models.Machine(name="DEF-A", status="Running", utilization=50))
+        db.add(_work_order(work_order_no="DW1", status="Running", target_quantity=100, actual_quantity=0))
+        db.add(models.CustomerOrder(order_no="DO1", customer_name="C", product_name="P",
+                                    order_quantity=100, dispatched_quantity=50, due_date=date(2026, 1, 1)))
+        db.add(models.CostRecord(cost_no="DC1", cost_type="Downtime", description="d", amount=999))
+        db.commit()
+    finally:
+        T.reset_current_tenant(tok)
+
+    tok = T.set_current_tenant("GMATS")
+    try:
+        db.add(models.Machine(name="GM-A", status="Running", utilization=50))
+        db.add(models.Machine(name="GM-B", status="Idle", utilization=0))
+        db.add(_work_order(work_order_no="GW1", status="Running", target_quantity=100, actual_quantity=0))
+        db.add(models.QualityInspection(inspection_no="GQ1", inspector="I",
+                                        inspected_quantity=100, passed_quantity=75))
+        db.add(models.CustomerOrder(order_no="GO1", customer_name="C", product_name="P",
+                                    order_quantity=200, dispatched_quantity=40, due_date=date(2026, 1, 1)))
+        db.add(models.CostRecord(cost_no="GC1", cost_type="Downtime", description="d", amount=500))
+        db.commit()
+        out = analytics_routes.get_final_executive_summary(db=db, current_user={"tenant": "GMATS"})
+    finally:
+        T.reset_current_tenant(tok)
+
+    # GMATS sees only its own rows; DEFAULT's machine / work order / order / cost are invisible.
+    assert out["machine_count"] == 2, out
+    assert out["running_machines"] == 1, out
+    assert out["work_orders"] == 1, out
+    # quality_rate over GMATS's single inspection only: 75/100 -> 75
+    assert out["quality_rate"] == 75, out
+    # dispatch over GMATS's single order only: 40/200 -> 20 (NOT folding DEFAULT's 50/100)
+    assert out["customer_orders"] == 1 and out["dispatch_rate"] == 20, out
+    # total_cost is GMATS's £500 alone, never £999 + £500
+    assert out["total_cost"] == 500, out
+    print("PASS final-executive-summary: SQL counts/sums stay tenant-scoped (GMATS sees only its own)")
+
+
 def _operator_job(**kw):
     kw.setdefault("operator_name", "Op")
     return models.OperatorJobExecution(**kw)
@@ -1183,6 +1244,8 @@ if __name__ == "__main__":
     test_executive_oee_null_utilization_fallback_is_zero_not_a_crash()
     test_final_executive_summary_null_columns_are_zero_not_a_crash()
     test_final_executive_summary_empty_tables_are_zero_not_a_crash()
+    test_final_executive_summary_does_not_hydrate_whole_tables()
+    test_final_executive_summary_counts_are_tenant_scoped()
     test_operator_terminal_analytics_null_counts_and_reconciled_totals()
     test_operator_terminal_analytics_empty_table_is_zero_not_a_crash()
     test_inventory_analytics_null_stock_and_bounded_transaction_count()

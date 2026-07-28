@@ -1182,47 +1182,66 @@ def get_system_health(db: Session = Depends(_get_db), current_user: dict = Depen
 
 @router.get("/analytics/final-executive-summary")
 def get_final_executive_summary(db: Session = Depends(_get_db), current_user: dict = Depends(get_current_user)):
-    machines = db.query(models.Machine).all()
-    work_orders = db.query(models.WorkOrder).all()
-    production_plans = db.query(models.ProductionPlan).all()
-    quality = db.query(models.QualityInspection).all()
-    inventory = db.query(models.InventoryItem).all()
-    orders = db.query(models.CustomerOrder).all()
-    purchase_orders = db.query(models.PurchaseOrder).all()
-    cost_records = db.query(models.CostRecord).all()
-
+    # Count/sum in SQL, never hydrate EIGHT whole (growing) tables into Python just
+    # to take len()/a filtered len()/sum() of them (rule-4 antipattern; the same
+    # COUNT / COALESCE(SUM(..),0) fix already applied to the sibling rollups —
+    # /analytics/system-health, /analytics/work-orders, /escalations #288,
+    # /analytics/quality #299). Each model here is in SCOPED_MODELS, so the
+    # do_orm_execute hook (ADR-0002) tenant-scopes every aggregate exactly as it
+    # scoped the prior whole-table scans — the numbers are identical, only the
+    # per-row hydration into Python is gone.
+    #
     # Several count columns are Column(Integer, default=0) WITHOUT nullable=False
     # (passed_quantity, dispatched_quantity, current_stock, reorder_level, amount).
     # The ORM default only fills a value the inserter omitted, so a row written by
     # raw SQL, a migration, or an update that clears the field can legitimately be
-    # NULL. The old raw sum(...) / None comparisons then did int + None (or
-    # None <= None) and raised TypeError, 500-ing this whole executive summary on a
-    # single unset row — the same NULL-count class fixed in the order/purchasing
-    # analytics (#278) and the work-order rollup. Coalesce each to the column's own
-    # default of 0. inspected_quantity and order_quantity are nullable=False and
-    # need no guard (but stay the divisors, so the divide-by-zero guards remain).
-    inspected = sum(row.inspected_quantity for row in quality)
-    passed = sum((row.passed_quantity or 0) for row in quality)
+    # NULL. COALESCE(SUM(..),0) reproduces the old `sum(col or 0)` exactly (SUM
+    # skips NULLs, and COALESCE turns an all-NULL/empty group's NULL sum into 0),
+    # and COALESCE in the low-stock predicate mirrors `(current_stock or 0) <=
+    # (reorder_level or 0)`. inspected_quantity and order_quantity are nullable=False
+    # and stay the divisors, so the divide-by-zero guards remain.
+    machine_count = db.query(func.count(models.Machine.id)).scalar() or 0
+    # Equality match, so a NULL status is excluded either way (Python
+    # `None == "Running"` and SQL `status = 'Running'` are both false/NULL) —
+    # parity holds without an extra NULL clause.
+    running_machines = db.query(func.count(models.Machine.id)).filter(
+        models.Machine.status == "Running"
+    ).scalar() or 0
+    work_orders = db.query(func.count(models.WorkOrder.id)).scalar() or 0
+    production_plans = db.query(func.count(models.ProductionPlan.id)).scalar() or 0
+    customer_orders = db.query(func.count(models.CustomerOrder.id)).scalar() or 0
+    purchase_orders = db.query(func.count(models.PurchaseOrder.id)).scalar() or 0
+
+    # int() so a DB that returns Decimal for SUM (Postgres) matches the plain-int
+    # payload the frontend type expects and divides cleanly.
+    inspected = int(db.query(func.coalesce(func.sum(models.QualityInspection.inspected_quantity), 0)).scalar() or 0)
+    passed = int(db.query(func.coalesce(func.sum(models.QualityInspection.passed_quantity), 0)).scalar() or 0)
     quality_rate = round((passed / inspected) * 100) if inspected else 0
 
-    order_qty = sum(row.order_quantity for row in orders)
-    dispatched_qty = sum((row.dispatched_quantity or 0) for row in orders)
+    order_qty = int(db.query(func.coalesce(func.sum(models.CustomerOrder.order_quantity), 0)).scalar() or 0)
+    dispatched_qty = int(db.query(func.coalesce(func.sum(models.CustomerOrder.dispatched_quantity), 0)).scalar() or 0)
     dispatch_rate = round((dispatched_qty / order_qty) * 100) if order_qty else 0
 
+    # Low stock = COALESCE(current_stock,0) <= COALESCE(reorder_level,0), counted in
+    # SQL (a NULL on either side collapses to 0, matching the old Python predicate).
+    low_stock_items = db.query(func.count(models.InventoryItem.id)).filter(
+        func.coalesce(models.InventoryItem.current_stock, 0)
+        <= func.coalesce(models.InventoryItem.reorder_level, 0)
+    ).scalar() or 0
+
+    total_cost = int(db.query(func.coalesce(func.sum(models.CostRecord.amount), 0)).scalar() or 0)
+
     return {
-        "machine_count": len(machines),
-        "running_machines": len([m for m in machines if m.status == "Running"]),
-        "work_orders": len(work_orders),
-        "production_plans": len(production_plans),
+        "machine_count": machine_count,
+        "running_machines": running_machines,
+        "work_orders": work_orders,
+        "production_plans": production_plans,
         "quality_rate": quality_rate,
-        "low_stock_items": len([
-            item for item in inventory
-            if (item.current_stock or 0) <= (item.reorder_level or 0)
-        ]),
-        "customer_orders": len(orders),
+        "low_stock_items": low_stock_items,
+        "customer_orders": customer_orders,
         "dispatch_rate": dispatch_rate,
-        "purchase_orders": len(purchase_orders),
-        "total_cost": sum((row.amount or 0) for row in cost_records),
+        "purchase_orders": purchase_orders,
+        "total_cost": total_cost,
     }
 
 

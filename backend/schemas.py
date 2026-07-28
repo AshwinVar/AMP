@@ -476,6 +476,19 @@ class CustomerOrderResponse(BaseModel):
     notes: Optional[str] = None
     created_at: Optional[datetime] = None
 
+    # dispatched_quantity is Column(Integer, default=0) WITHOUT nullable=False, so a
+    # row written by raw SQL / a migration / a cleared update can hold a true NULL.
+    # It is typed non-optional here, so a single such NULL row raised Pydantic
+    # ValidationError during response serialisation and 500-ed the WHOLE GET
+    # /customer-orders list — one bad row hiding every good order, on an endpoint the
+    # order-book dashboard polls. The compute paths already coalesce this exact NULL
+    # (the PATCH heals it in-handler, /analytics/customer-orders COALESCEs it, the
+    # CSV export reads `o.dispatched_quantity or 0`); the raw-ORM list serializer was
+    # the one reader left un-healed. Coalesce a NULL to the column's own default of 0
+    # on the way out — the same #375/#395 response-serialisation heal; a real 0 is
+    # untouched (mode="before" only rewrites None).
+    _heal_dispatched_quantity = field_validator("dispatched_quantity", mode="before")(_coalesce_null_count)
+
     class Config:
         from_attributes = True
 
@@ -548,6 +561,17 @@ class PurchaseOrderResponse(BaseModel):
     status: str
     notes: Optional[str] = None
     created_at: Optional[datetime] = None
+
+    # received_quantity is Column(Integer, default=0) WITHOUT nullable=False (the exact
+    # sibling of CustomerOrder.dispatched_quantity above), so a raw-SQL / migration /
+    # cleared-field row can hold a true NULL. Typed non-optional here, so one such row
+    # raised Pydantic ValidationError during response serialisation and 500-ed the
+    # WHOLE GET /purchase-orders list. Every compute path already coalesces it (the
+    # PATCH heals it in-handler, /analytics/purchasing COALESCEs it, the CSV export
+    # reads `p.received_quantity or 0`); the raw-ORM list serializer was the one reader
+    # left un-healed. Coalesce a NULL to the column's own default of 0 on the way out,
+    # matching the #375/#395 heals; a real recorded 0 is untouched.
+    _heal_received_quantity = field_validator("received_quantity", mode="before")(_coalesce_null_count)
 
     class Config:
         from_attributes = True

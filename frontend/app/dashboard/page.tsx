@@ -872,6 +872,7 @@ export default function DashboardPage() {
 
   async function addMachine(e: React.FormEvent) {
     e.preventDefault();
+    await runOnce("machine", async () => {
 
     try {
       await apiPost<Machine>("/machines", {
@@ -890,6 +891,7 @@ export default function DashboardPage() {
     } catch (error) {
       console.error(error);
     }
+    });
   }
 
   async function deleteMachine(id: number) {
@@ -963,6 +965,7 @@ export default function DashboardPage() {
 
   async function createWorkOrder(e: React.FormEvent) {
     e.preventDefault();
+    await runOnce("work-order", async () => {
 
     try {
       await apiPost<WorkOrder>("/work-orders", {
@@ -987,6 +990,7 @@ export default function DashboardPage() {
       console.error(error);
       alert("Failed to create work order. Check backend logs.");
     }
+    });
   }
 
   async function updateWorkOrder(
@@ -1019,6 +1023,7 @@ export default function DashboardPage() {
 
   async function createProductionPlan(e: React.FormEvent) {
     e.preventDefault();
+    await runOnce("production-plan", async () => {
 
     try {
       await apiPost<ProductionPlan>("/production-plans", {
@@ -1045,6 +1050,7 @@ export default function DashboardPage() {
       console.error(error);
       alert("Failed to create production plan. Check backend logs.");
     }
+    });
   }
 
   async function updateProductionPlan(
@@ -1150,6 +1156,7 @@ export default function DashboardPage() {
 
   async function createInventoryItem(e: React.FormEvent) {
     e.preventDefault();
+    await runOnce("inventory-item", async () => {
 
     try {
       await apiPost<InventoryItem>("/inventory/items", inventoryItemForm);
@@ -1170,6 +1177,7 @@ export default function DashboardPage() {
       console.error(error);
       alert("Failed to create inventory item.");
     }
+    });
   }
 
   async function updateInventoryItem(
@@ -1202,6 +1210,7 @@ export default function DashboardPage() {
 
   async function createInventoryTransaction(e: React.FormEvent) {
     e.preventDefault();
+    await runOnce("inventory-transaction", async () => {
 
     try {
       await apiPost<InventoryTransaction>("/inventory/transactions", {
@@ -1223,6 +1232,7 @@ export default function DashboardPage() {
       console.error(error);
       alert("Failed to post inventory transaction.");
     }
+    });
   }
 
   async function generateLowStockEscalations() {
@@ -1237,6 +1247,7 @@ export default function DashboardPage() {
 
   async function createQualityInspection(e: React.FormEvent) {
     e.preventDefault();
+    await runOnce("quality-inspection", async () => {
 
     try {
       await apiPost<QualityInspection>("/quality/inspections", {
@@ -1272,6 +1283,7 @@ export default function DashboardPage() {
       console.error(error);
       alert("Failed to create quality inspection.");
     }
+    });
   }
 
   async function updateQualityInspection(
@@ -1324,6 +1336,7 @@ export default function DashboardPage() {
 
   async function createFactoryNode(e: React.FormEvent) {
     e.preventDefault();
+    await runOnce("factory-node", async () => {
 
     try {
       await apiPost<FactoryLayoutNode>("/factory-layout/nodes", {
@@ -1347,6 +1360,7 @@ export default function DashboardPage() {
       console.error(error);
       alert("Failed to create factory layout node.");
     }
+    });
   }
 
   async function updateFactoryNode(id: number, x: number, y: number, zone: string) {
@@ -1386,6 +1400,7 @@ export default function DashboardPage() {
 
   async function createCustomerOrder(e: React.FormEvent) {
     e.preventDefault();
+    await runOnce("customer-order", async () => {
 
     try {
       await apiPost<CustomerOrder>("/customer-orders", {
@@ -1419,6 +1434,7 @@ export default function DashboardPage() {
       console.error(error);
       alert("Failed to create customer order.");
     }
+    });
   }
 
   async function updateCustomerOrder(
@@ -1463,6 +1479,7 @@ export default function DashboardPage() {
 
   async function createSupplier(e: React.FormEvent) {
     e.preventDefault();
+    await runOnce("supplier", async () => {
 
     try {
       await apiPost<Supplier>("/suppliers", supplierForm);
@@ -1482,6 +1499,7 @@ export default function DashboardPage() {
       console.error(error);
       alert("Failed to create supplier.");
     }
+    });
   }
 
   async function updateSupplier(id: number, status: string) {
@@ -1506,6 +1524,7 @@ export default function DashboardPage() {
 
   async function createPurchaseOrder(e: React.FormEvent) {
     e.preventDefault();
+    await runOnce("purchase-order", async () => {
 
     try {
       await apiPost<PurchaseOrder>("/purchase-orders", {
@@ -1534,6 +1553,7 @@ export default function DashboardPage() {
       console.error(error);
       alert("Failed to create purchase order.");
     }
+    });
   }
 
   async function updatePurchaseOrder(id: number, receivedQty: number, status?: string) {
@@ -1572,11 +1592,13 @@ export default function DashboardPage() {
 
   async function createDocument(e: React.FormEvent) {
     e.preventDefault();
+    await runOnce("document", async () => {
     try {
       await apiPost<ComplianceDocument>("/documents", documentForm);
       setDocumentForm({ document_no: "", title: "", document_type: "SOP", department: "Production", version: "1.0", owner: "QA Lead", approval_status: "Draft", review_due_date: new Date().toISOString().slice(0,10), storage_link: "", notes: "" });
       fetchAll();
     } catch (error) { console.error(error); alert("Failed to create document."); }
+    });
   }
 
   async function updateDocument(id: number, approvalStatus: string, version?: string) {
@@ -1596,11 +1618,13 @@ export default function DashboardPage() {
 
   async function createMaintenanceTask(e: React.FormEvent) {
     e.preventDefault();
+    await runOnce("maintenance-task", async () => {
     try {
       await apiPost<MaintenanceTask>("/maintenance/tasks", { ...maintenanceForm, machine_id: Number(maintenanceForm.machine_id), downtime_minutes: Number(maintenanceForm.downtime_minutes) });
       setMaintenanceForm({ task_no: "", machine_id: "", task_type: "Preventive", priority: "Medium", assigned_to: "Maintenance", planned_date: new Date().toISOString().slice(0,10), downtime_minutes: 0, spare_parts_used: "", status: "Open", notes: "" });
       fetchAll();
     } catch (error) { console.error(error); alert("Failed to create maintenance task."); }
+    });
   }
 
   async function updateMaintenanceTask(id: number, status: string, downtime?: number) {
@@ -1620,11 +1644,13 @@ export default function DashboardPage() {
 
   async function createProductionSchedule(e: React.FormEvent) {
     e.preventDefault();
+    await runOnce("production-schedule", async () => {
     try {
       await apiPost<ProductionSchedule>("/production-schedules", { ...scheduleForm, work_order_id: scheduleForm.work_order_id ? Number(scheduleForm.work_order_id) : null, production_plan_id: scheduleForm.production_plan_id ? Number(scheduleForm.production_plan_id) : null, machine_id: Number(scheduleForm.machine_id), planned_quantity: Number(scheduleForm.planned_quantity), estimated_minutes: Number(scheduleForm.estimated_minutes) });
       setScheduleForm({ schedule_no: "", work_order_id: "", production_plan_id: "", machine_id: "", shift_name: "Shift A", scheduled_date: new Date().toISOString().slice(0,10), priority: "Medium", planned_quantity: 0, estimated_minutes: 480, status: "Scheduled", notes: "" });
       fetchAll();
     } catch (error) { console.error(error); alert("Failed to create production schedule."); }
+    });
   }
 
   async function updateProductionSchedule(id: number, status: string, priority?: string) {
@@ -1639,11 +1665,13 @@ export default function DashboardPage() {
 
   async function createIotTelemetry(e: React.FormEvent) {
     e.preventDefault();
+    await runOnce("iot-telemetry", async () => {
     try {
       await apiPost<IoTTelemetry>("/iot/telemetry", { ...iotForm, machine_id: Number(iotForm.machine_id), numeric_value: Number(iotForm.numeric_value) });
       setIotForm({ machine_id: "", signal_name: "status", signal_value: "Running", numeric_value: 0, unit: "", source: "Manual" });
       fetchAll();
     } catch (error) { console.error(error); alert("Failed to post IoT signal."); }
+    });
   }
 
   async function generateAiRecommendations() {
@@ -1658,8 +1686,10 @@ export default function DashboardPage() {
 
   async function createTenant(e: React.FormEvent) {
     e.preventDefault();
+    await runOnce("tenant", async () => {
     try { await apiPost<CompanyTenant>("/saas/tenants", tenantForm); setTenantForm({ company_code: "", company_name: "", industry: "", plan_name: "Starter", subscription_status: "Trial", seats: 5, monthly_fee: 0 }); fetchAll(); }
     catch (error) { console.error(error); alert("Failed to create tenant."); }
+    });
   }
 
   async function updateTenant(id: number, status: string) {
@@ -1711,8 +1741,10 @@ export default function DashboardPage() {
 
   async function createCost(e: React.FormEvent) {
     e.preventDefault();
+    await runOnce("cost", async () => {
     try { await apiPost<CostRecord>("/cost-records", costForm); setCostForm({ cost_no: "", cost_type: "Material", reference_type: "", reference_id: 0, description: "", amount: 0, department: "Production" }); fetchAll(); }
     catch (error) { console.error(error); alert("Failed to create cost."); }
+    });
   }
 
   async function updateCost(id: number, amount: number) {
@@ -1727,11 +1759,13 @@ export default function DashboardPage() {
 
   async function createOperatorExecution(e: React.FormEvent) {
     e.preventDefault();
+    await runOnce("operator-execution", async () => {
     try {
       await apiPost<OperatorJobExecution>("/operator/executions", { ...operatorForm, machine_id: Number(operatorForm.machine_id), work_order_id: operatorForm.work_order_id ? Number(operatorForm.work_order_id) : null, production_plan_id: operatorForm.production_plan_id ? Number(operatorForm.production_plan_id) : null, good_count: Number(operatorForm.good_count), rejected_count: Number(operatorForm.rejected_count) });
       setOperatorForm({ execution_no: "", operator_name: "", machine_id: "", work_order_id: "", production_plan_id: "", job_status: "Started", good_count: 0, rejected_count: 0, notes: "" });
       fetchAll();
     } catch (error) { console.error(error); alert("Failed to create operator execution."); }
+    });
   }
 
   async function updateOperatorExecution(id: number, status: string, good: number, reject: number) {
@@ -1761,12 +1795,14 @@ export default function DashboardPage() {
 
   async function createReport(e: React.FormEvent) {
     e.preventDefault();
+    await runOnce("report", async () => {
     try {
       await apiPost<ReportRequest>("/reports", reportForm);
       await apiPost<AuditLog>("/audit-logs", { actor: reportForm.requested_by, action: "Generated report request", entity_type: "Report", details: reportForm.report_type });
       setReportForm({ report_no: "", report_type: "Executive Summary", requested_by: "Admin", format: "PDF", status: "Generated", notes: "" });
       fetchAll();
     } catch (error) { console.error(error); alert("Failed to create report request."); }
+    });
   }
 
   function getMachineName(machineId: number) {

@@ -14,6 +14,7 @@ from sqlalchemy.orm import sessionmaker
 import main
 import costing_routes
 import models
+import schemas
 from database import Base
 
 EXPECTED = {"/cost-records", "/cost-records/{cost_id}", "/analytics/costing"}
@@ -129,10 +130,83 @@ def test_costing_empty_tables_all_zero():
     print("PASS costing rollup survives empty tables (all zeros, per-unit None)")
 
 
+def test_patch_null_amount_heals_to_zero_not_500():
+    # A client (or a UI clearing the field) PATCHes {"amount": null}. amount is a
+    # nullable Integer column and CostRecordUpdate types it Optional[int]=None, so
+    # exclude_unset keeps the explicit null and the setattr writes None. Without the
+    # coalesce the handler commits amount=NULL and the return 500s against
+    # CostRecordResponse (amount: int) — and the persisted NULL then 500s every
+    # later GET /cost-records for the tenant. The fix heals None -> 0 (the column's
+    # own default) before the return.
+    db = _fresh_session()
+    db.add(models.CostRecord(cost_no="C-1", cost_type="Labour", description="x", amount=300))
+    db.commit()
+    row_id = db.query(models.CostRecord).filter(models.CostRecord.cost_no == "C-1").one().id
+
+    out = costing_routes.update_cost_record(
+        cost_id=row_id,
+        payload=schemas.CostRecordUpdate(amount=None),
+        db=db, current_user={})
+
+    assert out.amount == 0, out.amount                 # healed, not None
+    # The healed value is committed, so a re-read is 0 too (the list path is safe).
+    assert db.query(models.CostRecord).filter_by(id=row_id).one().amount == 0
+    # And it now validates against the response schema — the exact 500 that fired.
+    assert schemas.CostRecordResponse.model_validate(out).amount == 0
+    print("PASS PATCH {amount: null} heals to 0 and validates (no ResponseValidation 500)")
+
+
+def test_patch_unrelated_field_heals_preexisting_null_amount():
+    # A legacy / raw-SQL / migration row already carries a NULL amount. A PATCH of
+    # an UNRELATED field (department) must not 500 on the way out — the coalesce
+    # heals the pre-existing NULL even though the payload never mentions amount.
+    db = _fresh_session()
+    db.add(models.CostRecord(cost_no="C-9", cost_type="Labour", description="x", amount=0))
+    db.commit()
+    row_id = db.query(models.CostRecord).filter(models.CostRecord.cost_no == "C-9").one().id
+    db.execute(text("UPDATE cost_records SET amount=NULL WHERE cost_no='C-9'"))
+    db.commit()
+
+    out = costing_routes.update_cost_record(
+        cost_id=row_id,
+        payload=schemas.CostRecordUpdate(department="Assembly"),
+        db=db, current_user={})
+
+    assert out.department == "Assembly"
+    assert out.amount == 0, out.amount                 # pre-existing NULL healed
+    assert schemas.CostRecordResponse.model_validate(out).amount == 0
+    print("PASS PATCH of an unrelated field heals a pre-existing NULL amount to 0")
+
+
+def test_patch_keeps_a_real_amount_and_zero_unchanged():
+    # Guard the coalesce doesn't clobber real values: a set amount is preserved,
+    # and a genuine 0 stays 0 (0 or 0 == 0 — no accidental change).
+    db = _fresh_session()
+    db.add(models.CostRecord(cost_no="C-2", cost_type="Labour", description="x", amount=750))
+    db.commit()
+    row_id = db.query(models.CostRecord).filter(models.CostRecord.cost_no == "C-2").one().id
+
+    # Patch an unrelated field: the real 750 must survive the coalesce.
+    kept = costing_routes.update_cost_record(
+        cost_id=row_id, payload=schemas.CostRecordUpdate(cost_type="Material"),
+        db=db, current_user={})
+    assert kept.amount == 750 and kept.cost_type == "Material", kept.amount
+
+    # Explicitly set amount to 0 — a legitimate zero cost, not a null.
+    zeroed = costing_routes.update_cost_record(
+        cost_id=row_id, payload=schemas.CostRecordUpdate(amount=0),
+        db=db, current_user={})
+    assert zeroed.amount == 0, zeroed.amount
+    print("PASS PATCH preserves a real amount and a legitimate 0")
+
+
 if __name__ == "__main__":
     test_costing_paths_owned_by_costing_routes()
     test_cost_per_good_unit_keeps_pence_precision()
     test_cost_per_good_unit_is_none_when_no_production()
     test_costing_survives_null_amount_and_received_quantity()
     test_costing_empty_tables_all_zero()
+    test_patch_null_amount_heals_to_zero_not_500()
+    test_patch_unrelated_field_heals_preexisting_null_amount()
+    test_patch_keeps_a_real_amount_and_zero_unchanged()
     print("ALL COSTING ROUTE TESTS PASSED")

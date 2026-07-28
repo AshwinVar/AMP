@@ -57,6 +57,18 @@ def update_cost_record(cost_id: int, payload: schemas.CostRecordUpdate, db: Sess
         raise HTTPException(status_code=404, detail="Cost record not found")
     for key, value in payload.model_dump(exclude_unset=True).items():
         setattr(row, key, value)
+    # amount is Column(Integer, default=0) WITHOUT nullable=False, and
+    # CostRecordUpdate types it Optional[int]=None — so a client can PATCH an
+    # explicit {"amount": null} (exclude_unset keeps an explicit null) and a
+    # legacy / raw-SQL / migration row can already carry a NULL. Left as None the
+    # response 500s: CostRecordResponse types amount as a non-optional int
+    # (ResponseValidationError int <- None). Worse, the NULL is committed first, so
+    # every subsequent GET /cost-records (List[CostRecordResponse]) then 500s for
+    # the whole tenant until the row is repaired. A NULL amount is the column's own
+    # default of 0 — coalesce before the return, the same heal the sibling PATCH
+    # handlers already apply (inventory_routes / orders_routes / quality_routes).
+    # This also heals a pre-existing NULL row touched by an unrelated-field patch.
+    row.amount = row.amount or 0
     db.commit()
     db.refresh(row)
     return row

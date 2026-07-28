@@ -9,7 +9,7 @@ Run:  python backend/test_tenant_activity.py     (exit 0 = pass)
 """
 from datetime import datetime, timedelta
 
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker
 
 import models
@@ -106,6 +106,41 @@ def test_counts_are_isolated_windowed_and_ordered():
     assert r["active_count"] == 1 and r["quiet_count"] == 2
 
 
+def test_open_escalation_count_includes_null_status_excludes_terminal():
+    """open_escalations = every escalation NOT in a terminal state, with a NULL
+    status counted as open. Escalation.status is nullable (default "Open"), so a
+    raw-SQL / migration / cleared-field row can hold a NULL; the old
+    `status NOT IN (...)` filter evaluated to NULL — not TRUE — for it and
+    silently dropped an open NULL-status escalation, undercounting the panel
+    (the #403 bug class). Independently-derived expected: of Open + NULL +
+    Resolved + Cancelled + Closed, exactly the first two are open → 2."""
+    db = _fresh_session()
+    db.add(models.CompanyTenant(company_code="ACME", company_name="Acme",
+                                plan_name="Growth", subscription_status="Active"))
+    db.commit()
+
+    token = tenancy.set_current_tenant("ACME")
+    try:
+        for title, status in [("A-open", "Open"), ("A-null", "Open"),
+                              ("A-resolved", "Resolved"), ("A-cancelled", "Cancelled"),
+                              ("A-closed", "Closed")]:
+            db.add(models.Escalation(title=title, severity="High", owner="Ops",
+                                     department="Maintenance", status=status))
+        db.commit()
+        # The ORM default fills an explicit None on insert, so a genuine NULL only
+        # arises out-of-band — reproduce it with a raw UPDATE (a migration / raw
+        # write / an update that cleared the field), exactly as in production.
+        db.execute(text("UPDATE escalations SET status=NULL WHERE title='A-null'"))
+        db.commit()
+    finally:
+        tenancy.reset_current_tenant(token)
+
+    r = saas_routes.get_tenant_activity(db=db, current_user={"tenant": "DEFAULT"})
+    acme = {t["tenant_code"]: t for t in r["tenants"]}["ACME"]
+    # Open + NULL count; Resolved / Cancelled / Closed do not.
+    assert acme["open_escalations"] == 2, acme["open_escalations"]
+
+
 def test_founder_only_and_empty_registry_safe():
     db = _fresh_session()
     try:
@@ -122,6 +157,8 @@ def test_founder_only_and_empty_registry_safe():
 if __name__ == "__main__":
     test_counts_are_isolated_windowed_and_ordered()
     print("ok  counts isolated per tenant, 7d-windowed, quietest-first, active flag")
+    test_open_escalation_count_includes_null_status_excludes_terminal()
+    print("ok  open-escalation count includes NULL status, excludes terminal states")
     test_founder_only_and_empty_registry_safe()
     print("ok  founder-only + empty registry safe")
     print("\nALL TENANT-ACTIVITY TESTS PASSED")

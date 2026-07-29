@@ -2,6 +2,7 @@
 import React, { useEffect, useState } from "react";
 import { apiGet, apiPost, apiPatch, apiDelete, API_URL } from "../lib/api";
 import { LoadError, useLoadError } from "../lib/useLoadError";
+import { parseApiDate } from "../lib/apiDate";
 
 // ── Types ─────────────────────────────────────────────────────────
 
@@ -555,7 +556,7 @@ function InvoiceTab({ tenant, reload, isAdmin }: { tenant: string; reload: () =>
                   <td className="py-3 px-4 font-mono text-slate-400">PI #{v.proforma_id ?? "-"}</td>
                   <td className="py-3 px-4">{v.customer_name}</td>
                   <td className="py-3 px-4"><span className="rounded-full px-2 py-0.5 text-xs border border-green-500/40 bg-green-500/10 text-green-400">{v.status}</span></td>
-                  <td className="py-3 px-4 text-slate-400 text-xs">{new Date(v.created_at).toLocaleString()}</td>
+                  <td className="py-3 px-4 text-slate-400 text-xs">{parseApiDate(v.created_at)?.toLocaleString() ?? "—"}</td>
                   <td className="py-3 px-4">
                     {isAdmin
                       ? <button onClick={() => voidInvoice(v.id)} className="text-xs text-red-400 border border-red-500/30 rounded-lg px-3 py-1 hover:bg-red-500/10">Void</button>

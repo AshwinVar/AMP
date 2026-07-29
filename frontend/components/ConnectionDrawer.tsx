@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { apiGet } from "../lib/api";
 import { useModalFocus } from "../lib/useModalFocus";
+import { parseApiDate } from "../lib/apiDate";
 
 // Mirrors the backend edge-connection drill-down (ai/connectivity.py build_connection_detail).
 type Tag = {
@@ -336,7 +337,7 @@ export default function ConnectionDrawer({
                           </span>
                         </div>
                         <p className="text-xs text-slate-600 mt-0.5">
-                          {new Date(r.at).toLocaleString()}
+                          {parseApiDate(r.at)?.toLocaleString() ?? "—"}
                           {r.source ? ` · ${r.source}` : ""}
                         </p>
                       </li>

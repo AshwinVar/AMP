@@ -1,4 +1,5 @@
 import type { MachineEvent } from "../lib/phase8-types";
+import { parseApiDate } from "../lib/apiDate";
 
 function statusStyle(status: string) {
   switch (status) {
@@ -34,7 +35,7 @@ export default function MachineTimeline({ events }: { events: MachineEvent[] }) 
               <div>
                 <p className="font-semibold text-white">{event.machine_name}</p>
                 <p className="text-xs text-slate-500 mt-1">
-                  {event.created_at ? new Date(event.created_at).toLocaleString() : "Live event"}
+                  {parseApiDate(event.created_at)?.toLocaleString() ?? "Live event"}
                 </p>
               </div>
 

@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { apiGet } from "../lib/api";
 import { useModalFocus } from "../lib/useModalFocus";
+import { parseApiDate } from "../lib/apiDate";
 
 // Mirrors the backend defect drill-down (ai/quality.py build_defect_detail).
 type Inspection = {
@@ -28,8 +29,8 @@ type DefectDetail = {
 
 function fmt(iso: string | null) {
   if (!iso) return "—";
-  const d = new Date(iso);
-  return Number.isNaN(d.getTime()) ? "—" : d.toLocaleString();
+  const d = parseApiDate(iso);
+  return d ? d.toLocaleString() : "—";
 }
 
 export default function QualityDefectDrawer({ category, onClose }: { category: string; onClose: () => void }) {

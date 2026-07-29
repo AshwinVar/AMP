@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { apiGet } from "../lib/api";
+import { parseApiDate } from "../lib/apiDate";
 
 type ChaseRow = {
   schedule_no: string;
@@ -44,8 +45,8 @@ function toneClasses(tone?: string) {
 }
 
 function dayLabel(iso: string) {
-  const d = new Date(iso);
-  return Number.isNaN(d.getTime()) ? "" : d.toLocaleDateString(undefined, { weekday: "narrow" });
+  const d = parseApiDate(iso);
+  return d ? d.toLocaleDateString(undefined, { weekday: "narrow" }) : "";
 }
 
 // The planner's morning board: booked load over the next 7 days (by day and by

@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { apiGet } from "../lib/api";
+import { parseApiDate } from "../lib/apiDate";
 
 type Series = { date: string; count: number }[];
 
@@ -28,8 +29,8 @@ const TREND_CARDS: { key: string; label: string; path: string }[] = [
 ];
 
 function wk(iso: string) {
-  const d = new Date(iso);
-  return Number.isNaN(d.getTime()) ? "" : d.toLocaleDateString(undefined, { weekday: "short" });
+  const d = parseApiDate(iso);
+  return d ? d.toLocaleDateString(undefined, { weekday: "short" }) : "";
 }
 
 function toneClasses(tone?: string) {

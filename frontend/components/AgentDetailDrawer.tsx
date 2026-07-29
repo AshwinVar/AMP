@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { apiGet, apiPost } from "../lib/api";
 import { useModalFocus } from "../lib/useModalFocus";
+import { parseApiDate } from "../lib/apiDate";
 
 // Mirrors the backend agent detail read-model (ai/roster.py build_agent_detail).
 type RecentAction = {
@@ -54,13 +55,13 @@ function statusStyle(s: string) {
 
 function fmt(iso: string | null) {
   if (!iso) return "—";
-  const d = new Date(iso);
-  return Number.isNaN(d.getTime()) ? "—" : d.toLocaleString();
+  const d = parseApiDate(iso);
+  return d ? d.toLocaleString() : "—";
 }
 
 function wk(iso: string) {
-  const d = new Date(iso);
-  return Number.isNaN(d.getTime()) ? "" : d.toLocaleDateString(undefined, { weekday: "short" });
+  const d = parseApiDate(iso);
+  return d ? d.toLocaleDateString(undefined, { weekday: "short" }) : "";
 }
 
 function humanKind(k: string) {

@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { apiGet } from "../lib/api";
+import { parseApiDate } from "../lib/apiDate";
 
 type Row = {
   task_no: string;
@@ -39,8 +40,8 @@ function toneClasses(tone?: string) {
 }
 
 function dayLabel(iso: string) {
-  const d = new Date(iso);
-  return Number.isNaN(d.getTime()) ? "" : d.toLocaleDateString(undefined, { weekday: "narrow" });
+  const d = parseApiDate(iso);
+  return d ? d.toLocaleDateString(undefined, { weekday: "narrow" }) : "";
 }
 
 // The forward maintenance schedule for the CMMS view: the next 14 days laid out

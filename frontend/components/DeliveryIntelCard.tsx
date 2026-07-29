@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { apiGet } from "../lib/api";
+import { parseApiDate } from "../lib/apiDate";
 
 type AtRiskOrder = {
   order_no: string;
@@ -35,8 +36,8 @@ type DeliverySummary = {
 };
 
 function dayLabel(iso: string) {
-  const d = new Date(iso);
-  return Number.isNaN(d.getTime()) ? "" : d.toLocaleDateString(undefined, { weekday: "narrow" });
+  const d = parseApiDate(iso);
+  return d ? d.toLocaleDateString(undefined, { weekday: "narrow" }) : "";
 }
 
 // The Orders & Dispatch view's intelligence layer over the order CRUD: are we

@@ -237,6 +237,20 @@ def get_customer_order_analytics(
         .all()
     )
 
+    # The COMPLETE status breakdown, mirroring priority_counts / customer_counts
+    # below: one entry per status the app actually writes, coalescing a NULL status
+    # (String default="Pending", not NOT NULL — a raw-SQL / migration / cleared
+    # write can store NULL) to "Unknown". This is the AUTHORITATIVE partition —
+    # sum(status_breakdown.values()) == total_orders by construction (both count
+    # the same tenant-scoped rows) — so no order is ever silently dropped from the
+    # breakdown. The four named buckets below are a convenience subset and do NOT
+    # cover the wider vocabulary the factory simulator / reset write ("In
+    # Production", "Ready to Dispatch", "Partially Dispatched"); reading the status
+    # story off them alone under-reported (rule-3: a breakdown must reconcile with
+    # its headline).
+    status_breakdown = {(status or "Unknown"): int(count)
+                        for status, count in status_counts.items()}
+
     # order_quantity is nullable=False, but SUM over an empty book is still NULL;
     # dispatched_quantity is Column(Integer, default=0) WITHOUT nullable=False, so a
     # row written by raw SQL / a migration / a cleared update can be a true NULL,
@@ -283,13 +297,22 @@ def get_customer_order_analytics(
     return {
         "total_orders": total_orders,
         "pending": status_counts.get("Pending", 0),
-        "partial": status_counts.get("Partial", 0),
+        # "Partial" and "Partially Dispatched" are two spellings of the SAME state
+        # (an order with some but not all units dispatched) written by two code
+        # paths in this app — the create/update endpoints emit "Partial", the
+        # factory simulator / reset emit "Partially Dispatched". Fold the synonym
+        # so the Partial headline counts EVERY partially-dispatched order, not just
+        # the API-created ones (rule-1: one metric, not two spellings). Before this,
+        # a seeded/simulated demo showed Partial=0 while partially-dispatched orders
+        # sat plainly in the table below it.
+        "partial": status_counts.get("Partial", 0) + status_counts.get("Partially Dispatched", 0),
         "dispatched": status_counts.get("Dispatched", 0),
         "cancelled": status_counts.get("Cancelled", 0),
         "late": late,
         "total_order_qty": total_order_qty,
         "total_dispatched_qty": total_dispatched_qty,
         "dispatch_rate": dispatch_rate,
+        "status_counts": status_breakdown,
         "priority_counts": priority_counts,
         "customer_counts": customer_counts,
     }

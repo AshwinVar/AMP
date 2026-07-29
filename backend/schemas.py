@@ -324,6 +324,21 @@ class InventoryItemResponse(BaseModel):
     location: Optional[str] = None
     created_at: Optional[datetime] = None
 
+    # current_stock / reorder_level are Column(Integer, default=0) WITHOUT
+    # nullable=False, so a row written by raw SQL / a migration / a cleared update
+    # can hold a true NULL. They are typed non-optional here, so a single such NULL
+    # row raised Pydantic ValidationError during response serialisation and 500-ed
+    # the WHOLE GET /inventory/items list — one bad row hiding every good item, on
+    # an endpoint the inventory dashboards poll. The compute paths already coalesce
+    # this exact NULL (the PATCH heals it in-handler, the stock-mutation math reads
+    # `stock or 0`); the raw-ORM list serializer was the one reader left un-healed
+    # (same #375/#395/#401 response-serialisation heal as CustomerOrder/PurchaseOrder
+    # /OperatorJobExecution above). Coalesce a NULL to the column's own default of 0
+    # on the way out; a real 0 is untouched (mode="before" only rewrites None).
+    _heal_counts = field_validator("current_stock", "reorder_level", mode="before")(
+        _coalesce_null_count
+    )
+
     class Config:
         from_attributes = True
 
@@ -392,6 +407,23 @@ class QualityInspectionResponse(BaseModel):
     status: str
     notes: Optional[str] = None
     created_at: Optional[datetime] = None
+
+    # passed / failed / rework / scrap_quantity are Column(Integer, default=0)
+    # WITHOUT nullable=False, so a row written by raw SQL / a migration / a cleared
+    # update can hold a true NULL. They are typed non-optional here, so a single such
+    # NULL row raised Pydantic ValidationError during response serialisation and
+    # 500-ed the WHOLE GET /quality/inspections list — one bad row hiding every good
+    # inspection. The compute paths already coalesce this exact NULL (the PATCH heals
+    # it in-handler, /analytics/quality COALESCEs it in SQL, the defect generator
+    # reads `failed or 0`); the raw-ORM list serializer was the one reader left
+    # un-healed (same #375/#395/#401 response-serialisation heal as the sibling
+    # models above). Coalesce a NULL to the column's own default of 0 on the way out;
+    # a real 0 is untouched (mode="before" only rewrites None). inspected_quantity is
+    # nullable=False, so it needs no heal.
+    _heal_counts = field_validator(
+        "passed_quantity", "failed_quantity", "rework_quantity", "scrap_quantity",
+        mode="before",
+    )(_coalesce_null_count)
 
     class Config:
         from_attributes = True

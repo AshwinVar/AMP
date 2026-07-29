@@ -142,6 +142,40 @@ def test_unrelated_patch_over_legacy_null_row_is_safe():
     print("PASS unrelated patch over a legacy NULL row is safe (90 + 0 = 90 <= 100)")
 
 
+def test_list_serialises_legacy_null_row_without_500():
+    # The bug this fix closes: GET /quality/inspections returns raw ORM rows, and
+    # FastAPI validates each through QualityInspectionResponse (passed/failed/rework/
+    # scrap_quantity are non-optional int). A legacy NULL row (raw-SQL / migration)
+    # never went through the PATCH in-handler heal, so the raw-ORM list serializer
+    # was the one reader left un-healed — a single such row raised ValidationError
+    # and 500-ed the WHOLE list, hiding every good inspection. model_validate is
+    # exactly what the response layer does; assert the NULL counts heal to 0 while
+    # the good row (and inspected_quantity, which is nullable=False) are untouched.
+    db = _iso_session()
+    tok = T.set_current_tenant(TENANT)
+    try:
+        good = _make_inspection(db, "QI-GOOD", inspected=100, passed=90, failed=10,
+                                rework=3, scrap=2)
+        bad = _make_inspection(db, "QI-LEGACY-NULL", inspected=50, passed=0, failed=0)
+        _null_out(db, bad.id, ["passed_quantity", "failed_quantity",
+                               "rework_quantity", "scrap_quantity"])
+        rows = QR.get_quality_inspections(db=db, current_user={"tenant": TENANT})
+        serialised = [schemas.QualityInspectionResponse.model_validate(r) for r in rows]
+    finally:
+        T.reset_current_tenant(tok)
+    by_no = {s.inspection_no: s for s in serialised}
+    nulled = by_no["QI-LEGACY-NULL"]
+    assert nulled.passed_quantity == 0 and nulled.failed_quantity == 0, (
+        nulled.passed_quantity, nulled.failed_quantity)
+    assert nulled.rework_quantity == 0 and nulled.scrap_quantity == 0
+    assert nulled.inspected_quantity == 50, nulled.inspected_quantity  # nullable=False, verbatim
+    assert isinstance(nulled.passed_quantity, int)
+    # the good row's real values are untouched — the heal only rewrites None
+    ok = by_no["QI-GOOD"]
+    assert (ok.passed_quantity, ok.failed_quantity, ok.rework_quantity, ok.scrap_quantity) == (90, 10, 3, 2)
+    print("PASS GET list serialises a legacy NULL row as 0 (not a 500 that hides every inspection)")
+
+
 def test_valid_update_applies_and_preserves_invariant():
     # The preserved behaviour: a valid patch applies, and the invariant still rejects
     # passed + failed > inspected with a clean 400 (never a 500). Numbers derived
@@ -216,6 +250,7 @@ if __name__ == "__main__":
     test_failed_inspection_still_publishes_event()
     test_patch_explicit_null_count_heals_to_zero_not_500()
     test_unrelated_patch_over_legacy_null_row_is_safe()
+    test_list_serialises_legacy_null_row_without_500()
     test_valid_update_applies_and_preserves_invariant()
     test_create_rejects_negative_count_the_invariant_would_pass()
     test_create_accepts_valid_counts()

@@ -7,6 +7,7 @@ import { apiGet, apiPost, apiPatch, apiDelete, getToken, getUserRole } from "../
 import { useInFlight } from "../../lib/useInFlight";
 import { parseDurationToMinutes } from "../../lib/duration";
 import { readMachineOee } from "../../lib/oee";
+import { pooledShiftEfficiency, shiftAttainment } from "../../lib/shift";
 import { usePolling } from "../../lib/usePolling";
 import { ActionError, useActionError } from "../../lib/useActionError";
 import {
@@ -1781,15 +1782,11 @@ export default function DashboardPage() {
         ).sort((a, b) => b[1] - a[1])[0][0]
       : "No data";
 
-  const avgShiftEfficiency =
-    shifts.length > 0
-      ? Math.round(
-          shifts.reduce((sum, shift) => {
-            if (shift.target_output === 0) return sum;
-            return sum + (shift.actual_output / shift.target_output) * 100;
-          }, 0) / shifts.length
-        )
-      : 0;
+  // Pooled — one ratio of the summed totals, the basis analytics_routes.py and
+  // ai/shift.py both use. The old form dropped a zero-target shift from the
+  // numerator but still divided by it, so two shifts at 100% of target plus one
+  // unplanned shift printed 67% here while the table below printed 100/100/0.
+  const avgShiftEfficiency = pooledShiftEfficiency(shifts);
 
   const downtimeReasonChartData = Object.entries(
     downtimeLogs.reduce<Record<string, number>>((acc, log) => {
@@ -2220,7 +2217,10 @@ export default function DashboardPage() {
         <KpiCard title="Avg Utilization" value={`${avgUtilization}%`} />
         <KpiCard title="Downtime Events" value={downtimeLogs.length} />
         <KpiCard title="Total Downtime" value={`${totalDowntimeMinutes}m`} />
-        <KpiCard title="Avg Shift Eff." value={`${avgShiftEfficiency}%`} />
+        <KpiCard
+          title="Avg Shift Eff."
+          value={avgShiftEfficiency === null ? "—" : `${avgShiftEfficiency}%`}
+        />
         <KpiCard title="Top Reason" value={topReason} small />
       </section>
         </>
@@ -2539,12 +2539,13 @@ export default function DashboardPage() {
 
                 <tbody>
                   {shifts.map((shift) => {
-                    const efficiency =
-                      shift.target_output > 0
-                        ? Math.round(
-                            (shift.actual_output / shift.target_output) * 100
-                          )
-                        : 0;
+                    // null, not 0, for an unplanned shift: it has no target to
+                    // be measured against, and printing 0% brands it the worst
+                    // performer on the board (ai/shift.py:18-22, ADR-0007).
+                    const efficiency = shiftAttainment(
+                      shift.actual_output,
+                      shift.target_output
+                    );
 
                     return (
                       <tr key={shift.id} className="border-b border-slate-800">
@@ -2553,7 +2554,15 @@ export default function DashboardPage() {
                         </td>
                         <td className="py-3 px-4">{shift.target_output}</td>
                         <td className="py-3 px-4">{shift.actual_output}</td>
-                        <td className="py-3 px-4">{efficiency}%</td>
+                        <td className="py-3 px-4">
+                          {efficiency === null ? (
+                            <span className="text-slate-500" title="Unplanned shift — no target to measure against">
+                              —
+                            </span>
+                          ) : (
+                            `${efficiency}%`
+                          )}
+                        </td>
                       </tr>
                     );
                   })}

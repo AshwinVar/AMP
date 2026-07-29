@@ -17,7 +17,7 @@ from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import func, or_
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 
 import ai
 import ai.prediction
@@ -170,7 +170,23 @@ router = APIRouter(tags=["Analytics"])
 
 @router.get("/oee/summary")
 def oee_summary(db: Session = Depends(_get_db), current_user: dict = Depends(get_current_user)):
-    records = db.query(models.ProductionRecord).order_by(models.ProductionRecord.id.desc()).limit(100).all()
+    # Eager-load the machine: the row below reads `record.machine.name`, and
+    # lazily that is one SELECT per distinct machine in the page — 26 statements
+    # for 100 records over 25 machines, 101 when every record names a different
+    # one. SQLite makes that look cheap; production is Postgres over a network,
+    # where each is a round trip.
+    #
+    # joinedload rather than selectinload because `machine` is many-to-one: the
+    # LEFT OUTER JOIN cannot multiply rows, so it stays correct under .limit(100)
+    # (a joinedload on a one-to-many would need the subquery form to avoid the
+    # limit applying to the joined rows).
+    records = (
+        db.query(models.ProductionRecord)
+        .options(joinedload(models.ProductionRecord.machine))
+        .order_by(models.ProductionRecord.id.desc())
+        .limit(100)
+        .all()
+    )
     data = []
     for record in records:
         oee = calculate_oee_from_record(record)

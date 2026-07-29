@@ -115,6 +115,14 @@ def reference_executive_oee(db):
             else:
                 quality = 95
 
+        # FLOOR every component at 0 as well as capping at 100 — mirror of the real
+        # endpoint's symmetric clamp (kept verbatim so this stays a faithful oracle).
+        # A no-op on every well-formed machine; only a negative-count legacy/raw-SQL
+        # row (SUM goes negative) or an over-100 inspection fallback is affected.
+        availability = max(0, min(100, availability))
+        performance = max(0, min(100, performance))
+        quality = max(0, min(100, quality))
+
         oee = round((availability / 100) * (performance / 100) * (quality / 100) * 100)
 
         machine_rows.append(
@@ -365,9 +373,92 @@ def test_matches_reference_with_machines_but_no_activity():
     db.close()
 
 
+def test_per_machine_components_floor_at_zero():
+    """A negative-count legacy/raw-SQL row must not print a negative per-machine OEE.
+
+    The HTTP ingest rejects negative counts/minutes, but that constraint is not
+    retro-applied to rows written by raw SQL / a migration / a cleared update — the
+    exact premise the shared OEE helper floors against (#414). The per-machine block
+    capped each component at 100% but never floored at 0, so such a row printed a
+    NEGATIVE availability / performance / quality (and an OEE below zero) for its
+    machine, while the pooled plant rollup on the same response floored the identical
+    sums to 0 — the parts contradicting the whole (rule-3). Every expected number
+    below is derived by hand from the row, NOT read back from the implementation.
+
+    Calls the endpoint DIRECTLY (not via the reference oracle) so a floor removed
+    from the real code fails this test even if the oracle lost it too.
+    """
+    import analytics_routes
+    db = _fresh_db()
+
+    neg_runtime = _machine(db, "NegRuntime", status="Running", utilization=70)
+    neg_counts = _machine(db, "NegCounts", status="Running", utilization=55)
+    insp_neg = _machine(db, "InspNeg", status="Breakdown", utilization=12)
+    insp_over = _machine(db, "InspOver", status="Running", utilization=80)
+
+    def prod(machine, planned, runtime, ideal, total, good, rejected):
+        db.add(models.ProductionRecord(
+            machine_id=machine.id, planned_minutes=planned, runtime_minutes=runtime,
+            ideal_cycle_time_seconds=ideal, total_count=total, good_count=good,
+            rejected_count=rejected, tenant_code="DEFAULT"))
+
+    # Negative runtime: availability = round(min(-50/480, 1)*100) = -10 -> floored to 0.
+    #   runtime<=0 -> performance falls back to the Running constant 90.
+    #   quality = round(min(90/100, 1)*100) = 90.
+    prod(neg_runtime, 480, -50, 30, 100, 90, 10)
+
+    # Positive runtime but a negative ideal_cycle and negative good_count:
+    #   availability = round(min(400/480, 1)*100) = 83.
+    #   performance = round(min(-3000/24000, 1)*100) = -12/-13 -> floored to 0.
+    #   quality     = round(min(-50/100, 1)*100)   = -50      -> floored to 0.
+    prod(neg_counts, 480, 400, -30, 100, -50, 150)
+
+    # No production; the inspection-fallback quality was uncapped in BOTH directions.
+    #   InspNeg : passed=-20 of 100 -> round(-20) = -20 -> floored to 0.
+    #   InspOver: passed=150 of 100 -> round(150)       -> capped at 100.
+    db.add(models.QualityInspection(inspection_no="QN", machine_id=insp_neg.id, inspector="QA",
+        inspected_quantity=100, passed_quantity=-20, failed_quantity=0,
+        status="Closed", tenant_code="DEFAULT"))
+    db.add(models.QualityInspection(inspection_no="QO", machine_id=insp_over.id, inspector="QA",
+        inspected_quantity=100, passed_quantity=150, failed_quantity=0,
+        status="Closed", tenant_code="DEFAULT"))
+    db.commit()
+
+    out = analytics_routes.get_executive_oee(
+        db=db, current_user={"username": "t", "role": "Admin", "tenant": "DEFAULT"})
+    rows = {row["machine_name"]: row for row in out["machine_ranking"]}
+
+    # No per-machine component or OEE may fall outside the bound the data supports.
+    for name, row in rows.items():
+        for field in ("availability", "performance", "quality", "oee"):
+            assert 0 <= row[field] <= 100, f"{name}.{field} = {row[field]} out of [0,100]"
+
+    # Independently-derived exact values (see the fixture comments above).
+    assert rows["NegRuntime"]["availability"] == 0, rows["NegRuntime"]
+    assert rows["NegRuntime"]["performance"] == 90, rows["NegRuntime"]
+    assert rows["NegRuntime"]["quality"] == 90, rows["NegRuntime"]
+    assert rows["NegRuntime"]["oee"] == 0, rows["NegRuntime"]
+
+    assert rows["NegCounts"]["availability"] == 83, rows["NegCounts"]
+    assert rows["NegCounts"]["performance"] == 0, rows["NegCounts"]
+    assert rows["NegCounts"]["quality"] == 0, rows["NegCounts"]
+    assert rows["NegCounts"]["oee"] == 0, rows["NegCounts"]
+
+    assert rows["InspNeg"]["quality"] == 0, rows["InspNeg"]
+    assert rows["InspOver"]["quality"] == 100, rows["InspOver"]
+
+    # Reconciliation: the pooled plant rollup already floors, so it too stays in bound.
+    for field in ("plant_availability", "plant_performance", "plant_quality", "plant_oee"):
+        assert 0 <= out[field] <= 100, f"{field} = {out[field]} out of [0,100]"
+
+    print("  per-machine component floor OK")
+    db.close()
+
+
 if __name__ == "__main__":
     test_matches_reference_on_every_branch()
     test_plant_pooling_clamps_when_every_run_slipped()
     test_matches_reference_on_an_empty_database()
     test_matches_reference_with_machines_but_no_activity()
+    test_per_machine_components_floor_at_zero()
     print("executive-oee SQL parity: OK")

@@ -739,6 +739,23 @@ def get_executive_oee(
             else:
                 quality = 95
 
+        # FLOOR every component at 0 as well as capping it at 100 — the SAME
+        # symmetric clamp the shared OEE helper (analytics_engine.pooled_oee_from_sums
+        # / calculate_oee_from_record, #414) and the pooled plant rollup below already
+        # apply. The data branches above cap at 100% (min(ratio, 1)) but never floored:
+        # the ingest rejects negatives, yet a legacy / raw-SQL / migration row can
+        # still hold a negative runtime / good_count / (ideal_cycle * total), whose SUM
+        # makes runtime/planned, ideal_seconds/runtime or good/total NEGATIVE — printing
+        # e.g. quality -50% and an OEE below zero for THIS machine row, while the pooled
+        # plant rollup on the SAME response floors the identical sums to 0 (rule-3: the
+        # per-machine parts must reconcile with the pooled whole). The inspection-based
+        # quality fallback was uncapped in BOTH directions (a raw-SQL row's passed can
+        # exceed or undershoot inspected), so it gets the same treatment. max(0, min(100,
+        # x)) is a strict no-op on every well-formed machine.
+        availability = max(0, min(100, availability))
+        performance = max(0, min(100, performance))
+        quality = max(0, min(100, quality))
+
         oee = round((availability / 100) * (performance / 100) * (quality / 100) * 100)
 
         machine_rows.append(

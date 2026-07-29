@@ -127,6 +127,7 @@ import {
   MODULE_CATALOG,
   PLAN_MODULES,
   getEnabledModules,
+  withAlwaysOpen,
   canRoleSeeView,
   navItemsFromPacks,
   catalogFromPacks,
@@ -526,13 +527,13 @@ export default function DashboardPage() {
     reloadTenantCfg();
   }, [reloadTenantCfg]);
 
-  // Effective modules come from the tenant's licence; core + admin are always
-  // available so no one is locked out of basics or account management.
-  const enabledModules = (
-    tenantCfg
-      ? Array.from(new Set([...tenantCfg.enabled_modules, "core", "admin"]))
-      : getEnabledModules(plan)
-  ) as ReturnType<typeof getEnabledModules>;
+  // Effective modules come from the tenant's licence, plus the packs the API
+  // never gates. Both branches apply the SAME overlay (lib/modules
+  // withAlwaysOpen) — spelling it out inline here is what let the fallback
+  // drift and drop `admin`.
+  const enabledModules = tenantCfg
+    ? withAlwaysOpen(tenantCfg.enabled_modules)
+    : getEnabledModules(plan);
   const brandName = tenantCfg?.brand_name || "AMP";
 
   // The plug-and-play nav: rendered from the backend module manifest (GET

@@ -64,9 +64,18 @@ def calculate_oee_from_record(record):
     # data-entry slip), and its OEE could top 100% — disagreeing with the pooled
     # headline and violating the honesty rule (a metric can't exceed the bound
     # the data supports). Reconciles the per-record view with the pooled one.
-    availability = min(availability, 1)
-    performance = min(performance, 1)
-    quality = min(quality, 1)
+    #
+    # The clamp is SYMMETRIC — floor at 0 as well as cap at 1. The ingest paths
+    # reject negative counts/minutes (machines_routes.create_production_record,
+    # mqtt_service._non_negative_int), but a legacy / raw-SQL / migration row can
+    # still hold a negative good_count or runtime, and good/total (or runtime/
+    # planned) then goes NEGATIVE — printing e.g. quality -20% and dragging OEE
+    # below zero. A percentage the data can't support in the other direction is
+    # the same honesty violation as one over 100%; 0 is the floor a physical
+    # quantity supports. max(0, min(x, 1)) is a strict no-op on every valid record.
+    availability = max(0, min(availability, 1))
+    performance = max(0, min(performance, 1))
+    quality = max(0, min(quality, 1))
 
     return {
         "availability": round(availability * 100),
@@ -104,9 +113,15 @@ def pooled_oee_from_sums(planned, runtime, total, good, ideal_seconds, has_data)
     re-derive the formula — which is how two surfaces end up disagreeing — it
     calls this, and ``pooled_oee`` above delegates here too. One definition.
     """
-    a = min(runtime / planned, 1.0) if planned else 0.0
-    p = min(ideal_seconds / (runtime * 60), 1.0) if runtime else 0.0
-    q = min(good / total, 1.0) if total else 0.0
+    # Symmetric clamp to [0, 1]: cap at 1.0 (a component can't exceed 100%) AND
+    # floor at 0.0. A negative count/minute on a legacy or raw-SQL row (the ingest
+    # guards can't retro-fix history) makes good/total or runtime/planned negative,
+    # which pulled pooled OEE below zero — the same honesty violation as > 100%,
+    # and it disagreed with calculate_oee_from_record above (which now floors too).
+    # max(0.0, ...) is a strict no-op on every well-formed sum.
+    a = max(0.0, min(runtime / planned, 1.0)) if planned else 0.0
+    p = max(0.0, min(ideal_seconds / (runtime * 60), 1.0)) if runtime else 0.0
+    q = max(0.0, min(good / total, 1.0)) if total else 0.0
     return {
         "oee": round(a * p * q * 100),
         "availability": round(a * 100),
@@ -306,7 +321,10 @@ def build_smart_alerts(machines, production_records, downtime_logs):
 
 
 def calculate_fallback_oee(utilization: int):
-    return round((utilization / 100) * 0.9 * 0.95 * 100)
+    # Floor at 0 for the same reason the pooled/per-record clamps do: the summary
+    # fallback (analytics_routes) passes a machine's raw stored utilization, and a
+    # legacy / raw-SQL negative reading would otherwise estimate a negative OEE.
+    return max(0, round((utilization / 100) * 0.9 * 0.95 * 100))
 
 
 def generate_alerts(db: Session):

@@ -768,6 +768,29 @@ class ProductionScheduleResponse(BaseModel):
     notes: Optional[str] = None
     created_at: Optional[datetime] = None
 
+    # ProductionSchedule.estimated_minutes is Column(Integer, default=480) WITHOUT
+    # nullable=False, so — like every other nullable-default int on the sibling
+    # response models above — a row written by raw SQL / a migration / a PATCH that
+    # cleared the field can legitimately hold NULL (and ProductionScheduleUpdate
+    # types it Optional[int]=None, so PATCH {"estimated_minutes": null} persists a
+    # NULL through the API alone). This field is typed a non-optional int, so one
+    # such NULL row raised Pydantic ValidationError during serialisation and 500-ed
+    # BOTH the PATCH response AND every subsequent GET /production-schedules for the
+    # tenant — one poisoned row hiding all schedules, the same class already healed
+    # on the plan / operator / order / machine lists. It was the only counted
+    # response schema still missing the heal.
+    #
+    # Heals to 0 (NOT the column's 480 default): both readers of this column already
+    # treat a NULL as 0 — the /analytics/production-schedules rollup does
+    # COALESCE(SUM(estimated_minutes), 0) and the schedule-load read-model does
+    # `s.estimated_minutes or 0`. Showing 0 for a NULL row keeps the per-schedule
+    # list on the SAME basis as the booked-minutes headline and per-machine load it
+    # sums into (rule-3: the parts reconcile with the whole). A real recorded value —
+    # including a real 0 — is untouched; only NULL is rewritten.
+    _heal_estimated_minutes = field_validator("estimated_minutes", mode="before")(
+        _coalesce_null_count
+    )
+
     class Config:
         from_attributes = True
 

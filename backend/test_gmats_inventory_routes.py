@@ -700,6 +700,98 @@ def test_create_min_positive_line_still_issues():
     print("PASS MIN still issues a positive line correctly after the qty guard")
 
 
+# --- Bounded windows + batched line fetch on the transactional listings. The
+# proforma / invoice / MIN lists grow without limit as a tenant trades, and each is
+# polled — yet they were the only list endpoints in the backend with no .limit()
+# cap. /gmats/proformas and /gmats/min also fired a per-row line query (an N+1 that
+# grew with every document); those are now collapsed into one batched IN(...) fetch
+# per page. These pin the newest-500 bound AND that the batched fetch still groups
+# each document's own lines, in insertion order. Expected values derived by hand. ---
+
+
+def test_proforma_listing_batches_lines_per_document_correctly():
+    # Two proformas, each with its own lines: the single batched fetch must group
+    # each document's lines under it (no cross-contamination) and keep insertion
+    # order — byte-for-byte what the old per-proforma query returned.
+    db = _db()
+    _item(db, 1, "GMATS", "Part A")
+    _item(db, 2, "GMATS", "Part B")
+    db.add(models.GmatsProforma(id=1, tenant_code="GMATS", proforma_no="PI-1",
+                                customer_name="C1", status="Open"))
+    db.add(models.GmatsProforma(id=2, tenant_code="GMATS", proforma_no="PI-2",
+                                customer_name="C2", status="Open"))
+    db.commit()
+    db.add(models.GmatsProformaLine(id=1, proforma_id=1, item_id=1, qty=3))
+    db.add(models.GmatsProformaLine(id=2, proforma_id=1, item_id=2, qty=4))
+    db.add(models.GmatsProformaLine(id=3, proforma_id=2, item_id=2, qty=7))
+    db.commit()
+
+    out = gmats.gmats_proformas(tenant="GMATS", db=db, current_user=_ADMIN)
+    by_no = {p["proforma_no"]: p for p in out}
+    assert [(l["item_id"], l["qty"]) for l in by_no["PI-1"]["lines"]] == [(1, 3), (2, 4)]
+    assert [(l["item_id"], l["qty"]) for l in by_no["PI-2"]["lines"]] == [(2, 7)]
+    # Names still resolve from this tenant's item map through the batched path.
+    assert by_no["PI-1"]["lines"][0]["item_name"] == "Part A"
+    print("PASS proforma listing batches lines per document, in order, names resolved")
+
+
+def test_proforma_listing_bounds_to_newest_500():
+    # 501 proformas -> only the newest 500 (id desc) are returned; the oldest (id 1)
+    # is dropped, the second-oldest (id 2) survives — the window is exactly 500.
+    db = _db()
+    for i in range(1, 502):
+        db.add(models.GmatsProforma(id=i, tenant_code="GMATS", proforma_no=f"PI-{i}",
+                                    customer_name="C", status="Open"))
+    db.commit()
+
+    out = gmats.gmats_proformas(tenant="GMATS", db=db, current_user=_ADMIN)
+    assert len(out) == 500, f"expected the newest 500, got {len(out)}"
+    assert out[0]["proforma_no"] == "PI-501"          # newest first
+    nos = {p["proforma_no"] for p in out}
+    assert "PI-1" not in nos, "the oldest proforma beyond the 500-row window must be dropped"
+    assert "PI-2" in nos
+    print("PASS proforma listing bounds to the newest 500 (oldest beyond the window dropped)")
+
+
+def test_invoice_listing_bounds_to_newest_500():
+    db = _db()
+    for i in range(1, 502):
+        db.add(models.GmatsInvoice(id=i, tenant_code="GMATS", invoice_no=f"INV-{i}",
+                                   proforma_id=None, customer_name="C", status="Generated"))
+    db.commit()
+
+    out = gmats.gmats_invoices(tenant="GMATS", db=db, current_user=_ADMIN)
+    assert len(out) == 500, f"expected the newest 500, got {len(out)}"
+    assert out[0]["invoice_no"] == "INV-501"
+    nos = {v["invoice_no"] for v in out}
+    assert "INV-1" not in nos and "INV-2" in nos
+    print("PASS invoice listing bounds to the newest 500")
+
+
+def test_min_listing_batches_lines_and_bounds_to_newest_500():
+    # 501 MINs -> newest 500; the newest (id 501) carries two lines that the batched
+    # fetch must resolve under it, in order, with names from this tenant's items.
+    db = _db()
+    _item(db, 1, "GMATS", "Spare A")
+    _item(db, 2, "GMATS", "Spare B")
+    for i in range(1, 502):
+        db.add(models.GmatsMIN(id=i, tenant_code="GMATS", min_no=f"MIN-{i}",
+                               customer_name="C", machine_ref="R", status="Issued"))
+    db.commit()
+    db.add(models.GmatsMINLine(id=1, min_id=501, item_id=1, qty=2))
+    db.add(models.GmatsMINLine(id=2, min_id=501, item_id=2, qty=5))
+    db.commit()
+
+    out = gmats.gmats_min_list(tenant="GMATS", db=db, current_user=_ADMIN)
+    assert len(out) == 500, f"expected the newest 500, got {len(out)}"
+    assert out[0]["min_no"] == "MIN-501"
+    assert [(l["item_id"], l["qty"]) for l in out[0]["lines"]] == [(1, 2), (2, 5)]
+    assert out[0]["lines"][0]["item_name"] == "Spare A"
+    nos = {m["min_no"] for m in out}
+    assert "MIN-1" not in nos and "MIN-2" in nos
+    print("PASS MIN listing batches lines and bounds to the newest 500")
+
+
 if __name__ == "__main__":
     test_gmats_inventory_paths_registered_once_and_owned()
     test_proforma_listing_resolves_only_same_tenant_item_names()
@@ -732,4 +824,8 @@ if __name__ == "__main__":
     test_create_min_rejects_negative_line_qty()
     test_create_min_rejects_zero_line_qty()
     test_create_min_positive_line_still_issues()
+    test_proforma_listing_batches_lines_per_document_correctly()
+    test_proforma_listing_bounds_to_newest_500()
+    test_invoice_listing_bounds_to_newest_500()
+    test_min_listing_batches_lines_and_bounds_to_newest_500()
     print("ALL GMATS-INVENTORY ROUTE TESTS PASSED")

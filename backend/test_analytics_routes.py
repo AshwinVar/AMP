@@ -287,6 +287,64 @@ def test_analytics_summary_shift_efficiency_all_zero_target_is_zero_not_a_crash(
     print("PASS analytics-summary shift efficiency: all-zero-target -> 0, no divide-by-zero")
 
 
+def test_analytics_summary_plant_oee_is_pooled_in_sql_not_a_whole_table_scan():
+    # The plant OEE headline pools across production_records (ratio of sums). It must
+    # produce that number by aggregating in SQL, never by hydrating the whole growing
+    # table into Python (rule-4) — the same fix already applied to the sibling
+    # executive rollups. Two machines of very different volume make the pooled result
+    # differ from a naive per-record mean, and the numbers are derived BY HAND here
+    # (independently of pooled_oee) so the test can't pass a broken pooling.
+    db = _fresh_session()
+    db.add(models.Machine(id=1, name="Big", status="Running", utilization=80))
+    db.add(models.Machine(id=2, name="Tiny", status="Running", utilization=80))
+    # Big run: planned 1000, runtime 500, ideal 30s, total 500, good 400, rej 100.
+    db.add(models.ProductionRecord(machine_id=1, planned_minutes=1000, runtime_minutes=500,
+                                   ideal_cycle_time_seconds=30, total_count=500, good_count=400, rejected_count=100))
+    # Tiny run: planned 10, runtime 10, ideal 60s, total 10, good 10, rej 0.
+    db.add(models.ProductionRecord(machine_id=2, planned_minutes=10, runtime_minutes=10,
+                                   ideal_cycle_time_seconds=60, total_count=10, good_count=10, rejected_count=0))
+    db.commit()
+
+    out = analytics_routes.analytics_summary(db=db, current_user={})
+    # Pooled sums: planned 1010, runtime 510, total 510, good 410,
+    #   ideal_seconds = 30*500 + 60*10 = 15000 + 600 = 15600.
+    # availability = min(510/1010, 1)      = 0.50495... -> round(*100) = 50
+    # performance  = min(15600/(510*60),1) = min(0.5098..,1) -> round(*100) = 51
+    # quality      = min(410/510, 1)       = 0.80392... -> round(*100) = 80
+    # oee          = round(0.50495*0.5098*0.80392*100) = round(20.69..) = 21
+    assert out["avg_availability"] == 50, out["avg_availability"]
+    assert out["avg_performance"] == 51, out["avg_performance"]
+    assert out["avg_quality"] == 80, out["avg_quality"]
+    assert out["avg_oee"] == 21, out["avg_oee"]
+    # ...and it is emphatically NOT the mean of the two per-record OEEs. Big alone:
+    #   a=min(500/1000,1)=.5, p=min(15000/30000,1)=.5, q=400/500=.8 -> round(20)=20.
+    #   Tiny alone: a=1, p=min(600/600,1)=1, q=1 -> 100. mean(20,100)=60 != 21.
+    assert out["avg_oee"] != 60, "plant OEE must pool by volume, not average per-record OEE"
+
+    # Regression guard: the compute must aggregate in SQL, not fall back to a whole-
+    # table `.all()` scan of the growing production_records table (rule-4).
+    src = inspect.getsource(analytics_routes.analytics_summary)
+    assert "db.query(models.ProductionRecord).all()" not in src, \
+        "analytics-summary must pool production_records in SQL, not hydrate the whole table"
+    assert "func.sum(models.ProductionRecord" in src, \
+        "analytics-summary should sum production_records with func.sum"
+    print("PASS analytics-summary plant OEE is pooled in SQL (a50/p51/q80/oee21), no whole-table scan")
+
+
+def test_analytics_summary_plant_oee_empty_production_falls_back_not_a_crash():
+    # No production records at all: pooled has_data is False (record COUNT is 0), so
+    # OEE falls back to the per-machine utilization estimate rather than dividing by
+    # an empty aggregate. Pins that the SQL count, not a hydrated list, drives the
+    # `if record_count == 0` fallback branch.
+    db = _fresh_session()
+    db.add(models.Machine(id=1, name="M", status="Running", utilization=100))
+    db.commit()
+    out = analytics_routes.analytics_summary(db=db, current_user={})
+    # fallback = calculate_fallback_oee(100) = round(100/100 * 0.9 * 0.95 * 100) = 86.
+    assert out["avg_oee"] == 86, out["avg_oee"]
+    print("PASS analytics-summary: empty production -> utilization fallback (86%), no empty-aggregate crash")
+
+
 def test_executive_oee_null_utilization_fallback_is_zero_not_a_crash():
     # No production for the machine -> availability falls back to utilization. With
     # a NULL reading the old `max(machine.utilization, 0)` raised TypeError; it must
@@ -1418,6 +1476,8 @@ if __name__ == "__main__":
     test_analytics_summary_all_null_utilization_is_zero_not_a_crash()
     test_analytics_summary_shift_efficiency_is_pooled_not_mean_of_ratios()
     test_analytics_summary_shift_efficiency_all_zero_target_is_zero_not_a_crash()
+    test_analytics_summary_plant_oee_is_pooled_in_sql_not_a_whole_table_scan()
+    test_analytics_summary_plant_oee_empty_production_falls_back_not_a_crash()
     test_executive_oee_null_utilization_fallback_is_zero_not_a_crash()
     test_final_executive_summary_null_columns_are_zero_not_a_crash()
     test_final_executive_summary_empty_tables_are_zero_not_a_crash()

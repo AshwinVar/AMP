@@ -32,7 +32,6 @@ from analytics_engine import (
     calculate_oee_from_record,
     generate_alerts,
     parse_duration_to_minutes,
-    pooled_oee,
     pooled_oee_from_sums,
 )
 from auth import get_current_user, require_roles
@@ -52,7 +51,34 @@ def analytics_summary(db: Session = Depends(_get_db), current_user: dict = Depen
     machines = db.query(models.Machine).all()
     logs = db.query(models.DowntimeLog).all()
     shifts = db.query(models.ShiftData).all()
-    records = db.query(models.ProductionRecord).all()
+
+    # Plant OEE is a pure ratio of sums (pooled_oee), so the growing
+    # production_records table belongs in SQL — not hydrated whole into Python just
+    # to sum it, the rule-4 antipattern already retired on the sibling rollups
+    # (/analytics/executive-oee #405, /analytics/final-executive-summary #370,
+    # /analytics/factory-command-center #372). At a year of a twenty-machine plant
+    # the old `.all()` was thousands of ORM objects per call on an endpoint the
+    # dashboard polls. ProductionRecord is in SCOPED_MODELS, so this aggregate stays
+    # tenant-scoped by the do_orm_execute hook (ADR-0002) exactly as the scan did.
+    #
+    # coalesce keeps the arithmetic total: SUM over no rows is NULL. The counted
+    # columns are all nullable=False, but the ideal*count product and the empty
+    # table can still yield NULL, and 0 is the reading pooled_oee_from_sums takes.
+    # The record COUNT drives the no-production fallback below (was `if not records`).
+    planned_sum, runtime_sum, total_sum, good_sum, ideal_sum, record_count = db.query(
+        func.coalesce(func.sum(models.ProductionRecord.planned_minutes), 0),
+        func.coalesce(func.sum(models.ProductionRecord.runtime_minutes), 0),
+        func.coalesce(func.sum(models.ProductionRecord.total_count), 0),
+        func.coalesce(func.sum(models.ProductionRecord.good_count), 0),
+        func.coalesce(
+            func.sum(
+                models.ProductionRecord.ideal_cycle_time_seconds
+                * models.ProductionRecord.total_count
+            ),
+            0,
+        ),
+        func.count(models.ProductionRecord.id),
+    ).one()
 
     running = len([m for m in machines if m.status == "Running"])
     idle = len([m for m in machines if m.status == "Idle"])
@@ -67,12 +93,21 @@ def analytics_summary(db: Session = Depends(_get_db), current_user: dict = Depen
 
     # Plant OEE pooled across records (ratio of sums), consistent with every other
     # surface; fall back to a utilization estimate only before any production exists.
-    pooled = pooled_oee(records)
+    # pooled_oee_from_sums is the same pooling pooled_oee(records) delegates to — one
+    # definition — so the number is byte-for-byte what the old whole-table scan gave.
+    pooled = pooled_oee_from_sums(
+        planned=int(planned_sum),
+        runtime=int(runtime_sum),
+        total=int(total_sum),
+        good=int(good_sum),
+        ideal_seconds=int(ideal_sum),
+        has_data=record_count > 0,
+    )
     avg_oee = pooled["oee"]
     avg_availability = pooled["availability"]
     avg_performance = pooled["performance"]
     avg_quality = pooled["quality"]
-    if not records and machines:
+    if record_count == 0 and machines:
         # Fallback only over machines with a utilization reading — calculate_fallback_oee
         # divides utilization by 100, so a NULL row would crash the estimate.
         fallback = [calculate_fallback_oee(m.utilization) for m in machines if m.utilization is not None]

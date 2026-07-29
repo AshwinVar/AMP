@@ -783,8 +783,14 @@ def get_executive_oee(
     plant_quality = plant["quality"]
     plant_oee = plant["oee"]
 
-    total_target = sum(shift.target_output for shift in shifts)
-    total_actual = sum(shift.actual_output for shift in shifts)
+    # Coalesce per-row NULL shift outputs to 0 (parity with build_shift_kpis and the
+    # COALESCE(SUM(..),0) this endpoint already applies to its production sums): a
+    # NULL target/actual on a raw-SQL/legacy row (Integer nullable=False, no default —
+    # not retro-applied to old rows) made `sum(...)` raise TypeError and 500 this
+    # Admin-polled endpoint, while the SQL-summed /analytics/management returned a
+    # number. SQL SUM skips a NULL row, so `or 0` per row reconciles the two (rule-3).
+    total_target = sum((shift.target_output or 0) for shift in shifts)
+    total_actual = sum((shift.actual_output or 0) for shift in shifts)
     plan_achievement = round((total_actual / total_target) * 100) if total_target else 0
 
     downtime_pareto = [
@@ -794,12 +800,18 @@ def get_executive_oee(
 
     shift_rows = []
     for shift in shifts:
-        efficiency = round((shift.actual_output / shift.target_output) * 100) if shift.target_output else 0
+        # Same per-row NULL coalesce as total_target/total_actual above: a NULL
+        # target/actual made `actual / target` and the JSON payload carry None,
+        # 500-ing or corrupting the per-shift chart. 0 is the honest floor for an
+        # unrecorded output, matching the pooled headline just computed.
+        target = shift.target_output or 0
+        actual = shift.actual_output or 0
+        efficiency = round((actual / target) * 100) if target else 0
         shift_rows.append(
             {
                 "shift_name": shift.shift_name,
-                "target_output": shift.target_output,
-                "actual_output": shift.actual_output,
+                "target_output": target,
+                "actual_output": actual,
                 "efficiency": efficiency,
             }
         )

@@ -71,8 +71,14 @@ def export_shifts_csv(db: Session = Depends(_get_db), current_user: dict = Depen
     shifts = db.query(models.ShiftData).all()
 
     def _row(shift):
-        efficiency = round((shift.actual_output / shift.target_output) * 100) if shift.target_output else 0
-        return [shift.id, shift.shift_name, shift.target_output, shift.actual_output,
+        # Coalesce per-row NULL outputs to 0 (parity with build_shift_kpis / the
+        # analytics shift reads): a raw-SQL/legacy row with a NULL target/actual
+        # (Integer nullable=False, no default) made `actual / target` raise
+        # TypeError and 500 the whole export instead of yielding a row.
+        target = shift.target_output or 0
+        actual = shift.actual_output or 0
+        efficiency = round((actual / target) * 100) if target else 0
+        return [shift.id, shift.shift_name, target, actual,
                 efficiency, shift.created_at]
 
     return _csv(

@@ -153,13 +153,27 @@ def build_shift_kpis(shifts):
     rows = []
 
     for shift in shifts:
-        efficiency = round((shift.actual_output / shift.target_output) * 100) if shift.target_output else 0
+        # Coalesce NULL target/actual to 0 BEFORE any arithmetic. Both columns are
+        # Column(Integer, nullable=False) WITHOUT a default, but that constraint is
+        # not retro-applied to rows written by raw SQL / a migration / a legacy
+        # insert — the same reason the count columns are read as `... or 0`
+        # everywhere (calculate_oee_from_record, the predictive scorer #428). Left
+        # as None, `None / int`, `int - None` and (in the callers below) `sum(...)`
+        # raised TypeError and 500-ed every hydrated-row shift surface
+        # (/analytics/shift-kpis, /analytics/executive-oee, the intelligence-summary
+        # export) — while the SQL rollups (/analytics/summary, /analytics/management)
+        # returned a number, because their COALESCE(SUM(..),0) already drops a NULL
+        # row (SQL SUM skips NULLs, contributing 0). Coalescing per-row to 0 here
+        # RECONCILES the two: a NULL row contributes 0 to both paths (rule-3).
+        target = shift.target_output or 0
+        actual = shift.actual_output or 0
+        efficiency = round((actual / target) * 100) if target else 0
         rows.append({
             "shift_name": shift.shift_name,
-            "target_output": shift.target_output,
-            "actual_output": shift.actual_output,
+            "target_output": target,
+            "actual_output": actual,
             "efficiency": efficiency,
-            "gap": shift.target_output - shift.actual_output,
+            "gap": target - actual,
         })
 
     return rows
@@ -252,8 +266,13 @@ def build_management_summary(machines, downtime_logs, shifts, production_records
     if shift_sums is not None:
         target_output, actual_output = shift_sums
     else:
-        target_output = sum(shift.target_output for shift in shifts)
-        actual_output = sum(shift.actual_output for shift in shifts)
+        # Coalesce per-row NULLs to 0 (see build_shift_kpis): a NULL target/actual on
+        # a raw-SQL/legacy row made `sum(...)` raise TypeError here, 500-ing the
+        # intelligence-summary export. SQL's COALESCE(SUM(..),0) path already skips a
+        # NULL row (contributing 0), so `or 0` per row keeps the list path byte-for-byte
+        # identical to the SQL rollup (rule-3).
+        target_output = sum((shift.target_output or 0) for shift in shifts)
+        actual_output = sum((shift.actual_output or 0) for shift in shifts)
     target_achievement = round((actual_output / target_output) * 100) if target_output else 0
 
     # Value the downtime as lost OUTPUT: at the observed run-rate (good units per

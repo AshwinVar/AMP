@@ -88,9 +88,35 @@ def build_escalation_summary(db, tenant: str) -> dict:
     # Bounded in SQL: escalations raised inside the resolution window OR still open
     # (any age). Old closed escalations outside the window feed no number here, so
     # excluding them changes nothing — it just keeps the poll a range scan (rule 4).
+    #
+    # COALESCE before LOWER, the same idiom ai/flow.py:114-119 uses, because the
+    # naive form silently deleted rows. `~func.lower(status).in_(...)` compiles to
+    # NOT (lower(status) IN (...)), and on a NULL status lower(NULL) is NULL, so
+    # the IN is UNKNOWN and its negation is UNKNOWN too — never TRUE. FALSE OR
+    # UNKNOWN is UNKNOWN, so an AGED escalation with a NULL status failed both
+    # branches and vanished: /escalation-summary reported "No escalations on
+    # record" for a Critical, never-resolved item that /analytics/dashboard,
+    # /analytics/system-health and /saas/tenant-activity all still counted open.
+    # Only aged rows were affected — inside the window the created_at branch still
+    # carried them — so the loss fell exactly on the rows oldest_open_days and the
+    # "30+ days" aging bucket exist to surface, and on ai/report.py's Escalations
+    # section, which is gated on this `open` count.
+    #
+    # NULL is OPEN here, and that is not a judgement call: _is_closed(None) is
+    # False, so the Python that adjudicates every row two lines below already
+    # says so. COALESCE is what makes the prefilter agree with it, and it is the
+    # load-bearing part — removing it restores the bug.
+    #
+    # trim() is NOT load-bearing, and mutation testing is how that was settled
+    # rather than assumed: dropping it fails no test, because the prefilter is
+    # deliberately WIDE and _is_closed makes every final call. Without trim,
+    # lower("  Resolved  ") is "  resolved  ", which is not in CLOSED_STATUSES,
+    # so the row is fetched — and then dropped in Python, since _norm() strips.
+    # Same answer, wider scan. Keep it for the narrower scan; do not expect a
+    # test to fail if it goes.
     rows = (db.query(models.Escalation).filter(or_(
         models.Escalation.created_at >= cutoff,
-        ~func.lower(models.Escalation.status).in_(CLOSED_STATUSES),
+        func.lower(func.trim(func.coalesce(models.Escalation.status, ""))).notin_(CLOSED_STATUSES),
     )).all())
 
     def _days_open(e) -> int:

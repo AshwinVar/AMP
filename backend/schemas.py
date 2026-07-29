@@ -724,6 +724,28 @@ class MaintenanceTaskResponse(BaseModel):
     notes: Optional[str] = None
     created_at: Optional[datetime] = None
 
+    # status (default="Open"), priority (default="Medium") and downtime_minutes
+    # (default=0) are declared Column(..., default=...) WITHOUT nullable=False, so
+    # the ORM default only fills a value the *inserter* omitted — a row written by
+    # raw SQL, a migration, or an update that cleared the field can legitimately
+    # hold NULL. All three are typed non-optional here, so a single such NULL row
+    # raised Pydantic ValidationError during response serialisation and 500-ed the
+    # WHOLE GET /maintenance/tasks list — one bad row hiding every good task. This
+    # is the same response-serialisation NULL class already healed on the machine /
+    # production-plan / operator-execution lists (#375/#395) and on EscalationResponse
+    # (which likewise heals a NULL status to its "Open" default).
+    #
+    # Coalesce each NULL to the column's own declared default on the way out. The
+    # values also keep the list on the SAME basis as /analytics/maintenance
+    # (rule-3): that rollup treats a NULL status as not-Completed (still overdue/open
+    # — it OR's `status IS NULL` into the overdue filter) and reads a NULL
+    # downtime_minutes as 0 (COALESCE(SUM(downtime_minutes), 0)), so healing status
+    # -> "Open" and downtime -> 0 makes the per-task row agree with the headline it
+    # sums into. A real recorded value — including a real 0 downtime — is untouched.
+    _heal_status = field_validator("status", mode="before")(_coalesce_null_text("Open"))
+    _heal_priority = field_validator("priority", mode="before")(_coalesce_null_text("Medium"))
+    _heal_downtime_minutes = field_validator("downtime_minutes", mode="before")(_coalesce_null_count)
+
     class Config:
         from_attributes = True
 

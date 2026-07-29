@@ -287,6 +287,50 @@ def test_analytics_summary_shift_efficiency_all_zero_target_is_zero_not_a_crash(
     print("PASS analytics-summary shift efficiency: all-zero-target -> 0, no divide-by-zero")
 
 
+def test_analytics_summary_shift_efficiency_is_pooled_in_sql_not_a_whole_table_scan():
+    # Shift efficiency pools across the growing shift_data table (total actual /
+    # total target). It must produce that number by aggregating in SQL, never by
+    # hydrating the whole table into Python (rule-4) — the same fix already applied
+    # to the sibling production_records scan in this very function. Shifts of very
+    # different size make the pooled result differ from a per-shift mean, and the
+    # numbers are derived BY HAND here so the test can't pass a broken pooling.
+    db = _fresh_session()
+    db.add(models.Machine(id=1, name="M1", status="Running", utilization=70))
+    # Big 700/1000=70%, small 95/100=95%, unplanned 30/0. Pooled = (700+95+30) /
+    # (1000+100+0) = 825/1100 = 75.0% -> 75. A mean of ratios would be
+    # round((70+95+0)/3) = round(55) = 55 — over-weighting the small shift and
+    # scoring the unplanned one a false 0%.
+    db.add(models.ShiftData(id=1, shift_name="A", target_output=1000, actual_output=700))
+    db.add(models.ShiftData(id=2, shift_name="B", target_output=100, actual_output=95))
+    db.add(models.ShiftData(id=3, shift_name="C", target_output=0, actual_output=30))
+    db.commit()
+
+    out = analytics_routes.analytics_summary(db=db, current_user={})
+    assert out["avg_shift_efficiency"] == 75, out["avg_shift_efficiency"]
+    assert out["avg_shift_efficiency"] != 55, \
+        "shift efficiency must pool by target volume, not average per-shift ratios"
+
+    # Regression guard: the compute must aggregate in SQL, not fall back to a whole-
+    # table `.all()` scan of the growing shift_data table (rule-4).
+    src = inspect.getsource(analytics_routes.analytics_summary)
+    assert "db.query(models.ShiftData).all()" not in src, \
+        "analytics-summary must pool shift_data in SQL, not hydrate the whole table"
+    assert "func.sum(models.ShiftData" in src, \
+        "analytics-summary should sum shift_data with func.sum"
+    print("PASS analytics-summary shift efficiency is pooled in SQL (75%), no whole-table scan")
+
+
+def test_analytics_summary_shift_efficiency_empty_table_is_zero_not_a_crash():
+    # No shifts at all: COALESCE(SUM(..), 0) makes the empty-table aggregate read 0,
+    # so the pooled rate is a guarded 0 rather than an int()-of-None / divide-by-zero.
+    db = _fresh_session()
+    db.add(models.Machine(id=1, name="M1", status="Idle", utilization=0))
+    db.commit()
+    out = analytics_routes.analytics_summary(db=db, current_user={})
+    assert out["avg_shift_efficiency"] == 0, out["avg_shift_efficiency"]
+    print("PASS analytics-summary shift efficiency: empty shift_data -> 0, no empty-aggregate crash")
+
+
 def test_analytics_summary_plant_oee_is_pooled_in_sql_not_a_whole_table_scan():
     # The plant OEE headline pools across production_records (ratio of sums). It must
     # produce that number by aggregating in SQL, never by hydrating the whole growing
@@ -1476,6 +1520,8 @@ if __name__ == "__main__":
     test_analytics_summary_all_null_utilization_is_zero_not_a_crash()
     test_analytics_summary_shift_efficiency_is_pooled_not_mean_of_ratios()
     test_analytics_summary_shift_efficiency_all_zero_target_is_zero_not_a_crash()
+    test_analytics_summary_shift_efficiency_is_pooled_in_sql_not_a_whole_table_scan()
+    test_analytics_summary_shift_efficiency_empty_table_is_zero_not_a_crash()
     test_analytics_summary_plant_oee_is_pooled_in_sql_not_a_whole_table_scan()
     test_analytics_summary_plant_oee_empty_production_falls_back_not_a_crash()
     test_executive_oee_null_utilization_fallback_is_zero_not_a_crash()

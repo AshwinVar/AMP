@@ -174,6 +174,34 @@ def test_dedup_open_but_regenerate_after_resolved():
     print("PASS dedup on open, regenerate after resolved")
 
 
+def test_dedup_against_null_status_open_escalation():
+    """An existing OPEN escalation whose status column is a genuine NULL (raw SQL /
+    migration / cleared write — Escalation.status is default='Open', not NOT NULL)
+    must still block a duplicate. The old bare `status != 'Resolved'` dedup was NULL
+    (not TRUE) for such a row, so it did NOT find the existing escalation and raised a
+    SECOND one — inflating the open-escalation count every reader reports. Regression
+    guard for the or_(status IS NULL, ...) fix."""
+    from sqlalchemy import text
+
+    db = _fresh_session()
+    db.add(_insp("DUPNULL", 100, failed=30))  # 30% -> would escalate
+    db.add(models.Escalation(title="Quality issue: DUPNULL", severity="High",
+                             status="Open", source="Quality",
+                             owner="Quality Lead", department="Quality"))
+    db.commit()
+    # Force the existing open escalation's status to a real SQL NULL.
+    db.execute(text("UPDATE escalations SET status = NULL "
+                    "WHERE title = 'Quality issue: DUPNULL'"))
+    db.commit()
+    db.expire_all()
+
+    created = _run(db)
+    assert created == 0, f"NULL-status open escalation must block a duplicate, got {created}"
+    dup = [e for e in _escalations(db) if e.title == "Quality issue: DUPNULL"]
+    assert len(dup) == 1, f"NULL-status open escalation was duplicated: {len(dup)} rows"
+    print("PASS dedup blocks a duplicate against a NULL-status open escalation")
+
+
 def test_empty_table():
     """No inspections -> nothing raised, no error."""
     db = _fresh_session()
@@ -188,5 +216,6 @@ if __name__ == "__main__":
     test_null_scrap_does_not_crash()
     test_null_failed_quantity_with_scrap_does_not_crash()
     test_dedup_open_but_regenerate_after_resolved()
+    test_dedup_against_null_status_open_escalation()
     test_empty_table()
     print("ALL DEFECT-ESCALATION TESTS PASSED")

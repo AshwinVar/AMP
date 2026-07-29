@@ -356,9 +356,105 @@ def test_customer_order_analytics_empty_book():
     assert result["total_dispatched_qty"] == 0, result["total_dispatched_qty"]
     assert result["dispatch_rate"] == 0, result["dispatch_rate"]
     assert result["late"] == 0, result["late"]
+    assert result["partial"] == 0, result["partial"]
+    assert result["status_counts"] == {}, result["status_counts"]
     assert result["priority_counts"] == {}, result["priority_counts"]
     assert result["customer_counts"] == {}, result["customer_counts"]
     print("PASS customer-order analytics: empty book returns zeroes, no NULL, no divide-by-zero")
+
+
+def _seed_order(db, no, status, qty=10, dispatched=0, customer="Acme"):
+    """Insert a CustomerOrder with an EXACT status, bypassing create_customer_order's
+    dispatched-vs-qty auto-derivation. This is how the factory simulator / reset seed
+    the wider status vocabulary ("In Production", "Ready to Dispatch", "Partially
+    Dispatched") that the create endpoint never emits — so it's what a real seeded
+    demo book looks like. tenant_code is set explicitly (the row is inserted, and the
+    analytics read is tenant-scoped to it)."""
+    from datetime import timedelta
+
+    db.add(models.CustomerOrder(
+        tenant_code="TA", order_no=no, customer_name=customer, product_name="Widget",
+        order_quantity=qty, dispatched_quantity=dispatched, priority="Medium",
+        due_date=_today() + timedelta(days=30), status=status,
+    ))
+    db.commit()
+
+
+def test_customer_order_analytics_folds_partial_synonym_and_reconciles():
+    # The wider status vocabulary the app's OWN simulator/reset write. The endpoint's
+    # four named buckets recognise only "Pending"/"Partial"/"Dispatched"/"Cancelled",
+    # so before this fix an order that was "In Production", "Ready to Dispatch" or
+    # "Partially Dispatched" was counted in total_orders but fell into NO bucket, and
+    # "Partially Dispatched" (a partial order by another spelling) never reached the
+    # Partial headline — which read 0 in a seeded demo full of partial orders.
+    #
+    # Every expected number below is derived by hand from the seven-row fixture, not
+    # read back from the endpoint.
+    db = _iso_session()
+    tok = T.set_current_tenant("TA")
+    try:
+        _seed_order(db, "CO-PEN", "Pending")
+        _seed_order(db, "CO-IP", "In Production")
+        _seed_order(db, "CO-RD", "Ready to Dispatch")
+        _seed_order(db, "CO-PD", "Partially Dispatched", qty=10, dispatched=5)
+        _seed_order(db, "CO-PA", "Partial", qty=10, dispatched=3)
+        _seed_order(db, "CO-DIS", "Dispatched", qty=10, dispatched=10)
+        _seed_order(db, "CO-CAN", "Cancelled")
+
+        result = orders_routes.get_customer_order_analytics(db=db, current_user={"tenant": "TA"})
+    finally:
+        T.reset_current_tenant(tok)
+
+    assert result["total_orders"] == 7, result["total_orders"]
+
+    # The Partial headline folds BOTH spellings of the same state: "Partial" (CO-PA)
+    # + "Partially Dispatched" (CO-PD) = 2. Pre-fix this was 1 (only "Partial").
+    assert result["partial"] == 2, result["partial"]
+    assert result["pending"] == 1, result["pending"]
+    assert result["dispatched"] == 1, result["dispatched"]
+    assert result["cancelled"] == 1, result["cancelled"]
+
+    # The authoritative breakdown carries EVERY status, so it reconciles with the
+    # headline (rule-3: parts sum to the whole) — the four named buckets alone do not.
+    assert result["status_counts"] == {
+        "Pending": 1, "In Production": 1, "Ready to Dispatch": 1,
+        "Partially Dispatched": 1, "Partial": 1, "Dispatched": 1, "Cancelled": 1,
+    }, result["status_counts"]
+    assert sum(result["status_counts"].values()) == result["total_orders"]
+
+    # Pin exactly why the complete breakdown is needed: the four named buckets miss
+    # the two in-progress states ("In Production", "Ready to Dispatch"), so they sum
+    # to 5, not 7 — status_counts is the honest partition.
+    named = result["pending"] + result["partial"] + result["dispatched"] + result["cancelled"]
+    assert named == 5, named
+    assert named < result["total_orders"], (named, result["total_orders"])
+    print("PASS customer-order analytics: Partial folds 'Partially Dispatched', status_counts reconciles to total (7)")
+
+
+def test_customer_order_analytics_status_counts_null_status_is_unknown():
+    # A NULL status (String default="Pending", not NOT NULL — raw SQL / migration /
+    # cleared write) must not vanish from or crash the breakdown: it lands under
+    # "Unknown" (a JSON dict can't key on None), and the breakdown still reconciles
+    # with total_orders. Consistent with the existing NULL-status test: NULL is not
+    # "Pending", so the Pending headline stays 0.
+    db = _iso_session()
+    tok = T.set_current_tenant("TA")
+    try:
+        co = orders_routes.create_customer_order(_co("CO-NUL", 10, 0), db=db, current_user={"tenant": "TA"})
+        _seed_order(db, "CO-OK", "Pending")
+        db.execute(text("UPDATE customer_orders SET status = NULL WHERE id = :i"), {"i": co.id})
+        db.commit()
+        db.expire_all()
+
+        result = orders_routes.get_customer_order_analytics(db=db, current_user={"tenant": "TA"})
+    finally:
+        T.reset_current_tenant(tok)
+
+    assert result["total_orders"] == 2, result["total_orders"]
+    assert result["pending"] == 1, result["pending"]                 # only CO-OK, not the NULL row
+    assert result["status_counts"] == {"Unknown": 1, "Pending": 1}, result["status_counts"]
+    assert sum(result["status_counts"].values()) == result["total_orders"]
+    print("PASS customer-order analytics: NULL status -> 'Unknown' bucket, breakdown reconciles (no None key, no drop)")
 
 
 def test_customer_order_analytics_null_status_overdue_counts_as_late():
@@ -837,6 +933,8 @@ if __name__ == "__main__":
     test_customer_order_analytics_survives_null_dispatched_quantity()
     test_customer_order_analytics_buckets_and_reconciles()
     test_customer_order_analytics_empty_book()
+    test_customer_order_analytics_folds_partial_synonym_and_reconciles()
+    test_customer_order_analytics_status_counts_null_status_is_unknown()
     test_customer_order_analytics_null_status_overdue_counts_as_late()
     test_late_order_escalation_generator_reconciles_with_late_headline()
     test_purchasing_analytics_overdue_reconciles_with_generator()

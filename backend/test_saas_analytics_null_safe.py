@@ -22,7 +22,13 @@ import saas_routes
 import schemas
 from database import Base
 
-FOUNDER = {"tenant": "DEFAULT", "sub": "founder"}
+# A real token always carries a role: both mint sites (core_routes.py:119,169)
+# build it as {"sub", "role", "tenant"}. This fixture omitted it, which mattered
+# once _registry_scope started gating on role as well as workspace — the whole
+# registry is founder data, so a non-Admin in the platform workspace sees only
+# its own row. Without the role the fixture modelled a token shape that cannot
+# occur and the founder read back an empty registry.
+FOUNDER = {"tenant": "DEFAULT", "sub": "founder", "role": "Admin"}
 
 
 def _fresh_session():
@@ -152,7 +158,7 @@ def test_analytics_registry_scoped_to_client_own_row():
     _add(db, "CRUX", "Cancelled", 2000, 20)
     db.commit()
 
-    client = {"tenant": "APEX", "sub": "apex-admin"}
+    client = {"tenant": "APEX", "sub": "apex-admin", "role": "Admin"}
     a = saas_routes.get_saas_analytics(db, client)
     # APEX only: one Active tenant, its own fee and seats, nothing from BOLT/CRUX.
     assert a["total_tenants"] == 1, a

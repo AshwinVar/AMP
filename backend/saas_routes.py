@@ -42,12 +42,34 @@ def _get_db():
 
 
 def _registry_scope(query, current_user):
-    """The tenant registry is founder data. A non-DEFAULT workspace sees only
-    its own row — scoped by the raw JWT claim (not the X-Tenant preview), and
-    returned as data rather than a 403 so client dashboards' batched fetch
-    keeps working."""
+    """The tenant registry is founder data. Only a founder-workspace ADMIN sees
+    the whole registry; everyone else sees only their own workspace's row —
+    scoped by the raw JWT claim (not the X-Tenant preview), and returned as data
+    rather than a 403 so client dashboards' batched fetch keeps working.
+
+    ROLE, not just workspace. This used to narrow on the claim alone, so every
+    role inside the founder DEFAULT workspace — an Operator demo login, a
+    Supervisor — read the entire customer registry: company_code, name,
+    industry, plan_name, subscription_status, seats and monthly_fee for every
+    client, plus aggregate MRR and total seats from /analytics/saas. Both
+    endpoints are polled on every 3s dashboard round for every role, so it was a
+    continuous read, not a reachable-in-theory one. Measured before the fix:
+
+        founder ADMIN     sees 2 tenants  MRR=2400 seats=35
+        founder OPERATOR  sees 2 tenants  MRR=2400 seats=35   <- identical
+        client  OPERATOR  sees 1 tenant   MRR=600  seats=10   <- correctly scoped
+
+    Every other endpoint in this module already pairs require_roles(["Admin"])
+    with _require_founder; GET /saas/tenants and GET /analytics/saas were the
+    only two carrying a bare get_current_user. Gating here rather than adding
+    require_roles to those two keeps the deliberate data-not-403 contract this
+    docstring describes — a client dashboard's batched fetch must not start
+    failing — and covers every future caller of this helper by construction.
+
+    Fail-closed: a token with no role claim is not an Admin, so it narrows."""
     claim = current_user.get("tenant", tenancy.DEFAULT_TENANT)
-    if claim != tenancy.DEFAULT_TENANT:
+    founder_admin = claim == tenancy.DEFAULT_TENANT and current_user.get("role") == "Admin"
+    if not founder_admin:
         query = query.filter(models.CompanyTenant.company_code == claim)
     return query
 

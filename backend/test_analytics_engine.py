@@ -305,6 +305,71 @@ def test_calculate_oee_floors_components_at_zero():
     print("PASS calculate_oee_from_record floors components at 0 (no negative/fake-positive OEE)")
 
 
+def test_calculate_oee_coalesces_null_columns():
+    # A legacy / raw-SQL / migration row can hold NULL in any of the five
+    # count/minute columns despite their nullable=False constraint (not
+    # retro-applied). The per-record view must coalesce them the way pooled_oee
+    # already does (`... or 0`) instead of raising `None / int` and 500-ing
+    # /oee/summary, /oee/trends, /reports/oee.csv and the alert paths.
+    #
+    # All five NULL -> every component 0 (no measured production).
+    allnull = ae.calculate_oee_from_record(_rec(
+        runtime_minutes=None, planned_minutes=None,
+        ideal_cycle_time_seconds=None, total_count=None, good_count=None,
+    ))
+    assert allnull == {"availability": 0, "performance": 0, "quality": 0, "oee": 0}, allnull
+
+    # NULL good_count only: availability 400/480 = .8333 -> 83, performance
+    # (30*700)/(400*60) = 21000/24000 = .875 -> 88, quality 0/700 = 0 -> 0,
+    # oee = .8333 * .875 * 0 = 0. (Independently derived, not tautological.)
+    null_good = ae.calculate_oee_from_record(_rec(
+        runtime_minutes=400, planned_minutes=480,
+        ideal_cycle_time_seconds=30, total_count=700, good_count=None,
+    ))
+    assert null_good == {"availability": 83, "performance": 88,
+                         "quality": 0, "oee": 0}, null_good
+
+    # NULL runtime only: runtime -> 0 zeroes availability (0/480) and, via
+    # runtime_seconds == 0, guards performance to 0; quality 690/700 = .9857 -> 99;
+    # oee = 0 * 0 * .9857 = 0.
+    null_runtime = ae.calculate_oee_from_record(_rec(
+        runtime_minutes=None, planned_minutes=480,
+        ideal_cycle_time_seconds=30, total_count=700, good_count=690,
+    ))
+    assert null_runtime == {"availability": 0, "performance": 0,
+                            "quality": 99, "oee": 0}, null_runtime
+    print("PASS calculate_oee_from_record coalesces NULL count/minute columns (no 500)")
+
+
+def test_per_record_and_pooled_reconcile_on_null_row():
+    # Rule-3: the per-record drill-down and the pooled headline of the SAME
+    # NULL-column row must agree component-for-component (both read it as 0), so a
+    # drill-down can't 500 while its headline quietly renders 0.
+    rec = _rec(runtime_minutes=None, planned_minutes=None,
+               ideal_cycle_time_seconds=None, total_count=None, good_count=None,
+               rejected_count=None)
+    per = ae.calculate_oee_from_record(rec)
+    pooled = ae.pooled_oee([rec])
+    for key in ("availability", "performance", "quality", "oee"):
+        assert per[key] == pooled[key] == 0, (key, per, pooled)
+    print("PASS per-record and pooled OEE reconcile at 0 on a NULL-column row")
+
+
+def test_smart_alerts_null_reject_count_is_safe():
+    # A NULL rejected_count with a real total_count made `None / total_count` raise
+    # TypeError, 500-ing /alerts/smart and the intelligence-summary export even
+    # though total_count guarded the divide. Coalesced, it reads as a 0 reject rate
+    # (no quality alert), and the function returns cleanly.
+    machine = SimpleNamespace(id=1, name="M1", status="Running", utilization=80)
+    rec = _rec(id=1, machine_id=1, machine=None,
+               runtime_minutes=400, planned_minutes=480, ideal_cycle_time_seconds=30,
+               total_count=700, good_count=690, rejected_count=None)
+    alerts = ae.build_smart_alerts([machine], [rec], [])
+    assert isinstance(alerts, list)
+    assert not any(a["type"] in ("Quality Escalation", "Quality Loss") for a in alerts), alerts
+    print("PASS build_smart_alerts coalesces a NULL reject count (no 500, no fake quality alert)")
+
+
 def test_pooled_oee_from_sums_floors_negative_at_zero():
     # A negative good in the pooled sums: quality -50/100 = -0.5 -> floored to 0.
     # availability 100/100 = 1.0 -> 100; performance 3000/(100*60)=.5 -> 50;
@@ -355,6 +420,9 @@ if __name__ == "__main__":
     test_build_smart_alerts_empty_downtime_is_safe()
     test_build_smart_alerts_null_utilization_is_safe_and_honest()
     test_calculate_oee_floors_components_at_zero()
+    test_calculate_oee_coalesces_null_columns()
+    test_per_record_and_pooled_reconcile_on_null_row()
+    test_smart_alerts_null_reject_count_is_safe()
     test_pooled_oee_from_sums_floors_negative_at_zero()
     test_per_record_and_pooled_reconcile_on_negative()
     test_calculate_fallback_oee_monotonic()

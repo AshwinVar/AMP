@@ -47,15 +47,33 @@ def oee_direction(current, prior, dead_band=OEE_TREND_DEAD_BAND):
 
 
 def calculate_oee_from_record(record):
-    availability = record.runtime_minutes / record.planned_minutes if record.planned_minutes else 0
-    runtime_seconds = record.runtime_minutes * 60
+    # Coalesce every NULL count/minute column to 0 BEFORE any arithmetic. These
+    # five columns are nullable=False, but that constraint is not retro-applied to
+    # rows written by raw SQL / a migration / a legacy insert — pooled_oee already
+    # reads them as `... or 0` for exactly this reason. This per-record view did
+    # NOT, so a single such row raised TypeError (`None / int`, `int * None`) and
+    # 500-ed every surface it backs: /oee/summary, /oee/trends, /reports/oee.csv,
+    # and the smart-alert / generate-alert paths (which call this first). That is
+    # the same "a NULL count 500'd the whole endpoint" class already fixed for the
+    # predictive scorer (#428) and the roster/list endpoints. A missing count means
+    # no measured production, so it contributes 0 — which also reconciles this
+    # drill-down with the pooled headline (rule-3): pooled_oee returns all-zero
+    # components on the identical row, and now so does this.
+    planned_minutes = record.planned_minutes or 0
+    runtime_minutes = record.runtime_minutes or 0
+    total_count = record.total_count or 0
+    good_count = record.good_count or 0
+    ideal_cycle_time_seconds = record.ideal_cycle_time_seconds or 0
+
+    availability = runtime_minutes / planned_minutes if planned_minutes else 0
+    runtime_seconds = runtime_minutes * 60
 
     performance = (
-        (record.ideal_cycle_time_seconds * record.total_count) / runtime_seconds
+        (ideal_cycle_time_seconds * total_count) / runtime_seconds
         if runtime_seconds else 0
     )
 
-    quality = record.good_count / record.total_count if record.total_count else 0
+    quality = good_count / total_count if total_count else 0
 
     # Clamp EVERY component to [0, 1], matching pooled_oee (which caps a/p/q the
     # same way). Only performance was capped here, so the per-record view could
@@ -317,7 +335,11 @@ def build_smart_alerts(machines, production_records, downtime_logs):
         elif oee["oee"] < 60:
             add_alert("Low OEE", "High", machine_name, f"{machine_name} OEE is below target at {oee['oee']}%.")
 
-        reject_rate = (record.rejected_count / record.total_count) * 100 if record.total_count else 0
+        # Coalesce a NULL rejected_count to 0 (same legacy/raw-SQL rows as above):
+        # total_count already guards the divide, but `None / int` still raised
+        # TypeError when only rejected_count was NULL, 500-ing /alerts/smart and the
+        # intelligence-summary export. No recorded rejects means a 0 reject rate.
+        reject_rate = ((record.rejected_count or 0) / record.total_count) * 100 if record.total_count else 0
 
         if reject_rate > 8:
             add_alert("Quality Escalation", "High", machine_name, f"{machine_name} reject rate is above 8%.")
@@ -404,7 +426,11 @@ def generate_alerts(db: Session):
         if oee["oee"] < 60:
             add_alert("Low OEE", "High", machine_name, f"{machine_name} OEE is below target at {oee['oee']}%")
 
-        if record.rejected_count > 0 and record.total_count:
+        # `record.rejected_count > 0` raised TypeError on a NULL rejected_count
+        # (a legacy/raw-SQL row) before either operand was even divided; coalesce
+        # it so a missing reject count reads as 0 (no reject alert) rather than
+        # 500-ing /alerts (generate_alerts backs the dynamic alert feed).
+        if (record.rejected_count or 0) > 0 and record.total_count:
             reject_rate = (record.rejected_count / record.total_count) * 100
 
             if reject_rate > 5:

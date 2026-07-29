@@ -617,11 +617,26 @@ def get_executive_oee(
     db: Session = Depends(_get_db),
     current_user: dict = Depends(get_current_user),
 ):
-    # The machine roster and the shift list are bounded reference sets — a plant
-    # has dozens of machines, and every shift row is returned in `shift_oee`, so
-    # reading them whole is what the response needs anyway.
+    # The machine roster is a bounded reference set — a plant has dozens of
+    # machines, and every machine is returned in `machine_ranking`, so reading it
+    # whole is what the response needs anyway.
     machines = db.query(models.Machine).all()
-    shifts = db.query(models.ShiftData).all()
+
+    # shift_data, in contrast, GROWS without bound: factory_simulator.tick_shift_entry
+    # appends a fresh dated row ("Shift A – 17 Jul") every tick, which is why
+    # /analytics/summary was pooled off it in SQL (#419) and ai/shift.py windows it to a
+    # week. Reading it whole here streamed every shift ever recorded into Python on an
+    # Admin-polled endpoint AND returned one `shift_oee` row per entry — an unbounded,
+    # ever-growing response (rule-4). Bound it to the most-recent 50 shifts, the exact
+    # window the sibling /analytics/shift-kpis (build_shift_kpis, line ~310) already
+    # uses, so the two per-shift attainment surfaces reconcile on ONE basis instead of
+    # disagreeing (shift-kpis last-50 vs this endpoint all-time). Reverse to oldest-first
+    # so the chart still reads left-to-right chronologically — the same id-desc-then-
+    # reverse idiom /analytics/oee-trends uses, and the order the old SQLite `.all()`
+    # scan happened to return. The headline production_target/actual below sum this SAME
+    # bounded set, so the per-shift breakdown still sums to the headline (rule-3).
+    shifts = db.query(models.ShiftData).order_by(models.ShiftData.id.desc()).limit(50).all()
+    shifts.reverse()
 
     # downtime_logs carries a FREE-TEXT duration ("2 hrs 15 min") that only
     # parse_duration_to_minutes can read — there is no SQL SUM for it — so this

@@ -291,6 +291,94 @@ def test_null_actual_completion_falls_back_to_target():
     print("PASS NULL actual_quantity still falls back to the target on completion")
 
 
+def _null_out_actual(db, work_order_id):
+    """Force a legacy/raw-SQL NULL into the nullable-default-0 actual_quantity
+    column — the exact state the ORM default never fills (it only covers an
+    inserter that OMITS the field) but a migration or a cleared write can leave."""
+    from sqlalchemy import text
+    db.execute(
+        text("UPDATE work_orders SET actual_quantity = NULL WHERE id = :id"),
+        {"id": work_order_id},
+    )
+    db.commit()
+    db.expire_all()
+
+
+def test_get_work_orders_survives_a_null_actual_quantity_row():
+    # A single row with actual_quantity = NULL used to 500 the WHOLE list:
+    # WorkOrderResponse types actual_quantity as a non-optional int, so the NULL
+    # raised ValidationError during response serialisation and hid every good row
+    # behind it — the exact class already healed for GET /production-plans and the
+    # inventory / orders / quality lists. The response model now coalesces a NULL to
+    # the column's own default of 0 (honest: NULL = "no value recorded", declared
+    # default is 0), while a real value is preserved untouched and the required
+    # target_quantity (nullable=False) is never coerced.
+    db = _iso_session()
+    machine = _seed_machine(db, "TA")
+    _create_as(db, "TA", _wo("WO-OK", machine.id, 100, 42))
+    legacy = _create_as(db, "TA", _wo("WO-NULL", machine.id, 100, 0))
+    _null_out_actual(db, legacy.id)
+
+    tok = T.set_current_tenant("TA")
+    try:
+        rows = WO.get_work_orders(db=db, current_user={"tenant": "TA"})
+        # Serialise EXACTLY as FastAPI does (response_model + from_attributes); this
+        # is the step that used to raise on the NULL row.
+        serialised = {
+            r.work_order_no: schemas.WorkOrderResponse.model_validate(r)
+            for r in rows
+        }
+    finally:
+        T.reset_current_tenant(tok)
+
+    assert set(serialised) == {"WO-OK", "WO-NULL"}, set(serialised)
+    # The NULL row heals to 0; the real value is preserved; target is untouched.
+    assert serialised["WO-NULL"].actual_quantity == 0, serialised["WO-NULL"].actual_quantity
+    assert serialised["WO-NULL"].target_quantity == 100, serialised["WO-NULL"].target_quantity
+    assert serialised["WO-OK"].actual_quantity == 42, serialised["WO-OK"].actual_quantity
+    print("PASS GET /work-orders survives a NULL actual_quantity row (heals to 0, real value kept)")
+
+
+def test_status_only_patch_on_a_null_actual_row_serialises():
+    # A status-only PATCH never touches actual_quantity (the actual_quantity block
+    # is skipped), so on a legacy NULL row it returned the row unchanged and the
+    # response serialisation 500ed. The heal keeps the status transition working and
+    # returns actual_quantity as 0. A recorded 0 is real; the NULL row is distinct
+    # only in that its ORM attribute is None until the response model heals it.
+    db = _iso_session()
+    machine = _seed_machine(db, "TA")
+    wo = _create_as(db, "TA", _wo("WO-SP", machine.id, 100, 0))
+    _null_out_actual(db, wo.id)
+
+    tok = T.set_current_tenant("TA")
+    try:
+        updated = WO.update_work_order(
+            wo.id, schemas.WorkOrderUpdate(status="On Hold"),
+            db=db, current_user={"tenant": "TA"})
+        serialised = schemas.WorkOrderResponse.model_validate(updated)
+    finally:
+        T.reset_current_tenant(tok)
+
+    assert serialised.status == "On Hold", serialised.status
+    assert serialised.actual_quantity == 0, serialised.actual_quantity
+    assert serialised.target_quantity == 100, serialised.target_quantity
+    print("PASS status-only PATCH on a NULL actual_quantity work order serialises (heals to 0)")
+
+
+def test_work_order_response_heals_only_null_not_a_real_zero():
+    # Pin the heal's boundary: a genuinely recorded actual_quantity of 0 (a WO with
+    # no output yet) is untouched — it is ALREADY 0 — and a real positive value is
+    # passed through verbatim. The heal fires only for a NULL, never rewriting real
+    # data. Independently derived: (target 50, actual 0) -> 0; (target 50, actual 50) -> 50.
+    db = _iso_session()
+    machine = _seed_machine(db, "TA")
+    zero = _create_as(db, "TA", _wo("WO-REAL0", machine.id, 50, 0))
+    full = _create_as(db, "TA", _wo("WO-REAL50", machine.id, 50, 50))
+    assert schemas.WorkOrderResponse.model_validate(zero).actual_quantity == 0
+    assert schemas.WorkOrderResponse.model_validate(full).actual_quantity == 50
+    print("PASS WorkOrderResponse heals only NULL; a real 0 and a real value pass through unchanged")
+
+
 def test_completion_reaching_target_publishes_actual_quantity():
     # Regression: the normal path is unchanged. Logging an actual that reaches the
     # target flips status to Completed and publishes that ACTUAL quantity (120),
@@ -325,5 +413,8 @@ if __name__ == "__main__":
     test_status_only_completion_with_zero_actual_publishes_zero_not_target()
     test_zero_actual_completion_does_not_fabricate_bom_movement()
     test_null_actual_completion_falls_back_to_target()
+    test_get_work_orders_survives_a_null_actual_quantity_row()
+    test_status_only_patch_on_a_null_actual_row_serialises()
+    test_work_order_response_heals_only_null_not_a_real_zero()
     test_completion_reaching_target_publishes_actual_quantity()
     print("ALL WORK-ORDERS ROUTE TESTS PASSED")

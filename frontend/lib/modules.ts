@@ -99,8 +99,25 @@ export const PLAN_MODULES: Record<PlanName, ModuleKey[]> = {
   demo:       ["core", "operations", "factory", "intelligence", "admin"],
 };
 
+// The packs the API never gates, mirroring module_manifest.always_open_packs()
+// — every pack in backend/modules.json with `gated: false`. Two fields there are
+// easy to conflate: `gated` decides whether the API enforces a 403, while
+// `plans` decides what applying a subscription provisions. `admin` is
+// gated:false but bundled only with enterprise/demo, so it is always reachable
+// even on a plan that does not bundle it.
+export const ALWAYS_OPEN_MODULES: readonly ModuleKey[] = ["core", "admin"];
+
+/** A licence plus the packs the API serves regardless of licence. */
+export function withAlwaysOpen(modules: readonly string[]): ModuleKey[] {
+  return Array.from(new Set<ModuleKey>([...(modules as ModuleKey[]), ...ALWAYS_OPEN_MODULES]));
+}
+
 export function getEnabledModules(plan: PlanName): ModuleKey[] {
-  return PLAN_MODULES[plan] ?? ["core"];
+  // The overlay is applied here, not just on the live path. Without it a
+  // starter tenant lost User Management, Documents, Costing and Enterprise
+  // Polish from the nav whenever /tenant-config was slow or failed — screens
+  // the API would have served perfectly well.
+  return withAlwaysOpen(PLAN_MODULES[plan] ?? []);
 }
 
 export function isViewEnabled(viewKey: string, enabledModules: ModuleKey[]): boolean {
@@ -200,7 +217,7 @@ export function enabledModulesFromPacks(packs: ModulePack[]): ModuleKey[] {
   const on = packs
     .filter((p) => p.enabled || !p.gated)
     .map((p) => p.id as ModuleKey);
-  return Array.from(new Set<ModuleKey>([...on, "core", "admin"]));
+  return withAlwaysOpen(on);
 }
 
 // view→module and view enablement resolved against a supplied nav list (the live

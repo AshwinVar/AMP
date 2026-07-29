@@ -300,11 +300,26 @@ def generate_document_review_escalations(
     current_user: dict = Depends(require_roles(["Admin", "Supervisor"])),
 ):
     today = datetime.utcnow().date()
+    # Overdue = past its review date and not retired (Obsolete) — the SAME set the
+    # /analytics/documents 'review_due' count and the /compliance read-model report,
+    # so the three must agree (a metric defined once, not re-spelled a second way).
+    # approval_status is String default="Draft" (NOT nullable=False): a raw-SQL /
+    # migration / cleared-field row can hold a genuine NULL, and SQL's
+    # `approval_status != 'Obsolete'` evaluates to NULL — not TRUE — for it, silently
+    # DROPPING a past-due, non-obsolete document from the generator while the
+    # analytics count and the read-model both count it (both treat a NULL as active,
+    # i.e. not Obsolete). OR the NULL back in so the generator raises an escalation
+    # for exactly the documents the 'review_due' headline claims are due — the same
+    # NULL-status reconciliation the maintenance-overdue generator below and the
+    # analytics review_due count (#295/#298) already apply.
     documents = (
         db.query(models.ComplianceDocument)
         .filter(
             models.ComplianceDocument.review_due_date < today,
-            models.ComplianceDocument.approval_status != "Obsolete",
+            or_(
+                models.ComplianceDocument.approval_status.is_(None),
+                models.ComplianceDocument.approval_status != "Obsolete",
+            ),
         )
         .all()
     )

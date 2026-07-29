@@ -28,18 +28,100 @@ def get_db():
     finally:
         db.close()
 
+
+# ── Bounded pages + cheap item labels ────────────────────────
+#
+# The history/list endpoints in this file all read from tables that only ever
+# grow (remnants, issue slips, receipts, cycle counts) and label each row from
+# the item master. Loading the whole table plus the whole InventoryItem master
+# on every call is the rule-4 antipattern; these helpers give the bounded,
+# label-only version. The GRN and cycle-count endpoints additionally nest their
+# line items (see _children / _group_by).
+
+_PAGE_DEFAULT = 50
+_PAGE_MAX = 200
+
+# SQLite allows at most 999 bound parameters per statement, and a page of large
+# receipts can reference more item ids than that.
+_IN_CHUNK = 500
+
+
+def _page(limit: int, offset: int):
+    """Clamp caller-supplied paging into a range that cannot exhaust the server."""
+    try:
+        limit = int(limit)
+    except (TypeError, ValueError):
+        limit = _PAGE_DEFAULT
+    try:
+        offset = int(offset)
+    except (TypeError, ValueError):
+        offset = 0
+    return max(1, min(limit, _PAGE_MAX)), max(0, offset)
+
+
+def _in_chunks(db, model, column, values):
+    """`WHERE column IN values` for arbitrarily many values."""
+    values = list(values)
+    rows = []
+    for i in range(0, len(values), _IN_CHUNK):
+        rows.extend(db.query(model).filter(column.in_(values[i:i + _IN_CHUNK])).all())
+    return rows
+
+
+def _children(db, model, fk_column, parent_ids):
+    """Only the child rows belonging to the parents on this page."""
+    return _in_chunks(db, model, fk_column, parent_ids) if parent_ids else []
+
+
+def _group_by(rows, attr):
+    """{fk: [rows]} in one pass, replacing a rescan of `rows` per parent."""
+    grouped = defaultdict(list)
+    for row in rows:
+        grouped[getattr(row, attr)].append(row)
+    return grouped
+
+
+def _item_labels(db, item_ids):
+    """{item_id: (item_code, item_name)} for just the items this page references.
+
+    The callers only ever read those two columns, so this replaces loading the
+    entire InventoryItem table as ORM objects."""
+    item_ids = {i for i in item_ids if i is not None}
+    labels = {}
+    ids = list(item_ids)
+    for i in range(0, len(ids), _IN_CHUNK):
+        for row in (db.query(models.InventoryItem.id, models.InventoryItem.item_code,
+                             models.InventoryItem.item_name)
+                    .filter(models.InventoryItem.id.in_(ids[i:i + _IN_CHUNK])).all()):
+            labels[row.id] = (row.item_code, row.item_name)
+    return labels
+
+
 # ── Remnants ──────────────────────────────────────────────────
 
 
 @router.get("/remnants")
-def get_remnants(db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
-    rows = db.query(models.Remnant).order_by(models.Remnant.id.desc()).all()
-    items = {i.id: i for i in db.query(models.InventoryItem).all()}
+def get_remnants(limit: int = _PAGE_DEFAULT, offset: int = 0,
+                 db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
+    """Remnant (offcut) stock, newest first, one page at a time.
+
+    This used to `.all()` the whole (ever-growing) remnants table and, on every
+    call, hydrate the ENTIRE InventoryItem master into ORM objects just to read
+    two columns per row — the same rule-4 antipattern the GRN / cycle-count
+    history endpoints in this file already retired. A remnant table only ever
+    grows (one row per offcut logged), so paging keeps the response bounded, and
+    _item_labels fetches only the (item_code, item_name) of the items THIS page
+    references. Tenant scoping stays automatic (ADR-0002)."""
+    limit, offset = _page(limit, offset)
+    rows = (db.query(models.Remnant)
+            .order_by(models.Remnant.id.desc())
+            .limit(limit).offset(offset).all())
+    items = _item_labels(db, {r.item_id for r in rows})
     return [
         {
             "id": r.id, "tag_no": r.tag_no, "item_id": r.item_id,
-            "item_code": items[r.item_id].item_code if r.item_id in items else "",
-            "item_name": items[r.item_id].item_name if r.item_id in items else "",
+            "item_code": items.get(r.item_id, ("", ""))[0],
+            "item_name": items.get(r.item_id, ("", ""))[1],
             "source_reference": r.source_reference,
             "original_qty": r.original_qty, "remaining_qty": r.remaining_qty,
             "unit": r.unit, "location": r.location,
@@ -95,14 +177,24 @@ def update_remnant_status(rid: int, payload: dict, db: Session = Depends(get_db)
 
 
 @router.get("/issue-slips")
-def get_issue_slips(db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
-    rows = db.query(models.MaterialIssueSlip).order_by(models.MaterialIssueSlip.id.desc()).all()
-    items = {i.id: i for i in db.query(models.InventoryItem).all()}
+def get_issue_slips(limit: int = _PAGE_DEFAULT, offset: int = 0,
+                    db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
+    """Material issue slips, newest first, one page at a time.
+
+    Same rule-4 fix as get_remnants above: the issue-slip table grows one row per
+    material request, and this used to `.all()` it whole and hydrate the entire
+    InventoryItem master just to read two columns. Page the slips and label only
+    the items this page references. Tenant scoping stays automatic (ADR-0002)."""
+    limit, offset = _page(limit, offset)
+    rows = (db.query(models.MaterialIssueSlip)
+            .order_by(models.MaterialIssueSlip.id.desc())
+            .limit(limit).offset(offset).all())
+    items = _item_labels(db, {s.item_id for s in rows})
     return [
         {
             "id": s.id, "slip_no": s.slip_no, "item_id": s.item_id,
-            "item_code": items[s.item_id].item_code if s.item_id in items else "",
-            "item_name": items[s.item_id].item_name if s.item_id in items else "",
+            "item_code": items.get(s.item_id, ("", ""))[0],
+            "item_name": items.get(s.item_id, ("", ""))[1],
             "remnant_id": s.remnant_id, "work_order_ref": s.work_order_ref,
             "requested_qty": s.requested_qty, "issued_qty": s.issued_qty,
             "requested_by": s.requested_by, "approved_by": s.approved_by,
@@ -198,72 +290,6 @@ def reject_issue_slip(sid: int, db: Session = Depends(get_db), current_user: dic
     s.approved_by = current_user.get("sub", "Admin")
     db.commit()
     return {"ok": True}
-
-# ── Paged parent + children ──────────────────────────────────
-#
-# The GRN and cycle-count history endpoints both return a parent row with its
-# line items nested. Both used to load every parent, every child and the whole
-# item master, then rescan the full child list once per parent — an O(parents x
-# children) join in Python. These helpers give the linear version.
-
-_PAGE_DEFAULT = 50
-_PAGE_MAX = 200
-
-# SQLite allows at most 999 bound parameters per statement, and a page of large
-# receipts can reference more item ids than that.
-_IN_CHUNK = 500
-
-
-def _page(limit: int, offset: int):
-    """Clamp caller-supplied paging into a range that cannot exhaust the server."""
-    try:
-        limit = int(limit)
-    except (TypeError, ValueError):
-        limit = _PAGE_DEFAULT
-    try:
-        offset = int(offset)
-    except (TypeError, ValueError):
-        offset = 0
-    return max(1, min(limit, _PAGE_MAX)), max(0, offset)
-
-
-def _in_chunks(db, model, column, values):
-    """`WHERE column IN values` for arbitrarily many values."""
-    values = list(values)
-    rows = []
-    for i in range(0, len(values), _IN_CHUNK):
-        rows.extend(db.query(model).filter(column.in_(values[i:i + _IN_CHUNK])).all())
-    return rows
-
-
-def _children(db, model, fk_column, parent_ids):
-    """Only the child rows belonging to the parents on this page."""
-    return _in_chunks(db, model, fk_column, parent_ids) if parent_ids else []
-
-
-def _group_by(rows, attr):
-    """{fk: [rows]} in one pass, replacing a rescan of `rows` per parent."""
-    grouped = defaultdict(list)
-    for row in rows:
-        grouped[getattr(row, attr)].append(row)
-    return grouped
-
-
-def _item_labels(db, item_ids):
-    """{item_id: (item_code, item_name)} for just the items this page references.
-
-    The callers only ever read those two columns, so this replaces loading the
-    entire InventoryItem table as ORM objects."""
-    item_ids = {i for i in item_ids if i is not None}
-    labels = {}
-    ids = list(item_ids)
-    for i in range(0, len(ids), _IN_CHUNK):
-        for row in (db.query(models.InventoryItem.id, models.InventoryItem.item_code,
-                             models.InventoryItem.item_name)
-                    .filter(models.InventoryItem.id.in_(ids[i:i + _IN_CHUNK])).all()):
-            labels[row.id] = (row.item_code, row.item_name)
-    return labels
-
 
 # ── GRN ──────────────────────────────────────────────────────
 

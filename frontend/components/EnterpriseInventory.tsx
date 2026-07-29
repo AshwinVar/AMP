@@ -134,9 +134,14 @@ function RemnantsTab({ items }: { items: InventoryItem[] }) {
   const [form, setForm] = useState({ item_id: "", original_qty: "", remaining_qty: "", unit: "m", location: "", source_reference: "", notes: "" });
   const [loading, setLoading] = useState(false);
 
+  const [shown, setShown] = useState(PAGE);
   const { error, track } = useLoadError();
-  const load = () => track(apiGet<Remnant[]>("/remnants"), setRows, "remnants");
-  useEffect(() => { load(); }, []);
+  // Paged: the remnant register only grows, and the endpoint caps a page at 200.
+  const load = (limit = shown) =>
+    track(apiGet<Remnant[]>(`/remnants?limit=${limit}&offset=0`), setRows, "remnants");
+  useEffect(() => { load(PAGE); }, []);
+
+  const loadMore = () => { const next = shown + PAGE; setShown(next); load(next); };
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
@@ -214,6 +219,11 @@ function RemnantsTab({ items }: { items: InventoryItem[] }) {
             </tbody>
           </table>
         </div>
+        {rows.length >= shown && (
+          <button type="button" onClick={loadMore} className="mt-4 text-sm text-slate-400 border border-slate-700 rounded-xl px-4 py-2 hover:border-slate-500">
+            Load older remnants
+          </button>
+        )}
       </div>
     </div>
   );
@@ -226,9 +236,14 @@ function IssueSlipsTab({ items }: { items: InventoryItem[] }) {
   const [form, setForm] = useState({ item_id: "", requested_qty: "", work_order_ref: "", requested_by: "", notes: "" });
   const [loading, setLoading] = useState(false);
 
+  const [shown, setShown] = useState(PAGE);
   const { error, track } = useLoadError();
-  const load = () => track(apiGet<IssueSlip[]>("/issue-slips"), setRows, "issue slips");
-  useEffect(() => { load(); }, []);
+  // Paged: the issue-slip log only grows, and the endpoint caps a page at 200.
+  const load = (limit = shown) =>
+    track(apiGet<IssueSlip[]>(`/issue-slips?limit=${limit}&offset=0`), setRows, "issue slips");
+  useEffect(() => { load(PAGE); }, []);
+
+  const loadMore = () => { const next = shown + PAGE; setShown(next); load(next); };
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
@@ -315,6 +330,11 @@ function IssueSlipsTab({ items }: { items: InventoryItem[] }) {
             </tbody>
           </table>
         </div>
+        {rows.length >= shown && (
+          <button type="button" onClick={loadMore} className="mt-4 text-sm text-slate-400 border border-slate-700 rounded-xl px-4 py-2 hover:border-slate-500">
+            Load older slips
+          </button>
+        )}
       </div>
     </div>
   );

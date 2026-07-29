@@ -12,7 +12,7 @@ from sqlalchemy import case, func
 from sqlalchemy.orm import Session
 
 import models
-from csv_safe import read_upload_text
+from csv_safe import import_row_error, read_upload_text
 from payload_fields import int_field, str_field
 from auth import get_current_user, require_roles
 from database import SessionLocal
@@ -656,40 +656,67 @@ async def import_inventory_csv(
     reader = csv_lib.DictReader(io.StringIO(text))
     created = updated = skipped = 0
     errors = []
+    # Each row gets its own SAVEPOINT so a row the database rejects is reported
+    # against its own line and the rest of the file still lands.
+    #
+    # The per-row `except` alone could not do that, because the only db.commit()
+    # was after the loop. item_code is UNIQUE globally while the `existing`
+    # lookup below is tenant-scoped (ADR-0002), so a code another workspace owns
+    # is invisible here, takes the insert branch, and collides. Traced:
+    #
+    #   row 3 adds WIDGET (pending; ALPHA's WIDGET is not visible to BETA)
+    #   row 4's lookup AUTOFLUSHES  -> IntegrityError
+    #   the except catches it and blames ROW 4, which is a valid row
+    #   db.commit() then raises PendingRollbackError -> HTTP 500
+    #
+    # and nothing at all was imported — including the rows already counted as
+    # created. A savepoint per row keeps the session usable, so the failure is
+    # attributed correctly and the valid rows survive, which is what this
+    # endpoint's contract ("reports per-row errors") always claimed to do.
     for i, row in enumerate(reader, start=2):
+        outcome = None
         try:
-            code = (row.get("item_code") or row.get("Item Code") or "").strip()
-            name = (row.get("item_name") or row.get("Item Name") or "").strip()
-            if not code or not name:
-                skipped += 1
-                continue
-            category = (row.get("category") or row.get("Category") or "Imported").strip()
-            unit = (row.get("unit") or row.get("Unit") or "pcs").strip()
-            stock = int(float((row.get("current_stock") or row.get("Opening Stock") or row.get("Stock") or "0").strip() or 0))
-            reorder = int(float((row.get("reorder_level") or row.get("Reorder Level") or "0").strip() or 0))
-            supplier = (row.get("supplier") or row.get("Supplier") or "").strip()
-            location = (row.get("location") or row.get("Location") or "").strip()
-            existing = db.query(models.InventoryItem).filter(models.InventoryItem.item_code == code).first()
-            if existing:
-                existing.item_name = name
-                existing.category = category
-                existing.unit = unit
-                existing.current_stock = stock
-                existing.reorder_level = reorder
-                if supplier:
-                    existing.supplier = supplier
-                if location:
-                    existing.location = location
-                updated += 1
-            else:
-                db.add(models.InventoryItem(
-                    item_code=code, item_name=name, category=category,
-                    unit=unit, current_stock=stock, reorder_level=reorder,
-                    supplier=supplier, location=location,
-                ))
-                created += 1
+            with db.begin_nested():
+                code = (row.get("item_code") or row.get("Item Code") or "").strip()
+                name = (row.get("item_name") or row.get("Item Name") or "").strip()
+                if not code or not name:
+                    outcome = "skipped"
+                else:
+                    category = (row.get("category") or row.get("Category") or "Imported").strip()
+                    unit = (row.get("unit") or row.get("Unit") or "pcs").strip()
+                    stock = int(float((row.get("current_stock") or row.get("Opening Stock") or row.get("Stock") or "0").strip() or 0))
+                    reorder = int(float((row.get("reorder_level") or row.get("Reorder Level") or "0").strip() or 0))
+                    supplier = (row.get("supplier") or row.get("Supplier") or "").strip()
+                    location = (row.get("location") or row.get("Location") or "").strip()
+                    existing = db.query(models.InventoryItem).filter(models.InventoryItem.item_code == code).first()
+                    if existing:
+                        existing.item_name = name
+                        existing.category = category
+                        existing.unit = unit
+                        existing.current_stock = stock
+                        existing.reorder_level = reorder
+                        if supplier:
+                            existing.supplier = supplier
+                        if location:
+                            existing.location = location
+                        outcome = "updated"
+                    else:
+                        db.add(models.InventoryItem(
+                            item_code=code, item_name=name, category=category,
+                            unit=unit, current_stock=stock, reorder_level=reorder,
+                            supplier=supplier, location=location,
+                        ))
+                        outcome = "created"
         except Exception as e:
-            errors.append(f"Row {i}: {str(e)}")
+            errors.append(f"Row {i}: {import_row_error(e)}")
+            continue
+        # Counted only once the savepoint released, i.e. the row really flushed.
+        if outcome == "created":
+            created += 1
+        elif outcome == "updated":
+            updated += 1
+        elif outcome == "skipped":
+            skipped += 1
     db.commit()
     return {"created": created, "updated": updated, "skipped": skipped,
             "errors": errors[:10], "encoding": encoding}

@@ -18,7 +18,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 import models
-from csv_safe import read_upload_text
+from csv_safe import import_row_error, read_upload_text
 import schemas
 from auth import get_current_user, require_roles
 from database import SessionLocal
@@ -783,40 +783,55 @@ async def import_suppliers_csv(
     reader = csv.DictReader(io.StringIO(text))
     created = updated = skipped = 0
     errors = []
+    # One SAVEPOINT per row — supplier_code is UNIQUE globally while this lookup
+    # is tenant-scoped (ADR-0002), so a code another workspace owns is invisible
+    # here and takes the insert branch. Without the savepoint that collision
+    # surfaces on a LATER row's autoflush, gets blamed on that innocent row, and
+    # then poisons the single commit below into a 500 that loses the whole file.
+    # See the same fix and its full trace in enterprise_inventory_routes.
     for i, row in enumerate(reader, start=2):
+        outcome = None
         try:
-            code = (row.get("supplier_code") or row.get("Code") or row.get("Supplier Code") or "").strip()
-            name = (row.get("supplier_name") or row.get("Name") or row.get("Supplier") or "").strip()
-            if not code or not name:
-                skipped += 1
-                continue
-            contact = (row.get("contact_person") or row.get("Contact") or "").strip()
-            email = (row.get("email") or row.get("Email") or "").strip()
-            phone = (row.get("phone") or row.get("Phone") or "").strip()
-            category = (row.get("category") or row.get("Category") or "").strip()
-            status = (row.get("status") or row.get("Status") or "Active").strip() or "Active"
-            existing = db.query(models.Supplier).filter(models.Supplier.supplier_code == code).first()
-            if existing:
-                existing.supplier_name = name
-                if contact:
-                    existing.contact_person = contact
-                if email:
-                    existing.email = email
-                if phone:
-                    existing.phone = phone
-                if category:
-                    existing.category = category
-                existing.status = status
-                updated += 1
-            else:
-                db.add(models.Supplier(
-                    supplier_code=code, supplier_name=name,
-                    contact_person=contact or None, email=email or None,
-                    phone=phone or None, category=category or None, status=status,
-                ))
-                created += 1
+            with db.begin_nested():
+                code = (row.get("supplier_code") or row.get("Code") or row.get("Supplier Code") or "").strip()
+                name = (row.get("supplier_name") or row.get("Name") or row.get("Supplier") or "").strip()
+                if not code or not name:
+                    outcome = "skipped"
+                else:
+                    contact = (row.get("contact_person") or row.get("Contact") or "").strip()
+                    email = (row.get("email") or row.get("Email") or "").strip()
+                    phone = (row.get("phone") or row.get("Phone") or "").strip()
+                    category = (row.get("category") or row.get("Category") or "").strip()
+                    status = (row.get("status") or row.get("Status") or "Active").strip() or "Active"
+                    existing = db.query(models.Supplier).filter(models.Supplier.supplier_code == code).first()
+                    if existing:
+                        existing.supplier_name = name
+                        if contact:
+                            existing.contact_person = contact
+                        if email:
+                            existing.email = email
+                        if phone:
+                            existing.phone = phone
+                        if category:
+                            existing.category = category
+                        existing.status = status
+                        outcome = "updated"
+                    else:
+                        db.add(models.Supplier(
+                            supplier_code=code, supplier_name=name,
+                            contact_person=contact or None, email=email or None,
+                            phone=phone or None, category=category or None, status=status,
+                        ))
+                        outcome = "created"
         except Exception as e:
-            errors.append(f"Row {i}: {str(e)}")
+            errors.append(f"Row {i}: {import_row_error(e)}")
+            continue
+        if outcome == "created":
+            created += 1
+        elif outcome == "updated":
+            updated += 1
+        elif outcome == "skipped":
+            skipped += 1
     db.commit()
     return {"created": created, "updated": updated, "skipped": skipped,
             "errors": errors[:10], "encoding": encoding}

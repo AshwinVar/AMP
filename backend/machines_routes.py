@@ -18,7 +18,7 @@ from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from sqlalchemy.orm import Session
 
 import models
-from csv_safe import read_upload_text
+from csv_safe import import_row_error, read_upload_text
 import schemas
 from auth import get_current_user, require_roles
 from database import SessionLocal
@@ -215,36 +215,52 @@ async def import_machines_csv(
     reader = csv.DictReader(io.StringIO(text))
     created = updated = skipped = 0
     errors = []
+    # One SAVEPOINT per row, matching the inventory and supplier imports. Machine
+    # carries no unique column, so no constraint can trip today — but the loop had
+    # the same shape that loses a whole file elsewhere in this codebase: a DB error
+    # raised on a later row's autoflush, mis-blamed, then a 500 at the single
+    # commit below. The savepoint makes the docstring's promise above ("reports
+    # per-row errors instead of failing the whole file") true for database errors
+    # too, not just parse errors.
     for i, row in enumerate(reader, start=2):
+        outcome = None
         try:
-            name = (row.get("name") or row.get("Name") or row.get("Machine") or "").strip()
-            if not name:
-                skipped += 1
-                continue
-            line = (row.get("line") or row.get("Line") or "").strip()
-            # Unknown status vocabulary falls back to Idle rather than failing the
-            # row — an import is bulk onboarding, not a live status change (the
-            # PATCH endpoint keeps its strict 400 for manual edits).
-            status = normalize_machine_status(
-                (row.get("status") or row.get("Status") or "Idle").strip() or "Idle") or "Idle"
-            try:
-                utilization = int(float((row.get("utilization") or row.get("Utilization") or "0").strip() or 0))
-            except (TypeError, ValueError):
-                utilization = 0
-            utilization = max(0, min(100, utilization))
-            existing = db.query(models.Machine).filter(models.Machine.name == name).first()
-            if existing:
-                if line:
-                    existing.line = line
-                existing.status = status
-                existing.utilization = utilization
-                updated += 1
-            else:
-                db.add(models.Machine(name=name, status=status,
-                                      utilization=utilization, downtime="0 min", line=line))
-                created += 1
+            with db.begin_nested():
+                name = (row.get("name") or row.get("Name") or row.get("Machine") or "").strip()
+                if not name:
+                    outcome = "skipped"
+                else:
+                    line = (row.get("line") or row.get("Line") or "").strip()
+                    # Unknown status vocabulary falls back to Idle rather than failing the
+                    # row — an import is bulk onboarding, not a live status change (the
+                    # PATCH endpoint keeps its strict 400 for manual edits).
+                    status = normalize_machine_status(
+                        (row.get("status") or row.get("Status") or "Idle").strip() or "Idle") or "Idle"
+                    try:
+                        utilization = int(float((row.get("utilization") or row.get("Utilization") or "0").strip() or 0))
+                    except (TypeError, ValueError):
+                        utilization = 0
+                    utilization = max(0, min(100, utilization))
+                    existing = db.query(models.Machine).filter(models.Machine.name == name).first()
+                    if existing:
+                        if line:
+                            existing.line = line
+                        existing.status = status
+                        existing.utilization = utilization
+                        outcome = "updated"
+                    else:
+                        db.add(models.Machine(name=name, status=status,
+                                              utilization=utilization, downtime="0 min", line=line))
+                        outcome = "created"
         except Exception as e:
-            errors.append(f"Row {i}: {str(e)}")
+            errors.append(f"Row {i}: {import_row_error(e)}")
+            continue
+        if outcome == "created":
+            created += 1
+        elif outcome == "updated":
+            updated += 1
+        elif outcome == "skipped":
+            skipped += 1
     db.commit()
     return {"created": created, "updated": updated, "skipped": skipped,
             "errors": errors[:10], "encoding": encoding}

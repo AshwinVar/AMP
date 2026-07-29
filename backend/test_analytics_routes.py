@@ -954,6 +954,71 @@ def test_executive_oee_per_machine_components_capped_at_100():
     print("PASS executive-oee: per-machine availability/quality capped at 100 (no >100% metric)")
 
 
+def test_executive_oee_shift_scan_is_bounded_to_recent_50_and_reconciles():
+    # shift_data GROWS without bound (factory_simulator.tick_shift_entry appends a new
+    # dated row every tick), so /analytics/executive-oee must not hydrate the whole
+    # table and return one shift_oee row per entry — an ever-growing response on an
+    # Admin-polled endpoint (rule-4). It bounds to the most-recent 50 shifts, the exact
+    # window the sibling /analytics/shift-kpis already uses, and the headline
+    # production_target/actual sum that SAME 50-shift set so the per-shift breakdown
+    # still sums to the headline (rule-3).
+    #
+    # 55 shifts, id 1..55: target=id*10, actual=id*8. The most-recent 50 are ids 6..55.
+    #   sum(6..55) = (6+55)*50/2 = 1525
+    #   production_target = 1525*10 = 15250 ; production_actual = 1525*8 = 12200
+    #   production_achievement = round(12200/15250*100) = round(80.0) = 80
+    db = _fresh_session()
+    db.add(models.Machine(id=1, name="M1", status="Running", utilization=70))
+    for i in range(1, 56):
+        db.add(models.ShiftData(id=i, shift_name=f"S{i}", target_output=i * 10, actual_output=i * 8))
+    db.commit()
+
+    out = analytics_routes.get_executive_oee(db=db, current_user={})
+
+    # Response bounded to 50 rows, not 55 (and never the whole growing table).
+    assert len(out["shift_oee"]) == 50, len(out["shift_oee"])
+    names = [r["shift_name"] for r in out["shift_oee"]]
+    # The 5 oldest shifts (S1..S5) are dropped; the window is the most-recent 50.
+    assert "S5" not in names and "S1" not in names, names
+    # Presented oldest-first within that window (chronological chart order).
+    assert names[0] == "S6" and names[-1] == "S55", (names[0], names[-1])
+
+    # Headline sums the SAME bounded set — independently derived, not a tautology.
+    assert out["production_target"] == 15250, out["production_target"]
+    assert out["production_actual"] == 12200, out["production_actual"]
+    assert out["production_achievement"] == 80, out["production_achievement"]
+
+    # rule-3: the per-shift breakdown sums exactly to the headline totals.
+    assert sum(r["target_output"] for r in out["shift_oee"]) == out["production_target"]
+    assert sum(r["actual_output"] for r in out["shift_oee"]) == out["production_actual"]
+    print("PASS executive-oee: shift scan bounded to recent 50, breakdown reconciles with headline")
+
+
+def test_executive_oee_shift_scan_does_not_hydrate_whole_shift_table():
+    # Regression guard: the compute must bound the growing shift_data table in SQL, not
+    # fall back to a whole-table `.all()` scan (rule-4) — the same guard the sibling
+    # /analytics/summary carries for its shift pooling (#419).
+    src = inspect.getsource(analytics_routes.get_executive_oee)
+    assert "db.query(models.ShiftData).all()" not in src, \
+        "executive-oee must bound the shift_data scan, not hydrate the whole growing table"
+    assert "order_by(models.ShiftData.id.desc()).limit(50)" in src, \
+        "executive-oee should bound shift_data to the most-recent 50 (parity with /analytics/shift-kpis)"
+    print("PASS executive-oee: shift_data scan is SQL-bounded (no whole-table hydration)")
+
+
+def test_executive_oee_shift_empty_table_is_zero_not_a_crash():
+    # No shifts at all: the bounded query returns nothing, so the headline attainment
+    # is a guarded 0 (never a divide-by-zero) and shift_oee is empty.
+    db = _fresh_session()
+    db.add(models.Machine(id=1, name="M1", status="Idle", utilization=0))
+    db.commit()
+    out = analytics_routes.get_executive_oee(db=db, current_user={})
+    assert out["shift_oee"] == [], out["shift_oee"]
+    assert out["production_target"] == 0 and out["production_actual"] == 0, out
+    assert out["production_achievement"] == 0, out["production_achievement"]
+    print("PASS executive-oee: empty shift table -> 0 attainment, empty breakdown, no crash")
+
+
 def test_factory_command_center_null_stock_and_failed_are_zero_not_a_crash():
     # factory-command-center compares current_stock <= reorder_level (both nullable
     # Integers) and sums failed_quantity (nullable). A real SQL NULL made
@@ -1542,6 +1607,9 @@ if __name__ == "__main__":
     test_quality_analytics_is_tenant_scoped()
     test_executive_oee_null_quality_columns_in_per_machine_fallback()
     test_executive_oee_per_machine_components_capped_at_100()
+    test_executive_oee_shift_scan_is_bounded_to_recent_50_and_reconciles()
+    test_executive_oee_shift_scan_does_not_hydrate_whole_shift_table()
+    test_executive_oee_shift_empty_table_is_zero_not_a_crash()
     test_factory_command_center_null_stock_and_failed_are_zero_not_a_crash()
     test_factory_command_center_counts_reconcile_with_independent_numbers()
     test_factory_command_center_does_not_hydrate_growing_tables()

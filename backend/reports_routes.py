@@ -68,7 +68,17 @@ def export_downtime_csv(db: Session = Depends(_get_db), current_user: dict = Dep
 
 @router.get("/shifts.csv")
 def export_shifts_csv(db: Session = Depends(_get_db), current_user: dict = Depends(require_roles(["Admin", "Supervisor"]))):
-    shifts = db.query(models.ShiftData).all()
+    # Order by id ascending, like every sibling export above and below
+    # (downtime.csv, work-orders.csv, maintenance.csv, ...). This one export was
+    # the only one issuing a bare `.all()` with no ORDER BY: on SQLite a table
+    # scan happens to come back in rowid (insertion) order, so the rows looked
+    # stable, but on PostgreSQL (production) a seqscan has NO guaranteed order —
+    # the shift report's rows could come back in an arbitrary order that reshuffles
+    # between downloads. The same non-determinism the quality-defect chart
+    # (analytics_routes) and the cycle-count "latest line" pick (enterprise
+    # inventory) were already given an explicit order for. shift_data is a growing
+    # table, so the deterministic key is the stable, indexed primary key.
+    shifts = db.query(models.ShiftData).order_by(models.ShiftData.id.asc()).all()
 
     def _row(shift):
         # Coalesce per-row NULL outputs to 0 (parity with build_shift_kpis / the

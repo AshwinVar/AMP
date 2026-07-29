@@ -11,6 +11,7 @@ ADR-0009.
 from typing import List
 
 from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy import or_
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -253,11 +254,25 @@ def generate_low_stock_escalations(
     for item in low_stock_items:
         title = f"Low stock: {item.item_code} - {item.item_name}"
 
+        # Dedup against an already-open escalation for this item. status is
+        # Column(String, default="Open") WITHOUT nullable=False, so a raw-SQL /
+        # migration / cleared-field row can hold a genuine NULL, and SQL's bare
+        # `status != 'Resolved'` is NULL — not TRUE — for it, so the dedup MISSED a
+        # NULL-status open escalation and raised a DUPLICATE. A NULL status is not a
+        # terminal state (still open) — the same convention every open-escalation
+        # READER already applies (analytics /escalations #295, system-notifications
+        # #403, tenant-activity, the maintenance/document generators' own overdue
+        # selection) — so OR the NULL in and treat it as open: it blocks the
+        # duplicate instead of inflating the very open-escalation count the readers
+        # report. A Resolved escalation still lets a fresh recurrence through.
         existing = (
             db.query(models.Escalation)
             .filter(
                 models.Escalation.title == title,
-                models.Escalation.status != "Resolved",
+                or_(
+                    models.Escalation.status.is_(None),
+                    models.Escalation.status != "Resolved",
+                ),
             )
             .first()
         )

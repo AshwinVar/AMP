@@ -273,6 +273,37 @@ def test_update_normal_edit_still_applies():
     print("PASS PATCH normal edit applies (80) and a real 0 reorder level stays 0")
 
 
+def test_low_stock_null_status_existing_escalation_is_deduped_not_duplicated():
+    """generate_low_stock_escalations must treat a NULL-status EXISTING escalation
+    as still open, matching the "NULL is not terminal" convention every
+    open-escalation reader uses (#295/#403). status is String default="Open" (not
+    NOT NULL), so a raw-SQL / migration / cleared write can hold a real NULL; SQL's
+    `status != 'Resolved'` is NULL — not TRUE — for it, so the bare predicate MISSED
+    the open escalation and raised a DUPLICATE, inflating the very open-escalation
+    count the readers report. Regression guard for the or_(status IS NULL, ...) fix."""
+    db = _iso_session()
+    tok = T.set_current_tenant(TENANT)
+    try:
+        _make_item(db, "IC-1", current_stock=0, reorder_level=10)   # low stock
+        title = "Low stock: IC-1 - IC-1"
+        db.add(models.Escalation(
+            tenant_code=TENANT, title=title, severity="High", owner="Stores",
+            department="Inventory", status="Open", source="Inventory"))
+        db.commit()
+        db.execute(text("UPDATE escalations SET status = NULL WHERE title = :t"),
+                   {"t": title})
+        db.commit()
+        db.expire_all()
+
+        out = inventory_routes.generate_low_stock_escalations(
+            db=db, current_user={"tenant": TENANT})
+        assert out == {"created": 0}, out                 # NULL-status one is still open
+        assert db.query(models.Escalation).count() == 1   # no duplicate raised
+    finally:
+        T.reset_current_tenant(tok)
+    print("PASS low-stock: a NULL-status open escalation is deduped, not duplicated")
+
+
 if __name__ == "__main__":
     test_inventory_paths_owned_by_module()
     test_low_stock_still_publishes_inventory_low()
@@ -286,4 +317,5 @@ if __name__ == "__main__":
     test_update_legacy_null_row_serialises_zero()
     test_update_negative_stock_rejected_400()
     test_update_normal_edit_still_applies()
+    test_low_stock_null_status_existing_escalation_is_deduped_not_duplicated()
     print("ALL INVENTORY ROUTE TESTS PASSED")

@@ -14,6 +14,7 @@ Per ADR-0009; imports only lower-level/shared modules, never main.
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Response
+from sqlalchemy import or_
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -278,11 +279,24 @@ def create_escalations_from_smart_alerts(
     for alert in alerts:
         title = f'{alert.get("type", "Alert")} - {alert.get("machine", "Factory")}'
 
+        # Dedup against an already-open escalation for this alert. status is
+        # Column(String, default="Open") WITHOUT nullable=False, so a raw-SQL /
+        # migration / cleared-field row can hold a genuine NULL, and SQL's bare
+        # `status != 'Resolved'` is NULL — not TRUE — for it, so the dedup MISSED a
+        # NULL-status open escalation and raised a DUPLICATE. A NULL status is not a
+        # terminal state (still open) — the same convention every open-escalation
+        # READER already applies (analytics /escalations #295, system-notifications
+        # #403) — so OR the NULL in: it blocks the duplicate instead of inflating
+        # the very open-escalation count the readers report. A Resolved escalation
+        # still lets a fresh recurrence through.
         existing = (
             db.query(models.Escalation)
             .filter(
                 models.Escalation.title == title,
-                models.Escalation.status != "Resolved",
+                or_(
+                    models.Escalation.status.is_(None),
+                    models.Escalation.status != "Resolved",
+                ),
             )
             .first()
         )

@@ -86,6 +86,35 @@ def test_null_status_past_task_raises_an_escalation():
     print("PASS NULL-status past task raises an escalation (2, not 1); future NULL excluded")
 
 
+def test_null_status_existing_escalation_is_deduped_not_duplicated():
+    """The dedup guard must treat a NULL-status EXISTING escalation as still open,
+    matching the "NULL is not terminal" convention the overdue-task selection above
+    and every open-escalation reader already use. status is String default="Open"
+    (not NOT NULL), so a raw-SQL / migration / cleared-field row can hold a real
+    NULL; SQL's `status != 'Resolved'` is NULL — not TRUE — for it, so the bare
+    predicate MISSED the open escalation and raised a DUPLICATE, inflating the very
+    open-escalation count the readers report. Regression guard for the
+    or_(status IS NULL, ...) dedup fix."""
+    db = _fresh_session()
+    today = datetime.utcnow().date()
+    db.add(_task("MT-1", 1, "Open", today - timedelta(days=2)))     # overdue
+    # A pre-existing open escalation for MT-1 whose status is a genuine NULL.
+    db.add(models.Escalation(
+        title="Maintenance overdue: MT-1", severity="Medium", owner="tech",
+        department="Maintenance", status="Open", source="Maintenance"))
+    db.commit()
+    # Force a genuine NULL (the ORM default would refill an explicit None).
+    db.execute(text("UPDATE escalations SET status = NULL "
+                    "WHERE title = 'Maintenance overdue: MT-1'"))
+    db.commit()
+    db.expire_all()
+
+    out = generate_maintenance_overdue_escalations(db=db, current_user=USER)
+    assert out == {"created": 0}, out                     # NULL-status one is still open
+    assert db.query(models.Escalation).count() == 1       # no duplicate raised
+    print("PASS a NULL-status open escalation is deduped, not duplicated")
+
+
 def test_empty_and_all_completed_raise_nothing():
     db = _fresh_session()
     today = datetime.utcnow().date()
@@ -102,5 +131,6 @@ def test_empty_and_all_completed_raise_nothing():
 if __name__ == "__main__":
     test_overdue_task_raises_one_escalation_idempotently()
     test_null_status_past_task_raises_an_escalation()
+    test_null_status_existing_escalation_is_deduped_not_duplicated()
     test_empty_and_all_completed_raise_nothing()
     print("ALL MAINTENANCE OVERDUE-ESCALATION TESTS PASSED")

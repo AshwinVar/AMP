@@ -171,6 +171,33 @@ def test_receive_above_reorder_publishes_no_event():
     print("PASS receive that stays above reorder publishes no event (50+10=60)")
 
 
+def test_list_serialises_legacy_null_row_without_500():
+    # The bug this fix closes: GET /inventory/items returns raw ORM rows, and FastAPI
+    # validates each through InventoryItemResponse (current_stock/reorder_level are
+    # non-optional int). A legacy NULL row (raw-SQL / migration) never went through
+    # the PATCH in-handler heal, so the raw-ORM list serializer was the one reader
+    # left un-healed — a single such row raised ValidationError and 500-ed the WHOLE
+    # list, hiding every good item. model_validate is exactly what the response layer
+    # does; assert the NULL row heals to 0 and the good row is untouched.
+    db = _iso_session()
+    tok = T.set_current_tenant(TENANT)
+    try:
+        good = _make_item(db, "P-GOOD", current_stock=25, reorder_level=5)
+        bad = _make_item(db, "P-LEGACY-NULL", current_stock=0, reorder_level=0)
+        _null_out(db, bad.id, ["current_stock", "reorder_level"])
+        rows = inventory_routes.get_inventory_items(db=db, current_user={"tenant": TENANT})
+        serialised = [schemas.InventoryItemResponse.model_validate(r) for r in rows]
+    finally:
+        T.reset_current_tenant(tok)
+    by_code = {s.item_code: s for s in serialised}
+    assert by_code["P-LEGACY-NULL"].current_stock == 0, by_code["P-LEGACY-NULL"].current_stock
+    assert by_code["P-LEGACY-NULL"].reorder_level == 0, by_code["P-LEGACY-NULL"].reorder_level
+    assert isinstance(by_code["P-LEGACY-NULL"].current_stock, int)
+    # the good row's real values are untouched — the heal only rewrites None
+    assert by_code["P-GOOD"].current_stock == 25 and by_code["P-GOOD"].reorder_level == 5
+    print("PASS GET list serialises a legacy NULL row as 0 (not a 500 that hides every item)")
+
+
 def _update_item(db, item_id, **fields):
     # Call the PATCH handler directly (the require_roles dependency isn't run on a
     # direct call, like _txn above). model_validate is how a JSON body with an
@@ -254,6 +281,7 @@ if __name__ == "__main__":
     test_null_reorder_level_skips_crossing_event_without_crashing()
     test_issue_crossing_reorder_still_publishes_inventory_low()
     test_receive_above_reorder_publishes_no_event()
+    test_list_serialises_legacy_null_row_without_500()
     test_update_explicit_null_stock_heals_not_500()
     test_update_legacy_null_row_serialises_zero()
     test_update_negative_stock_rejected_400()

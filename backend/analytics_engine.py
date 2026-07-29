@@ -169,7 +169,8 @@ def build_oee_trends(records):
     return rows
 
 
-def build_management_summary(machines, downtime_logs, shifts, production_records, unit_value_gbp=None):
+def build_management_summary(machines, downtime_logs, shifts, production_records,
+                             unit_value_gbp=None, production_sums=None, shift_sums=None):
     reason_minutes = defaultdict(int)
     machine_minutes = defaultdict(int)
 
@@ -195,22 +196,50 @@ def build_management_summary(machines, downtime_logs, shifts, production_records
             worst_machine = machine.name
             break
 
-    # Plant OEE is pooled across the window's records (ratio of sums), consistent
-    # with the Executive-OEE card and every other surface.
-    pooled = pooled_oee(production_records)
+    # Plant OEE is pooled across the records (ratio of sums), consistent with the
+    # Executive-OEE card and every other surface. ``good``/``runtime`` (the loss
+    # valuation below) are the same sums pooled_oee already needs, so they come out
+    # of the same place.
+    #
+    # A caller that aggregated the (growing) production_records table in SQL — rather
+    # than hydrating every row into Python just to sum it (rule-4) — passes the five
+    # pooled sums plus the record COUNT as ``production_sums``; the pooled result and
+    # the loss units are then byte-for-byte identical to iterating the full list
+    # (pooled_oee delegates to the very same pooled_oee_from_sums), which is exactly
+    # what the /analytics/summary rollup already does (#411/#419). The list path is
+    # kept for callers that already hold the rows (the text-report export). Downtime
+    # stays a row scan either way — its durations are free text, and only Python's
+    # parse_duration_to_minutes can total them.
+    if production_sums is not None:
+        planned_s, runtime_s, total_s, good_s, ideal_s, record_count = production_sums
+        pooled = pooled_oee_from_sums(
+            planned=planned_s, runtime=runtime_s, total=total_s,
+            good=good_s, ideal_seconds=ideal_s, has_data=record_count > 0,
+        )
+        good = good_s
+        runtime = runtime_s
+    else:
+        pooled = pooled_oee(production_records)
+        good = sum(r.good_count or 0 for r in production_records)
+        runtime = sum(r.runtime_minutes or 0 for r in production_records)
     avg_oee = pooled["oee"]
     avg_availability = pooled["availability"]
     avg_performance = pooled["performance"]
     avg_quality = pooled["quality"]
 
-    target_output = sum(shift.target_output for shift in shifts)
-    actual_output = sum(shift.actual_output for shift in shifts)
+    # Shift attainment is pooled (total actual / total target). Same rule-4 option as
+    # above: a caller that summed shift_data in SQL passes ``shift_sums``; the list
+    # path sums the rows it was handed. target_output/actual_output are nullable=False,
+    # so the SQL COALESCE(SUM(..),0) and the Python sum agree byte-for-byte.
+    if shift_sums is not None:
+        target_output, actual_output = shift_sums
+    else:
+        target_output = sum(shift.target_output for shift in shifts)
+        actual_output = sum(shift.actual_output for shift in shifts)
     target_achievement = round((actual_output / target_output) * 100) if target_output else 0
 
     # Value the downtime as lost OUTPUT: at the observed run-rate (good units per
     # minute of run time), the downtime would have produced this many good units.
-    good = sum(r.good_count or 0 for r in production_records)
-    runtime = sum(r.runtime_minutes or 0 for r in production_records)
     estimated_loss_units = round(total_downtime * (good / runtime)) if runtime else 0
     if unit_value_gbp is not None:
         # Money = lost units x the tenant's configured £/good-unit. A configured

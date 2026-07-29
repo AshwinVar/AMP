@@ -315,10 +315,39 @@ def get_shift_kpis(db: Session = Depends(_get_db), current_user: dict = Depends(
 def get_management_dashboard(db: Session = Depends(_get_db), current_user: dict = Depends(require_roles(["Admin", "Supervisor"]))):
     machines = db.query(models.Machine).all()
     downtime_logs = db.query(models.DowntimeLog).all()
-    shifts = db.query(models.ShiftData).all()
-    production_records = db.query(models.ProductionRecord).all()
+
+    # Pool plant OEE and shift attainment straight out of SQL rather than hydrating
+    # the whole (growing) production_records and shift_data tables into Python just to
+    # sum them (rule-4) — the identical fix /analytics/summary already carries
+    # (#411/#419). build_management_summary reduces both tables to sums, so passing the
+    # pre-aggregated sums yields byte-for-byte the same summary while reading two
+    # aggregate rows instead of every row on this Admin-polled endpoint. Both models
+    # are in SCOPED_MODELS, so these aggregates stay tenant-scoped by the do_orm_execute
+    # hook (ADR-0002) exactly as the old .all() scans did. Downtime stays a row scan
+    # (free-text durations — only parse_duration_to_minutes can total them), the same
+    # accepted exception /analytics/summary makes.
+    production_sums = db.query(
+        func.coalesce(func.sum(models.ProductionRecord.planned_minutes), 0),
+        func.coalesce(func.sum(models.ProductionRecord.runtime_minutes), 0),
+        func.coalesce(func.sum(models.ProductionRecord.total_count), 0),
+        func.coalesce(func.sum(models.ProductionRecord.good_count), 0),
+        func.coalesce(func.sum(
+            models.ProductionRecord.ideal_cycle_time_seconds
+            * models.ProductionRecord.total_count
+        ), 0),
+        func.count(models.ProductionRecord.id),
+    ).one()
+    shift_sums = db.query(
+        func.coalesce(func.sum(models.ShiftData.target_output), 0),
+        func.coalesce(func.sum(models.ShiftData.actual_output), 0),
+    ).one()
+
     rate = tenant_unit_value(db, request_tenant(current_user))
-    return build_management_summary(machines, downtime_logs, shifts, production_records, unit_value_gbp=rate)
+    return build_management_summary(
+        machines, downtime_logs, [], [], unit_value_gbp=rate,
+        production_sums=tuple(int(v) for v in production_sums),
+        shift_sums=tuple(int(v) for v in shift_sums),
+    )
 
 
 @router.get("/alerts/smart")

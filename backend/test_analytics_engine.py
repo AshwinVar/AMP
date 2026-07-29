@@ -277,10 +277,65 @@ def test_build_smart_alerts_null_utilization_is_safe_and_honest():
     print("PASS build_smart_alerts skips the utilization alert on a NULL reading (no crash, no fake 0%)")
 
 
+def test_calculate_oee_floors_components_at_zero():
+    # The ingest paths reject negative counts/minutes, but a legacy / raw-SQL row
+    # can still hold one, and the ratio then goes NEGATIVE. The clamp is symmetric
+    # (floor 0, cap 1) so a metric never prints below the floor the data supports.
+    #
+    # Negative good_count: quality -50/100 = -0.5 -> floored to 0. availability
+    # 90/100 = .9 -> 90; performance (30*100)/(90*60)=3000/5400=.5556 -> 56;
+    # oee = .9 * .5556 * 0 = 0 (was quality -50, oee -25 before the floor).
+    neg_good = ae.calculate_oee_from_record(_rec(
+        runtime_minutes=90, planned_minutes=100,
+        ideal_cycle_time_seconds=30, total_count=100, good_count=-50,
+    ))
+    assert neg_good == {"availability": 90, "performance": 56,
+                        "quality": 0, "oee": 0}, neg_good
+
+    # Negative runtime_minutes is the subtle one: availability -100/100 = -1.0 and
+    # performance 3000/-6000 = -0.5 are BOTH negative, and their product with
+    # quality .9 is round(-1.0 * -0.5 * .9 * 100) = +45 — a fabricated positive OEE
+    # from two negatives. Flooring each component at 0 collapses it to an honest 0.
+    neg_runtime = ae.calculate_oee_from_record(_rec(
+        runtime_minutes=-100, planned_minutes=100,
+        ideal_cycle_time_seconds=30, total_count=100, good_count=90,
+    ))
+    assert neg_runtime == {"availability": 0, "performance": 0,
+                           "quality": 90, "oee": 0}, neg_runtime
+    print("PASS calculate_oee_from_record floors components at 0 (no negative/fake-positive OEE)")
+
+
+def test_pooled_oee_from_sums_floors_negative_at_zero():
+    # A negative good in the pooled sums: quality -50/100 = -0.5 -> floored to 0.
+    # availability 100/100 = 1.0 -> 100; performance 3000/(100*60)=.5 -> 50;
+    # oee = 1.0 * .5 * 0 = 0 (was quality -50, oee -25 before the floor).
+    p = ae.pooled_oee_from_sums(planned=100, runtime=100, total=100,
+                                good=-50, ideal_seconds=3000, has_data=True)
+    assert p == {"oee": 0, "availability": 100, "performance": 50,
+                 "quality": 0, "has_data": True}, p
+    print("PASS pooled_oee_from_sums floors a negative component at 0")
+
+
+def test_per_record_and_pooled_reconcile_on_negative():
+    # Rule-3 reconciliation: the per-record view and the pooled view of the SAME
+    # single record must agree component-for-component — including on the floored
+    # negative — so a drill-down can't disagree with its own headline.
+    rec = _rec(runtime_minutes=100, planned_minutes=100,
+               ideal_cycle_time_seconds=30, total_count=100, good_count=-50)
+    per = ae.calculate_oee_from_record(rec)
+    pooled = ae.pooled_oee([rec])
+    for key in ("availability", "performance", "quality", "oee"):
+        assert per[key] == pooled[key], (key, per, pooled)
+        assert per[key] >= 0, (key, per)     # never below the floor
+    print("PASS per-record and pooled OEE reconcile (and stay >= 0) on a negative row")
+
+
 def test_calculate_fallback_oee_monotonic():
     assert ae.calculate_fallback_oee(80) == round((80 / 100) * 0.9 * 0.95 * 100)
     assert ae.calculate_fallback_oee(90) > ae.calculate_fallback_oee(50)
-    print("PASS calculate_fallback_oee follows utilization monotonically")
+    assert ae.calculate_fallback_oee(0) == 0                  # zero utilization = 0
+    assert ae.calculate_fallback_oee(-30) == 0               # negative reading floored, not a negative estimate
+    print("PASS calculate_fallback_oee follows utilization monotonically (floored at 0)")
 
 
 if __name__ == "__main__":
@@ -299,5 +354,8 @@ if __name__ == "__main__":
     test_build_smart_alerts_downtime_window_is_recent_not_caller_order()
     test_build_smart_alerts_empty_downtime_is_safe()
     test_build_smart_alerts_null_utilization_is_safe_and_honest()
+    test_calculate_oee_floors_components_at_zero()
+    test_pooled_oee_from_sums_floors_negative_at_zero()
+    test_per_record_and_pooled_reconcile_on_negative()
     test_calculate_fallback_oee_monotonic()
     print("ALL ANALYTICS-ENGINE TESTS PASSED")

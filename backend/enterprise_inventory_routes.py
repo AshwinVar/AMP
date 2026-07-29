@@ -502,12 +502,37 @@ def approve_cycle_count(cid: int, db: Session = Depends(get_db), current_user: d
     c = db.query(models.CycleCount).filter(models.CycleCount.id == cid).first()
     if not c:
         raise HTTPException(status_code=404, detail="Cycle count not found")
+    # Approving moves stock, so it must run at most once — the same rule accept_grn
+    # states 100 lines above. Without this guard a repeat call re-applies the count:
+    # variance is written once at creation and never cleared, so `variance != 0`
+    # below is still true and the whole body fires again. Measured on a 100-unit
+    # item counted at 90, then legitimately receipted by 500:
+    #
+    #     approve #1 -> 90    receipt -> 590    approve #2 -> 90
+    #
+    # 500 units destroyed, and a second "Adjust 10" ledger row written that makes
+    # the trail corroborate the corrupted figure instead of exposing it. The
+    # Approve button carries no disabled state (EnterpriseInventory.tsx), so a
+    # double-click, a retry after a timeout, or a second admin on a 3s-polled page
+    # all reach this.
+    if c.status != "Draft":
+        raise HTTPException(status_code=400, detail=f"Cycle count already processed (status '{c.status}')")
     ci = db.query(models.CycleCountItem).filter(models.CycleCountItem.count_id == cid).all()
     for line in ci:
         if line.variance != 0:
             item = db.query(models.InventoryItem).filter(models.InventoryItem.id == line.item_id).first()
             if item:
-                item.current_stock = line.physical_qty
+                # Apply the variance as a DELTA, not `= physical_qty`. A count is
+                # taken on the floor and approved later, and an absolute set
+                # silently reverts everything booked in between — the same 500-unit
+                # loss as above, from a single legitimate approve.
+                #
+                # The delta is also what this block's own ledger row already
+                # claims: it records quantity=abs(variance) and "Variance: -10",
+                # never "set to 90". The stock mutation now matches the audit row
+                # instead of contradicting it. NULL current_stock (nullable
+                # Integer) coalesces to 0, the idiom accept_grn uses above.
+                item.current_stock = (item.current_stock or 0) + line.variance
                 db.add(models.InventoryTransaction(
                     item_id=item.id, transaction_type="Adjust",
                     quantity=abs(line.variance),

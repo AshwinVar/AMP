@@ -1,6 +1,7 @@
 import type { WorkOrder } from "../lib/phase9-types";
 import type { ProductionPlan } from "../lib/phase11-types";
 import type { CustomerOrder, CustomerOrderAnalytics } from "../lib/phase17-types";
+import { LiveInput } from "../lib/useLiveField";
 
 function statusStyle(status: string) {
   switch (status) {
@@ -175,11 +176,11 @@ export default function OrdersDispatchSection({
                     <td className="py-3 px-4">{getPlanName(row.linked_production_plan_id)}</td>
                     <td className="py-3 px-4">{row.order_quantity}</td>
                     <td className="py-3 px-4">
-                      <input
+                      <LiveInput
                         className="w-24 bg-slate-950 border border-slate-700 rounded-lg px-2 py-1"
                         type="number"
-                        defaultValue={row.dispatched_quantity}
-                        onBlur={(e) => updateOrder(row.id, Number(e.target.value), undefined, row.priority)}
+                        value={row.dispatched_quantity}
+                        onCommit={(raw) => updateOrder(row.id, Number(raw), undefined, row.priority)}
                       />
                     </td>
                     <td className="py-3 px-4">

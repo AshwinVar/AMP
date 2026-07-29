@@ -1,6 +1,7 @@
 import type { WorkOrder } from "../lib/phase9-types";
 import type { ProductionPlan } from "../lib/phase11-types";
 import type { QualityAnalytics, QualityInspection } from "../lib/phase14-types";
+import { LiveInput } from "../lib/useLiveField";
 
 type Machine = {
   id: number;
@@ -283,14 +284,14 @@ export default function QualitySection({
                   <td className="py-3 px-4">{row.inspected_quantity}</td>
 
                   <td className="py-3 px-4">
-                    <input
+                    <LiveInput
                       className="w-20 bg-slate-950 border border-slate-700 rounded-lg px-2 py-1"
                       type="number"
-                      defaultValue={row.passed_quantity}
-                      onBlur={(e) =>
+                      value={row.passed_quantity}
+                      onCommit={(raw) =>
                         updateInspection(
                           row.id,
-                          Number(e.target.value),
+                          Number(raw),
                           row.failed_quantity,
                           row.status,
                           row.defect_category || "",
@@ -303,15 +304,15 @@ export default function QualitySection({
                   </td>
 
                   <td className="py-3 px-4">
-                    <input
+                    <LiveInput
                       className="w-20 bg-slate-950 border border-slate-700 rounded-lg px-2 py-1"
                       type="number"
-                      defaultValue={row.failed_quantity}
-                      onBlur={(e) =>
+                      value={row.failed_quantity}
+                      onCommit={(raw) =>
                         updateInspection(
                           row.id,
                           row.passed_quantity,
-                          Number(e.target.value),
+                          Number(raw),
                           row.status,
                           row.defect_category || "",
                           row.rework_quantity,

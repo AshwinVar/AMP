@@ -1,4 +1,5 @@
 import React, { useState } from "react";
+import { LiveInput } from "../lib/useLiveField";
 import type {
   InventoryAnalytics,
   InventoryItem,
@@ -274,29 +275,29 @@ export default function InventorySection({
                   <td className="py-3 px-4">{item.supplier || "-"}</td>
                   <td className="py-3 px-4 text-slate-400 text-xs">{item.location || "-"}</td>
                   <td className="py-3 px-4">
-                    <input
+                    <LiveInput
                       className="w-24 bg-slate-950 border border-slate-700 rounded-lg px-2 py-1"
                       type="number"
-                      defaultValue={item.current_stock}
-                      onBlur={(e) =>
+                      value={item.current_stock}
+                      onCommit={(raw) =>
                         updateItem(
                           item.id,
-                          Number(e.target.value),
+                          Number(raw),
                           item.reorder_level
                         )
                       }
                     />
                   </td>
                   <td className="py-3 px-4">
-                    <input
+                    <LiveInput
                       className="w-24 bg-slate-950 border border-slate-700 rounded-lg px-2 py-1"
                       type="number"
-                      defaultValue={item.reorder_level}
-                      onBlur={(e) =>
+                      value={item.reorder_level}
+                      onCommit={(raw) =>
                         updateItem(
                           item.id,
                           item.current_stock,
-                          Number(e.target.value)
+                          Number(raw)
                         )
                       }
                     />

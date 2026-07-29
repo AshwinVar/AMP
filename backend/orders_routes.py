@@ -359,8 +359,17 @@ def generate_late_order_escalations(
             status="Open",
             source="Orders",
             notes=(
+                # Coalesce a NULL dispatched_quantity to 0 for the DISPLAYED note.
+                # dispatched_quantity is Column(Integer, default=0) WITHOUT
+                # nullable=False, so a legacy / raw-SQL / cleared-field row can hold a
+                # true NULL — and this generator's late basis selects on due_date/status
+                # (never dispatched_quantity, see the reconciliation above), so a
+                # NULL-dispatched Pending overdue order reaches here and the note read
+                # "dispatched None/500". A raw None must never leak into a value a human
+                # reads (rule-2); 0 is the column's own default and the exact coalesce
+                # /analytics/customer-orders and the CSV export already apply to it.
                 f"Customer {order.customer_name}; product {order.product_name}; "
-                f"due {order.due_date}; dispatched {order.dispatched_quantity}/{order.order_quantity}"
+                f"due {order.due_date}; dispatched {order.dispatched_quantity or 0}/{order.order_quantity}"
             ),
         )
 
@@ -738,8 +747,16 @@ def generate_overdue_po_escalations(
             status="Open",
             source="Purchasing",
             notes=(
+                # Coalesce a NULL received_quantity to 0 for the DISPLAYED note (same
+                # reason as the late-order generator above). received_quantity is
+                # Column(Integer, default=0) WITHOUT nullable=False, and this generator's
+                # overdue basis selects on expected_delivery_date/status (never
+                # received_quantity), so a NULL-received overdue PO reaches here and the
+                # note read "received None/500" — a raw None in a value a human reads
+                # (rule-2). 0 is the column's own default and the coalesce
+                # /analytics/purchasing and the CSV export already apply to it.
                 f"Supplier {supplier_name}; item {po.item_name}; "
-                f"expected {po.expected_delivery_date}; received {po.received_quantity}/{po.order_quantity}"
+                f"expected {po.expected_delivery_date}; received {po.received_quantity or 0}/{po.order_quantity}"
             ),
         )
 

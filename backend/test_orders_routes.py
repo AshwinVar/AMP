@@ -469,6 +469,66 @@ def test_purchasing_analytics_overdue_reconciles_with_generator():
     print("PASS purchasing overdue headline reconciles with the generator (incl. NULL status)")
 
 
+def test_late_order_escalation_note_coalesces_null_dispatched():
+    # rule-2: a raw None must never leak into a DISPLAYED value. dispatched_quantity
+    # is Column(Integer, default=0) WITHOUT nullable=False, and the late basis selects
+    # on due_date/status (never dispatched_quantity), so a NULL-dispatched Pending
+    # overdue order reaches the generator. Its note used to read "dispatched None/10";
+    # it must read the column's own default of 0 ("dispatched 0/10") — the same
+    # coalesce the analytics headline and CSV export already apply. Hand-derived: one
+    # overdue Pending order, dispatched forced NULL -> exactly one escalation whose
+    # note contains "dispatched 0/10" and never the substring "None".
+    db = _iso_session()
+    tok = T.set_current_tenant("TA")
+    try:
+        co = orders_routes.create_customer_order(
+            _co_full("CO-LN", "Acme", 10, 0, "Pending", "High", -3),
+            db=db, current_user={"tenant": "TA"})
+        db.execute(text("UPDATE customer_orders SET dispatched_quantity = NULL WHERE id = :i"), {"i": co.id})
+        db.commit()
+        db.expire_all()
+
+        created = orders_routes.generate_late_order_escalations(db=db, current_user={"tenant": "TA"})["created"]
+        assert created == 1, created
+        esc = db.query(models.Escalation).filter(
+            models.Escalation.title == "Late customer order: CO-LN").first()
+        assert esc is not None, "escalation not created for the NULL-dispatched overdue order"
+        assert "dispatched 0/10" in esc.notes, esc.notes     # coalesced, honest
+        assert "None" not in esc.notes, esc.notes            # no raw None leaked
+    finally:
+        T.reset_current_tenant(tok)
+    print("PASS late-order escalation note coalesces a NULL dispatched to 0 (no 'None' leak)")
+
+
+def test_overdue_po_escalation_note_coalesces_null_received():
+    # The PO-side complement (rule-2): received_quantity is Column(Integer, default=0)
+    # WITHOUT nullable=False, and the overdue basis selects on expected_delivery_date/
+    # status (never received_quantity), so a NULL-received overdue PO reaches the
+    # generator. Its note used to read "received None/20"; it must read "received 0/20".
+    # Hand-derived: one overdue Open PO, received forced NULL -> one escalation whose
+    # note contains "received 0/20" and never the substring "None".
+    db = _iso_session()
+    tok = T.set_current_tenant("TA")
+    try:
+        s1 = orders_routes.create_supplier(_supplier("S1", "Acme"), db=db, current_user={"tenant": "TA"})
+        po = orders_routes.create_purchase_order(
+            _po_due("PO-RN", s1.id, 20, 0, -3), db=db, current_user={"tenant": "TA"})
+        db.execute(text("UPDATE purchase_orders SET received_quantity = NULL WHERE id = :i"), {"i": po.id})
+        db.commit()
+        db.expire_all()
+
+        created = orders_routes.generate_overdue_po_escalations(db=db, current_user={"tenant": "TA"})["created"]
+        assert created == 1, created
+        esc = db.query(models.Escalation).filter(
+            models.Escalation.title == "Overdue purchase order: PO-RN").first()
+        assert esc is not None, "escalation not created for the NULL-received overdue PO"
+        assert "received 0/20" in esc.notes, esc.notes       # coalesced, honest
+        assert "None" not in esc.notes, esc.notes            # no raw None leaked
+    finally:
+        T.reset_current_tenant(tok)
+    print("PASS overdue-PO escalation note coalesces a NULL received to 0 (no 'None' leak)")
+
+
 def test_update_customer_order_survives_null_dispatched_quantity():
     # The WRITE path complement to test_customer_order_analytics_survives_null_*:
     # dispatched_quantity is Column(Integer, default=0) WITHOUT nullable=False and
@@ -780,6 +840,8 @@ if __name__ == "__main__":
     test_customer_order_analytics_null_status_overdue_counts_as_late()
     test_late_order_escalation_generator_reconciles_with_late_headline()
     test_purchasing_analytics_overdue_reconciles_with_generator()
+    test_late_order_escalation_note_coalesces_null_dispatched()
+    test_overdue_po_escalation_note_coalesces_null_received()
     test_update_customer_order_survives_null_dispatched_quantity()
     test_update_customer_order_dispatch_from_null_transitions_partial()
     test_update_purchase_order_survives_null_received_quantity()

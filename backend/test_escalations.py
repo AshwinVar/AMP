@@ -12,7 +12,7 @@ Run:  python backend/test_escalations.py     (exit 0 = pass)
 """
 from datetime import datetime, timedelta
 
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker
 
 import models
@@ -154,6 +154,93 @@ def test_window_bound_keeps_old_closed_out_but_old_open_in():
     print("PASS window bound excludes old closed, keeps old open")
 
 
+def _force_status(db, title, raw):
+    """Set a status the ORM cannot write.
+
+    `status = Column(String, default="Open")` is a PYTHON-side default, so
+    passing status=None to the model writes "Open" and the case under test never
+    exists. Raw SQL is the only way to build the row — which is also how it
+    arises in production: a migration, a bulk import, or a manual fix-up. The
+    repo ships 16 raw .sql migrations, and five other test files do exactly this.
+    """
+    db.execute(text("UPDATE escalations SET status = :s WHERE title = :t"),
+               {"s": raw, "t": title})
+    db.commit()
+    db.expire_all()
+
+
+def test_an_aged_escalation_with_no_status_is_still_open():
+    """THE BUG. The bounded scan was `NOT (lower(status) IN (...))`, and on a NULL
+    status lower(NULL) is NULL, so the IN is UNKNOWN and its negation is UNKNOWN —
+    never TRUE. An escalation older than the window failed the created_at branch
+    too, so it vanished from the queue entirely.
+
+    Measured before the fix, on one Critical never-resolved 60-day-old row:
+
+        open 0 | urgent_open 0 | oldest_open_days None | queue []
+        verdict "No escalations on record."
+
+    while /analytics/dashboard, /analytics/system-health and /saas/tenant-activity
+    all counted it open — and this module's own _is_closed(None) returns False.
+    """
+    db = _fresh_session()
+    _add(db, [_esc("no-status", severity="Critical", status="Open",
+                   created_days_ago=WINDOW_DAYS + 30)])
+    _force_status(db, "no-status", None)
+
+    r = escalations.build_escalation_summary(db, "DEFAULT")
+    assert r["open"] == 1, r["open"]
+    assert r["urgent_open"] == 1, r["urgent_open"]
+    assert r["oldest_open_days"] == WINDOW_DAYS + 30, r["oldest_open_days"]
+    assert r["needs_attention"]["title"] == "no-status"
+    assert [q["title"] for q in r["queue"]] == ["no-status"]
+    assert "No escalations" not in r["verdict"], r["verdict"]
+    print("PASS an aged NULL-status escalation stays in the backlog")
+
+
+def test_the_prefilter_agrees_with_the_python_that_adjudicates_it():
+    """The SQL is only a prefilter; _is_closed makes the real call. When the two
+    disagree the row never reaches the Python, so the disagreement is invisible.
+
+    This pins them together over the statuses that differ: NULL and whitespace
+    both normalise to "" in _norm, which is not in CLOSED_STATUSES, so both are
+    OPEN — and both must survive the scan from outside the window.
+    """
+    for raw in (None, "", "   ", "\t"):
+        db = _fresh_session()
+        _add(db, [_esc("odd", severity="Medium", status="Open",
+                       created_days_ago=WINDOW_DAYS + 10)])
+        _force_status(db, "odd", raw)
+
+        assert escalations._is_closed(raw) is False, raw     # the Python basis: OPEN
+        r = escalations.build_escalation_summary(db, "DEFAULT")
+        assert r["open"] == 1, (raw, r["open"])              # ...so the scan must fetch it
+        assert sum(a["count"] for a in r["aging"]) == 1, raw
+    print("PASS NULL and whitespace statuses agree with _is_closed")
+
+
+def test_widening_the_filter_does_not_drag_closed_escalations_back_in():
+    """The fix errs WIDE on purpose, so the risk it introduces is over-inclusion.
+
+    A whitespace-padded closed status is the case that probes it: trim() makes
+    SQL see "resolved" exactly as _norm() does, so an old resolved escalation
+    stays out of the backlog rather than reappearing as a 40-day-old open item.
+    """
+    db = _fresh_session()
+    _add(db, [
+        _esc("padded-closed", status="Resolved",
+             created_days_ago=WINDOW_DAYS + 40, resolved_days_ago=WINDOW_DAYS + 38),
+        _esc("upper-closed", status="CANCELLED", created_days_ago=WINDOW_DAYS + 40),
+    ])
+    _force_status(db, "padded-closed", "  Resolved  ")
+
+    r = escalations.build_escalation_summary(db, "DEFAULT")
+    assert r["open"] == 0, r["open"]
+    assert r["queue"] == [] and r["needs_attention"] is None
+    assert r["resolution"]["raised"] == 0                    # both are outside the window
+    print("PASS a padded/cased closed status stays closed")
+
+
 def test_empty_and_none_fields_are_safe():
     """No escalations -> honest zeros / None, no divide-by-zero. A row with a NULL
     created_at (the nullable timestamp) is bucketed as freshly open rather than
@@ -217,6 +304,9 @@ if __name__ == "__main__":
     test_backlog_breakdowns_reconcile_and_rank()
     test_resolution_scorecard_uses_real_timestamps()
     test_window_bound_keeps_old_closed_out_but_old_open_in()
+    test_an_aged_escalation_with_no_status_is_still_open()
+    test_the_prefilter_agrees_with_the_python_that_adjudicates_it()
+    test_widening_the_filter_does_not_drag_closed_escalations_back_in()
     test_empty_and_none_fields_are_safe()
     test_clear_queue_reads_good()
     test_summary_exposes_the_card_contract()

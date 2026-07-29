@@ -13,7 +13,7 @@ reference.
 Run:  python backend/test_enterprise_inventory_null_safe.py     (exit 0 = pass)
 """
 from fastapi import HTTPException
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker
 
 import models
@@ -30,10 +30,34 @@ def _sess():
 
 
 def _item(db, item_id, code, stock, reorder=0):
+    """Insert an item, writing a REAL NULL when stock/reorder is None.
+
+    The obvious version — passing current_stock=None to the model — does not do
+    that. `current_stock = Column(Integer, default=0)` is a PYTHON-side default,
+    so SQLAlchemy treats an explicitly-None attribute as "no value supplied" and
+    inserts the default. Verified:
+
+        passing current_stock=None to the model  -> 0
+        after a raw SQL UPDATE ... = NULL        -> None
+
+    Every fixture in this file used the obvious version, so the whole file — a
+    file whose entire subject is NULL-stock safety, and whose docstring above
+    correctly says only a raw-SQL/migration write can store one — was exercising
+    ZERO-stock, and the coalesce guards it claims to pin were unprotected.
+    """
     db.add(models.InventoryItem(
         id=item_id, item_code=code, item_name=f"Item {code}",
-        category="Raw", unit="pc", current_stock=stock, reorder_level=reorder,
+        category="Raw", unit="pc",
+        current_stock=0 if stock is None else stock,
+        reorder_level=0 if reorder is None else reorder,
     ))
+    db.flush()
+    nulls = [c for c, v in (("current_stock", stock), ("reorder_level", reorder)) if v is None]
+    for column in nulls:
+        db.execute(text(f"UPDATE inventory_items SET {column} = NULL WHERE id = :i"),
+                   {"i": item_id})
+    if nulls:
+        db.expire_all()
 
 
 def test_issue_slip_null_stock_is_400_not_500():

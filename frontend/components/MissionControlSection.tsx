@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { apiGet, apiPatch, apiPost } from "../lib/api";
 import FactoryPulse from "./FactoryPulse";
+import { parseApiDate } from "../lib/apiDate";
 
 // Mirrors the backend Insight shape (ai/insights.py build_feed).
 type Insight = {
@@ -33,8 +34,9 @@ function sourceBadge(source: string) {
 }
 
 function timeAgo(iso: string) {
-  const then = new Date(iso).getTime();
-  if (Number.isNaN(then)) return "";
+  const parsed = parseApiDate(iso);
+  if (!parsed) return "";
+  const then = parsed.getTime();
   const s = Math.max(0, Math.floor((Date.now() - then) / 1000));
   if (s < 60) return `${s}s ago`;
   const m = Math.floor(s / 60);

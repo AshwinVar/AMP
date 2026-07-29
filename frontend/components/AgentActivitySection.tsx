@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import { apiGet, apiPost } from "../lib/api";
 import AgentDetailDrawer from "./AgentDetailDrawer";
 import AgentPolicyPanel from "./AgentPolicyPanel";
+import { parseApiDate } from "../lib/apiDate";
 
 // Mirrors the backend AgentAction (main.py _agent_action_dict).
 type AgentAction = {
@@ -77,13 +78,13 @@ function agentStyle(a: string) {
 
 function fmt(iso: string | null) {
   if (!iso) return "—";
-  const d = new Date(iso);
-  return Number.isNaN(d.getTime()) ? "—" : d.toLocaleString();
+  const d = parseApiDate(iso);
+  return d ? d.toLocaleString() : "—";
 }
 
 function weekday(iso: string) {
-  const d = new Date(iso);
-  return Number.isNaN(d.getTime()) ? "" : d.toLocaleDateString(undefined, { weekday: "short" });
+  const d = parseApiDate(iso);
+  return d ? d.toLocaleDateString(undefined, { weekday: "short" }) : "";
 }
 
 export default function AgentActivitySection() {

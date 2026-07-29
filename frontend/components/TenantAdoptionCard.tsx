@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { apiGet } from "../lib/api";
+import { parseApiDate } from "../lib/apiDate";
 
 type TenantRow = {
   tenant_code: string;
@@ -24,8 +25,8 @@ type TenantActivity = {
 
 function ago(iso: string | null) {
   if (!iso) return "never";
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return "—";
+  const d = parseApiDate(iso);
+  if (!d) return "—";
   const days = Math.floor((Date.now() - d.getTime()) / 86400000);
   return days <= 0 ? "today" : `${days}d ago`;
 }

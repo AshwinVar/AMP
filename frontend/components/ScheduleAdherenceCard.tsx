@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { apiGet } from "../lib/api";
+import { parseApiDate } from "../lib/apiDate";
 
 type ChaseRow = {
   plan_no: string;
@@ -34,8 +35,8 @@ type ScheduleSummary = {
 };
 
 function dayLabel(iso: string) {
-  const d = new Date(iso);
-  return Number.isNaN(d.getTime()) ? "" : d.toLocaleDateString(undefined, { weekday: "narrow" });
+  const d = parseApiDate(iso);
+  return d ? d.toLocaleDateString(undefined, { weekday: "narrow" }) : "";
 }
 
 // The Production Plan view's intelligence layer over the plan CRUD: did we make

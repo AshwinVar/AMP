@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import type { Escalation, EscalationAnalytics } from "../lib/phase12-types";
+import { LiveInput } from "../lib/useLiveField";
 
 type Machine = {
   id: number;
@@ -230,14 +231,14 @@ export default function EscalationSection({
                   </td>
 
                   <td className="py-3 px-4">
-                    <input
+                    <LiveInput
                       className="w-32 bg-slate-950 border border-slate-700 rounded-lg px-2 py-1"
-                      defaultValue={row.owner}
-                      onBlur={(e) =>
+                      value={row.owner}
+                      onCommit={(raw) =>
                         updateEscalation(
                           row.id,
                           row.status,
-                          e.target.value,
+                          raw,
                           row.department,
                           row.resolution_notes || ""
                         )
@@ -246,15 +247,15 @@ export default function EscalationSection({
                   </td>
 
                   <td className="py-3 px-4">
-                    <input
+                    <LiveInput
                       className="w-32 bg-slate-950 border border-slate-700 rounded-lg px-2 py-1"
-                      defaultValue={row.department}
-                      onBlur={(e) =>
+                      value={row.department}
+                      onCommit={(raw) =>
                         updateEscalation(
                           row.id,
                           row.status,
                           row.owner,
-                          e.target.value,
+                          raw,
                           row.resolution_notes || ""
                         )
                       }
@@ -284,17 +285,17 @@ export default function EscalationSection({
                   <td className="py-3 px-4">{row.source}</td>
 
                   <td className="py-3 px-4">
-                    <input
+                    <LiveInput
                       className="w-52 bg-slate-950 border border-slate-700 rounded-lg px-2 py-1"
                       placeholder="Resolution notes"
-                      defaultValue={row.resolution_notes || ""}
-                      onBlur={(e) =>
+                      value={row.resolution_notes || ""}
+                      onCommit={(raw) =>
                         updateEscalation(
                           row.id,
                           row.status,
                           row.owner,
                           row.department,
-                          e.target.value
+                          raw
                         )
                       }
                     />

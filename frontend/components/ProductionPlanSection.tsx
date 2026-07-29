@@ -1,5 +1,6 @@
 import type { ProductionPlan, ProductionPlanAnalytics } from "../lib/phase11-types";
 import type { WorkOrder } from "../lib/phase9-types";
+import { LiveInput } from "../lib/useLiveField";
 
 type Machine = {
   id: number;
@@ -146,7 +147,7 @@ export default function ProductionPlanSection({
                     <td className="py-3 px-4">{plan.shift_name}</td>
                     <td className="py-3 px-4">{plan.planned_quantity}</td>
                     <td className="py-3 px-4">
-                      <input className="w-24 bg-slate-950 border border-slate-700 rounded-lg px-2 py-1" type="number" defaultValue={plan.actual_quantity} onBlur={(e) => updatePlan(plan.id, Number(e.target.value), undefined)} />
+                      <LiveInput className="w-24 bg-slate-950 border border-slate-700 rounded-lg px-2 py-1" type="number" value={plan.actual_quantity} onCommit={(raw) => updatePlan(plan.id, Number(raw), undefined)} />
                     </td>
                     <td className="py-3 px-4">
                       <div className="w-32 bg-slate-800 h-2 rounded-full">

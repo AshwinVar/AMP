@@ -1,5 +1,6 @@
 import type { InventoryItem } from "../lib/phase13-types";
 import type { PurchaseOrder, PurchasingAnalytics, Supplier } from "../lib/phase18-types";
+import { LiveInput } from "../lib/useLiveField";
 
 function statusStyle(status: string) {
   switch (status) {
@@ -214,7 +215,7 @@ export default function PurchasingSection({
                       <td className="py-3 px-4">{row.item_name}</td>
                       <td className="py-3 px-4">{row.order_quantity} {row.unit}</td>
                       <td className="py-3 px-4">
-                        <input className="w-24 bg-slate-950 border border-slate-700 rounded-lg px-2 py-1" type="number" defaultValue={row.received_quantity} onBlur={(e) => updatePurchaseOrder(row.id, Number(e.target.value), undefined)} />
+                        <LiveInput className="w-24 bg-slate-950 border border-slate-700 rounded-lg px-2 py-1" type="number" value={row.received_quantity} onCommit={(raw) => updatePurchaseOrder(row.id, Number(raw), undefined)} />
                         <p className="text-xs text-slate-500">{progress}%</p>
                       </td>
                       <td className="py-3 px-4">{row.expected_delivery_date}</td>

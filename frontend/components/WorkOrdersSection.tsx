@@ -3,6 +3,7 @@
 import { useState } from "react";
 import WorkOrderTraceDrawer from "./WorkOrderTraceDrawer";
 import type { WorkOrder, WorkOrderAnalytics } from "../lib/phase9-types";
+import { LiveInput } from "../lib/useLiveField";
 
 type Machine = {
   id: number;
@@ -213,14 +214,14 @@ export default function WorkOrdersSection({
                     </td>
                     <td className="py-3 px-4">{wo.target_quantity}</td>
                     <td className="py-3 px-4">
-                      <input
+                      <LiveInput
                         className="w-24 bg-slate-950 border border-slate-700 rounded-lg px-2 py-1"
                         type="number"
-                        defaultValue={wo.actual_quantity}
-                        onBlur={(e) =>
+                        value={wo.actual_quantity}
+                        onCommit={(raw) =>
                           updateWorkOrder(
                             wo.id,
-                            Number(e.target.value),
+                            Number(raw),
                             undefined
                           )
                         }

@@ -150,3 +150,41 @@ async def read_upload_text(file, max_bytes: int = MAX_UPLOAD_BYTES):
                        f"In Excel choose File > Save As and pick CSV, then upload that.")
 
     return decode_csv_bytes(content)
+
+
+# ── Per-row import failures ─────────────────────────────────────────
+
+def import_row_error(exc) -> str:
+    """A readable one-line reason a row could not be applied.
+
+    SQLAlchemy str()s a database error into a multi-line dump: the message, then
+    the whole INSERT, then its bound parameters. Those parameters are the row the
+    customer just uploaded, so echoing the dump into a response both buries the
+    reason and hands their data back to them inside an error string:
+
+        (sqlite3.IntegrityError) UNIQUE constraint failed: inventory_items.item_code
+        [SQL: INSERT INTO inventory_items (tenant_code, item_code, ...) VALUES (?, ...)]
+        [parameters: ('BETA', 'WIDGET', 'Beta widget', ...)]
+
+    Two things guard that, and on SQLite they are redundant with each other —
+    mutation testing established it rather than guesswork. Removing EITHER alone
+    fails no test; removing BOTH leaks the dump, and that is caught:
+
+      * `.orig` is the driver's own message. On sqlite3 it is already one line,
+        so it alone suffices there.
+      * taking the FIRST LINE alone also suffices, since the SQL and parameters
+        are on the lines below.
+
+    Keep both, because SQLite is hiding the case that matters. psycopg2's `.orig`
+    is MULTI-line — the message, then a DETAIL line that quotes the offending key
+    back verbatim ("Key (item_code)=(WIDGET) already exists"). On Postgres the
+    first-line take is the part doing the work, and the local test database can
+    never show that. Same class of blind spot as the GROUP BY ordering and NULL
+    three-valued logic this codebase has been caught by before.
+
+    Non-database errors (a bad number, a missing column) have no .orig and pass
+    through unchanged, since their str() is already the message.
+    """
+    orig = getattr(exc, "orig", None)
+    text = str(orig if orig is not None else exc).strip()
+    return (text.split("\n")[0] or exc.__class__.__name__)[:200]

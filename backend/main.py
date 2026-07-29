@@ -170,6 +170,12 @@ _ensure_index("production_records", "machine_id")        # cockpit throughput wi
 _ensure_index("quality_inspections", "machine_id")       # cockpit quality window + /analytics/quality per-machine GROUP BY
 _ensure_index("maintenance_tasks", "machine_id")         # twin open-task count + cockpit timeline (ai/twin)
 _ensure_index("agent_actions", "related_machine_id")     # twin pending-action count + cockpit timeline/open-actions (ai/twin)
+# GMATS transactional-listing line lookups: /gmats/proformas and /gmats/min batch
+# every page's lines in ONE query (proforma_id / min_id IN (...)) instead of a
+# per-row N+1. These FK columns carry no index (SQLAlchemy indexes only the PK), so
+# the join was a full-table scan of the line tables that grew with every document.
+_ensure_index("gmats_proforma_lines", "proforma_id")     # batched line fetch for /gmats/proformas listing
+_ensure_index("gmats_min_lines", "min_id")               # batched line fetch for /gmats/min listing
 tenancy.ensure_tenant_columns(engine)  # ADR-0002: tenant_code on core tables
 # Audit trail + enterprise-inventory: add tenant_code NULLABLE, NO blind backfill.
 # Legacy rows stay NULL (hidden) until an approved, source-based backfill assigns

@@ -249,7 +249,15 @@ def gmats_resolve(name: str, tenant: str = "GMATS", db: Session = Depends(get_db
 @router.get("/proformas")
 def gmats_proformas(tenant: str = "GMATS", db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
     tenant = _effective_tenant(current_user, tenant)
-    rows = db.query(models.GmatsProforma).filter(models.GmatsProforma.tenant_code == tenant).order_by(models.GmatsProforma.id.desc()).all()
+    # Bound the window (rule-4): proformas grow without limit as the tenant trades,
+    # and this list is polled — yet it was the one transactional list endpoint with
+    # no cap, where every sibling (/escalations, /operator/executions, /iot/telemetry,
+    # …) already takes the newest .limit(300/500). Take the newest 500 (id desc), so a
+    # long-lived tenant's oldest proformas can't turn the poll into a full-table scan.
+    rows = (db.query(models.GmatsProforma)
+            .filter(models.GmatsProforma.tenant_code == tenant)
+            .order_by(models.GmatsProforma.id.desc())
+            .limit(500).all())
     # Resolve line item names from THIS tenant's items only. GmatsItem is not in
     # tenancy.SCOPED_MODELS, so an unfiltered .all() loads every company's items
     # into memory (an unbounded cross-tenant scan) and would leak a foreign
@@ -258,9 +266,22 @@ def gmats_proformas(tenant: str = "GMATS", db: Session = Depends(get_db), curren
         i.id: i
         for i in db.query(models.GmatsItem).filter(models.GmatsItem.tenant_code == tenant).all()
     }
+    # Fetch every line for the WHOLE page in one query, grouped by proforma, instead
+    # of a per-proforma line query in the loop below — that N+1 fired 1 + len(rows)
+    # round-trips (up to 501) and got slower with each proforma raised. Ordered by
+    # line id so lines stay in insertion order within each proforma, byte-for-byte as
+    # the per-row query returned them. Scoped by the tenant's own proforma ids (rows
+    # is already tenant-filtered), so no foreign line can appear.
+    from collections import defaultdict
+    lines_by_proforma = defaultdict(list)
+    proforma_ids = [p.id for p in rows]
+    if proforma_ids:
+        for l in (db.query(models.GmatsProformaLine)
+                  .filter(models.GmatsProformaLine.proforma_id.in_(proforma_ids))
+                  .order_by(models.GmatsProformaLine.id).all()):
+            lines_by_proforma[l.proforma_id].append(l)
     out = []
     for p in rows:
-        lines = db.query(models.GmatsProformaLine).filter(models.GmatsProformaLine.proforma_id == p.id).all()
         out.append({
             "id": p.id, "proforma_no": p.proforma_no, "customer_name": p.customer_name,
             "status": p.status, "created_at": p.created_at,
@@ -268,7 +289,7 @@ def gmats_proformas(tenant: str = "GMATS", db: Session = Depends(get_db), curren
                 {"item_id": l.item_id,
                  "item_name": items[l.item_id].item_name if l.item_id in items else "",
                  "qty": l.qty}
-                for l in lines
+                for l in lines_by_proforma.get(p.id, [])
             ],
         })
     return out
@@ -371,7 +392,13 @@ def gmats_cancel_proforma(pid: int, db: Session = Depends(get_db), current_user:
 @router.get("/invoices")
 def gmats_invoices(tenant: str = "GMATS", db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
     tenant = _effective_tenant(current_user, tenant)
-    rows = db.query(models.GmatsInvoice).filter(models.GmatsInvoice.tenant_code == tenant).order_by(models.GmatsInvoice.id.desc()).all()
+    # Bound the window (rule-4): invoices grow without limit and this list is polled;
+    # take the newest 500 (id desc), matching /gmats/proformas and every other
+    # transactional list endpoint that already caps rather than scanning the table.
+    rows = (db.query(models.GmatsInvoice)
+            .filter(models.GmatsInvoice.tenant_code == tenant)
+            .order_by(models.GmatsInvoice.id.desc())
+            .limit(500).all())
     return [
         {"id": v.id, "invoice_no": v.invoice_no, "proforma_id": v.proforma_id,
          "customer_name": v.customer_name, "status": v.status, "created_at": v.created_at}
@@ -431,16 +458,31 @@ def gmats_generate_invoice(pid: int, db: Session = Depends(get_db), current_user
 @router.get("/min")
 def gmats_min_list(tenant: str = "GMATS", db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
     tenant = _effective_tenant(current_user, tenant)
-    rows = db.query(models.GmatsMIN).filter(models.GmatsMIN.tenant_code == tenant).order_by(models.GmatsMIN.id.desc()).all()
+    # Bound the window (rule-4): MINs grow without limit and this list is polled;
+    # take the newest 500 (id desc), matching /gmats/proformas and the sibling lists.
+    rows = (db.query(models.GmatsMIN)
+            .filter(models.GmatsMIN.tenant_code == tenant)
+            .order_by(models.GmatsMIN.id.desc())
+            .limit(500).all())
     # Same tenant-scoping as the proforma listing: only resolve names from this
     # tenant's items, never every company's (see gmats_proformas above).
     items = {
         i.id: i
         for i in db.query(models.GmatsItem).filter(models.GmatsItem.tenant_code == tenant).all()
     }
+    # Batch the line fetch for the whole page in one query, grouped by MIN, instead
+    # of the per-MIN N+1 in the loop below (see gmats_proformas). Ordered by line id
+    # to keep insertion order within each MIN; scoped by the tenant's own MIN ids.
+    from collections import defaultdict
+    lines_by_min = defaultdict(list)
+    min_ids = [m.id for m in rows]
+    if min_ids:
+        for l in (db.query(models.GmatsMINLine)
+                  .filter(models.GmatsMINLine.min_id.in_(min_ids))
+                  .order_by(models.GmatsMINLine.id).all()):
+            lines_by_min[l.min_id].append(l)
     out = []
     for m in rows:
-        lines = db.query(models.GmatsMINLine).filter(models.GmatsMINLine.min_id == m.id).all()
         out.append({
             "id": m.id, "min_no": m.min_no, "customer_name": m.customer_name,
             "machine_ref": m.machine_ref, "status": m.status, "created_at": m.created_at,
@@ -448,7 +490,7 @@ def gmats_min_list(tenant: str = "GMATS", db: Session = Depends(get_db), current
                 {"item_id": l.item_id,
                  "item_name": items[l.item_id].item_name if l.item_id in items else "",
                  "qty": l.qty}
-                for l in lines
+                for l in lines_by_min.get(m.id, [])
             ],
         })
     return out

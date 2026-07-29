@@ -329,11 +329,22 @@ def generate_document_review_escalations(
     for document in documents:
         title = f"Document review overdue: {document.document_no}"
 
+        # Dedup against an already-open escalation for this document. A NULL status
+        # is not a terminal state (still open) — the SAME convention this generator
+        # already applies to its overdue-document selection above (or_ approval_status
+        # IS NULL) and every open-escalation reader uses (#295/#403). Without OR-ing
+        # the NULL in, SQL's bare `status != 'Resolved'` is NULL — not TRUE — for a
+        # NULL-status row, so the dedup MISSED it and raised a DUPLICATE, inflating
+        # the open-escalation count the readers report. A Resolved one still lets a
+        # fresh recurrence through.
         existing = (
             db.query(models.Escalation)
             .filter(
                 models.Escalation.title == title,
-                models.Escalation.status != "Resolved",
+                or_(
+                    models.Escalation.status.is_(None),
+                    models.Escalation.status != "Resolved",
+                ),
             )
             .first()
         )
@@ -459,11 +470,22 @@ def generate_maintenance_overdue_escalations(
 
     for task in tasks:
         title = f"Maintenance overdue: {task.task_no}"
+        # Dedup against an already-open escalation for this task. A NULL status is
+        # not a terminal state (still open) — the SAME convention this generator
+        # already applies to its overdue-task selection above (or_ status IS NULL)
+        # and every open-escalation reader uses (#295/#403). Without OR-ing the NULL
+        # in, SQL's bare `status != 'Resolved'` is NULL — not TRUE — for a NULL-status
+        # row, so the dedup MISSED it and raised a DUPLICATE, inflating the
+        # open-escalation count the readers report. A Resolved one still lets a fresh
+        # recurrence through.
         existing = (
             db.query(models.Escalation)
             .filter(
                 models.Escalation.title == title,
-                models.Escalation.status != "Resolved",
+                or_(
+                    models.Escalation.status.is_(None),
+                    models.Escalation.status != "Resolved",
+                ),
             )
             .first()
         )
@@ -512,9 +534,20 @@ def generate_oee_recovery_escalation(
 
     lever = rec["lever_label"]
     title = f"OEE recovery: close the {lever} gap"
+    # Dedup against an already-open recovery escalation. A NULL status is not a
+    # terminal state (still open) — the convention every open-escalation reader
+    # uses (#295/#403) — so OR the NULL in: a bare `status != 'Resolved'` is NULL
+    # (not TRUE) for a NULL-status row and would surface a DUPLICATE instead of the
+    # existing one. A Resolved one still lets a fresh recurrence through.
     existing = (
         db.query(models.Escalation)
-        .filter(models.Escalation.title == title, models.Escalation.status != "Resolved")
+        .filter(
+            models.Escalation.title == title,
+            or_(
+                models.Escalation.status.is_(None),
+                models.Escalation.status != "Resolved",
+            ),
+        )
         .first()
     )
     if existing:

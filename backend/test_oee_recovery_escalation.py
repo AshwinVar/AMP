@@ -82,6 +82,36 @@ def test_is_idempotent_while_unresolved():
     print("PASS idempotent — an open recovery escalation is surfaced, not duplicated")
 
 
+def test_null_status_existing_escalation_is_surfaced_not_duplicated():
+    """A pre-existing recovery escalation whose status is a genuine NULL is still
+    open, so the generator must SURFACE it (created 0), not raise a duplicate.
+    status is String default="Open" (not NOT NULL), so a raw-SQL / migration /
+    cleared-field row can hold a real NULL; SQL's `status != 'Resolved'` is NULL —
+    not TRUE — for it, so the bare predicate MISSED it. Regression guard for the
+    or_(status IS NULL, ...) dedup fix."""
+    from sqlalchemy import text
+    db = _fresh_session()
+    db.add(models.Escalation(
+        title="OEE recovery: close the Performance gap", severity="High",
+        owner="Operations", department="Production", status="Open",
+        source="OEE Recovery"))
+    db.commit()
+    db.execute(text("UPDATE escalations SET status = NULL "
+                    "WHERE title = 'OEE recovery: close the Performance gap'"))
+    db.commit()
+    db.expire_all()
+    existing_id = db.query(models.Escalation).one().id
+
+    orig = _stub(_summary())
+    try:
+        out = generate_oee_recovery_escalation(db=db, current_user=USER)
+    finally:
+        rec.build_recovery_summary = orig
+    assert out == {"created": 0, "escalation_id": existing_id}, out
+    assert db.query(models.Escalation).count() == 1       # no duplicate raised
+    print("PASS a NULL-status open recovery escalation is surfaced, not duplicated")
+
+
 def test_units_only_when_no_rate():
     db = _fresh_session()
     orig = _stub(_summary(lever_recoverable_value_per_year=None))
@@ -127,6 +157,7 @@ def test_no_op_at_world_class():
 if __name__ == "__main__":
     test_creates_one_escalation_with_the_lever_and_prize()
     test_is_idempotent_while_unresolved()
+    test_null_status_existing_escalation_is_surfaced_not_duplicated()
     test_units_only_when_no_rate()
     test_targets_worst_machine_on_the_lever()
     test_no_op_at_world_class()

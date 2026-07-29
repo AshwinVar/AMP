@@ -50,7 +50,6 @@ def _get_db():
 def analytics_summary(db: Session = Depends(_get_db), current_user: dict = Depends(get_current_user)):
     machines = db.query(models.Machine).all()
     logs = db.query(models.DowntimeLog).all()
-    shifts = db.query(models.ShiftData).all()
 
     # Plant OEE is a pure ratio of sums (pooled_oee), so the growing
     # production_records table belongs in SQL — not hydrated whole into Python just
@@ -124,8 +123,23 @@ def analytics_summary(db: Session = Depends(_get_db), current_user: dict = Depen
     # already follows. Pooling adds a 0-target shift's real output to the numerator
     # and nothing to the denominator, so an unplanned shift neither fabricates a 0%
     # nor disagrees with the attainment surfaces on the same shifts.
-    total_shift_target = sum(s.target_output or 0 for s in shifts)
-    total_shift_actual = sum(s.actual_output or 0 for s in shifts)
+    #
+    # Pooling is a pure ratio of sums, so the growing shift_data table belongs in
+    # SQL — not hydrated whole into Python just to sum it, the same rule-4 fix the
+    # production_records scan 60 lines above already carries (#411) and the sibling
+    # executive rollups do (#405/#370/#372). The old `db.query(ShiftData).all()`
+    # returned every shift ever recorded on an endpoint the dashboard polls, only
+    # to sum two columns and discard the rows. ShiftData is in SCOPED_MODELS, so the
+    # do_orm_execute hook (ADR-0002) tenant-scopes this aggregate exactly as it
+    # scoped the scan. COALESCE(SUM(..), 0) matches the old `sum(.. or 0 ..)` byte
+    # for byte: SQL SUM already skips a (theoretical, nullable-legacy) NULL row the
+    # way `or 0` did, and COALESCE returns 0 for the empty-table SUM (NULL).
+    total_shift_target, total_shift_actual = db.query(
+        func.coalesce(func.sum(models.ShiftData.target_output), 0),
+        func.coalesce(func.sum(models.ShiftData.actual_output), 0),
+    ).one()
+    total_shift_target = int(total_shift_target)
+    total_shift_actual = int(total_shift_actual)
     avg_shift_efficiency = round((total_shift_actual / total_shift_target) * 100) if total_shift_target else 0
 
     reason_counts = {}

@@ -23,7 +23,12 @@ const PLAIN_RE = new RegExp(NUM);
 // Python's round() breaks ties to even: round(2.5) is 2, round(3.5) is 4.
 // Math.round would give 3 and 4. Matching it keeps the tile and the API on the
 // same minute for every input, not just most of them.
-function roundHalfToEven(n: number) {
+//
+// Exported because it is not a duration rule, it is the Python rule — anything
+// this codebase ports from a `round(...)` in backend/ needs it. lib/shift.ts is
+// the second caller: a shift that made 1 of a target 40 is exactly 2.5%, where
+// Math.round says 3% and the API says 2%.
+export function roundHalfToEven(n: number) {
   const floor = Math.floor(n);
   const remainder = n - floor;
 

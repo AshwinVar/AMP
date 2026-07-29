@@ -327,11 +327,22 @@ def generate_late_order_escalations(
     for order in late_orders:
         title = f"Late customer order: {order.order_no}"
 
+        # Dedup against an already-OPEN escalation with the same title. Escalation.status
+        # is Column(String, default="Open") WITHOUT nullable=False, so a raw-SQL /
+        # migration / cleared-field row can carry a genuine NULL. In SQL a bare
+        # `status != 'Resolved'` is NULL — not TRUE — for such a row, so it did NOT find
+        # a NULL-status open escalation and raised a DUPLICATE, inflating the very
+        # open-escalation count every reader reports. OR the NULL back in so a NULL-status
+        # open escalation blocks the duplicate; a Resolved one still lets a fresh
+        # recurrence through. (Mirrors #425, which missed this generator.)
         existing = (
             db.query(models.Escalation)
             .filter(
                 models.Escalation.title == title,
-                models.Escalation.status != "Resolved",
+                or_(
+                    models.Escalation.status.is_(None),
+                    models.Escalation.status != "Resolved",
+                ),
             )
             .first()
         )
@@ -692,11 +703,22 @@ def generate_overdue_po_escalations(
     for po in overdue_pos:
         title = f"Overdue purchase order: {po.po_no}"
 
+        # Dedup against an already-OPEN escalation with the same title. Escalation.status
+        # is Column(String, default="Open") WITHOUT nullable=False, so a raw-SQL /
+        # migration / cleared-field row can carry a genuine NULL. In SQL a bare
+        # `status != 'Resolved'` is NULL — not TRUE — for such a row, so it did NOT find
+        # a NULL-status open escalation and raised a DUPLICATE, inflating the very
+        # open-escalation count every reader reports. OR the NULL back in so a NULL-status
+        # open escalation blocks the duplicate; a Resolved one still lets a fresh
+        # recurrence through. (Mirrors #425, which missed this generator.)
         existing = (
             db.query(models.Escalation)
             .filter(
                 models.Escalation.title == title,
-                models.Escalation.status != "Resolved",
+                or_(
+                    models.Escalation.status.is_(None),
+                    models.Escalation.status != "Resolved",
+                ),
             )
             .first()
         )

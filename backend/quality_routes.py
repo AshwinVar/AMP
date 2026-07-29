@@ -258,11 +258,24 @@ def generate_defect_escalations(
 
         title = f"Quality issue: {inspection.inspection_no}"
 
+        # Dedup against an already-OPEN escalation with the same title. Escalation.status
+        # is Column(String, default="Open") WITHOUT nullable=False, so a raw-SQL /
+        # migration / cleared-field row can carry a genuine NULL. In SQL a bare
+        # `status != 'Resolved'` is NULL — not TRUE — for such a row, so it did NOT find
+        # a NULL-status open escalation and raised a DUPLICATE, inflating the very
+        # open-escalation count every reader reports (analytics /escalations,
+        # system-notifications, tenant-activity all count a NULL status as still open).
+        # OR the NULL back in so a NULL-status open escalation blocks the duplicate; a
+        # Resolved one still lets a fresh recurrence through. (Mirrors #425, which widened
+        # the other five generators but missed this one.)
         existing = (
             db.query(models.Escalation)
             .filter(
                 models.Escalation.title == title,
-                models.Escalation.status != "Resolved",
+                or_(
+                    models.Escalation.status.is_(None),
+                    models.Escalation.status != "Resolved",
+                ),
             )
             .first()
         )

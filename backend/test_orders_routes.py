@@ -714,6 +714,59 @@ def test_update_purchase_order_rejects_negative_received():
     print("PASS update purchase order rejects a negative received PATCH -> 400, no phantom receipt")
 
 
+def test_late_order_generator_dedups_against_null_status_open_escalation():
+    # An existing OPEN "Late customer order" escalation whose status column is a
+    # genuine NULL (raw SQL / migration / cleared write — Escalation.status is
+    # default="Open", not NOT NULL) must still block a duplicate on the next run.
+    # The old bare `status != 'Resolved'` dedup was NULL (not TRUE) for such a row,
+    # so it did NOT find the existing escalation and raised a SECOND one — inflating
+    # the open-escalation count every reader reports. Regression guard for the
+    # or_(status IS NULL, ...) fix (completing #425 for this generator).
+    db = _iso_session()
+    tok = T.set_current_tenant("TA")
+    try:
+        orders_routes.create_customer_order(_co_full("CO-DN", "Acme", 10, 0, "Pending", "High", -3), db=db, current_user={"tenant": "TA"})
+        db.commit()
+        # First run raises the escalation, then force its status to a real SQL NULL.
+        assert orders_routes.generate_late_order_escalations(db=db, current_user={"tenant": "TA"})["created"] == 1
+        db.execute(text("UPDATE escalations SET status = NULL WHERE title = 'Late customer order: CO-DN'"))
+        db.commit()
+        db.expire_all()
+
+        # Second run must find the NULL-status open escalation and NOT duplicate it.
+        again = orders_routes.generate_late_order_escalations(db=db, current_user={"tenant": "TA"})["created"]
+        assert again == 0, f"NULL-status open escalation must block a duplicate, got {again}"
+        dup = [e for e in db.query(models.Escalation).all() if e.title == "Late customer order: CO-DN"]
+        assert len(dup) == 1, f"NULL-status open escalation was duplicated: {len(dup)} rows"
+    finally:
+        T.reset_current_tenant(tok)
+    print("PASS late-order generator dedups against a NULL-status open escalation")
+
+
+def test_overdue_po_generator_dedups_against_null_status_open_escalation():
+    # Same NULL-status dedup regression for the overdue-PO generator (see the
+    # late-order test above). An existing NULL-status open "Overdue purchase order"
+    # escalation must block a duplicate on the next run.
+    db = _iso_session()
+    tok = T.set_current_tenant("TA")
+    try:
+        s1 = orders_routes.create_supplier(_supplier("S1", "Acme"), db=db, current_user={"tenant": "TA"})
+        orders_routes.create_purchase_order(_po_due("PO-DN", s1.id, 10, 0, -3), db=db, current_user={"tenant": "TA"})
+        db.commit()
+        assert orders_routes.generate_overdue_po_escalations(db=db, current_user={"tenant": "TA"})["created"] == 1
+        db.execute(text("UPDATE escalations SET status = NULL WHERE title = 'Overdue purchase order: PO-DN'"))
+        db.commit()
+        db.expire_all()
+
+        again = orders_routes.generate_overdue_po_escalations(db=db, current_user={"tenant": "TA"})["created"]
+        assert again == 0, f"NULL-status open escalation must block a duplicate, got {again}"
+        dup = [e for e in db.query(models.Escalation).all() if e.title == "Overdue purchase order: PO-DN"]
+        assert len(dup) == 1, f"NULL-status open escalation was duplicated: {len(dup)} rows"
+    finally:
+        T.reset_current_tenant(tok)
+    print("PASS overdue-PO generator dedups against a NULL-status open escalation")
+
+
 if __name__ == "__main__":
     test_procurement_paths_owned_by_orders_routes()
     test_duplicate_order_no_across_tenants_is_409_not_500()
@@ -735,4 +788,6 @@ if __name__ == "__main__":
     test_update_customer_order_rejects_negative_dispatched()
     test_create_purchase_order_rejects_negative_quantities()
     test_update_purchase_order_rejects_negative_received()
+    test_late_order_generator_dedups_against_null_status_open_escalation()
+    test_overdue_po_generator_dedups_against_null_status_open_escalation()
     print("ALL ORDERS ROUTE TESTS PASSED")

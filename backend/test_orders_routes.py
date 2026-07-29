@@ -118,25 +118,38 @@ def _supplier(code, name):
     return schemas.SupplierCreate(supplier_code=code, supplier_name=name)
 
 
+def _today():
+    """The same "today" orders_routes uses.
+
+    Every date comparison in the routes under test is against
+    ``datetime.utcnow().date()``. A fixture built from ``date.today()`` is the
+    LOCAL date, and for any timezone ahead of UTC the two disagree for the hours
+    after local midnight — so a row seeded "1 day ago" lands on UTC today and
+    stops being overdue. That made the overdue reconciliation test fail for part
+    of every day, and CI never saw it because GitHub runners are UTC.
+    """
+    return datetime.utcnow().date()
+
+
 def _po(no, supplier_id, order_qty, received_qty):
-    from datetime import date, timedelta
+    from datetime import timedelta
 
     return schemas.PurchaseOrderCreate(
         po_no=no, supplier_id=supplier_id, item_name="Widget",
         order_quantity=order_qty, received_quantity=received_qty, unit="ea",
-        expected_delivery_date=date.today() + timedelta(days=30),  # future -> never overdue
+        expected_delivery_date=_today() + timedelta(days=30),  # future -> never overdue
     )
 
 
 def _po_due(no, supplier_id, order_qty, received_qty, days):
     """A purchase order whose expected_delivery_date is `days` from today
     (negative -> already overdue)."""
-    from datetime import date, timedelta
+    from datetime import timedelta
 
     return schemas.PurchaseOrderCreate(
         po_no=no, supplier_id=supplier_id, item_name="Widget",
         order_quantity=order_qty, received_quantity=received_qty, unit="ea",
-        expected_delivery_date=date.today() + timedelta(days=days),
+        expected_delivery_date=_today() + timedelta(days=days),
     )
 
 
@@ -237,12 +250,12 @@ def test_purchasing_analytics_survives_null_received_quantity():
 
 
 def _co(no, order_qty, dispatched_qty):
-    from datetime import date, timedelta
+    from datetime import timedelta
 
     return schemas.CustomerOrderCreate(
         order_no=no, customer_name="Acme", product_name="Widget",
         order_quantity=order_qty, dispatched_quantity=dispatched_qty,
-        due_date=date.today() + timedelta(days=30),  # future -> never late
+        due_date=_today() + timedelta(days=30),  # future -> never late
     )
 
 

@@ -8,7 +8,7 @@ read-model (parity with the production-record / quality / order-PO ingests).
 
 Run:  python backend/test_production_planning_routes.py     (exit 0 = pass)
 """
-from datetime import date
+from datetime import datetime
 
 from fastapi import HTTPException
 from sqlalchemy import create_engine, text
@@ -73,11 +73,23 @@ def _seed_machine_and_wo(db, tenant):
     return machine, wo
 
 
+def _today():
+    """The same "today" the read-models use.
+
+    ai/schedule.py windows plans against ``datetime.utcnow().date()`` and asks
+    ``p.plan_date == today``. Seeding from the LOCAL ``date.today()`` makes the
+    row a FUTURE plan for any timezone ahead of UTC in the hours after local
+    midnight, so it drops out of the window entirely. Same trap that broke the
+    overdue reconciliation in test_orders_routes.py.
+    """
+    return datetime.utcnow().date()
+
+
 def _plan(no, machine_id, wo_id, planned, actual):
     return schemas.ProductionPlanCreate(
         plan_no=no, work_order_id=wo_id, machine_id=machine_id,
         planned_quantity=planned, actual_quantity=actual,
-        plan_date=date.today(), shift_name="A",
+        plan_date=_today(), shift_name="A",
     )
 
 
@@ -248,7 +260,7 @@ def test_status_only_patch_on_a_null_row_does_not_500():
 def _schedule(no, machine_id, planned, minutes):
     return schemas.ProductionScheduleCreate(
         schedule_no=no, machine_id=machine_id, shift_name="A",
-        scheduled_date=date.today(), planned_quantity=planned, estimated_minutes=minutes,
+        scheduled_date=_today(), planned_quantity=planned, estimated_minutes=minutes,
     )
 
 

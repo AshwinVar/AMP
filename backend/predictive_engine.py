@@ -8,13 +8,19 @@ from duration import parse_duration_to_minutes
 def _int(value):
     """Coalesce a possibly-NULL integer column to 0.
 
-    ``Machine.utilization`` and ``WorkOrder.actual_quantity`` are declared
-    ``Column(Integer, default=0)`` WITHOUT ``nullable=False`` — the ORM default
-    only fills a value the *inserter* omitted, so a row written by raw SQL, a
-    migration, or an update that clears the field can legitimately be NULL. The
-    scorer then did ``None < 40`` / ``target - None`` and raised ``TypeError``,
-    500-ing the predictive-maintenance endpoint. Treat a missing count as the
-    column's own default of 0.
+    The scorer reads five integer columns off its input rows —
+    ``Machine.utilization``, ``WorkOrder.actual_quantity`` /
+    ``WorkOrder.target_quantity`` and ``ProductionRecord.total_count`` /
+    ``ProductionRecord.rejected_count``. A row written by raw SQL, a migration,
+    or an update that clears a field can legitimately store NULL in any of them
+    (the ``default=0`` columns because the ORM default only fills a value the
+    *inserter* omitted; the ``nullable=False`` count columns because that
+    constraint isn't retro-applied to pre-existing rows). The scorer then did
+    ``None < 40`` / ``target - None`` / ``sum += None`` and raised ``TypeError``,
+    500-ing the predictive-maintenance endpoint (and the maintenance agent that
+    scores off the same rows). Treat a missing count as the column's own default
+    of 0 — the same coalesce ``analytics_engine.pooled_oee`` already applies to
+    ``total_count`` / ``good_count`` when it pools OEE from these very records.
     """
     return value if value is not None else 0
 
@@ -60,8 +66,13 @@ def calculate_predictive_risk(machines, downtime_logs, production_records, machi
             breakdown_events_by_machine[log.machine_id] += 1
 
     for record in production_records:
-        reject_by_machine[record.machine_id] += record.rejected_count
-        total_by_machine[record.machine_id] += record.total_count
+        # Coalesce NULL counts to 0 (see _int): a legacy / raw-SQL / migration row
+        # can hold a NULL total_count or rejected_count, and `defaultdict(int) += None`
+        # raised TypeError, 500-ing the endpoint. A missing count means no measured
+        # production, so it contributes 0 (and total 0 leaves reject_rate at 0 via the
+        # divide guard below) — matching how pooled_oee reads these same columns.
+        reject_by_machine[record.machine_id] += _int(record.rejected_count)
+        total_by_machine[record.machine_id] += _int(record.total_count)
 
     for event in machine_events:
         if event.new_status == "Breakdown":
@@ -72,7 +83,11 @@ def calculate_predictive_risk(machines, downtime_logs, production_records, machi
         # SQL): if a caller passes an unfiltered list, only active work orders
         # count toward pressure — same set as ACTIVE_WORK_ORDER_STATUSES.
         if work_order.status in ACTIVE_WORK_ORDER_STATUSES:
-            work_order_pressure[work_order.machine_id] += max(work_order.target_quantity - _int(work_order.actual_quantity), 0)
+            # Guard BOTH operands: actual_quantity was already coalesced, but a NULL
+            # target_quantity (same legacy/raw-SQL rows) made `None - int` raise
+            # TypeError on the very same line. No known target = no known outstanding
+            # demand, so max(0 - actual, 0) = 0 pressure — honest, not fabricated.
+            work_order_pressure[work_order.machine_id] += max(_int(work_order.target_quantity) - _int(work_order.actual_quantity), 0)
 
     rows = []
     for machine in machines:

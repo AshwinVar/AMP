@@ -113,6 +113,53 @@ def test_null_actual_quantity_counts_as_zero():
     print("PASS calculate_predictive_risk treats NULL actual_quantity as 0, no crash")
 
 
+def test_null_production_counts_counted_as_zero():
+    # ProductionRecord.total_count / rejected_count are declared nullable=False, but
+    # that constraint isn't retro-applied to pre-existing rows, so a legacy / raw-SQL
+    # / migration row can still hold NULL — exactly the rows _int exists for, and the
+    # same columns analytics_engine.pooled_oee already coalesces with `or 0`. The
+    # scorer summed them with `defaultdict(int) += None`, which raised TypeError and
+    # 500-ed the predictive-maintenance endpoint. A missing count means no measured
+    # production: it contributes 0, and total 0 leaves reject_rate at 0 (divide guard).
+    machines = [SimpleNamespace(id=1, name="M1", status="Running", utilization=70)]
+    records = [SimpleNamespace(machine_id=1, rejected_count=None, total_count=None)]
+    rows = pe.calculate_predictive_risk(machines, [], records, [], [])
+    assert rows[0]["reject_rate"] == 0, rows[0]
+    assert rows[0]["risk_score"] == 0, rows[0]            # no rule fires on a clean 70% machine
+    print("PASS calculate_predictive_risk treats NULL production counts as 0, no crash")
+
+
+def test_null_production_counts_mixed_with_real_rows():
+    # A NULL-count legacy row must not corrupt the reject_rate of REAL rows on the
+    # same machine: only the good rows contribute. Two records — one all-NULL, one
+    # real (8 rejects / 200 total = 4.0%, below the 5% band so no reject points).
+    machines = [SimpleNamespace(id=1, name="M1", status="Running", utilization=70)]
+    records = [
+        SimpleNamespace(machine_id=1, rejected_count=None, total_count=None),
+        SimpleNamespace(machine_id=1, rejected_count=8, total_count=200),
+    ]
+    rows = pe.calculate_predictive_risk(machines, [], records, [], [])
+    # reject_rate = 8 / 200 = 4.0%  (the NULL row adds 0 to both sums)
+    assert rows[0]["reject_rate"] == 4.0, rows[0]
+    assert rows[0]["risk_score"] == 0, rows[0]            # 4.0% < 5% band, nothing fires
+    print("PASS calculate_predictive_risk ignores NULL-count rows when pooling reject rate")
+
+
+def test_null_target_quantity_counts_as_zero_pressure():
+    # WorkOrder.target_quantity is nullable=False, but a legacy / raw-SQL / migration
+    # row can hold NULL. `None - actual` raised TypeError on the same line that already
+    # guards actual_quantity — 500-ing the endpoint. No known target = no known demand,
+    # so pressure floors to 0 (max(0 - actual, 0)) rather than crashing or inventing one.
+    machines = [SimpleNamespace(id=1, name="M1", status="Running", utilization=55)]
+    work_orders = [SimpleNamespace(machine_id=1, status="Running",
+                                   target_quantity=None, actual_quantity=50)]
+    rows = pe.calculate_predictive_risk(machines, [], [], [], work_orders)
+    assert rows[0]["work_order_pressure"] == 0, rows[0]
+    assert rows[0]["risk_score"] == 0, rows[0]            # 0 pressure, no other rule fires
+    assert "high active work-order load" not in rows[0]["reasons"]
+    print("PASS calculate_predictive_risk treats NULL target_quantity as 0 pressure, no crash")
+
+
 if __name__ == "__main__":
     test_uses_shared_duration_parser()
     test_classify_risk_boundaries()
@@ -121,4 +168,7 @@ if __name__ == "__main__":
     test_predictive_risk_reject_rate_guarded()
     test_null_utilization_scored_as_column_default_zero()
     test_null_actual_quantity_counts_as_zero()
+    test_null_production_counts_counted_as_zero()
+    test_null_production_counts_mixed_with_real_rows()
+    test_null_target_quantity_counts_as_zero_pressure()
     print("ALL PREDICTIVE-ENGINE TESTS PASSED")

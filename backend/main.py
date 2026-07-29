@@ -108,6 +108,39 @@ def _ensure_column(table: str, column: str, ddl: str):
         print(f"[MIGRATE] {table}.{column} skipped: {e}")
 
 
+def _backfill_completed_at():
+    """Stamp completed_at on work orders that are ALREADY Completed.
+
+    Without this, every historic Completed order would carry a NULL completed_at,
+    and the first PATCH that left it Completed would look like a first completion
+    and move its bill of materials a SECOND time — the very bug the column exists
+    to stop, fired once per order at deploy.
+
+    created_at is used as the stamp rather than now(), so the backfill does not
+    claim the whole order book completed at deploy time. The exact instant is
+    unknown for historic rows; what matters is only that it is not NULL.
+
+    This exactly preserves today's behaviour for existing data. An order that
+    reached Completed via PATCH already moved its BOM, and now cannot move it
+    again; an order created directly as Completed never moved it (create does not
+    publish) and still will not.
+
+    Idempotent, so it is safe on every boot: after this change the only way to be
+    Completed with a NULL completed_at is to have been created that way, and
+    stamping those matches the pre-existing no-publish behaviour too.
+    """
+    from sqlalchemy import text
+    try:
+        with engine.begin() as conn:
+            result = conn.execute(text(
+                "UPDATE work_orders SET completed_at = created_at "
+                "WHERE status = 'Completed' AND completed_at IS NULL"))
+        if result.rowcount:
+            print(f"[MIGRATE] work_orders.completed_at backfilled for {result.rowcount} row(s)")
+    except Exception as e:
+        print(f"[MIGRATE] work_orders.completed_at backfill skipped: {e}")
+
+
 def _ensure_index(table: str, column: str):
     """Idempotent migration: index a column on an existing table (create_all only
     creates missing tables, so existing prod tables need it added explicitly).
@@ -123,6 +156,8 @@ def _ensure_index(table: str, column: str):
 _ensure_user_tenant_column()
 _ensure_column("machines", "line", "ALTER TABLE machines ADD COLUMN line VARCHAR DEFAULT ''")
 _ensure_column("work_orders", "material_state", "ALTER TABLE work_orders ADD COLUMN material_state VARCHAR DEFAULT 'RAW'")
+_ensure_column("work_orders", "completed_at", "ALTER TABLE work_orders ADD COLUMN completed_at TIMESTAMP")
+_backfill_completed_at()
 _ensure_column("tenant_configs", "unit_value_gbp", "ALTER TABLE tenant_configs ADD COLUMN unit_value_gbp FLOAT")
 # The windowed read-models filter these by created_at in SQL — index them so the
 # window stays fast as the tables grow.

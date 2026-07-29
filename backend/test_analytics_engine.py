@@ -90,6 +90,52 @@ def test_build_shift_kpis():
     print("PASS build_shift_kpis computes efficiency + gap (zero target guarded)")
 
 
+def test_build_shift_kpis_null_outputs_are_safe_and_honest():
+    # A raw-SQL/legacy row can hold NULL in target_output/actual_output (Integer
+    # nullable=False, no default — not retro-applied to old rows). Before the
+    # coalesce this 500-ed the whole /analytics/shift-kpis + executive-oee reads
+    # (`None / int`, `int - None`). A NULL output means "nothing recorded" -> 0.
+    rows = ae.build_shift_kpis([
+        SimpleNamespace(shift_name="null-actual", target_output=100, actual_output=None),
+        SimpleNamespace(shift_name="null-target", target_output=None, actual_output=40),
+        SimpleNamespace(shift_name="both-null", target_output=None, actual_output=None),
+    ])
+    # NULL actual with a real target: 0/100 -> 0% efficiency, gap = full target.
+    assert rows[0] == {"shift_name": "null-actual", "target_output": 100,
+                       "actual_output": 0, "efficiency": 0, "gap": 100}, rows[0]
+    # NULL target: divisor guard holds -> 0% (never a crash); gap = 0 - 40 = -40.
+    assert rows[1] == {"shift_name": "null-target", "target_output": 0,
+                       "actual_output": 40, "efficiency": 0, "gap": -40}, rows[1]
+    assert rows[2] == {"shift_name": "both-null", "target_output": 0,
+                       "actual_output": 0, "efficiency": 0, "gap": 0}, rows[2]
+    print("PASS build_shift_kpis coalesces NULL outputs to 0 (no 500, honest gap)")
+
+
+def test_management_summary_null_shift_outputs_reconcile_with_sql_sums():
+    # The hydrated-row path (summing shifts in Python) must produce the SAME
+    # attainment as the SQL path (shift_sums from COALESCE(SUM(..),0)). SQL SUM
+    # skips NULL rows, so a NULL output contributes 0 there; the Python path must
+    # match. Targets 100 + NULL + 50 -> 150; actuals 80 + 30 + NULL -> 110;
+    # attainment = 110/150 = 73.33 -> 73. A NULL row must not crash or shift the
+    # denominator away from the SQL basis (rule-3).
+    shifts = [
+        SimpleNamespace(target_output=100, actual_output=80),
+        SimpleNamespace(target_output=None, actual_output=30),
+        SimpleNamespace(target_output=50, actual_output=None),
+    ]
+    s = ae.build_management_summary([], [], shifts, [])
+    assert s["target_output"] == 150, s["target_output"]
+    assert s["actual_output"] == 110, s["actual_output"]
+    assert s["target_achievement"] == 73, s["target_achievement"]
+    # The SQL path (shift_sums pre-aggregated, NULL rows already dropped by SUM)
+    # yields the identical headline — this is the byte-for-byte reconciliation.
+    s_sql = ae.build_management_summary([], [], [], [], shift_sums=(150, 110))
+    assert s_sql["target_achievement"] == s["target_achievement"]
+    assert (s_sql["target_output"], s_sql["actual_output"]) == (
+        s["target_output"], s["actual_output"])
+    print("PASS build_management_summary reconciles NULL-shift list path with SQL sums")
+
+
 def test_build_oee_trends_indexes_and_names_machines():
     r1 = _rec(machine_id=1, machine=SimpleNamespace(name="CNC-1"),
               runtime_minutes=400, planned_minutes=480, ideal_cycle_time_seconds=30,
@@ -409,6 +455,8 @@ if __name__ == "__main__":
     test_calculate_oee_zero_guards_and_perf_cap()
     test_calculate_oee_caps_availability_and_quality()
     test_build_shift_kpis()
+    test_build_shift_kpis_null_outputs_are_safe_and_honest()
+    test_management_summary_null_shift_outputs_reconcile_with_sql_sums()
     test_build_oee_trends_indexes_and_names_machines()
     test_build_management_summary()
     test_management_summary_uses_pooled_not_averaged_oee()

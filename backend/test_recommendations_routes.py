@@ -255,6 +255,73 @@ def test_generator_survives_null_utilization_stock_and_quality_columns():
           "skips those rows instead of 500-ing")
 
 
+def test_dedupe_blocks_against_a_null_status_open_recommendation():
+    # The generator's dedup blocks a duplicate against any NON-closed rec with the
+    # same title. status is Column(String, default="Open") WITHOUT nullable=False,
+    # so a raw-SQL / migration / cleared-field row can hold a genuine NULL. Before
+    # the fix the dedup used a bare `status != 'Closed'`, which is NULL — not TRUE —
+    # for a NULL-status row, so it MISSED an existing open rec and raised a DUPLICATE
+    # on every regenerate. Force a real NULL (the ORM default coerces a Python None
+    # on insert, so drive it in via SQL) and assert the second regenerate adds
+    # nothing.
+    db = _fresh_session()
+    # Shop-floor state that deterministically raises ONE inventory rec titled
+    # "Inventory replenishment recommended for BOLT-1" (stock 0 <= reorder 10).
+    db.add(models.InventoryItem(item_code="BOLT-1", item_name="Bolt", category="C",
+                                supplier="S", unit="ea", current_stock=0,
+                                reorder_level=10, location="L"))
+    db.commit()
+
+    title = "Inventory replenishment recommended for BOLT-1"
+
+    # First pass creates exactly one open rec for the item.
+    recommendations_routes.generate_ai_recommendations(db=db, current_user={})
+    same_title = [r for r in _recs(db) if r.title == title]
+    assert len(same_title) == 1, same_title
+
+    # Simulate the raw-SQL / migration NULL that the ORM default can't retro-apply.
+    db.execute(text("UPDATE ai_recommendations SET status = NULL WHERE title = :t"),
+               {"t": title})
+    db.commit()
+    db.expire_all()
+
+    # Second pass must NOT duplicate: the NULL-status rec is still open and blocks it.
+    recommendations_routes.generate_ai_recommendations(db=db, current_user={})
+    same_title = [r for r in _recs(db) if r.title == title]
+    assert len(same_title) == 1, (
+        f"NULL-status open rec should block the duplicate, got {len(same_title)}"
+    )
+    print("PASS dedup blocks a duplicate against a NULL-status open recommendation")
+
+
+def test_dedupe_reopens_after_the_previous_one_is_closed():
+    # The dedup only suppresses NON-closed recs — a genuinely Closed rec must let
+    # the same finding be raised again (the `!= 'Closed'` semantics the fix
+    # preserves; it only widens the filter to also catch NULL). Pins that widening
+    # the guard did not accidentally start blocking against a Closed rec too.
+    db = _fresh_session()
+    db.add(models.InventoryItem(item_code="BOLT-2", item_name="Bolt", category="C",
+                                supplier="S", unit="ea", current_stock=0,
+                                reorder_level=10, location="L"))
+    db.commit()
+
+    title = "Inventory replenishment recommended for BOLT-2"
+
+    recommendations_routes.generate_ai_recommendations(db=db, current_user={})
+    assert len([r for r in _recs(db) if r.title == title]) == 1
+
+    # Close the first one out; the finding is now allowed to recur.
+    db.execute(text("UPDATE ai_recommendations SET status = 'Closed' WHERE title = :t"),
+               {"t": title})
+    db.commit()
+    db.expire_all()
+
+    recommendations_routes.generate_ai_recommendations(db=db, current_user={})
+    statuses = sorted(r.status for r in _recs(db) if r.title == title)
+    assert statuses == ["Closed", "Open"], statuses
+    print("PASS a Closed rec still lets the same finding be raised again")
+
+
 if __name__ == "__main__":
     test_recommendations_paths_owned_by_module()
     test_generator_is_bounded_to_the_recent_window_in_sql()
@@ -266,4 +333,6 @@ if __name__ == "__main__":
     test_quality_fail_rate_uses_the_recent_window_denominator()
     test_generator_is_edge_safe_on_empty_and_zero_inspection()
     test_generator_survives_null_utilization_stock_and_quality_columns()
+    test_dedupe_blocks_against_a_null_status_open_recommendation()
+    test_dedupe_reopens_after_the_previous_one_is_closed()
     print("ALL RECOMMENDATION ROUTE TESTS PASSED")

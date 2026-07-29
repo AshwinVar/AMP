@@ -13,6 +13,7 @@ from datetime import datetime, timedelta
 from typing import List
 
 from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
 import models
@@ -96,7 +97,25 @@ def generate_ai_recommendations(db: Session = Depends(_get_db), current_user: di
 
     def add_rec(kind, severity, title, message, machine_id=None, confidence=78):
         nonlocal created
-        existing = db.query(models.AIRecommendation).filter(models.AIRecommendation.title == title, models.AIRecommendation.status != "Closed").first()
+        # Dedup against an existing NON-closed recommendation with the same title.
+        # status is Column(String, default="Open") WITHOUT nullable=False, so a
+        # raw-SQL / migration / cleared-field row can carry a genuine NULL — and in
+        # SQL a bare `status != 'Closed'` evaluates to NULL (not TRUE) for that row,
+        # so the dedup MISSED a NULL-status open recommendation and raised a
+        # DUPLICATE on every /ai/generate-recommendations call, letting identical
+        # open recs pile up without bound. OR the NULL back in (a NULL status is not
+        # the terminal "Closed" state, i.e. still active) so it blocks the duplicate
+        # — the same NULL-status reconciliation every sibling generator's dedup
+        # already applies (the low-stock / smart-alert / maintenance / document
+        # generators, #425/#426). A genuinely Closed rec still lets a fresh
+        # recurrence through.
+        existing = db.query(models.AIRecommendation).filter(
+            models.AIRecommendation.title == title,
+            or_(
+                models.AIRecommendation.status.is_(None),
+                models.AIRecommendation.status != "Closed",
+            ),
+        ).first()
         if existing:
             return
         db.add(models.AIRecommendation(

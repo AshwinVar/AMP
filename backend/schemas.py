@@ -286,6 +286,22 @@ class EscalationResponse(BaseModel):
     created_at: Optional[datetime] = None
     resolved_at: Optional[datetime] = None
 
+    # status (default="Open") and source (default="Manual") are Column(String,
+    # default=...) WITHOUT nullable=False, so a raw-SQL / migration / cleared-field
+    # row can hold a genuine NULL. Both are typed non-optional here, so one such row
+    # raised Pydantic ValidationError during response serialisation and 500-ed the
+    # ENTIRE GET /escalations backlog — one bad row hiding every open issue, on an
+    # endpoint every dashboard polls. Same response-serialisation NULL class already
+    # healed on the machines roster (#395) and the production-plan / operator /
+    # customer-order / purchase-order lists (#375/#401/#423). Coalesce each NULL to
+    # the column's own declared default on the way out — and a NULL status is exactly
+    # the "still open" case every escalation READER already treats as open
+    # (or_(status.is_(None), status != 'Resolved'): #295/#403), so healing it to
+    # "Open" keeps the list reader and the counters on the same basis. A real value
+    # is untouched.
+    _heal_status = field_validator("status", mode="before")(_coalesce_null_text("Open"))
+    _heal_source = field_validator("source", mode="before")(_coalesce_null_text("Manual"))
+
     class Config:
         from_attributes = True
 

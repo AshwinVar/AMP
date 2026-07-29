@@ -65,6 +65,49 @@ def test_real_protocol_names_and_variants():
     print("PASS real protocol names and separator/casing variants classify correctly")
 
 
+def test_protocol_own_identifiers_are_recognised():
+    # A device.protocol is free text, so a user/integrator may type the protocol's
+    # OWN identifier from the PROTOCOLS table rather than the display name:
+    # Allen-Bradley IS the ODVA "EtherNet/IP" protocol (PROTOCOLS[ab]["transport"]),
+    # and Siemens S7 IS the snap7 / python-snap7 stack (PROTOCOLS[s7]["library"]).
+    # These fell through to the Modbus default before — feeding the device the wrong
+    # protocol's signal templates and stamping the wrong source_protocol (and, on a
+    # real edge agent, picking the wrong driver). Expected keys derived by hand from
+    # each identifier's true protocol, not from the function under test.
+    expected = {
+        "EtherNet/IP": "ab",
+        "EtherNetIP": "ab",
+        "Ethernet/IP": "ab",
+        "ethernet-ip": "ab",
+        "Allen-Bradley EtherNet/IP": "ab",
+        "snap7": "s7",
+        "python-snap7": "s7",
+        "S7 (snap7)": "s7",
+    }
+    for proto, want in expected.items():
+        got = ia.protocol_for(_device(proto))
+        assert got == want, f"{proto!r} -> {got!r}, expected {want!r}"
+    # Cross-check the invariant that these identifiers actually live in PROTOCOLS,
+    # so the test can't silently drift from the table it is asserting about.
+    ab = next(p for p in ia.PROTOCOLS if p["key"] == "ab")
+    s7 = next(p for p in ia.PROTOCOLS if p["key"] == "s7")
+    assert "ethernet/ip" in ab["transport"].lower()
+    assert "snap7" in s7["library"].lower()
+    print("PASS EtherNet/IP -> ab and snap7 -> s7 (the protocols' own PROTOCOLS identifiers)")
+
+
+def test_generic_ethernet_and_ip_names_are_not_allen_bradley():
+    # The EtherNet/IP alias must stay DISTINCTIVE: a generic name that merely
+    # contains "ethernet" or "ip" (but not the run-together "ethernetip") must NOT
+    # be forced onto Allen-Bradley. "enip" is deliberately not an alias precisely so
+    # a name like "GreenIP" can't substring-match it. All of these stay Modbus.
+    for proto in ("Ethernet Powerlink", "Industrial Ethernet", "GreenIP",
+                  "EtherCAT", "Profinet", "TCP/IP", "snapshot-sensor"):
+        got = ia.protocol_for(_device(proto))
+        assert got == "modbus", f"{proto!r} -> {got!r}, expected 'modbus'"
+    print("PASS generic 'ethernet'/'ip'/'snap' names are not misread as AB/Siemens")
+
+
 def test_names_containing_ab_are_not_allen_bradley():
     # The exact regression: a protocol whose name merely CONTAINS the letters "ab"
     # (or "s7") must NOT be forced onto Allen-Bradley / Siemens — it is unrecognised
@@ -120,6 +163,8 @@ def test_simulator_values_are_within_template_bounds():
 if __name__ == "__main__":
     test_seeded_demo_protocols_round_trip()
     test_real_protocol_names_and_variants()
+    test_protocol_own_identifiers_are_recognised()
+    test_generic_ethernet_and_ip_names_are_not_allen_bradley()
     test_names_containing_ab_are_not_allen_bradley()
     test_modbus_wins_over_incidental_ab_letters()
     test_empty_and_none_default_to_modbus()

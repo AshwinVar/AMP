@@ -63,11 +63,26 @@ _PROTOCOL_BY_KEY = {p["key"]: p for p in PROTOCOLS}
 # (plus a substring fallback for the long, distinctive aliases, and an "s7"-prefix
 # rule for the Siemens family) keeps every real protocol name resolving exactly as
 # before while dropping the accidental hits.
+#
+# The alias set also covers the protocol's OWN identifiers as they appear in the
+# PROTOCOLS table above — not just the display name. Allen-Bradley IS the ODVA
+# "EtherNet/IP" protocol (PROTOCOLS[ab]["transport"]), and an OT engineer commonly
+# types "EtherNet/IP" (or "EtherNetIP") rather than the vendor name; Siemens S7 IS
+# the snap7/python-snap7 stack (PROTOCOLS[s7]["library"]). Without these two, that
+# free text fell through to the Modbus default — feeding an Allen-Bradley or
+# Siemens device the wrong protocol's signal templates and stamping the wrong
+# source_protocol on every poll (and, on a real edge agent, picking the wrong
+# driver entirely). Both aliases are long and distinctive (>= _MIN_SUBSTRING_ALIAS),
+# so they only ever match "ethernet/ip"/"snap7"-family strings — never a generic
+# name like "Ethernet Powerlink" or "GreenIP", which stay Modbus. "enip" is
+# deliberately NOT an alias: at 4 chars it would substring-match unrelated names
+# like "GreenIP".
 _PROTOCOL_ALIASES = (
     ("opcua",    ("opcua", "opc")),
-    ("s7",       ("s7", "siemens", "simatic")),
+    ("s7",       ("s7", "siemens", "simatic", "snap7")),
     ("ab",       ("ab", "allen", "bradley", "rockwell",
-                  "allenbradley", "controllogix", "compactlogix")),
+                  "allenbradley", "controllogix", "compactlogix",
+                  "ethernetip")),
     ("beckhoff", ("beckhoff", "twincat")),
     ("omron",    ("omron", "fins")),
     ("modbus",   ("modbus",)),

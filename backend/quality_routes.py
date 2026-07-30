@@ -162,8 +162,18 @@ def update_quality_inspection(
     # non-optional int. A NULL count is the column's own default of 0 — coalesce before
     # the check and the return, the same `or 0` the sibling generate_defect_escalations
     # (#287) and the analytics rollups already apply to these very columns. This also
-    # heals a pre-existing NULL row on any update. inspected_quantity is nullable=False
-    # and not settable via this schema, so it needs no guard.
+    # heals a pre-existing NULL row on any update.
+    #
+    # inspected_quantity is NOT settable via this schema, but it is
+    # Column(Integer, nullable=False) WITHOUT a default, and that constraint is not
+    # retro-applied to a raw-SQL / migration / legacy row — the same reason
+    # analytics_engine coalesces ProductionRecord/ShiftData's own nullable=False count
+    # columns. Left NULL, the `min(...)` below did `min(None, ...)` and the invariant
+    # `passed + failed > None` both raised TypeError -> unhandled 500 on ANY patch to
+    # such a row (even one editing only status/defect_category), and the response then
+    # 500'd on the non-optional int field regardless. Coalesce it too ("no inspected
+    # quantity recorded" = 0), healing the row on write and keeping the check safe.
+    inspection.inspected_quantity = inspection.inspected_quantity or 0
     inspection.passed_quantity = inspection.passed_quantity or 0
     inspection.failed_quantity = inspection.failed_quantity or 0
     inspection.rework_quantity = inspection.rework_quantity or 0
@@ -173,8 +183,8 @@ def update_quality_inspection(
     # ingest #266). A NULL heals to 0 above and is fine; a NEGATIVE patch value
     # (`{"failed_quantity": -5}`) is physically impossible and would corrupt the
     # fail/quality-rate windows exactly as it would on create — so a clean 400,
-    # not a stored negative. inspected_quantity isn't settable via this schema and
-    # is nullable=False, so it's always a real int; including it is harmless.
+    # not a stored negative. inspected_quantity is healed to a real int above, so
+    # including it in the guard is safe.
     if min(inspection.inspected_quantity, inspection.passed_quantity,
            inspection.failed_quantity, inspection.rework_quantity,
            inspection.scrap_quantity) < 0:

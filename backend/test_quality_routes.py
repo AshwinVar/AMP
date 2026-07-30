@@ -5,12 +5,13 @@ generator live in quality_routes.register(app), peeled out of main.py. Guards
 registration + sole ownership, and that the QualityInspectionFailed event
 publish survived the move.
 
-Also covers the PATCH-update null-count hardening: passed/failed/rework/scrap are
-Column(Integer, default=0) WITHOUT nullable=False and are typed Optional[int]=None
-in QualityInspectionUpdate, so an explicit `{"passed_quantity": null}` patch — or a
-legacy/raw-SQL NULL row touched by an unrelated patch — used to land a None on the
-column and then either crash the `passed + failed` invariant check (TypeError -> 500)
-or crash response serialization (QualityInspectionResponse types them non-optional).
+Also covers the null-count hardening: passed/failed/rework/scrap are
+Column(Integer, default=0) WITHOUT nullable=False, and inspected_quantity is
+Column(Integer, nullable=False) WITHOUT a default — but a nullable=False constraint
+is not retro-applied to a raw-SQL / migration / legacy row, so any of the five can be
+a genuine NULL. A None on the column then either crashes the `passed + failed`
+invariant check / the `min(...)` non-negative guard (TypeError -> 500) or crashes
+response serialization (QualityInspectionResponse types all five non-optional int).
 
 Run:  python backend/test_quality_routes.py     (exit 0 = pass)
 """
@@ -176,6 +177,67 @@ def test_list_serialises_legacy_null_row_without_500():
     print("PASS GET list serialises a legacy NULL row as 0 (not a 500 that hides every inspection)")
 
 
+def test_response_heals_null_inspected_quantity_not_500():
+    # inspected_quantity is Column(Integer, nullable=False) WITHOUT a default. A
+    # raw-SQL / migration / legacy row can still hold NULL (the constraint is not
+    # retro-applied to pre-existing rows — the same reason analytics_engine coalesces
+    # ProductionRecord/ShiftData's own nullable=False count columns), and
+    # QualityInspectionResponse types inspected_quantity as a non-optional int — so a
+    # single such row raised ValidationError during serialisation and 500-ed the WHOLE
+    # GET /quality/inspections list, hiding every good inspection. #423 healed the four
+    # default-0 counts here but skipped this column on a mistaken "nullable=False needs
+    # no heal". model_validate is exactly what the FastAPI response layer applies to
+    # each ORM row returned by get_quality_inspections; a transient ORM object with
+    # inspected_quantity=None is the exact attribute state a loaded legacy-NULL row
+    # presents (SQLite's enforced NOT NULL means a real on-disk NULL can only predate
+    # the constraint, so it can't be planted via raw SQL the way the nullable sibling
+    # columns can). Assert the NULL heals to a concrete int 0 while a good row's real
+    # inspected_quantity passes through verbatim.
+    good = models.QualityInspection(
+        id=1, tenant_code=TENANT, inspection_no="QI-GOOD-INS", inspector="QC-1",
+        inspected_quantity=120, passed_quantity=100, failed_quantity=20,
+        rework_quantity=0, scrap_quantity=0, status="Open",
+    )
+    bad = models.QualityInspection(
+        id=2, tenant_code=TENANT, inspection_no="QI-NULL-INS", inspector="QC-1",
+        inspected_quantity=None, passed_quantity=0, failed_quantity=0,
+        rework_quantity=0, scrap_quantity=0, status="Open",
+    )
+    good_s = schemas.QualityInspectionResponse.model_validate(good)
+    bad_s = schemas.QualityInspectionResponse.model_validate(bad)
+    assert bad_s.inspected_quantity == 0, bad_s.inspected_quantity
+    assert isinstance(bad_s.inspected_quantity, int), type(bad_s.inspected_quantity)
+    assert good_s.inspected_quantity == 120, good_s.inspected_quantity  # untouched
+    print("PASS response serialisation heals a NULL inspected_quantity to 0 (not a 500 that hides every inspection)")
+
+
+def test_patch_over_legacy_null_inspected_quantity_is_safe():
+    # An unrelated patch ({"status": "Rework"}, which never sets inspected_quantity)
+    # over a row whose inspected_quantity is a legacy NULL reaches the guards with it
+    # still None: the OLD code did min(None, 0, 0, 0, 0) and `0 + 0 > None`, both
+    # TypeError -> unhandled 500. Now inspected_quantity heals to 0, the status
+    # applies, and the row is healed on write. Independent numbers: passed 0, failed 0,
+    # inspected heals 0, so 0 + 0 = 0 <= 0 (invariant OK) and min(...) = 0 (>= 0 OK).
+    #
+    # A real on-disk NULL can't be planted under SQLite's enforced NOT NULL, so
+    # reproduce the exact attribute state a loaded legacy-NULL row has — the attribute
+    # is None when the handler reads it — by clearing it in memory. autoflush is turned
+    # off so the handler's own SELECT returns this identity-mapped object (None intact,
+    # populate_existing is False so a query never overwrites a modified attribute)
+    # rather than trying to flush the transient NULL first; the heal then assigns 0,
+    # which is what actually commits.
+    db = _iso_session()
+    row = _make_inspection(db, "QI-NULL-INS-PATCH", inspected=40, passed=0, failed=0)
+    db.autoflush = False
+    row.inspected_quantity = None
+    result = _update(db, row.id, status="Rework")
+    assert result.status == "Rework", result.status
+    assert result.inspected_quantity == 0, result.inspected_quantity
+    db.refresh(row)
+    assert row.inspected_quantity == 0, row.inspected_quantity  # healed on write
+    print("PASS unrelated patch over a legacy NULL inspected_quantity is safe (heals to 0, not a 500)")
+
+
 def test_valid_update_applies_and_preserves_invariant():
     # The preserved behaviour: a valid patch applies, and the invariant still rejects
     # passed + failed > inspected with a clean 400 (never a 500). Numbers derived
@@ -251,6 +313,8 @@ if __name__ == "__main__":
     test_patch_explicit_null_count_heals_to_zero_not_500()
     test_unrelated_patch_over_legacy_null_row_is_safe()
     test_list_serialises_legacy_null_row_without_500()
+    test_response_heals_null_inspected_quantity_not_500()
+    test_patch_over_legacy_null_inspected_quantity_is_safe()
     test_valid_update_applies_and_preserves_invariant()
     test_create_rejects_negative_count_the_invariant_would_pass()
     test_create_accepts_valid_counts()

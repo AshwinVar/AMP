@@ -440,18 +440,24 @@ class QualityInspectionResponse(BaseModel):
     created_at: Optional[datetime] = None
 
     # passed / failed / rework / scrap_quantity are Column(Integer, default=0)
-    # WITHOUT nullable=False, so a row written by raw SQL / a migration / a cleared
-    # update can hold a true NULL. They are typed non-optional here, so a single such
-    # NULL row raised Pydantic ValidationError during response serialisation and
-    # 500-ed the WHOLE GET /quality/inspections list — one bad row hiding every good
-    # inspection. The compute paths already coalesce this exact NULL (the PATCH heals
-    # it in-handler, /analytics/quality COALESCEs it in SQL, the defect generator
-    # reads `failed or 0`); the raw-ORM list serializer was the one reader left
-    # un-healed (same #375/#395/#401 response-serialisation heal as the sibling
-    # models above). Coalesce a NULL to the column's own default of 0 on the way out;
-    # a real 0 is untouched (mode="before" only rewrites None). inspected_quantity is
-    # nullable=False, so it needs no heal.
+    # WITHOUT nullable=False; inspected_quantity is Column(Integer, nullable=False)
+    # WITHOUT a default. Neither constraint protects a row written by raw SQL / a
+    # migration / a legacy insert — a nullable=False column is NOT retro-applied to
+    # pre-existing rows, which is exactly why analytics_engine coalesces its own
+    # nullable=False count columns (ProductionRecord.total_count, ShiftData
+    # .target_output — `... or 0` in calculate_oee_from_record / build_shift_kpis).
+    # All five fields are typed non-optional here, so a single NULL row raised
+    # Pydantic ValidationError during response serialisation and 500-ed the WHOLE GET
+    # /quality/inspections list — one bad row hiding every good inspection. The
+    # compute paths already coalesce these NULLs (the PATCH heals them in-handler,
+    # /analytics/quality COALESCEs in SQL, the defect generator reads `failed or 0`);
+    # the raw-ORM list serializer was left half-healed — #423 covered the four
+    # default-0 counts but skipped inspected_quantity on the same (mistaken)
+    # "nullable=False needs no heal" reasoning that its own PATCH sibling used.
+    # Coalesce a NULL to 0 on the way out ("no count recorded"), matching every other
+    # reader; a real 0 is untouched (mode="before" only rewrites None).
     _heal_counts = field_validator(
+        "inspected_quantity",
         "passed_quantity", "failed_quantity", "rework_quantity", "scrap_quantity",
         mode="before",
     )(_coalesce_null_count)

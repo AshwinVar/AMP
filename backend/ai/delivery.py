@@ -20,6 +20,15 @@ AT_RISK_DAYS = 3   # due within this many days and not yet fulfilled -> at risk
 TOP_N = 10
 # A customer order counts as delivered once it's dispatched in full or marked done.
 FULFILLED_STATUSES = {"delivered", "dispatched", "shipped", "completed", "closed"}
+# A cancelled order is not a delivery obligation — it is held out of the outlook
+# entirely (see build_delivery_summary). Both spellings, normalised the same way
+# the fulfilled/status checks are (strip + lower), so a stored "Cancelled" /
+# " canceled " matches regardless of case or padding.
+CANCELLED_STATUSES = {"cancelled", "canceled"}
+
+
+def _is_cancelled(order) -> bool:
+    return (order.status or "").strip().lower() in CANCELLED_STATUSES
 
 
 def _pct(part: int, whole: int) -> int:
@@ -48,9 +57,21 @@ def _state(order, today) -> str:
 def build_delivery_summary(db, tenant: str) -> dict:
     """Delivery outlook across the order book: plant-wide state counts and unit
     fulfillment, a per-customer breakdown (worst first), and the specific
-    at-risk/late orders to chase. customer_orders is auto-scoped (ADR-0002)."""
+    at-risk/late orders to chase. customer_orders is auto-scoped (ADR-0002).
+
+    A cancelled order is held out of the outlook. The canonical late/overdue
+    definition (orders_routes /analytics/customer-orders and the late-order
+    escalation generator) both EXCLUDE "Cancelled", but ``_state`` classified a
+    cancelled, past-due order as "late" purely from its date — which put a phantom
+    order on the chase list, counted it as a missed delivery against the
+    reliability rate, and inflated units-at-risk. Cancelled orders are dropped here
+    and reported separately as ``cancelled``; every state / unit / chase /
+    reliability number below is then over live orders only and reconciles within
+    the surface (rule 3)."""
     today = datetime.utcnow().date()
-    orders = db.query(models.CustomerOrder).all()
+    all_orders = db.query(models.CustomerOrder).all()
+    cancelled = sum(1 for o in all_orders if _is_cancelled(o))
+    orders = [o for o in all_orders if not _is_cancelled(o)]
 
     totals = {"delivered": 0, "on_track": 0, "at_risk": 0, "late": 0}
     ordered_units = dispatched_units = units_at_risk = 0
@@ -115,6 +136,9 @@ def build_delivery_summary(db, tenant: str) -> dict:
 
     return {
         "total": len(orders),
+        # Cancelled orders are excluded from `total` and every state/rate above —
+        # surfaced here so the count is visible, not silently dropped.
+        "cancelled": cancelled,
         "delivered": totals["delivered"],
         "on_track": totals["on_track"],
         "at_risk": totals["at_risk"],
@@ -150,13 +174,19 @@ def build_customer_detail(db, tenant: str, customer: str) -> dict:
     # than scanning the whole order book in Python. "—" is the no-name bucket
     # (customer_name null or blank), matched with the same coalesce in SQL.
     if customer == "—":
-        orders = (db.query(models.CustomerOrder)
-                  .filter(or_(models.CustomerOrder.customer_name.is_(None),
-                              models.CustomerOrder.customer_name == "",
-                              models.CustomerOrder.customer_name == "—")).all())
+        all_orders = (db.query(models.CustomerOrder)
+                      .filter(or_(models.CustomerOrder.customer_name.is_(None),
+                                  models.CustomerOrder.customer_name == "",
+                                  models.CustomerOrder.customer_name == "—")).all())
     else:
-        orders = (db.query(models.CustomerOrder)
-                  .filter(models.CustomerOrder.customer_name == customer).all())
+        all_orders = (db.query(models.CustomerOrder)
+                      .filter(models.CustomerOrder.customer_name == customer).all())
+
+    # Hold cancelled orders out of this customer's outlook too (see
+    # build_delivery_summary), so the drill-down's late count, chase list,
+    # reliability and unit figures match the summary's live-order basis (rule 3).
+    cancelled = sum(1 for o in all_orders if _is_cancelled(o))
+    orders = [o for o in all_orders if not _is_cancelled(o)]
 
     totals = {"delivered": 0, "on_track": 0, "at_risk": 0, "late": 0}
     ordered_units = dispatched_units = overdue_units = 0
@@ -221,6 +251,7 @@ def build_customer_detail(db, tenant: str, customer: str) -> dict:
     return {
         "customer": customer,
         "total": len(orders),
+        "cancelled": cancelled,
         "delivered": totals["delivered"],
         "on_track": totals["on_track"],
         "at_risk": totals["at_risk"],

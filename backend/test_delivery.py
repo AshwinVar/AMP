@@ -160,15 +160,94 @@ def test_customer_detail_is_empty_safe_for_unknown_customer():
     assert d["chase"] == [] and d["recent"] == []
 
 
+def test_cancelled_orders_are_held_out_of_the_outlook():
+    """A cancelled order is not a delivery obligation. Before this fix `_state`
+    classified a cancelled, past-due order as "late" purely from its date — which
+    put a phantom order on the chase list, counted it as a missed delivery against
+    the reliability rate, and inflated units-at-risk. It must be excluded from the
+    outlook entirely and reported only as a `cancelled` count.
+
+    The canonical late definition (orders_routes /analytics/customer-orders and the
+    late-order escalation generator) already EXCLUDE "Cancelled"; this pins the
+    delivery read-model to the same basis.
+    """
+    db = _fresh_session()
+    db.add_all([
+        _order("BUG-1", "Bugatti", 100, 100, 5),                         # delivered
+        _order("BUG-2", "Bugatti", 100, 20, -2),                         # late (80 owed)
+        _order("BUG-X", "Bugatti", 100, 0, -10, status="Cancelled"),     # cancelled (was "late")
+        _order("MER-1", "Mercedes", 100, 0, 2),                          # at_risk (100 owed)
+    ])
+    db.commit()
+
+    s = delivery.build_delivery_summary(db, "DEFAULT")
+    # Only the 3 LIVE orders count toward the outlook; the cancelled one is reported
+    # separately, never as a state.
+    assert s["total"] == 3
+    assert s["cancelled"] == 1
+    assert s["delivered"] == 1 and s["late"] == 1 and s["at_risk"] == 1 and s["on_track"] == 0
+    assert s["delivered"] + s["on_track"] + s["at_risk"] + s["late"] == s["total"]
+
+    # Reliability is over live due orders only: 1 delivered + 1 late = 2 due, 1
+    # delivered -> 50%. WITHOUT the fix the cancelled order counted as a second
+    # "late" (resolved 3, reliability 33%).
+    assert s["resolved"] == 2 and s["reliability_rate"] == 50
+
+    # The cancelled order is off the chase list and out of units-at-risk.
+    chase_nos = [o["order_no"] for o in s["at_risk_orders"]]
+    assert "BUG-X" not in chase_nos
+    assert chase_nos == ["BUG-2", "MER-1"]
+    # units-at-risk: only the live late (BUG-2: 80) + at-risk (MER-1: 100) = 180,
+    # NOT 280 (which would include the cancelled order's 100 undelivered units).
+    assert s["units_at_risk"] == 180
+
+    # Unit fulfillment is over the live book: dispatched 120 of 300 ordered = 40%,
+    # not 120/400 (which would drag in the cancelled order's 100 undelivered units).
+    assert s["units_ordered"] == 300 and s["units_dispatched"] == 120
+    assert s["fulfillment_rate"] == 40
+    # on-track rate over the live book: (1 delivered + 0 on-track) / 3 = 33%.
+    assert s["on_track_rate"] == 33
+
+    # Per-customer rollup also excludes the cancelled order.
+    by = {c["customer"]: c for c in s["by_customer"]}
+    assert by["Bugatti"]["orders"] == 2 and by["Bugatti"]["late"] == 1
+
+    # Drill-down uses the same live basis.
+    d = delivery.build_customer_detail(db, "DEFAULT", "Bugatti")
+    assert d["total"] == 2 and d["cancelled"] == 1
+    assert d["late"] == 1 and d["delivered"] == 1
+    assert "BUG-X" not in [o["order_no"] for o in d["chase"]]
+    assert "BUG-X" not in {r["order_no"] for r in d["recent"]}
+    assert d["overdue_units"] == 80          # only the live late order's shortfall
+    assert d["resolved"] == 2 and d["reliability_rate"] == 50
+
+
+def test_all_cancelled_book_is_empty_safe():
+    """A book of only cancelled orders reads as an empty outlook — zeros, no
+    divide-by-zero — with the cancelled count surfaced."""
+    db = _fresh_session()
+    db.add_all([
+        _order("C-1", "Bugatti", 100, 0, -3, status="Cancelled"),
+        _order("C-2", "Mercedes", 50, 0, -1, status="cancelled"),   # lowercase spelling
+    ])
+    db.commit()
+    s = delivery.build_delivery_summary(db, "DEFAULT")
+    assert s["total"] == 0 and s["cancelled"] == 2
+    assert s["late"] == 0 and s["at_risk"] == 0
+    assert s["fulfillment_rate"] == 0 and s["reliability_rate"] == 0   # no divide-by-zero
+    assert s["units_at_risk"] == 0 and s["at_risk_orders"] == []
+    assert s["by_customer"] == []
+
+
 def test_summary_exposes_the_card_contract():
     # The Orders & Dispatch intel card (DeliveryIntelCard.tsx) renders exactly
     # these keys; pin them so a read-model edit can't silently break the card.
     db = _fresh_session()
     s = delivery.build_delivery_summary(db, "DEFAULT")
-    for k in ("total", "delivered", "on_track", "at_risk", "late", "on_track_rate",
-              "resolved", "reliability_rate", "fulfillment_rate", "units_ordered",
-              "units_dispatched", "units_remaining", "units_at_risk", "by_customer",
-              "at_risk_orders", "upcoming"):
+    for k in ("total", "cancelled", "delivered", "on_track", "at_risk", "late",
+              "on_track_rate", "resolved", "reliability_rate", "fulfillment_rate",
+              "units_ordered", "units_dispatched", "units_remaining", "units_at_risk",
+              "by_customer", "at_risk_orders", "upcoming"):
         assert k in s, f"delivery-summary missing card key {k!r}"
     assert all({"date", "orders"} <= set(r) for r in s["upcoming"])
     print("PASS delivery-summary exposes the keys the intel card renders")
@@ -176,6 +255,8 @@ def test_summary_exposes_the_card_contract():
 
 if __name__ == "__main__":
     test_delivery_classifies_orders_and_rolls_up_by_customer()
+    test_cancelled_orders_are_held_out_of_the_outlook()
+    test_all_cancelled_book_is_empty_safe()
     test_summary_exposes_the_card_contract()
     test_customer_detail_scopes_and_scores_one_customer()
     test_customer_detail_exposes_resolved_so_no_due_reads_as_dash_not_zero()

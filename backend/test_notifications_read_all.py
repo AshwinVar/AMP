@@ -69,7 +69,39 @@ def test_idempotent_and_empty_safe():
     print("PASS mark-all-read is idempotent and empty-safe")
 
 
+def test_null_status_notification_is_marked_read():
+    """A notification with a genuine NULL status must be flipped by mark-all-read.
+    status is Column(String, default="Unread") WITHOUT nullable=False, so a raw-SQL
+    / migration / cleared-field write can store a real NULL — and in SQL a bare
+    `status != 'Read'` is NULL (not TRUE) for that row, so the bulk UPDATE SKIPPED
+    it: it could never be cleared and was left out of the honest `marked` count.
+    OR-ing the NULL in (a NULL status is not the terminal 'Read', i.e. still unread)
+    flips and counts it — the same convention the generator's dedup uses."""
+    db = _fresh_session()
+    _notify(db, "ACME", "plain")                     # ordinary Unread
+    # Seed one whose status we clear to a genuine SQL NULL (insert real, then UPDATE
+    # to None — the Column default only fills an OMITTED value at INSERT).
+    stale = models.Notification(tenant_code="ACME", notification_type="System",
+                                severity="Info", title="stale", message="m",
+                                status="Unread")
+    db.add(stale)
+    db.commit()
+    stale.status = None
+    db.commit()
+    assert stale.status is None
+
+    r = factory_ops_routes.mark_all_notifications_read(
+        db=db, current_user={"tenant": "ACME", "role": "Admin"})
+    # Both the plain Unread and the NULL-status one must flip -> honestly counted.
+    assert r == {"marked": 2}, r
+    stale_after = db.query(models.Notification).filter(
+        models.Notification.title == "stale").first()
+    assert stale_after.status == "Read", stale_after.status
+    print("PASS mark-all-read flips a NULL-status notification and counts it")
+
+
 if __name__ == "__main__":
     test_marks_only_the_callers_tenant_and_counts_honestly()
     test_idempotent_and_empty_safe()
+    test_null_status_notification_is_marked_read()
     print("\nALL NOTIFICATIONS READ-ALL TESTS PASSED")

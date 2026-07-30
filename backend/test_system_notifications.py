@@ -143,6 +143,40 @@ def test_dedup_second_run_adds_nothing():
     print("PASS a second run does not duplicate the summary notifications")
 
 
+def test_dedup_matches_a_null_status_notification():
+    """A pre-existing summary notification with a genuine NULL status must still
+    block a duplicate. status is Column(String, default="Unread") WITHOUT
+    nullable=False, so a raw-SQL / migration / cleared-field write can store a real
+    NULL — and in SQL a bare `status != 'Read'` is NULL (not TRUE) for that row, so
+    the dedup MISSED it and piled a fresh duplicate on every run. OR-ing the NULL in
+    (a NULL status is not 'Read', i.e. still unread) blocks the duplicate — the same
+    convention this generator already applies to the open-escalation count."""
+    db = _fresh_session()
+    db.add(_escalation("E1", status="Open"))
+    # Seed the "Open escalations pending" summary, then clear its status to a genuine
+    # SQL NULL. The Column(String, default="Unread") default only fills an OMITTED
+    # value at INSERT, so a NULL only arises from a later cleared UPDATE — exactly
+    # what this reproduces (mirrors the null-stock fixture above).
+    stale = models.Notification(notification_type="Escalation", severity="Warning",
+                                title="Open escalations pending", message="m",
+                                status="Unread")
+    db.add(stale)
+    db.commit()
+    stale.status = None
+    db.commit()
+    assert stale.status is None
+
+    result = _run(db)
+
+    # The NULL-status summary already exists and is not Read, so the generator must
+    # NOT create a second one — exactly one "Open escalations pending" survives.
+    assert db.query(models.Notification).filter(
+        models.Notification.title == "Open escalations pending"
+    ).count() == 1, "duplicated a NULL-status notification"
+    assert result["created"] == 0, result
+    print("PASS dedup matches a NULL-status notification (no duplicate)")
+
+
 def test_counts_done_in_sql_not_a_python_scan():
     """Guard against a regression back to db.query(Model).all() + len(...) on the
     growing escalation / inventory tables (rule-4). The counts must be func.count
@@ -164,5 +198,6 @@ if __name__ == "__main__":
     test_empty_factory_creates_nothing()
     test_null_stock_or_level_not_counted_as_low()
     test_dedup_second_run_adds_nothing()
+    test_dedup_matches_a_null_status_notification()
     test_counts_done_in_sql_not_a_python_scan()
     print("ALL SYSTEM-NOTIFICATION TESTS PASSED")

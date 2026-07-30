@@ -975,12 +975,25 @@ def tick_iot(db):
     print(f"  IoT: signals pushed for {machine.name}")
 
 
+# tick_inventory stamps this exact note on every consumption row it writes, and
+# its self-imposed cap counts rows carrying THIS note — so the two literals must
+# be the same string. A single named constant keeps them in lock-step. They had
+# drifted: the cap counted "Auto-issued by simulator" (a string nothing ever
+# wrote), so `count` was permanently 0, the cap never fired, and the live
+# background loop drained raw stock and grew inventory_transactions without bound.
+_SIM_ISSUE_NOTE = "Issued to production line"
+
+# Once this many simulator consumption rows exist, stop auto-issuing so a
+# long-running deployment's ledger (and raw-stock drain) stays bounded.
+_SIM_ISSUE_CAP = 120
+
+
 def tick_inventory(db):
-    """Consume raw material inventory for production — capped at 120 auto transactions."""
+    """Consume raw material inventory for production — capped at _SIM_ISSUE_CAP auto transactions."""
     count = db.query(models.InventoryTransaction).filter(
-        models.InventoryTransaction.notes == "Auto-issued by simulator"
+        models.InventoryTransaction.notes == _SIM_ISSUE_NOTE
     ).count()
-    if count >= 120:
+    if count >= _SIM_ISSUE_CAP:
         return
     items = db.query(models.InventoryItem).filter(
         models.InventoryItem.category == "Raw Material",
@@ -993,7 +1006,7 @@ def tick_inventory(db):
     db.add(models.InventoryTransaction(
         item_id=item.id, transaction_type="Issue",
         quantity=qty, reference="Production",
-        notes="Issued to production line",
+        notes=_SIM_ISSUE_NOTE,
     ))
     item.current_stock = max(0, item.current_stock - qty)
     db.commit()

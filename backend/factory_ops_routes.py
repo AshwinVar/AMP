@@ -622,9 +622,21 @@ def mark_all_notifications_read(db: Session = Depends(_get_db),
     above is safe because it reads the row first (a SELECT, hence scoped)."""
     from tenancy import request_tenant
     tenant = request_tenant(current_user)
+    # "Unread" = every notification NOT explicitly Read. status is
+    # Column(String, default="Unread") WITHOUT nullable=False, so a raw-SQL /
+    # migration / cleared-field write can store a genuine NULL — and in SQL a bare
+    # `status != 'Read'` is NULL (not TRUE) for that row, so the bulk UPDATE
+    # SKIPPED a NULL-status notification and it could never be cleared (nor be
+    # counted in the honest `marked` total the UI shows). OR the NULL back in (a
+    # NULL status is not the terminal 'Read', i.e. still unread) — the SAME
+    # NULL-status convention this file already applies to every Escalation.status
+    # comparison and to the open-escalation count in the generator below.
     marked = (db.query(models.Notification)
               .filter(models.Notification.tenant_code == tenant,
-                      models.Notification.status != "Read")
+                      or_(
+                          models.Notification.status.is_(None),
+                          models.Notification.status != "Read",
+                      ))
               .update({models.Notification.status: "Read"}, synchronize_session=False))
     db.commit()
     return {"marked": marked}
@@ -636,7 +648,22 @@ def generate_system_notifications(db: Session = Depends(_get_db), current_user: 
 
     def add_notification(kind, severity, title, message):
         nonlocal created
-        existing = db.query(models.Notification).filter(models.Notification.title == title, models.Notification.status != "Read").first()
+        # Dedup against an existing NON-read notification with the same title. status
+        # is Column(String, default="Unread") WITHOUT nullable=False, so a raw-SQL /
+        # migration / cleared-field write can carry a genuine NULL — and in SQL a
+        # bare `status != 'Read'` is NULL (not TRUE) for that row, so the dedup
+        # MISSED a NULL-status notification and piled a fresh duplicate on every
+        # generate call (unbounded). OR the NULL back in (a NULL status is not the
+        # terminal 'Read', i.e. still unread) so it blocks the duplicate — the SAME
+        # NULL-status convention already applied to the open-escalation count below
+        # and to every Escalation.status comparison in this file.
+        existing = db.query(models.Notification).filter(
+            models.Notification.title == title,
+            or_(
+                models.Notification.status.is_(None),
+                models.Notification.status != "Read",
+            ),
+        ).first()
         if existing:
             return
         db.add(models.Notification(

@@ -1746,7 +1746,11 @@ export default function DashboardPage() {
     await runOnce("report", async () => {
     try {
       await apiPost<ReportRequest>("/reports", reportForm);
-      await apiPost<AuditLog>("/audit-logs", { actor: reportForm.requested_by, action: "Generated report request", entity_type: "Report", details: reportForm.report_type });
+      // No `actor`: the backend stamps it from the caller's token, because a
+      // client-supplied actor let anyone attribute an action to anyone. The
+      // typed "Requested By" is still a real business field — it rides on the
+      // /reports payload above, and goes in `details` so the trail keeps it.
+      await apiPost<AuditLog>("/audit-logs", { action: "Generated report request", entity_type: "Report", details: `${reportForm.report_type} · requested by ${reportForm.requested_by}` });
       setReportForm({ report_no: "", report_type: "Executive Summary", requested_by: "Admin", format: "PDF", status: "Generated", notes: "" });
       fetchAll();
     } catch (error) { report(error, "create report"); }

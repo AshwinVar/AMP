@@ -296,8 +296,42 @@ def audit_logs(db: Session = Depends(get_db), current_user: dict = Depends(requi
 
 
 @router.post("/audit-logs", response_model=schemas.AuditLogResponse)
-def create_audit_log(payload: schemas.AuditLogCreate, db: Session = Depends(get_db), current_user: dict = Depends(require_roles(["Admin", "Supervisor"]))):
-    row = models.AuditLog(**payload.model_dump())
+def create_audit_log(payload: schemas.AuditLogCreate, db: Session = Depends(get_db), current_user: dict = Depends(require_roles(["Admin"]))):
+    """Append an audit record, attributed to the AUTHENTICATED caller.
+
+    `actor` used to come straight out of the request body
+    (`models.AuditLog(**payload.model_dump())`), so the trail had no binding to
+    the identity that wrote it. A Supervisor — who passed the old
+    require_roles(["Admin","Supervisor"]) write gate but gets 403 on the GET —
+    could post {"actor": "alice_admin", "action": "delete_user", ...} and produce
+    a row indistinguishable from the ones log_audit() writes with
+    current_user["sub"]. Same table, same shape, no provenance flag. Measured:
+
+        POST (write)  Supervisor -> allowed
+        GET  (read)   Supervisor -> HTTP 403
+        trail shows   actor=alice_admin   (the caller was sup_mallory)
+
+    And not only via curl: the dashboard's report form posted
+    `actor: reportForm.requested_by`, a free-text input, so client-typed
+    attribution was the NORMAL path, not an attack.
+
+    Stamping from the token is the fix; `actor` is gone from AuditLogCreate so a
+    caller cannot believe it still works. The write is also narrowed to Admin, so
+    nobody writes into a trail they cannot read — verified safe: the only caller
+    is the report form, which renders inside the "enterprise" view and that view
+    is in the frontend's ADMIN_ONLY_VIEWS, and every internal caller uses
+    log_audit() directly rather than this route.
+
+    The `or "system"` is belt-and-braces, NOT load-bearing: actor is
+    Column(String, default="system"), a PYTHON-side default that SQLAlchemy
+    applies when the attribute is None at flush, so a token with no `sub` claim
+    records "system" either way (mutation testing established this — removing
+    only the `or` changes nothing observable; removing it AND the column default
+    writes NULL and 500s on the response_model). Kept because it mirrors
+    log_audit's own `actor or "system"` two hundred lines up.
+    """
+    row = models.AuditLog(**payload.model_dump(),
+                          actor=current_user.get("sub") or "system")
     db.add(row)
     db.commit()
     db.refresh(row)

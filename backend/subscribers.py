@@ -18,7 +18,30 @@ def move_bom_on_production_completed(event: ProductionCompleted, db) -> None:
     bom = PART_BOM.get(event.part_number)
     if not bom:
         return
-    qty = event.quantity
+
+    # Guard the completed quantity to a non-negative int before it drives any
+    # physical inventory movement — this handler is the single choke-point every
+    # ProductionCompleted event flows through (ADR-0001), so the guard belongs
+    # here rather than only at each producer. The completion path
+    # (work_orders_routes) falls back to the order's target_quantity when
+    # actual_quantity is NULL, and target_quantity — nullable=False in the model,
+    # but that constraint is not retro-applied to a raw-SQL / migration / cleared
+    # row (the same legacy-row reality the stock coalesces below defend) — can
+    # itself be NULL or, on a row that predates the create/PATCH non-negative
+    # guards, negative. Left unguarded:
+    #   * a NULL quantity made `qty * consume_per_unit` raise TypeError and, because
+    #     a subscriber error propagates by design (events.py), 500-ed the whole
+    #     completion write — the same NULL-count-500 class fixed for the OEE record
+    #     (#447) and the predictive scorer (#428);
+    #   * a NEGATIVE quantity produced a negative `consume`, so `current_stock -
+    #     consume` INCREASED raw stock and `stock + qty` DECREASED finished goods,
+    #     writing negative-quantity Issue/Receive ledger rows — inventory movement
+    #     the production data can't support (ADR-0010: never invent a number).
+    # A missing or physically-impossible completed quantity means no measured
+    # output, so it moves 0 — identical to the honest-zero path a genuine recorded
+    # actual of 0 already takes (work_orders_routes). max(x or 0, 0) is a strict
+    # no-op on every well-formed non-negative quantity.
+    qty = max(event.quantity or 0, 0)
 
     # Deduct raw material
     if bom["raw"]:

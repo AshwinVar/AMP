@@ -188,6 +188,76 @@ def test_consumption_tripping_reorder_still_raises_inventory_low():
     assert payload["current_stock"] == 2 and payload["reorder_level"] == 10, payload
 
 
+def test_none_quantity_moves_nothing_and_does_not_crash():
+    """A NULL completed quantity must not 500 the completion.
+
+    The completion path falls back to the order's target_quantity when
+    actual_quantity is NULL; a legacy / raw-SQL target_quantity can itself be
+    NULL, so the event arrives with quantity=None. `None * consume_per_unit`
+    raised TypeError and, because a subscriber error propagates by design, took
+    down the whole completion write. No measured output -> move 0: stock is
+    untouched and the ledger rows are zero-quantity (parity with the honest
+    recorded-zero path), never a crash.
+    """
+    db = _fresh_session()
+    db.add(models.InventoryItem(item_code="RM-STEEL-001", item_name="Steel",
+                                category="Raw", unit="kg", current_stock=100, reorder_level=10))
+    db.add(models.InventoryItem(item_code="FG-SHAFT-001", item_name="Shaft",
+                                category="Finished", unit="pcs", current_stock=5, reorder_level=0))
+    db.commit()
+
+    bus = EventBus()
+    subscribers.register(bus)
+    bus.publish(ProductionCompleted(
+        tenant_code="DEFAULT", work_order_id=1, work_order_no="WO-NONE",
+        part_number="SHAFT-001", quantity=None, machine_id=1), db)
+    db.commit()
+
+    raw = db.query(models.InventoryItem).filter_by(item_code="RM-STEEL-001").first()
+    fg = db.query(models.InventoryItem).filter_by(item_code="FG-SHAFT-001").first()
+    issue = db.query(models.InventoryTransaction).filter_by(transaction_type="Issue").first()
+    receive = db.query(models.InventoryTransaction).filter_by(transaction_type="Receive").first()
+    assert raw.current_stock == 100, raw.current_stock          # nothing consumed
+    assert fg.current_stock == 5, fg.current_stock              # nothing received
+    assert issue and issue.quantity == 0, issue and issue.quantity
+    assert receive and receive.quantity == 0, receive and receive.quantity
+    low = db.query(models.EventLog).filter_by(event_type="InventoryLow").all()
+    assert low == [], low                                      # no false reorder
+
+
+def test_negative_quantity_moves_nothing_not_backwards():
+    """A NEGATIVE completed quantity must not run inventory BACKWARDS.
+
+    A row that predates the create/PATCH non-negative guards (or a raw-SQL write)
+    can leave a negative target_quantity, which the completion falls back to when
+    actual is NULL. Unguarded, consume = min(qty*2, stock) went negative, so
+    `stock - consume` INCREASED raw stock (100 -> 110) and `stock + qty` DECREASED
+    finished goods (5 -> 0), writing negative-quantity ledger rows. An impossible
+    quantity is floored to 0 -> no movement, matching the None case above.
+    """
+    db = _fresh_session()
+    db.add(models.InventoryItem(item_code="RM-STEEL-001", item_name="Steel",
+                                category="Raw", unit="kg", current_stock=100, reorder_level=10))
+    db.add(models.InventoryItem(item_code="FG-SHAFT-001", item_name="Shaft",
+                                category="Finished", unit="pcs", current_stock=5, reorder_level=0))
+    db.commit()
+
+    bus = EventBus()
+    subscribers.register(bus)
+    bus.publish(ProductionCompleted(
+        tenant_code="DEFAULT", work_order_id=1, work_order_no="WO-NEG",
+        part_number="SHAFT-001", quantity=-5, machine_id=1), db)
+    db.commit()
+
+    raw = db.query(models.InventoryItem).filter_by(item_code="RM-STEEL-001").first()
+    fg = db.query(models.InventoryItem).filter_by(item_code="FG-SHAFT-001").first()
+    txns = db.query(models.InventoryTransaction).all()
+    assert raw.current_stock == 100, raw.current_stock          # NOT inflated to 110
+    assert fg.current_stock == 5, fg.current_stock              # NOT drained to 0
+    assert all(t.quantity == 0 for t in txns), [t.quantity for t in txns]
+    assert all(t.quantity >= 0 for t in txns), [t.quantity for t in txns]
+
+
 if __name__ == "__main__":
     r, f = test_production_completed_moves_bom_and_logs_event()
     print(f"PARITY OK: steel 100->{r} (-10), finished 5->{f} (+5), +2 txns, +1 event_log row")
@@ -199,4 +269,8 @@ if __name__ == "__main__":
     print("NULL-REORDER OK: reorder comparison survives a NULL level")
     test_consumption_tripping_reorder_still_raises_inventory_low()
     print("REORDER-TRIP OK: consumption crossing reorder still raises InventoryLow")
+    test_none_quantity_moves_nothing_and_does_not_crash()
+    print("NONE-QTY OK: a NULL completed quantity moves 0, no crash, no false reorder")
+    test_negative_quantity_moves_nothing_not_backwards()
+    print("NEG-QTY OK: a negative completed quantity moves 0 (no backwards inventory)")
     print("ALL SUBSCRIBER BOM TESTS PASSED")

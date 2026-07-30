@@ -23,7 +23,7 @@ import schemas
 from auth import get_current_user, require_roles
 from database import SessionLocal
 from events import event_bus, DowntimeStarted
-from machine_status import VALID_MACHINE_STATUSES, normalize_machine_status
+from machine_status import VALID_MACHINE_STATUSES, clamp_utilization, normalize_machine_status
 from tenancy import request_tenant
 
 
@@ -47,7 +47,34 @@ def get_machines(db: Session = Depends(_get_db), current_user: dict = Depends(ge
 @router.post("/machines", response_model=schemas.MachineResponse)
 def create_machine(machine: schemas.MachineCreate, db: Session = Depends(_get_db),
                    current_user: dict = Depends(require_roles(["Admin"]))):
-    new_machine = models.Machine(**machine.model_dump())
+    # Canonicalise the status and clamp the utilization at the create boundary,
+    # exactly like the manual PATCH /machines/{id}/status and every ingest path
+    # (IoT / MQTT / industrial / CSV import) already do through the one shared
+    # vocabulary (machine_status). This was the ONE machine-write path that wrote
+    # the client's raw values straight onto the row: schemas.MachineBase types
+    # status as a free `str` and utilization as an unbounded `int`, and
+    # models.Machine.status is a plain String (no CHECK/enum) — so a raw "RUNNING"
+    # / "breakdown" / typo silently dropped the machine from every status-based
+    # rollup (build_management_summary's breakdown_count, build_smart_alerts, the
+    # Machine-Health twin's bands, the predictive risk score — all match the EXACT
+    # canonical strings), leaving the machine count and its status breakdown no
+    # longer reconciling, and an out-of-range utilization (150, -5) rendered a
+    # percentage the data can't support (ADR-0010 honesty). A create is a
+    # deliberate manual action, so an unrecognised status gets an honest 400 with
+    # the valid set (like the PATCH sibling); utilization is clamped into [0, 100]
+    # (like the CSV-import onboarding path). A recognised-but-noncanonical status
+    # ("running") is stored canonically ("Running").
+    data = machine.model_dump()
+    canonical = normalize_machine_status(data.get("status"))
+    if canonical is None:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid machine status. Must be one of: {', '.join(VALID_MACHINE_STATUSES)}",
+        )
+    data["status"] = canonical
+    clamped = clamp_utilization(data.get("utilization"))
+    data["utilization"] = clamped if clamped is not None else 0
+    new_machine = models.Machine(**data)
     db.add(new_machine)
     db.commit()
     db.refresh(new_machine)

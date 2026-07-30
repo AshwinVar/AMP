@@ -572,24 +572,47 @@ def update_purchase_order(
     elif po.received_quantity > 0 and po.status != "Cancelled":
         po.status = "Partial"
 
-    received_delta = max(po.received_quantity - old_received, 0)
+    # SIGNED. `max(..., 0)` meant a received figure could only ever be revised UP:
+    # correcting a mistyped receipt did nothing to stock, so the over-received units
+    # stayed on the books for ever with no ledger row explaining them. Measured —
+    # 100 kg booked in by mistake against a PO where 10 actually arrived:
+    #
+    #   receive 100 (typo)        stock 100, po.received 100
+    #   correct down to 10        stock 100, po.received 10    <- 90 phantom kg
+    #   later top-up to 100       stock 190, po.received 100   <- and it compounds
+    #
+    # The PO then says 100 received while the shelf says 190, and every correction
+    # widens the gap. A receipt is a delta, so the correction has to be one too.
+    received_delta = po.received_quantity - old_received
 
-    if received_delta > 0 and po.item_id:
+    if received_delta and po.item_id:
         item = db.query(models.InventoryItem).filter(models.InventoryItem.id == po.item_id).first()
         if item:
             # current_stock is likewise Column(Integer, default=0) WITHOUT
             # nullable=False; `None += int` would TypeError-500 the receipt on a
             # legacy NULL-stock item (same guard as subscribers.py / inventory_routes).
-            item.current_stock = (item.current_stock or 0) + received_delta
+            on_hand = item.current_stock or 0
+            # A correction cannot take back more than is still on the shelf — the
+            # rest was already issued and cannot be un-issued. Clamping keeps stock
+            # >= 0, the invariant every other mutation in this codebase maintains,
+            # and the ledger records what ACTUALLY moved so the two still reconcile.
+            applied = received_delta if received_delta > 0 else -min(-received_delta, on_hand)
+            item.current_stock = on_hand + applied
 
-            transaction = models.InventoryTransaction(
-                item_id=item.id,
-                transaction_type="Receive",
-                quantity=received_delta,
-                reference=po.po_no,
-                notes="Auto stock receipt from purchase order",
-            )
-            db.add(transaction)
+            if applied:
+                transaction = models.InventoryTransaction(
+                    item_id=item.id,
+                    # "Adjust" is one of the variance report's _OUT_TYPES, so a
+                    # downward correction draws stock down there exactly as it does
+                    # on the shelf. "Receive" is an _IN_TYPE and stays the label for
+                    # a genuine receipt.
+                    transaction_type="Receive" if applied > 0 else "Adjust",
+                    quantity=abs(applied),
+                    reference=po.po_no,
+                    notes=("Auto stock receipt from purchase order" if applied > 0
+                           else "Auto stock correction: purchase-order received quantity revised down"),
+                )
+                db.add(transaction)
 
     db.commit()
     db.refresh(po)

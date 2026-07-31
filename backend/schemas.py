@@ -843,6 +843,19 @@ class IoTTelemetryResponse(BaseModel):
     source: str
     created_at: Optional[datetime] = None
 
+    # numeric_value is Column(Integer, default=0) WITHOUT nullable=False, so a row
+    # written by raw SQL / a migration / a legacy insert can hold NULL (the ORM
+    # default only fills a value the inserter omitted). Typed non-optional here, a
+    # single such NULL row raised Pydantic ValidationError during response
+    # serialisation and 500-ed the WHOLE GET /iot/telemetry list — one bad reading
+    # hiding every good one. Same class already healed on the machine / quality /
+    # maintenance / operator-execution lists (#423/#447). Coalesce a NULL to the
+    # column's own default of 0 ("no numeric reading"); a real recorded 0 is
+    # untouched (mode="before" only rewrites None).
+    _heal_numeric_value = field_validator("numeric_value", mode="before")(
+        _coalesce_null_count
+    )
+
     class Config:
         from_attributes = True
 
@@ -1108,6 +1121,15 @@ class IndustrialSignalResponse(BaseModel):
     quality: str
     source_protocol: str
     created_at: Optional[datetime] = None
+
+    # numeric_value is Column(Integer, default=0) WITHOUT nullable=False (the same
+    # gap as IoTTelemetryResponse above): a raw-SQL / migration / legacy row can
+    # hold NULL, and typed non-optional here it raised Pydantic ValidationError and
+    # 500-ed the WHOLE GET /industrial/signals list — one bad signal hiding every
+    # good one. Heal a NULL to the column's declared default of 0; a real 0 stays 0.
+    _heal_numeric_value = field_validator("numeric_value", mode="before")(
+        _coalesce_null_count
+    )
 
     class Config:
         from_attributes = True

@@ -253,6 +253,31 @@ def test_patch_null_required_field_paired_with_valid_field_still_rejected():
     print("PASS a null required field rejects the whole PATCH; the paired valid field is not applied")
 
 
+def test_get_list_survives_preexisting_null_amount():
+    # A legacy / raw-SQL / migration row carries a NULL amount and is NEVER
+    # patched. The PATCH-side heal (#457) only fixes a row that is patched, so
+    # without a RESPONSE-side healer this NULL 500s the whole GET /cost-records
+    # list (List[CostRecordResponse], amount: int) — one bad row hiding every
+    # good one for the tenant. This exercises the exact serialisation the list
+    # endpoint performs.
+    db = _fresh_session()
+    db.add(models.CostRecord(cost_no="C-OK", cost_type="Labour", description="real", amount=250))
+    db.add(models.CostRecord(cost_no="C-NULL", cost_type="Material", description="legacy", amount=0))
+    db.commit()
+    # The row the ORM default never touched (raw-SQL / migration write).
+    db.execute(text("UPDATE cost_records SET amount=NULL WHERE cost_no='C-NULL'"))
+    db.commit()
+
+    # Mirror the endpoint: GET /cost-records returns List[CostRecordResponse].
+    rows = costing_routes.get_cost_records(db=db, current_user={})
+    validated = [schemas.CostRecordResponse.model_validate(r) for r in rows]
+
+    by_no = {r.cost_no: r.amount for r in validated}
+    assert by_no["C-OK"] == 250, by_no        # real value preserved
+    assert by_no["C-NULL"] == 0, by_no        # pre-existing NULL healed, not a 500
+    print("PASS GET /cost-records list survives a pre-existing NULL amount (healed to 0, no 500)")
+
+
 def test_patch_updates_required_fields_with_real_values_still_works():
     # Regression: a legitimate non-null update of the required fields is unaffected
     # by the guard (it only rejects an explicit null-out).
@@ -281,5 +306,6 @@ if __name__ == "__main__":
     test_patch_keeps_a_real_amount_and_zero_unchanged()
     test_patch_null_cost_type_is_400_not_500_and_leaves_row_intact()
     test_patch_null_required_field_paired_with_valid_field_still_rejected()
+    test_get_list_survives_preexisting_null_amount()
     test_patch_updates_required_fields_with_real_values_still_works()
     print("ALL COSTING ROUTE TESTS PASSED")

@@ -953,6 +953,20 @@ class CostRecordResponse(BaseModel):
     department: Optional[str] = None
     created_at: Optional[datetime] = None
 
+    # amount is Column(Integer, default=0) WITHOUT nullable=False, so the ORM
+    # default only fills a value the *inserter* omitted — a raw-SQL / migration /
+    # cleared-field row can carry a genuine NULL. This field is a non-optional int,
+    # so ONE such row raised Pydantic ValidationError and 500-ed the WHOLE
+    # GET /cost-records list (List[CostRecordResponse]) for the tenant — one bad
+    # row hiding every good one. The costing PATCH (#457) heals a NULL it writes
+    # (`row.amount = row.amount or 0`), but that only touches a row that is patched;
+    # a pre-existing NULL never patched still poisoned the list. Heal it on the way
+    # OUT too — the same response-side coalesce every sibling count column already
+    # carries (ProductionResponse.actual_quantity, OperatorJobExecution good/rejected,
+    # InventoryItem stock/level, PurchaseOrder.received_quantity, ...). A real 0 is
+    # untouched; only NULL is healed.
+    _heal_amount = field_validator("amount", mode="before")(_coalesce_null_count)
+
     class Config:
         from_attributes = True
 

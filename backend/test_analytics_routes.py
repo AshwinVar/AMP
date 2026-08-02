@@ -141,6 +141,20 @@ def test_work_order_analytics_null_actual_and_reconciled_totals():
     db.add(_work_order(id=3, work_order_no="W3", status="Completed", target_quantity=300, actual_quantity=300))
     db.add(_work_order(id=4, work_order_no="W4", status="Delayed", target_quantity=50, actual_quantity=10))
     db.commit()
+    # Force a genuine SQL NULL. Passing actual_quantity=None on insert stores 0,
+    # because Column(Integer, default=0) is a PYTHON-side default — so the row
+    # above was a 0 row and this test never saw the NULL its name claims.
+    #
+    # Fidelity, not a new guard: SQL SUM skips a NULL, so 50+NULL+300+10 and
+    # 50+0+300+10 are both 360 and no assertion here can tell them apart. The
+    # COALESCE is guarded by the empty-table test below (SUM over zero rows is
+    # NULL, and int(None) raises). What this pins is that a NULL row is COUNTED
+    # in total_work_orders and does not crash the rollup — which is what the
+    # comment above always claimed to be testing. Same step the operator-terminal
+    # test in this file already takes.
+    db.execute(text("UPDATE work_orders SET actual_quantity = NULL WHERE work_order_no = 'W2'"))
+    db.commit()
+    db.expire_all()
 
     out = analytics_routes.get_work_order_analytics(db=db, current_user={})
     assert out["total_work_orders"] == 4, out
@@ -176,6 +190,12 @@ def test_production_plan_analytics_null_actual_and_reconciled_totals():
     db.add(models.ProductionPlan(id=3, plan_no="P3", status="Completed", planned_quantity=100,
                                  actual_quantity=100, plan_date=date(2026, 1, 1), shift_name="C"))
     db.commit()
+    # Force a genuine SQL NULL — actual_quantity=None on insert stores 0 (the
+    # Column default is applied Python-side), so this test never saw a NULL.
+    # Fidelity only, for the reason spelled out in the work-order test above.
+    db.execute(text("UPDATE production_plans SET actual_quantity = NULL WHERE plan_no = 'P2'"))
+    db.commit()
+    db.expire_all()
 
     out = analytics_routes.get_production_plan_analytics(db=db, current_user={})
     assert out["total_plans"] == 3, out

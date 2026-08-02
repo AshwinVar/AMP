@@ -14,6 +14,7 @@ from ai.oee import build_oee_summary
 from ai.production import build_production_summary
 from ai.delivery import build_delivery_summary
 from ai.cost import build_cost_summary, downtime_minutes, DOWNTIME_COST_PER_MIN, SCRAP_COST_PER_UNIT
+from currency import CURRENCY
 from ai.twin import _oee_from_records
 
 name = "scorecard"
@@ -111,7 +112,11 @@ def build_scorecard(db, tenant: str) -> dict:
         # displayed label and value are the honest delivery-reliability number.
         {"key": "on_time", "label": "Delivery reliability", "value": reliability, "unit": "%",
          "tone": _tone(reliability, 95, 85), "delta": None, "delta_tone": None},
-        {"key": "loss_cost", "label": "Cost of losses", "value": cost["loss_cost"], "unit": "$",
+        # `unit` is the DISPLAY token four consumers branch on to decide prefix-vs-suffix
+        # formatting: ai/report.py, ai/assistant.py and frontend ScorecardStrip.tsx all
+        # test it against the currency symbol. It must come from currency.CURRENCY, not a
+        # literal, or the strip silently falls through to suffix formatting ("49740£").
+        {"key": "loss_cost", "label": "Cost of losses", "value": cost["loss_cost"], "unit": CURRENCY,
          "tone": ("good" if cost["loss_cost"] == 0 else "warn"), "delta": cost_d, "delta_tone": cost_dt},
     ]
     return {

@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { apiGet } from "../lib/api";
+import { money } from "../lib/money";
 
 // Mirrors the backend cost read-model (ai/cost.py build_cost_summary).
 type Loss = { key: string; label: string; cost: number; detail: string };
@@ -19,7 +20,9 @@ type CostSummary = {
   by_type: { type: string; amount: number }[];
 };
 
-const money = (n: number) => `$${n.toLocaleString()}`;
+// Was a local `$` formatter. Now the shared one — this card's "Recorded costs" prints the
+// same cost_records.amount column that CostingSection renders with "£", so the two views
+// disagreed on the currency of literally the same rows.
 
 // SMT and IC each get a consistent accent across the dashboard (sky / violet).
 const lineChip = (line: string) =>

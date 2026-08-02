@@ -33,6 +33,7 @@ from sqlalchemy.orm import Session
 
 import models
 from auth import get_current_user
+from currency import money
 from database import SessionLocal
 
 # Cheap + fast models by default; override with AI_MODEL / GEMINI_MODEL.
@@ -163,8 +164,8 @@ def _build_factory_context(db: Session, tenant: str) -> str:
         cost = build_cost_summary(db, tenant)
         if cost["has_data"]:
             worst = cost["by_machine"][0]["name"] if cost["by_machine"] else "-"
-            lines.append(f"COST OF LOSSES (7d): ${cost['loss_cost']:,} total "
-                         f"(downtime ${cost['downtime_cost']:,}, scrap ${cost['scrap_cost']:,}); "
+            lines.append(f"COST OF LOSSES (7d): {money(cost['loss_cost'])} total "
+                         f"(downtime {money(cost['downtime_cost'])}, scrap {money(cost['scrap_cost'])}); "
                          f"costliest machine {worst}.")
         deliv = build_delivery_summary(db, tenant)
         if deliv["total"]:

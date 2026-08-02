@@ -21,6 +21,7 @@ from ai.flow import build_flow_summary
 from ai.shift import build_shift_summary
 from ai.briefing import build_briefing
 from ai.scorecard import build_scorecard
+from currency import CURRENCY, money
 
 name = "assistant"
 
@@ -57,11 +58,11 @@ def _cost(db, tenant):
     c = build_cost_summary(db, tenant)
     if not c["has_data"]:
         return "No production this week, so there are no losses to cost.", "costing"
-    ans = (f"Losses cost about ${c['loss_cost']:,} this week — "
-           f"downtime ${c['downtime_cost']:,}, scrap ${c['scrap_cost']:,}.")
+    ans = (f"Losses cost about {money(c['loss_cost'])} this week — "
+           f"downtime {money(c['downtime_cost'])}, scrap {money(c['scrap_cost'])}.")
     if c["by_machine"]:
         w = c["by_machine"][0]
-        ans += f" Costliest machine: {w['name']} (${w['cost']:,})."
+        ans += f" Costliest machine: {w['name']} ({money(w['cost'])})."
     return ans, "costing"
 
 
@@ -261,7 +262,7 @@ def _trend(db, tenant):
         if k.get("delta") is None or k["delta"] == 0:
             continue
         arrow = "up" if k["delta"] > 0 else "down"
-        mag = f"${abs(k['delta']):,}" if k["unit"] == "$" else f"{abs(k['delta'])}{'' if k['unit'] == '%' else k['unit']}"
+        mag = money(abs(k["delta"])) if k["unit"] == CURRENCY else f"{abs(k['delta'])}{'' if k['unit'] == '%' else k['unit']}"
         verdict = "better" if k.get("delta_tone") == "good" else "worse"
         moves.append(f"{k['label']} {arrow} {mag} ({verdict})")
     if not moves:
@@ -290,7 +291,9 @@ _ROUTES = [
     (("wip", "work in progress", "work-in-progress", "in progress", "pipeline", "work order", "raw ", "semi", "finished good"), _flow),
     (("shift", "attainment", "crew", "night", "day shift"), _shift),
     (("deliver", "on-time", "on time", " late", "customer", "ship", "fulfil", "bugatti", "mercedes", "order"), _delivery),
-    (("cost", "money", "losing", "$", "expensive", "spend", "margin"), _cost),
+    # "$" stays alongside "£": these are tokens the USER types, not display symbols, and
+    # someone asking "what's this costing me in $" should still reach the cost answer.
+    (("cost", "money", "losing", "£", "$", "expensive", "spend", "margin"), _cost),
     (("quality", "defect", "reject", "scrap", "fail", "yield", "fpy", "first-pass", "first pass"), _quality),
     (("compliance", "document", "audit", "iso", "sop", "controlled doc"), _compliance),
     (("maintenance", "overdue", "service", "pm ", " task"), _maintenance),
@@ -315,7 +318,7 @@ def digest(db, tenant: str) -> dict:
 
     lines = [f"Plant OEE is {b['oee']}% and trending {b['oee_trend']}."]
     if cost["has_data"]:
-        lines.append(f"Losses have cost about ${cost['loss_cost']:,} this week.")
+        lines.append(f"Losses have cost about {money(cost['loss_cost'])} this week.")
     if delivery["total"]:
         lines.append(f"On the order book, {delivery['fulfillment_rate']}% of units are fulfilled, "
                      f"with {delivery['late']} late and {delivery['at_risk']} at risk.")

@@ -20,6 +20,7 @@ from ai.stock_health import build_stock_health
 from ai.supplier_performance import build_supplier_performance
 from ai.flow import build_wip_aging
 from ai.workforce import build_operator_summary
+from currency import CURRENCY, money
 
 name = "report"
 
@@ -27,14 +28,14 @@ name = "report"
 def _kpi_line(k) -> str:
     if k["value"] is None:
         val = "—"
-    elif k["unit"] == "$":
-        val = f"${k['value']:,}"
+    elif k["unit"] == CURRENCY:
+        val = money(k["value"])
     else:
         val = f"{k['value']}{k['unit']}"
     delta = ""
     if k.get("delta") is not None and k["delta"] != 0:
         arrow = "up" if k["delta"] > 0 else "down"
-        mag = f"${abs(k['delta']):,}" if k["unit"] == "$" else f"{abs(k['delta'])}{'' if k['unit'] == '%' else k['unit']}"
+        mag = money(abs(k["delta"])) if k["unit"] == CURRENCY else f"{abs(k['delta'])}{'' if k['unit'] == '%' else k['unit']}"
         delta = f" ({arrow} {mag} vs last week)"
     return f"- **{k['label']}**: {val}{delta}"
 
@@ -56,11 +57,11 @@ def build_weekly_report(db, tenant: str) -> dict:
     lines.append("")
 
     lines.append("## Cost of losses")
-    lines.append(f"- ${cost['loss_cost']:,} lost this week "
-                 f"(downtime ${cost['downtime_cost']:,}, scrap ${cost['scrap_cost']:,})")
+    lines.append(f"- {money(cost['loss_cost'])} lost this week "
+                 f"(downtime {money(cost['downtime_cost'])}, scrap {money(cost['scrap_cost'])})")
     if cost["by_machine"]:
         worst = cost["by_machine"][0]
-        lines.append(f"- Costliest machine: {worst['name']} (${worst['cost']:,})")
+        lines.append(f"- Costliest machine: {worst['name']} ({money(worst['cost'])})")
     lines.append("")
 
     lines.append("## Delivery")

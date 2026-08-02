@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { apiGet } from "../lib/api";
+import { money } from "../lib/money";
 
 // Mirrors ai.cost.build_cost_summary (GET /cost-summary).
 type CostSummary = {
@@ -75,9 +76,9 @@ export default function CostIntelCard() {
       </div>
 
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-        <Stat label="Total lost" value={`$${s.loss_cost.toLocaleString()}`} bad={s.loss_cost > 0} />
-        <Stat label="Downtime" value={`$${s.downtime_cost.toLocaleString()}`} sub={`${s.downtime_minutes.toLocaleString()} min`} />
-        <Stat label="Scrap" value={`$${s.scrap_cost.toLocaleString()}`} sub={`${s.rejected_units.toLocaleString()} units`} />
+        <Stat label="Total lost" value={money(s.loss_cost)} bad={s.loss_cost > 0} />
+        <Stat label="Downtime" value={money(s.downtime_cost)} sub={`${s.downtime_minutes.toLocaleString()} min`} />
+        <Stat label="Scrap" value={money(s.scrap_cost)} sub={`${s.rejected_units.toLocaleString()} units`} />
         <Stat label="Biggest lever" value={s.biggest || "—"} small />
       </div>
 
@@ -107,7 +108,7 @@ export default function CostIntelCard() {
         )}
         {s.by_line.length > 0 && (
           <p className="text-xs text-slate-500 mt-3">
-            By line: {s.by_line.map((l) => `${l.line}: $${l.cost.toLocaleString()}`).join(" · ")}
+            By line: {s.by_line.map((l) => `${l.line}: ${money(l.cost)}`).join(" · ")}
           </p>
         )}
       </div>

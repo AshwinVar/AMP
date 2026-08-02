@@ -11,6 +11,7 @@ from sqlalchemy.orm import sessionmaker
 import models
 from database import Base
 from ai import report
+from currency import CURRENCY
 
 
 def _fresh_session():
@@ -107,7 +108,7 @@ def test_weekly_report_composes_a_markdown_page():
     assert "2 raised, 1 resolved (50%), avg 24.0h to close." in md
     # and pulls real figures through
     assert "Plant OEE" in md and "Bugatti" in md and "machine down" in md
-    assert "$" in md   # cost of losses rendered as money
+    assert CURRENCY in md and "$" not in md   # cost of losses in the platform currency
 
     # empty plant -> still a valid (mostly empty) report, no crash
     empty = report.build_weekly_report(_fresh_session(), "DEFAULT")

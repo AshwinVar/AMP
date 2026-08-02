@@ -1030,7 +1030,10 @@ class OperatorJobExecutionResponse(BaseModel):
 
 
 class AuditLogCreate(BaseModel):
-    actor: str = "system"
+    # No `actor`. It is stamped from the caller's token in create_audit_log —
+    # accepting it here let a client attribute an action to anyone, which is the
+    # one thing an audit trail must not permit. Left in place it would also read
+    # as a working field while being silently overwritten.
     action: str
     entity_type: Optional[str] = None
     entity_id: Optional[int] = None

@@ -545,11 +545,27 @@ def approve_cycle_count(cid: int, db: Session = Depends(get_db), current_user: d
 
 # ── Variance Report ───────────────────────────────────────────
 
-# Transaction types that add to / draw down on-hand stock. Unchanged from the
-# prior Python filter — kept as module constants so the SQL aggregate and the
-# semantics stay in one place.
+# Transaction types whose stored `quantity` is a directional MOVEMENT — units
+# genuinely received into, or issued out of, on-hand stock. Kept as module
+# constants so the SQL aggregate and the semantics stay in one place.
+#
+# "Adjust" is deliberately in NEITHER set: its ledger `quantity` is not a movement
+# amount, so it cannot be summed into either column honestly (rule 2 — never show a
+# metric the data can't support). Two paths write "Adjust", and each stores a value
+# that is not "units issued":
+#   * inventory_routes.create_inventory_transaction SETS stock to an absolute level
+#     (`item.current_stock = quantity`) and records that NEW ABSOLUTE LEVEL as the
+#     row's quantity — so counting it as issued reported the resulting stock as an
+#     issue (e.g. correcting an item from 5 -> 200 recorded "issued 200", though
+#     stock rose by 195).
+#   * approve_cycle_count records `quantity = abs(variance)` — a direction-agnostic
+#     magnitude that is an INCREASE when physical > book, so counting it as issued
+#     inverted the sign for every found-stock correction.
+# The quantity carries no reliable direction (both paths store a non-negative value
+# that can mean up or down), so an Adjust belongs in no movement column; the
+# cycle-count correction is already surfaced separately as last_variance below.
 _IN_TYPES = ("Receive", "Return")
-_OUT_TYPES = ("Issue", "Adjust")
+_OUT_TYPES = ("Issue",)
 
 
 @router.get("/inventory/variance-report")

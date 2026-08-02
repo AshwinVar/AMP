@@ -124,24 +124,27 @@ def test_variance_report_null_stock_no_crash_and_honest_status():
 
 
 def test_variance_report_totals_summed_in_sql_match_reference():
-    # Pin the SQL GROUP BY aggregate to independently-derived numbers and confirm it
-    # keeps the exact type semantics of the old Python scan:
-    #   received = Receive + Return, issued = Issue + Adjust, other types ignored.
+    # Pin the SQL GROUP BY aggregate to independently-derived numbers:
+    #   received = Receive + Return, issued = Issue ONLY. "Adjust" and "Scrap" are
+    #   BOTH excluded from either column. Adjust is not a directional movement — its
+    #   stored quantity is an absolute stock reset (inventory_routes) or abs(variance)
+    #   (approve_cycle_count), so summing it as issued reports a figure the data can't
+    #   support; the cycle-count correction is surfaced separately as last_variance.
     db = _sess()
     _item(db, 1, "A", stock=100, reorder=10)
     _item(db, 2, "B", stock=50, reorder=10)      # no transactions -> (0, 0)
     for tt, qty in [("Receive", 10), ("Return", 5), ("Issue", 3),
-                    ("Adjust", 2), ("Scrap", 99)]:   # "Scrap" is neither in nor out
+                    ("Adjust", 2), ("Scrap", 99)]:   # "Adjust" / "Scrap" -> neither column
         db.add(models.InventoryTransaction(item_id=1, transaction_type=tt, quantity=qty))
     db.commit()
 
     rows = {r["item_code"]: r for r in eir.variance_report(db=db, current_user=_ADMIN)}
     a = rows["A"]
     assert a["total_received"] == 15, a["total_received"]   # 10 + 5, "Scrap" excluded
-    assert a["total_issued"] == 5, a["total_issued"]        # 3 + 2
+    assert a["total_issued"] == 3, a["total_issued"]        # Issue only; "Adjust" excluded
     b = rows["B"]
     assert b["total_received"] == 0 and b["total_issued"] == 0   # item with no ledger
-    print("PASS variance_report SQL totals match the reference (Receive+Return / Issue+Adjust)")
+    print("PASS variance_report SQL totals match the reference (Receive+Return in / Issue out)")
 
 
 if __name__ == "__main__":

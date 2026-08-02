@@ -55,7 +55,21 @@ def update_cost_record(cost_id: int, payload: schemas.CostRecordUpdate, db: Sess
     row = db.query(models.CostRecord).filter(models.CostRecord.id == cost_id).first()
     if not row:
         raise HTTPException(status_code=404, detail="Cost record not found")
-    for key, value in payload.model_dump(exclude_unset=True).items():
+    data = payload.model_dump(exclude_unset=True)
+    # cost_type / description are Column(String, nullable=False) in the model, but
+    # CostRecordUpdate types each Optional[str]=None — so a client can PATCH an
+    # explicit {"cost_type": null} (exclude_unset keeps the explicit null, value
+    # None). setattr'd onto the row and committed, that hit the NOT NULL constraint
+    # and raised an unhandled IntegrityError -> a 500 (with the request session left
+    # aborted), where the create path already refuses a bad write with a clean 4xx
+    # (the duplicate-cost_no 409 below). Reject a null-out of a required column up
+    # front with a 400 — checked BEFORE any setattr, so a rejected PATCH never
+    # mutates the row (parity with the sibling PATCH guards that validate before
+    # commit: inventory/orders/quality reject a negative count before writing it).
+    for field in ("cost_type", "description"):
+        if field in data and data[field] is None:
+            raise HTTPException(status_code=400, detail="cost_type and description cannot be null")
+    for key, value in data.items():
         setattr(row, key, value)
     # amount is Column(Integer, default=0) WITHOUT nullable=False, and
     # CostRecordUpdate types it Optional[int]=None — so a client can PATCH an

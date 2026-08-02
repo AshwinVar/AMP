@@ -8,6 +8,7 @@ Run:  python backend/test_costing_routes.py     (exit 0 = pass)
 """
 from datetime import date
 
+from fastapi import HTTPException
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker
 
@@ -200,6 +201,75 @@ def test_patch_keeps_a_real_amount_and_zero_unchanged():
     print("PASS PATCH preserves a real amount and a legitimate 0")
 
 
+def test_patch_null_cost_type_is_400_not_500_and_leaves_row_intact():
+    # cost_type / description are Column(String, nullable=False), but
+    # CostRecordUpdate types each Optional[str]=None, so a client PATCHing an
+    # explicit {"cost_type": null} passes schema validation, exclude_unset keeps
+    # the null, and setattr writes None. Committing that hit the NOT NULL
+    # constraint and raised an unhandled IntegrityError -> a 500 (the create path
+    # already refuses a bad write with a clean 4xx). The guard rejects it with a
+    # 400 BEFORE any setattr, so the row is never mutated.
+    db = _fresh_session()
+    db.add(models.CostRecord(cost_no="C-NN", cost_type="Labour", description="shift", amount=120))
+    db.commit()
+    row_id = db.query(models.CostRecord).filter(models.CostRecord.cost_no == "C-NN").one().id
+
+    for bad in (schemas.CostRecordUpdate(cost_type=None),
+                schemas.CostRecordUpdate(description=None)):
+        try:
+            costing_routes.update_cost_record(cost_id=row_id, payload=bad, db=db, current_user={})
+            assert False, "expected a 400, got a success"
+        except HTTPException as e:
+            assert e.status_code == 400, e.status_code   # a clean 400, NOT a 500
+
+    # The rejected PATCH never mutated or committed the row: both required fields
+    # survive unchanged (and a later GET would still validate).
+    kept = db.query(models.CostRecord).filter_by(id=row_id).one()
+    assert kept.cost_type == "Labour" and kept.description == "shift", (kept.cost_type, kept.description)
+    print("PASS PATCH {cost_type|description: null} is a clean 400, row left intact (no IntegrityError 500)")
+
+
+def test_patch_null_required_field_paired_with_valid_field_still_rejected():
+    # A mixed PATCH — {"cost_type": null, "amount": 500} — must still be rejected
+    # whole: the null required field is caught before setattr, so the valid amount
+    # is NOT partially applied (all-or-nothing, like the sibling before-commit guards).
+    db = _fresh_session()
+    db.add(models.CostRecord(cost_no="C-MIX", cost_type="Material", description="d", amount=10))
+    db.commit()
+    row_id = db.query(models.CostRecord).filter(models.CostRecord.cost_no == "C-MIX").one().id
+
+    try:
+        costing_routes.update_cost_record(
+            cost_id=row_id,
+            payload=schemas.CostRecordUpdate(cost_type=None, amount=500),
+            db=db, current_user={})
+        assert False, "expected a 400"
+    except HTTPException as e:
+        assert e.status_code == 400, e.status_code
+
+    kept = db.query(models.CostRecord).filter_by(id=row_id).one()
+    # Nothing applied: cost_type intact AND the paired amount did not slip through.
+    assert kept.cost_type == "Material" and kept.amount == 10, (kept.cost_type, kept.amount)
+    print("PASS a null required field rejects the whole PATCH; the paired valid field is not applied")
+
+
+def test_patch_updates_required_fields_with_real_values_still_works():
+    # Regression: a legitimate non-null update of the required fields is unaffected
+    # by the guard (it only rejects an explicit null-out).
+    db = _fresh_session()
+    db.add(models.CostRecord(cost_no="C-OK", cost_type="Labour", description="old", amount=40))
+    db.commit()
+    row_id = db.query(models.CostRecord).filter(models.CostRecord.cost_no == "C-OK").one().id
+
+    out = costing_routes.update_cost_record(
+        cost_id=row_id,
+        payload=schemas.CostRecordUpdate(cost_type="Overhead", description="new"),
+        db=db, current_user={})
+    assert out.cost_type == "Overhead" and out.description == "new"
+    assert schemas.CostRecordResponse.model_validate(out).cost_type == "Overhead"
+    print("PASS a real (non-null) cost_type/description update still applies")
+
+
 if __name__ == "__main__":
     test_costing_paths_owned_by_costing_routes()
     test_cost_per_good_unit_keeps_pence_precision()
@@ -209,4 +279,7 @@ if __name__ == "__main__":
     test_patch_null_amount_heals_to_zero_not_500()
     test_patch_unrelated_field_heals_preexisting_null_amount()
     test_patch_keeps_a_real_amount_and_zero_unchanged()
+    test_patch_null_cost_type_is_400_not_500_and_leaves_row_intact()
+    test_patch_null_required_field_paired_with_valid_field_still_rejected()
+    test_patch_updates_required_fields_with_real_values_still_works()
     print("ALL COSTING ROUTE TESTS PASSED")

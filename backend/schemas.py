@@ -993,6 +993,22 @@ class OperatorJobExecutionResponse(BaseModel):
     _heal_counts = field_validator("good_count", "rejected_count", mode="before")(
         _coalesce_null_count
     )
+    # job_status is Column(String, default="Started") WITHOUT nullable=False, and
+    # OperatorJobExecutionUpdate types it Optional[str]=None — so a client can PATCH
+    # an explicit {"job_status": null} (the update handler's setattr loop over
+    # exclude_unset persists it) and a legacy / raw-SQL / migration row can already
+    # carry NULL. Left as None the response 500s (this field is a non-optional str),
+    # and because the NULL is committed first, every subsequent
+    # GET /operator/executions then 500s for the whole tenant until the row is
+    # repaired. The sibling count columns above were healed but this string column
+    # was missed. Coalesce a NULL to the column's own default "Started" — the same
+    # heal EscalationResponse (status -> "Open") and MaintenanceTaskResponse
+    # (status -> "Open", priority -> "Medium") already apply to their nullable
+    # string-default columns. A real recorded status is untouched (mode="before"
+    # only rewrites None).
+    _heal_job_status = field_validator("job_status", mode="before")(
+        _coalesce_null_text("Started")
+    )
 
     class Config:
         from_attributes = True

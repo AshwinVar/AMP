@@ -10,7 +10,7 @@ from sqlalchemy.orm import sessionmaker
 
 import models
 from database import Base
-from ai import handover
+from ai import handover, escalations
 
 
 def _fresh_session():
@@ -47,7 +47,53 @@ def test_handover_summarises_output_open_work_and_attention():
     assert empty["open_work"]["pending_approvals"] == 0 and empty["attention"] == []
 
 
+def test_open_escalation_count_counts_null_status_and_reconciles_with_queue():
+    """The carry-over count must include a NULL-status open escalation and use the
+    SAME open definition as the escalation-queue read-model — a whitelist of
+    exact status strings dropped both a NULL status and any non-terminal drift."""
+    db = _fresh_session()
+
+    # Five escalations spanning the states a real table holds:
+    #   Open          -> open
+    #   In Progress   -> open
+    #   NULL status   -> open (default="Open" is not nullable=False; a raw-SQL /
+    #                    migration / cleared-field row can hold a genuine NULL)
+    #   Resolved      -> closed
+    #   Cancelled     -> closed
+    db.add(models.Escalation(tenant_code="DEFAULT", title="a", severity="High",
+                             owner="o", department="Maintenance", status="Open", source="Manual"))
+    db.add(models.Escalation(tenant_code="DEFAULT", title="b", severity="Medium",
+                             owner="o", department="Production", status="In Progress", source="Manual"))
+    db.add(models.Escalation(tenant_code="DEFAULT", title="c", severity="Critical",
+                             owner="o", department="Maintenance", status=None, source="Manual"))
+    db.add(models.Escalation(tenant_code="DEFAULT", title="d", severity="Low",
+                             owner="o", department="Quality", status="Resolved", source="Manual"))
+    db.add(models.Escalation(tenant_code="DEFAULT", title="e", severity="Low",
+                             owner="o", department="Quality", status="Cancelled", source="Manual"))
+    db.commit()
+
+    h = handover.build_handover(db, "DEFAULT")
+
+    # Independently derived: 3 open (Open, In Progress, NULL), 2 closed.
+    assert h["open_work"]["open_escalations"] == 3, h["open_work"]["open_escalations"]
+
+    # Reconciles with the escalation-queue read-model's own "open" count (rule 3) —
+    # the two surfaces show the same handover page and must agree.
+    queue = escalations.build_escalation_summary(db, "DEFAULT")
+    assert h["open_work"]["open_escalations"] == queue["open"], (
+        h["open_work"]["open_escalations"], queue["open"])
+
+    # A resolved/cancelled-only plant carries nothing over.
+    closed_only = _fresh_session()
+    closed_only.add(models.Escalation(tenant_code="DEFAULT", title="z", severity="Low",
+                                      owner="o", department="Quality", status="Resolved", source="Manual"))
+    closed_only.commit()
+    assert handover.build_handover(closed_only, "DEFAULT")["open_work"]["open_escalations"] == 0
+
+
 if __name__ == "__main__":
     test_handover_summarises_output_open_work_and_attention()
+    test_open_escalation_count_counts_null_status_and_reconciles_with_queue()
     print("HANDOVER OK: output + OEE, open work to carry over (approvals + escalations), attention list + wins; "
-          "composed from briefing/production; empty-safe")
+          "composed from briefing/production; empty-safe; open-escalation count is NULL-safe and "
+          "reconciles with the escalation-queue read-model")

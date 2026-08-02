@@ -754,6 +754,169 @@ def test_update_purchase_order_receive_from_null_stocks_exact_delta():
     print("PASS update purchase order: receive 30 from NULL adds exactly 30 to stock (5 -> 35), delta correct")
 
 
+def _po_with_stock(db, po_no, stock, order_qty=100):
+    """A supplier, a stocked item and an Open PO against it, inside tenant TA."""
+    s = orders_routes.create_supplier(_supplier("S9", "Acme"), db=db, current_user={"tenant": "TA"})
+    item = models.InventoryItem(tenant_code="TA", item_code=f"ITM-{po_no}", item_name="Steel",
+                                category="Raw", unit="kg", current_stock=stock, reorder_level=0)
+    db.add(item)
+    db.commit()
+    po = orders_routes.create_purchase_order(
+        schemas.PurchaseOrderCreate(
+            po_no=po_no, supplier_id=s.id, item_id=item.id, item_name="Steel",
+            order_quantity=order_qty, received_quantity=0, unit="kg",
+            expected_delivery_date=_po("x", s.id, 1, 0).expected_delivery_date,
+        ),
+        db=db, current_user={"tenant": "TA"},
+    )
+    return item, po
+
+
+def _receive(db, po_id, qty):
+    return orders_routes.update_purchase_order(
+        po_id, schemas.PurchaseOrderUpdate(received_quantity=qty),
+        db=db, current_user={"tenant": "TA"})
+
+
+def _stock_and_ledger(db, item_id, po_no):
+    db.expire_all()
+    stock = db.query(models.InventoryItem).filter(models.InventoryItem.id == item_id).first().current_stock
+    ledger = [(t.transaction_type, t.quantity) for t in
+              db.query(models.InventoryTransaction)
+              .filter(models.InventoryTransaction.reference == po_no)
+              .order_by(models.InventoryTransaction.id).all()]
+    return stock, ledger
+
+
+def test_correcting_a_received_quantity_downward_returns_the_stock():
+    """THE BUG. The receipt delta was `max(new - old, 0)`, so a received figure could
+    only ever be revised UP. Correcting a mistyped receipt moved nothing and the
+    over-received units stayed on the books for ever, with no ledger row explaining
+    them. Measured — 100 kg booked against a PO where 10 actually arrived:
+
+        receive 100 (typo)      stock 100, po.received 100
+        correct down to 10      stock 100, po.received 10    <- 90 phantom kg
+
+    A receipt is a delta, so a correction has to be one too.
+    """
+    db = _iso_session()
+    tok = T.set_current_tenant("TA")
+    try:
+        item, po = _po_with_stock(db, "PO-DOWN", stock=0)
+        _receive(db, po.id, 100)
+        assert _stock_and_ledger(db, item.id, "PO-DOWN") == (100, [("Receive", 100)])
+
+        updated = _receive(db, po.id, 10)
+        stock, ledger = _stock_and_ledger(db, item.id, "PO-DOWN")
+    finally:
+        T.reset_current_tenant(tok)
+
+    assert updated.received_quantity == 10, updated.received_quantity
+    assert stock == 10, stock                                   # NOT 100
+    # "Adjust" is one of the variance report's _OUT_TYPES, so the correction draws
+    # stock down there exactly as it does on the shelf.
+    assert ledger == [("Receive", 100), ("Adjust", 90)], ledger
+    print("PASS correcting a received quantity down returns the over-received stock")
+
+
+def test_an_upward_top_up_still_books_only_the_delta():
+    """CONTROL, and it is what makes the test above meaningful: the ordinary
+    receive-more path must keep booking the DIFFERENCE, not the new total. Without
+    this, a fix that simply set stock to the received figure would pass the test
+    above while destroying every partial receipt.
+
+    It also pins the compounding the bug caused: before the fix, correcting down
+    then topping back up left stock at 190 against a PO reporting 100 received.
+    """
+    db = _iso_session()
+    tok = T.set_current_tenant("TA")
+    try:
+        item, po = _po_with_stock(db, "PO-UP", stock=0)
+        _receive(db, po.id, 100)
+        _receive(db, po.id, 10)          # correct down
+        _receive(db, po.id, 100)         # the rest genuinely arrives
+        stock, ledger = _stock_and_ledger(db, item.id, "PO-UP")
+    finally:
+        T.reset_current_tenant(tok)
+
+    assert stock == 100, stock                                  # NOT 190
+    assert ledger == [("Receive", 100), ("Adjust", 90), ("Receive", 90)], ledger
+    print("PASS an upward top-up books only the delta, and the books reconcile")
+
+
+def test_a_correction_cannot_drive_stock_negative():
+    """The rest was already issued and cannot be un-issued. Stock stays >= 0 — the
+    invariant every other mutation here maintains — and the ledger records what
+    ACTUALLY moved, so stock and ledger still reconcile."""
+    db = _iso_session()
+    tok = T.set_current_tenant("TA")
+    try:
+        item, po = _po_with_stock(db, "PO-NEG", stock=0)
+        _receive(db, po.id, 100)
+        # 95 of the 100 are issued to the floor before anyone notices the typo.
+        db.query(models.InventoryItem).filter(models.InventoryItem.id == item.id).first().current_stock = 5
+        db.commit()
+
+        _receive(db, po.id, 10)          # correction wants to take back 90; only 5 left
+        stock, ledger = _stock_and_ledger(db, item.id, "PO-NEG")
+    finally:
+        T.reset_current_tenant(tok)
+
+    assert stock == 0, stock                                    # clamped, never negative
+    assert ledger == [("Receive", 100), ("Adjust", 5)], ledger  # what really moved
+    print("PASS a correction clamps at zero stock and logs what actually moved")
+
+
+def test_a_correction_against_an_empty_shelf_writes_no_ledger_row():
+    """When the clamp reduces the correction to nothing, no transaction is written.
+
+    This is the case the `if applied:` guard exists for, and the only one — a plain
+    no-op PATCH is already blocked by the outer `if received_delta:`, so a fixture
+    built from that cannot exercise it. Mutation testing found exactly that gap.
+
+    A zero-quantity ledger row is not harmless: the variance report sums Adjust into
+    its OUT types, so a run of them makes the audit trail look like activity that
+    never happened.
+    """
+    db = _iso_session()
+    tok = T.set_current_tenant("TA")
+    try:
+        item, po = _po_with_stock(db, "PO-EMPTY", stock=0)
+        _receive(db, po.id, 100)
+        # Every one of the 100 is issued before the typo is spotted.
+        db.query(models.InventoryItem).filter(models.InventoryItem.id == item.id).first().current_stock = 0
+        db.commit()
+
+        _receive(db, po.id, 10)          # wants to take back 90; nothing left to take
+        stock, ledger = _stock_and_ledger(db, item.id, "PO-EMPTY")
+    finally:
+        T.reset_current_tenant(tok)
+
+    assert stock == 0, stock
+    assert ledger == [("Receive", 100)], ledger   # no zero-quantity Adjust appended
+    print("PASS a correction with nothing left to take back writes no ledger row")
+
+
+def test_a_no_op_patch_writes_no_ledger_row():
+    """Re-sending the same received figure is not a movement. `if received_delta`
+    must treat 0 as nothing to do — otherwise every idle PATCH from the 3s-polled
+    purchasing table would append a zero-quantity transaction."""
+    db = _iso_session()
+    tok = T.set_current_tenant("TA")
+    try:
+        item, po = _po_with_stock(db, "PO-NOOP", stock=0)
+        _receive(db, po.id, 40)
+        before = _stock_and_ledger(db, item.id, "PO-NOOP")
+        _receive(db, po.id, 40)
+        _receive(db, po.id, 40)
+        after = _stock_and_ledger(db, item.id, "PO-NOOP")
+    finally:
+        T.reset_current_tenant(tok)
+
+    assert before == after == (40, [("Receive", 40)]), (before, after)
+    print("PASS a repeat PATCH with the same received figure moves nothing")
+
+
 def test_create_customer_order_rejects_negative_quantities():
     # Parity with the production-record (#266) and quality (#324) ingests: the
     # schema types order_quantity / dispatched_quantity as plain ints (no ge=0), so
@@ -944,6 +1107,11 @@ if __name__ == "__main__":
     test_update_customer_order_dispatch_from_null_transitions_partial()
     test_update_purchase_order_survives_null_received_quantity()
     test_update_purchase_order_receive_from_null_stocks_exact_delta()
+    test_correcting_a_received_quantity_downward_returns_the_stock()
+    test_an_upward_top_up_still_books_only_the_delta()
+    test_a_correction_cannot_drive_stock_negative()
+    test_a_correction_against_an_empty_shelf_writes_no_ledger_row()
+    test_a_no_op_patch_writes_no_ledger_row()
     test_create_customer_order_rejects_negative_quantities()
     test_update_customer_order_rejects_negative_dispatched()
     test_create_purchase_order_rejects_negative_quantities()

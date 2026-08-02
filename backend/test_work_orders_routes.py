@@ -12,7 +12,7 @@ assert the routes moved and are owned by the module.
 Run:  python backend/test_work_orders_routes.py     (exit 0 = pass)
 """
 from fastapi import HTTPException
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker
 
 import main
@@ -403,6 +403,222 @@ def test_completion_reaching_target_publishes_actual_quantity():
     print("PASS completion via reaching target publishes the actual produced quantity")
 
 
+def _bom_session():
+    """A tenant with the SHAFT-001 recipe stocked: 2x RM-STEEL-001 -> FG-SHAFT-001."""
+    db = _iso_session()
+    machine = _seed_machine(db, "TA")
+    tok = T.set_current_tenant("TA")
+    try:
+        db.add(models.InventoryItem(item_code="RM-STEEL-001", item_name="Steel",
+                                    category="Raw", unit="kg", current_stock=100, reorder_level=10))
+        db.add(models.InventoryItem(item_code="FG-SHAFT-001", item_name="Shaft",
+                                    category="Finished", unit="pcs", current_stock=0, reorder_level=0))
+        db.commit()
+    finally:
+        T.reset_current_tenant(tok)
+    return db, machine
+
+
+def _patch_on_bom_bus(db, wo_id, **fields):
+    """PATCH the work order with only the BOM subscriber listening."""
+    import subscribers
+    from events import EventBus
+    bus = EventBus()
+    subscribers.register(bus)
+    original = WO.event_bus
+    WO.event_bus = bus
+    tok = T.set_current_tenant("TA")
+    try:
+        WO.update_work_order(wo_id, schemas.WorkOrderUpdate(**fields),
+                             db=db, current_user={"tenant": "TA"})
+        db.commit()
+    finally:
+        T.reset_current_tenant(tok)
+        WO.event_bus = original
+
+
+def _bom_state(db):
+    tok = T.set_current_tenant("TA")
+    try:
+        db.expire_all()
+        raw = db.query(models.InventoryItem).filter_by(item_code="RM-STEEL-001").first().current_stock
+        fg = db.query(models.InventoryItem).filter_by(item_code="FG-SHAFT-001").first().current_stock
+        ledger = [(t.transaction_type, t.quantity) for t in
+                  db.query(models.InventoryTransaction).order_by(models.InventoryTransaction.id).all()]
+    finally:
+        T.reset_current_tenant(tok)
+    return raw, fg, ledger
+
+
+def test_reopening_and_recompleting_does_not_move_the_bom_again():
+    """THE BUG. The publish was gated on `prev_status != "Completed"`, but
+    prev_status is read from the row at the top of the SAME request, so it only
+    remembered one PATCH back. Reopening a finished order and finishing it again
+    looked like a first completion.
+
+    Measured before the fix, on a 10-unit SHAFT-001 order (2 kg steel per unit),
+    driven entirely from the work-order table UI:
+
+        PATCH actual_quantity=10       raw 100->80, fg 0->10   correct
+        reopen (Running) -> Completed   raw 80->60,  fg 10->20
+        reopen -> Completed again       raw 60->40,  fg 20->30
+
+    40 kg written off and 30 units booked for 10 units of real production, and
+    unbounded in the number of cycles. The event carries the CUMULATIVE
+    actual_quantity and the subscriber applies it as an absolute move, so no
+    delta semantics make a re-fire harmless.
+    """
+    db, machine = _bom_session()
+    wo = _create_as(db, "TA", schemas.WorkOrderCreate(
+        work_order_no="WO-RF", part_number="SHAFT-001", batch_number="B-1",
+        machine_id=machine.id, target_quantity=10, actual_quantity=0, status="Running"))
+
+    _patch_on_bom_bus(db, wo.id, actual_quantity=10)          # completes on target
+    assert _bom_state(db)[:2] == (80, 10), _bom_state(db)
+
+    for _ in range(3):                                        # reopen / re-complete
+        _patch_on_bom_bus(db, wo.id, status="Running")
+        _patch_on_bom_bus(db, wo.id, status="Completed")
+
+    raw, fg, ledger = _bom_state(db)
+    assert (raw, fg) == (80, 10), (raw, fg)                   # NOT (40, 30)
+    # One movement pair, so the ledger cannot corroborate a corrupted figure.
+    assert ledger == [("Issue", 20), ("Receive", 10)], ledger
+    print("PASS reopening and re-completing a work order moves the BOM only once")
+
+
+def test_a_repeat_completed_patch_still_moves_nothing():
+    """CONTROL, and it is what makes the test above meaningful.
+
+    A repeat PATCH with status=Completed and NO intervening reopen never
+    republished (prev_status was already "Completed"), and must still not. If this
+    also changed, the test above could not tell the re-fire bug from a blanket
+    "never publish twice" that had broken the first completion too.
+    """
+    db, machine = _bom_session()
+    wo = _create_as(db, "TA", schemas.WorkOrderCreate(
+        work_order_no="WO-RC", part_number="SHAFT-001", batch_number="B-1",
+        machine_id=machine.id, target_quantity=10, actual_quantity=0, status="Running"))
+    _patch_on_bom_bus(db, wo.id, actual_quantity=10)
+    before = _bom_state(db)
+    _patch_on_bom_bus(db, wo.id, status="Completed")
+    _patch_on_bom_bus(db, wo.id, status="Completed")
+    assert _bom_state(db) == before, (before, _bom_state(db))
+    print("PASS a repeat Completed PATCH with no reopen still moves nothing")
+
+
+def test_completion_stamps_completed_at_once_and_never_rewrites_it():
+    """The marker must be written on the first completion and then left alone —
+    if a reopen cleared it, or a later PATCH refreshed it, the guard would fall
+    open again."""
+    db, machine = _bom_session()
+    wo = _create_as(db, "TA", schemas.WorkOrderCreate(
+        work_order_no="WO-TS", part_number="SHAFT-001", batch_number="B-1",
+        machine_id=machine.id, target_quantity=10, actual_quantity=0, status="Running"))
+    tok = T.set_current_tenant("TA")
+    try:
+        assert db.query(models.WorkOrder).filter_by(id=wo.id).first().completed_at is None
+    finally:
+        T.reset_current_tenant(tok)
+
+    _patch_on_bom_bus(db, wo.id, actual_quantity=10)
+    tok = T.set_current_tenant("TA")
+    try:
+        first = db.query(models.WorkOrder).filter_by(id=wo.id).first().completed_at
+    finally:
+        T.reset_current_tenant(tok)
+    assert first is not None, "first completion must stamp completed_at"
+
+    _patch_on_bom_bus(db, wo.id, status="Running")
+    _patch_on_bom_bus(db, wo.id, status="Completed")
+    tok = T.set_current_tenant("TA")
+    try:
+        row = db.query(models.WorkOrder).filter_by(id=wo.id).first()
+    finally:
+        T.reset_current_tenant(tok)
+    assert row.completed_at == first, (row.completed_at, first)   # survives a reopen
+    print("PASS completed_at is stamped once and survives a reopen")
+
+
+def test_an_order_created_already_completed_never_moves_the_bom():
+    """Create does not publish ProductionCompleted, so an order posted directly as
+    Completed has never moved its BOM — and must not start moving it on some later
+    unrelated PATCH. That was the behaviour before this change (prev_status was
+    already "Completed") and stamping completed_at on create preserves it."""
+    db, machine = _bom_session()
+    wo = _create_as(db, "TA", schemas.WorkOrderCreate(
+        work_order_no="WO-BORN", part_number="SHAFT-001", batch_number="B-1",
+        machine_id=machine.id, target_quantity=10, actual_quantity=10, status="Completed"))
+    assert _bom_state(db)[:2] == (100, 0), _bom_state(db)     # create moved nothing
+
+    _patch_on_bom_bus(db, wo.id, status="Completed")
+    _patch_on_bom_bus(db, wo.id, status="Running")
+    _patch_on_bom_bus(db, wo.id, status="Completed")
+    raw, fg, ledger = _bom_state(db)
+    assert (raw, fg) == (100, 0), (raw, fg)
+    assert ledger == [], ledger
+    print("PASS an order created as Completed never moves the BOM on a later PATCH")
+
+
+def test_the_backfill_stamps_existing_completed_orders():
+    """Historic rows carry a NULL completed_at, so without the backfill the first
+    PATCH that left such an order Completed would look like a first completion and
+    move its BOM a second time — the bug, fired once per order at deploy."""
+    db, machine = _bom_session()
+    wo = _create_as(db, "TA", schemas.WorkOrderCreate(
+        work_order_no="WO-OLD", part_number="SHAFT-001", batch_number="B-1",
+        machine_id=machine.id, target_quantity=10, actual_quantity=10, status="Completed"))
+    # Simulate a pre-migration row: Completed with no marker.
+    tok = T.set_current_tenant("TA")
+    try:
+        db.execute(text("UPDATE work_orders SET completed_at = NULL WHERE id = :i"), {"i": wo.id})
+        db.commit()
+        db.expire_all()
+        assert db.query(models.WorkOrder).filter_by(id=wo.id).first().completed_at is None
+    finally:
+        T.reset_current_tenant(tok)
+
+    # Run the REAL migration helper, pointed at this test engine. Inlining a copy
+    # of its UPDATE here would leave main._backfill_completed_at() itself untested —
+    # deleting it would break nothing, which mutation testing showed.
+    original_engine = main.engine
+    main.engine = db.get_bind()
+    try:
+        main._backfill_completed_at()
+    finally:
+        main.engine = original_engine
+
+    tok = T.set_current_tenant("TA")
+    try:
+        db.expire_all()
+        assert db.query(models.WorkOrder).filter_by(id=wo.id).first().completed_at is not None
+    finally:
+        T.reset_current_tenant(tok)
+
+    _patch_on_bom_bus(db, wo.id, status="Completed")
+    assert _bom_state(db)[:2] == (100, 0), _bom_state(db)
+    print("PASS the backfill stops a historic Completed order re-moving its BOM")
+
+
+def test_the_backfill_is_actually_wired_at_startup():
+    """The test above proves the FUNCTION works; this proves it RUNS.
+
+    Deleting the module-level call would leave every historic row unstamped and
+    the function still passing its own test — mutation testing found exactly that
+    hole. Same source-level wiring guard this file already uses for the
+    event_bus.publish coupling.
+    """
+    import inspect
+    import re
+    src = inspect.getsource(main)
+    # A call at module level (column 0), not the def and not a nested reference.
+    assert re.search(r"^_backfill_completed_at\(\)", src, re.M), (
+        "main.py no longer calls _backfill_completed_at() at import time — historic "
+        "Completed work orders would keep a NULL completed_at and re-move their BOM "
+        "on the next PATCH.")
+    print("PASS the completed_at backfill is wired at startup")
+
+
 if __name__ == "__main__":
     test_work_orders_paths_owned_by_module()
     test_completing_wo_still_publishes_production_completed()
@@ -417,4 +633,10 @@ if __name__ == "__main__":
     test_status_only_patch_on_a_null_actual_row_serialises()
     test_work_order_response_heals_only_null_not_a_real_zero()
     test_completion_reaching_target_publishes_actual_quantity()
+    test_reopening_and_recompleting_does_not_move_the_bom_again()
+    test_a_repeat_completed_patch_still_moves_nothing()
+    test_completion_stamps_completed_at_once_and_never_rewrites_it()
+    test_an_order_created_already_completed_never_moves_the_bom()
+    test_the_backfill_stamps_existing_completed_orders()
+    test_the_backfill_is_actually_wired_at_startup()
     print("ALL WORK-ORDERS ROUTE TESTS PASSED")

@@ -65,6 +65,13 @@ def create_work_order(
     if min(work_order.target_quantity, work_order.actual_quantity) < 0:
         raise HTTPException(status_code=400, detail="quantities must be non-negative")
     new_work_order = models.WorkOrder(**work_order.model_dump())
+    # Create does NOT publish ProductionCompleted, so an order posted directly as
+    # Completed has never moved its BOM — and must not start moving it on some
+    # later unrelated PATCH. Stamping completed_at here keeps that pre-existing
+    # behaviour exactly, and keeps the invariant "Completed => completed_at set"
+    # true from the moment the row exists.
+    if new_work_order.status == "Completed" and new_work_order.completed_at is None:
+        new_work_order.completed_at = datetime.utcnow()
     db.add(new_work_order)
     try:
         db.commit()
@@ -107,10 +114,34 @@ def update_work_order(
     if payload.status is not None:
         work_order.status = payload.status
 
-    # When a WO transitions to Completed, publish a domain event. The inventory
-    # BOM movement is now a subscriber (subscribers.py / ADR-0001); it runs
+    # When a WO reaches Completed for the FIRST time, publish a domain event. The
+    # inventory BOM movement is a subscriber (subscribers.py / ADR-0001); it runs
     # synchronously on this same DB session, so it still commits atomically below.
-    if prev_status != "Completed" and work_order.status == "Completed":
+    #
+    # Gated on completed_at, not on prev_status. prev_status is read from the row
+    # at the top of THIS request, so it only ever remembers one PATCH back —
+    # reopening a finished order and finishing it again looked like a first
+    # completion and moved the whole BOM a second time. The subscriber applies
+    # the event's CUMULATIVE actual_quantity as an absolute move, so there is no
+    # delta semantics that would make a re-fire harmless. Measured on a 10-unit
+    # SHAFT-001 order (2 kg steel per unit), driven entirely from the work-order
+    # table UI, which renders all four statuses for an already-Completed row:
+    #
+    #   PATCH actual_quantity=10     raw 100->80, fg 0->10   correct
+    #   reopen (Running) -> Completed  raw 80->60, fg 10->20
+    #   reopen -> Completed again      raw 60->40, fg 20->30
+    #
+    # 40 kg written off and 30 units booked for 10 units of real production, and
+    # unbounded in the number of cycles. Each re-fire also wrote a fresh
+    # "Issue 20 / Receive 10" pair, so the ledger corroborated the corrupted
+    # figure instead of exposing it — the same shape as the repeat cycle-count
+    # approve fixed in enterprise_inventory_routes.
+    #
+    # This condition SUBSUMES the old one: a repeat PATCH with status=Completed
+    # and no intervening reopen never republished before (prev_status was already
+    # "Completed") and still does not, because completed_at is set.
+    if work_order.status == "Completed" and work_order.completed_at is None:
+        work_order.completed_at = datetime.utcnow()
         # The BOM movement (subscribers.move_bom_on_production_completed) consumes
         # raw material and receives finished goods for THIS quantity, so it must be
         # what was actually produced. `actual_quantity or target_quantity` was the

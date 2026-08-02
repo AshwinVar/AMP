@@ -116,6 +116,11 @@ class WorkOrder(Base):
     material_state = Column(String, default="RAW")             # RAW -> SEMI (post-SMT) -> FIN (post-IC)
     planned_start = Column(DateTime, nullable=True)
     planned_end = Column(DateTime, nullable=True)
+    # Stamped ONCE, the first time the order reaches Completed. This is what makes
+    # the ProductionCompleted publish idempotent: `status` alone cannot say whether
+    # the BOM has already moved, because a finished order can be reopened and
+    # finished again. Also the only real completion timestamp any table carries.
+    completed_at = Column(DateTime, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
 
 

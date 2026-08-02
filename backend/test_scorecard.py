@@ -12,6 +12,7 @@ from sqlalchemy.orm import sessionmaker
 import models
 from database import Base
 from ai import scorecard
+from currency import CURRENCY
 
 
 def _fresh_session():
@@ -66,7 +67,10 @@ def test_scorecard_headlines_one_kpi_per_pillar_with_tone():
     assert kpis["good_rate"]["value"] == 97 and kpis["good_rate"]["unit"] == "%"
     assert kpis["on_time"]["label"] == "Delivery reliability"
     assert kpis["on_time"]["value"] == 0 and kpis["on_time"]["tone"] == "bad"  # 0 of 1 due delivered
-    assert kpis["loss_cost"]["unit"] == "$" and kpis["loss_cost"]["value"] > 0
+    # The unit is the platform currency (currency.CURRENCY), not a literal — four
+    # renderers branch on this token to format money as a prefix. See
+    # test_currency_single.py.
+    assert kpis["loss_cost"]["unit"] == CURRENCY and kpis["loss_cost"]["value"] > 0
     # deltas vs the prior week: good rate up 7 pts (good); cost down (good); reliability none
     assert kpis["good_rate"]["delta"] == 7 and kpis["good_rate"]["delta_tone"] == "good"
     assert kpis["loss_cost"]["delta"] < 0 and kpis["loss_cost"]["delta_tone"] == "good"

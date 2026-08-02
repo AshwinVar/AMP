@@ -1,5 +1,7 @@
 from datetime import datetime
 
+from currency import CURRENCY
+
 
 def build_daily_summary_text(summary: dict, shift_kpis: list, alerts: list):
     lines = [
@@ -15,7 +17,7 @@ def build_daily_summary_text(summary: dict, shift_kpis: list, alerts: list):
         f"Total Downtime: {summary.get('total_downtime_minutes', 0)} minutes",
         f"Top Loss Reason: {summary.get('top_loss_reason', 'No data')}",
         f"Worst Machine: {summary.get('worst_machine', 'No data')}",
-        f"Estimated Downtime Loss: £{summary.get('estimated_loss_value', 0)}",
+        f"Estimated Downtime Loss: {CURRENCY}{summary.get('estimated_loss_value', 0)}",
         "",
         "Shift KPIs",
         "----------",

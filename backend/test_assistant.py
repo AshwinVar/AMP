@@ -11,6 +11,7 @@ from sqlalchemy.orm import sessionmaker
 import models
 from database import Base
 from ai import assistant
+from currency import CURRENCY
 
 
 def _fresh_session():
@@ -97,7 +98,7 @@ def test_copilot_digest_summarises_the_plant():
     db = _fresh_session()
     _seed(db)
     d = assistant.digest(db, "DEFAULT")
-    assert "OEE" in d["digest"] and "$" in d["digest"]
+    assert "OEE" in d["digest"] and CURRENCY in d["digest"]
     # empty-safe on a fresh plant
     assert "digest" in assistant.digest(_fresh_session(), "DEFAULT")
 

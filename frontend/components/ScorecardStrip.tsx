@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { apiGet } from "../lib/api";
+import { CURRENCY, money } from "../lib/money";
 
 // Mirrors the backend scorecard read-model (ai/scorecard.py build_scorecard).
 type Kpi = {
@@ -24,16 +25,20 @@ const deltaCls: Record<string, string> = {
   flat: "text-slate-500",
 };
 
+// `unit` is the backend's display token (ai/scorecard.py sends currency.CURRENCY for
+// loss_cost). Compare against the shared constant, never a literal: currency is the one
+// unit rendered as a PREFIX, so if this comparison misses, the value falls through to the
+// suffix branch and reads "49740£".
 const fmt = (k: Kpi) =>
   k.value == null ? "—"
-    : k.unit === "$" ? `$${k.value.toLocaleString()}`
+    : k.unit === CURRENCY ? money(k.value)
     : k.unit === "%" ? `${k.value}%`
     : `${k.value}${k.unit}`;
 
 // The delta magnitude, formatted like the KPI (absolute value; the arrow carries the sign).
 const fmtDelta = (k: Kpi) => {
   const a = Math.abs(k.delta as number);
-  return k.unit === "$" ? `$${a.toLocaleString()}` : `${a}${k.unit === "%" ? "" : k.unit}`;
+  return k.unit === CURRENCY ? money(a) : `${a}${k.unit === "%" ? "" : k.unit}`;
 };
 const deltaGlyph = (d: number) => (d > 0 ? "↑" : d < 0 ? "↓" : "→");
 

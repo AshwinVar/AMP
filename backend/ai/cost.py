@@ -12,19 +12,23 @@ from datetime import datetime, timedelta
 
 import models
 from ai.twin import _recent_production
+from currency import CURRENCY, money, signed_money
 
 name = "cost"
 
 WINDOW_DAYS = 7
 TOP_N = 5
-DOWNTIME_COST_PER_MIN = 12      # $ lost per minute of unplanned downtime
-SCRAP_COST_PER_UNIT = 25        # $ lost per rejected / scrapped unit
+# Rates are in the platform currency (see currency.py — GBP per ADR-0010). These
+# comments used to say "$" while the tenant's own rate column is unit_value_gbp,
+# which is how the product ended up printing one plant's money two ways.
+DOWNTIME_COST_PER_MIN = 12      # lost per minute of unplanned downtime
+SCRAP_COST_PER_UNIT = 25        # lost per rejected / scrapped unit
 
 # Trend window — two WINDOW_DAYS halves, so "this week vs last week" over the same
 # 7-day window the cost summary already reports. Mirrors ai.downtime's trend.
 TREND_HALVES = 2
 TREND_WINDOW_DAYS = WINDOW_DAYS * TREND_HALVES
-# A week-to-week swing in loss cost below this ($) is ordinary noise, not a trend —
+# A week-to-week swing in loss cost below this is ordinary noise, not a trend —
 # and the floor a machine must clear to be named a mover. 300 = ~25 downtime min
 # or 12 scrapped units, the same order as ai.downtime's 30-minute floor.
 MIN_MOVE_COST = 300
@@ -123,9 +127,9 @@ def build_cost_summary(db, tenant: str) -> dict:
 
     losses = [
         {"key": "downtime", "label": "Downtime", "cost": downtime_cost,
-         "detail": f"{downtime_min:,} min at ${DOWNTIME_COST_PER_MIN}/min"},
+         "detail": f"{downtime_min:,} min at {money(DOWNTIME_COST_PER_MIN)}/min"},
         {"key": "scrap", "label": "Scrap", "cost": scrap_cost,
-         "detail": f"{rejected:,} units at ${SCRAP_COST_PER_UNIT}/unit"},
+         "detail": f"{rejected:,} units at {money(SCRAP_COST_PER_UNIT)}/unit"},
     ]
     biggest = max(losses, key=lambda l: l["cost"]) if loss_cost > 0 else None
 
@@ -262,18 +266,18 @@ def build_cost_trend(db, tenant: str) -> dict:
     if direction == "none":
         verdict, tone = "No cost of losses in the last 14 days.", "good"
     elif thin:
-        verdict, tone = (f"Cost of losses moved ${delta_cost:+,} to ${now_cost:,} this week, but on "
+        verdict, tone = (f"Cost of losses moved {signed_money(delta_cost)} to {money(now_cost)} this week, but on "
                          f"{total_loss_records} loss-making record{'s' if total_loss_records != 1 else ''} "
                          "in 14 days — too little to call a trend.", "warn")
     elif direction == "worsening":
-        blame = f" — {worst['name']} drove it (+${worst['delta_cost']:,})" if worst else ""
-        verdict, tone = (f"Cost of losses up ${delta_cost:,}{pct_txt} to ${now_cost:,} "
+        blame = f" — {worst['name']} drove it (+{money(worst['delta_cost'])})" if worst else ""
+        verdict, tone = (f"Cost of losses up {money(delta_cost)}{pct_txt} to {money(now_cost)} "
                          f"week on week{blame}.", "bad")
     elif direction == "improving":
-        verdict, tone = (f"Cost of losses down ${abs(delta_cost):,}{pct_txt} to ${now_cost:,} "
+        verdict, tone = (f"Cost of losses down {money(abs(delta_cost))}{pct_txt} to {money(now_cost)} "
                          "week on week.", "good")
     else:
-        verdict, tone = (f"Cost of losses steady at ${now_cost:,} (${delta_cost:+,} week on week).", "good")
+        verdict, tone = (f"Cost of losses steady at {money(now_cost)} ({signed_money(delta_cost)} week on week).", "good")
 
     return {
         "days": TREND_WINDOW_DAYS,

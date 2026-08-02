@@ -63,6 +63,12 @@ def _add_count_line(db, item_id, count_no, physical_qty, variance, book_qty=100)
     db.commit()
 
 
+def _add_txn(db, item_id, transaction_type, quantity):
+    db.add(models.InventoryTransaction(item_id=item_id, transaction_type=transaction_type,
+                                       quantity=quantity, reference="T"))
+    db.commit()
+
+
 def _row_for(report, item_id):
     return next(r for r in report if r["item_id"] == item_id)
 
@@ -104,6 +110,46 @@ def test_variance_report_item_without_a_count_reports_none():
     assert uncounted_row["last_variance"] is None, uncounted_row
     assert uncounted_row["status"] == "Stockout", uncounted_row   # current_stock 0
     print("PASS variance report reports None (not 0) for an item with no cycle count")
+
+
+def test_variance_report_movement_totals_count_only_real_movements():
+    # total_received / total_issued must count only genuine directional movements:
+    # Receive + Return into received, Issue into issued. An "Adjust" row must count
+    # toward NEITHER — its stored quantity is not a movement amount (the ledger path
+    # SETS stock to an absolute level and records that level; the cycle-count path
+    # records abs(variance), an increase when physical > book). Summing it as issued
+    # reported the resulting stock (or a found-stock magnitude) as units issued.
+    #
+    # Independently-derived expectations for the item below:
+    #   received = Receive 30 + Return 5            = 35
+    #   issued   = Issue 20                         = 20   (NOT 20 + 200 = 220)
+    # The Adjust 200 (an absolute stock reset) contributes to neither column.
+    db = _fresh_session()
+    item = _add_item(db, "ITM-MOVE", current_stock=200, reorder_level=20)
+    _add_txn(db, item.id, "Receive", 30)
+    _add_txn(db, item.id, "Return", 5)
+    _add_txn(db, item.id, "Issue", 20)
+    _add_txn(db, item.id, "Adjust", 200)   # absolute set to 200 — not "issued 200"
+
+    row = _row_for(eir.variance_report(db=db, current_user={}), item.id)
+    assert row["total_received"] == 35, row
+    assert row["total_issued"] == 20, row      # was 220 before the fix (Adjust counted)
+    print("PASS variance report counts Receive/Return in, Issue out, and excludes Adjust")
+
+
+def test_variance_report_adjust_only_item_reports_zero_movement():
+    # An item whose only ledger entry is an Adjust (e.g. a one-off stock correction)
+    # must show zero movement in BOTH columns — the Adjust is a correction, not a
+    # receipt or an issue. The current_stock/status still reflect the item itself.
+    db = _fresh_session()
+    item = _add_item(db, "ITM-ADJ", current_stock=7, reorder_level=10)
+    _add_txn(db, item.id, "Adjust", 7)
+
+    row = _row_for(eir.variance_report(db=db, current_user={}), item.id)
+    assert row["total_received"] == 0, row
+    assert row["total_issued"] == 0, row
+    assert row["status"] == "Low", row         # 7 <= reorder 10, but > 0
+    print("PASS variance report reports zero movement for an Adjust-only item")
 
 
 def test_variance_report_empty_tables_is_safe():
@@ -161,6 +207,8 @@ if __name__ == "__main__":
     test_enterprise_inventory_paths_registered_once_and_owned()
     test_variance_report_picks_the_latest_count_per_item()
     test_variance_report_item_without_a_count_reports_none()
+    test_variance_report_movement_totals_count_only_real_movements()
+    test_variance_report_adjust_only_item_reports_zero_movement()
     test_variance_report_empty_tables_is_safe()
     test_variance_report_is_tenant_isolated()
     print("ALL ENTERPRISE-INVENTORY ROUTE TESTS PASSED")

@@ -170,7 +170,7 @@ export default function AgentActivitySection() {
           </div>
           <div className="mt-4 flex items-end gap-2 h-24">
             {trend.daily.map((d) => {
-              const h = trend.peak ? Math.max(4, Math.round((d.count / trend.peak) * 96)) : 4;
+              const h = d.count === 0 ? 0 : Math.max(4, Math.round((d.count / trend.peak) * 96));
               return (
                 <div
                   key={d.date}

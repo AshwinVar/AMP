@@ -80,7 +80,7 @@ export default function ProductionSnapshot() {
           <p className="text-xs text-slate-500 mb-2">Throughput</p>
           <div className="flex items-end gap-2 h-20">
             {p.daily.map((d) => {
-              const h = peak ? Math.max(4, Math.round((d.count / peak) * 72)) : 4;
+              const h = d.count === 0 ? 0 : Math.max(4, Math.round((d.count / peak) * 72));
               return (
                 <div
                   key={d.date}

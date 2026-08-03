@@ -107,7 +107,7 @@ export default function AgentRoiSection() {
               </div>
               <div className="mt-4 flex items-end gap-2 h-24">
                 {trend.daily.map((d) => {
-                  const h = trend.peak ? Math.max(4, Math.round((d.count / trend.peak) * 96)) : 4;
+                  const h = d.count === 0 ? 0 : Math.max(4, Math.round((d.count / trend.peak) * 96));
                   return (
                     <div key={d.date} className="flex-1 flex flex-col items-center justify-end gap-1" title={`${d.count} on ${d.date}`}>
                       <span className="text-[10px] text-slate-400">{d.count || ""}</span>

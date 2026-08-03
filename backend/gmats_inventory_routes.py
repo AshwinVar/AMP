@@ -22,7 +22,7 @@ from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from sqlalchemy.orm import Session
 
 import models
-from payload_fields import int_field, str_field
+from payload_fields import int_cell, int_field, str_field
 from csv_safe import read_upload_text
 from auth import get_current_user, require_roles
 from database import SessionLocal
@@ -661,9 +661,17 @@ async def gmats_import_csv(
                 continue
             category = (row.get("category") or row.get("Category") or "General").strip()
             unit = (row.get("unit") or row.get("Unit") or "Nos").strip()
-            physical = int(float((row.get("physical_stock") or row.get("Opening Stock") or row.get("Stock") or "0").strip() or 0))
-            reorder = int(float((row.get("reorder_level") or row.get("Reorder Level") or "0").strip() or 0))
-            rate = int(float((row.get("purchase_rate") or row.get("Rate") or "0").strip() or 0))
+            # Bound each quantity cell to [0, MAX_QTY] via the shared int_cell — the
+            # CSV analogue of the int_field bound every JSON write of these columns
+            # already applies (gmats_create_item / gmats_update_item) and the negative-
+            # qty guards on the proforma/MIN lines. The old bare int(float(...)) stored
+            # a "-5" as a negative physical_stock and widened an out-of-range value
+            # silently, and both fed straight into displayed figures (available_stock,
+            # the /gmats/summary totals). A bad cell now raises, and the per-row except
+            # below reports it as a skipped row rather than writing a corrupt one.
+            physical = int_cell(row.get("physical_stock") or row.get("Opening Stock") or row.get("Stock"), "physical_stock")
+            reorder = int_cell(row.get("reorder_level") or row.get("Reorder Level"), "reorder_level")
+            rate = int_cell(row.get("purchase_rate") or row.get("Rate"), "purchase_rate")
             supplier = (row.get("supplier") or row.get("Supplier") or "").strip()
             location = (row.get("location") or row.get("Location") or "").strip()
             aliases_raw = (row.get("aliases") or row.get("Aliases") or "").strip()

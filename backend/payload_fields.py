@@ -73,6 +73,44 @@ def int_field(payload: dict, key: str, where: str = "", *, required: bool = True
     return value
 
 
+def int_cell(value, label: str = "value", *, default: int = 0, minimum: int = 0,
+             maximum: int = MAX_QTY) -> int:
+    """A bounded whole number from a CSV cell — decimal-tolerant, like int_field
+    with a [0, MAX_QTY] bound, but for the import (row) side rather than a JSON body.
+
+    The inventory CSV importers (gmats / enterprise) parse a quantity cell with a
+    bare ``int(float(cell))``: decimal-tolerant on purpose — Excel/Tally write an
+    integer quantity as "5", "5.0" or "5.00" — but UNBOUNDED, so a "-5" cell was
+    stored as a negative stock and an out-of-range value ("1e20") was widened by
+    ``int()`` and stored silently. Both then flowed straight into DISPLAYED numbers
+    — ``available_stock`` (physical - reserved) and the /gmats/summary totals — so a
+    single bad row dragged the plant figures below or above the truth. Every JSON
+    write of these same columns already refuses exactly those via ``int_field``'s
+    [0, MAX_QTY] bound (and the proforma/MIN line guards reject a negative qty); this
+    is that same bound for the CSV side, so the two ingest routes agree.
+
+    A missing / blank cell coalesces to ``default`` — a blank quantity cell means 0,
+    matching the ``or "0"`` the call sites already applied. Anything present but not
+    a number, negative, or past ``maximum`` raises ``ValueError`` (not HTTPException):
+    the importer wraps each row in its own ``except`` and turns that into a reported,
+    SKIPPED row, so one bad quantity neither silently poisons inventory nor loses the
+    whole import (#440) — the per-row CSV analogue of ``int_field``'s whole-request
+    400. OverflowError is caught alongside TypeError/ValueError for the same reason
+    int_field catches it: ``int(float("1e999"))`` is ``int(inf)`` -> OverflowError.
+    """
+    if _missing(value):
+        return default
+    try:
+        n = int(float(value))
+    except (TypeError, ValueError, OverflowError):
+        raise ValueError(f"{label} must be a whole number (got {value!r})")
+    if minimum is not None and n < minimum:
+        raise ValueError(f"{label} cannot be less than {minimum} (got {n})")
+    if maximum is not None and n > maximum:
+        raise ValueError(f"{label} is unrealistically large ({n})")
+    return n
+
+
 def str_field(payload: dict, key: str, where: str = "", *, required: bool = True,
               default: str = "") -> str:
     """Trimmed text from the body, or a 400. A whitespace-only value counts as

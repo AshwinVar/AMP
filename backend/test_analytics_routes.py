@@ -181,6 +181,43 @@ def test_work_order_analytics_empty_table_is_zero_not_a_crash():
     print("PASS work-order analytics: empty table -> zeros, no divide-by-zero")
 
 
+def test_work_order_analytics_folds_in_progress_into_running_and_reconciles():
+    # "Running" (the UI status dropdown, WorkOrdersSection) and "In Progress" (the
+    # factory simulator's _work_orders / advance tick, and the e2e sim) are two
+    # spellings of the same state. The endpoint used to read the "Running" bucket
+    # alone, so every simulator-written "In Progress" work order was counted in
+    # total_work_orders but fell into NONE of the four named buckets — the "Running"
+    # KPI read 0 while in-progress work orders sat in the table, and the parts no
+    # longer summed to the whole. Folding the synonym must fix both. Every expected
+    # number below is derived by hand, not read back from the endpoint.
+    db = _fresh_session()
+    db.add(_work_order(id=1, work_order_no="W1", status="Planned",     target_quantity=100, actual_quantity=0))
+    db.add(_work_order(id=2, work_order_no="W2", status="Running",     target_quantity=100, actual_quantity=40))
+    db.add(_work_order(id=3, work_order_no="W3", status="In Progress", target_quantity=100, actual_quantity=30))
+    db.add(_work_order(id=4, work_order_no="W4", status="In Progress", target_quantity=100, actual_quantity=20))
+    db.add(_work_order(id=5, work_order_no="W5", status="Completed",   target_quantity=100, actual_quantity=100))
+    db.add(_work_order(id=6, work_order_no="W6", status="Delayed",     target_quantity=100, actual_quantity=10))
+    db.commit()
+
+    out = analytics_routes.get_work_order_analytics(db=db, current_user={})
+    assert out["total_work_orders"] == 6, out
+    assert out["planned"] == 1, out
+    # running = Running(1) + In Progress(2) = 3 — NOT 1, and NOT 0
+    assert out["running"] == 3, out
+    assert out["completed"] == 1 and out["delayed"] == 1, out
+    # the four named buckets partition every row -> they sum to the headline
+    assert out["planned"] + out["running"] + out["completed"] + out["delayed"] \
+        == out["total_work_orders"], out
+    # target: 100 x 6 = 600 (target_quantity is NOT NULL, all counted)
+    assert out["total_target"] == 600, out
+    # actual: 0 + 40 + 30 + 20 + 100 + 10 = 200
+    assert out["total_actual"] == 200, out
+    # achievement = round(200/600*100) = round(33.33) = 33
+    assert out["achievement"] == 33, out
+    print("PASS work-order analytics: 'In Progress' folds into running=3, "
+          "buckets reconcile with total=6 (600 target / 200 actual / 33%)")
+
+
 def test_production_plan_analytics_null_actual_and_reconciled_totals():
     db = _fresh_session()
     db.add(models.ProductionPlan(id=1, plan_no="P1", status="Running", planned_quantity=100,
@@ -1665,6 +1702,7 @@ if __name__ == "__main__":
     test_executive_oee_no_production_is_zero_not_fabricated()
     test_work_order_analytics_null_actual_and_reconciled_totals()
     test_work_order_analytics_empty_table_is_zero_not_a_crash()
+    test_work_order_analytics_folds_in_progress_into_running_and_reconciles()
     test_production_plan_analytics_null_actual_and_reconciled_totals()
     test_production_plan_analytics_empty_table_is_zero_not_a_crash()
     test_production_schedule_analytics_folds_in_progress_into_running_and_reconciles()

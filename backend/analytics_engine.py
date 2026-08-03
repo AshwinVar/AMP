@@ -13,6 +13,29 @@ WORLD_CLASS_OEE = 85
 WORLD_CLASS_COMPONENTS = {"availability": 90, "performance": 95, "quality": 99}
 
 
+def normalize_downtime_reason(reason) -> str:
+    """Coalesce a downtime log's ``reason`` to a stable, non-empty label.
+
+    ``DowntimeLog.reason`` is ``Column(String, nullable=False)`` WITHOUT a
+    default, and (as everywhere in this codebase) that constraint is not
+    retro-applied to a row written by raw SQL / a migration / a legacy path — so
+    such a row can hold a genuine NULL, and an edge/import path can write an
+    empty string. Used RAW as a grouping key and as a displayed "top loss
+    reason" / Pareto label, a NULL surfaced in the payload as a literal
+    ``null`` / ``None`` (top_loss_reason, the downtime Pareto, the reason
+    tallies) — a stored non-value leaking straight into a displayed label
+    (ADR-0010: a default/guard must never leak into a displayed value).
+
+    Coalesce to "Unknown" — the SAME label the canonical downtime read-model
+    already uses (``ai.downtime._norm_reason``: ``(d.reason or "Unknown").strip()
+    or "Unknown"``) — so the older engine path and the read-model name an
+    unlabelled stop identically (rule-1: one convention, not two). A whitespace-
+    only reason folds to "Unknown" as well, and a real reason is returned
+    unchanged.
+    """
+    return (reason or "Unknown").strip() or "Unknown"
+
+
 def biggest_lever(components: dict):
     """The one OEE component to focus on: the one furthest below its OWN
     world-class target, so closing its gap buys the most. `components` maps
@@ -208,7 +231,10 @@ def build_management_summary(machines, downtime_logs, shifts, production_records
 
     for log in downtime_logs:
         minutes = parse_duration_to_minutes(log.duration)
-        reason_minutes[log.reason] += minutes
+        # Coalesce a NULL/empty reason to "Unknown" (see normalize_downtime_reason)
+        # so top_loss_reason is never a literal `null` label — the same convention
+        # the canonical downtime read-model applies.
+        reason_minutes[normalize_downtime_reason(log.reason)] += minutes
         machine_minutes[log.machine_id] += minutes
 
     total_downtime = sum(machine_minutes.values())

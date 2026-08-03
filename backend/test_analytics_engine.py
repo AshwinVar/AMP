@@ -150,6 +150,52 @@ def test_build_oee_trends_indexes_and_names_machines():
     print("PASS build_oee_trends indexes records and falls back on missing machine name")
 
 
+def test_normalize_downtime_reason():
+    # A NULL / empty / whitespace-only reason coalesces to "Unknown" (matching the
+    # canonical read-model ai.downtime._norm_reason); a real reason is untouched.
+    assert ae.normalize_downtime_reason(None) == "Unknown"
+    assert ae.normalize_downtime_reason("") == "Unknown"
+    assert ae.normalize_downtime_reason("   ") == "Unknown"
+    assert ae.normalize_downtime_reason("Tool Change") == "Tool Change"
+    assert ae.normalize_downtime_reason("  Breakdown  ") == "Breakdown"   # trimmed
+    print("PASS normalize_downtime_reason coalesces null/empty to 'Unknown'")
+
+
+def test_management_summary_null_reason_labels_unknown_not_null():
+    # A legacy / raw-SQL DowntimeLog can hold a NULL reason (Column nullable=False,
+    # but that isn't retro-applied to old rows) or an empty string. Used raw as the
+    # top-loss-reason label, a NULL surfaced as a literal `None`/`null` in the
+    # payload. It must coalesce to "Unknown" — and, when it carries the most
+    # minutes, be NAMED as the top reason (not silently dropped).
+    machines = [SimpleNamespace(id=1, name="CNC-1", status="Running")]
+    downtime = [
+        SimpleNamespace(machine_id=1, reason=None, duration="2h"),        # 120 min
+        SimpleNamespace(machine_id=1, reason="Tool Change", duration="30m"),  # 30 min
+    ]
+    s = ae.build_management_summary(machines, downtime, [], [])
+    assert s["total_downtime_minutes"] == 150, s["total_downtime_minutes"]
+    # 120 (Unknown) > 30 (Tool Change): the coalesced label is the top loss reason.
+    assert s["top_loss_reason"] == "Unknown", s["top_loss_reason"]
+    assert s["top_loss_reason"] is not None                                # never a null label
+    print("PASS build_management_summary labels a NULL downtime reason 'Unknown', not null")
+
+
+def test_management_summary_null_and_empty_reason_merge_into_one_bucket():
+    # A NULL reason and an empty-string reason are the SAME unlabelled stop — they
+    # must fold into a single "Unknown" bucket (parts sum to the whole, rule-3),
+    # exactly as the read-model / the costing "Unassigned" merge already do.
+    downtime = [
+        SimpleNamespace(machine_id=1, reason=None, duration="1h"),   # 60 min
+        SimpleNamespace(machine_id=1, reason="", duration="30m"),    # 30 min
+    ]
+    s = ae.build_management_summary(
+        [SimpleNamespace(id=1, name="M", status="Running")], downtime, [], [])
+    # Both fold to "Unknown": 60 + 30 = 90 total, one reason bucket carrying it all.
+    assert s["total_downtime_minutes"] == 90, s["total_downtime_minutes"]
+    assert s["top_loss_reason"] == "Unknown", s["top_loss_reason"]
+    print("PASS build_management_summary merges NULL and empty reason into one 'Unknown' bucket")
+
+
 def test_build_management_summary():
     machines = [SimpleNamespace(id=1, name="CNC-1", status="Breakdown"),
                 SimpleNamespace(id=2, name="CNC-2", status="Running")]
@@ -458,6 +504,9 @@ if __name__ == "__main__":
     test_build_shift_kpis_null_outputs_are_safe_and_honest()
     test_management_summary_null_shift_outputs_reconcile_with_sql_sums()
     test_build_oee_trends_indexes_and_names_machines()
+    test_normalize_downtime_reason()
+    test_management_summary_null_reason_labels_unknown_not_null()
+    test_management_summary_null_and_empty_reason_merge_into_one_bucket()
     test_build_management_summary()
     test_management_summary_uses_pooled_not_averaged_oee()
     test_estimated_loss_value_uses_unit_rate_when_given()

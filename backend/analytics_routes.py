@@ -982,9 +982,17 @@ def get_factory_command_center(
     zone_summary = {}
 
     for node in nodes:
+        # FactoryLayoutNode.zone is Column(String, default="Production") WITHOUT
+        # nullable=False, so a raw-SQL / migration / cleared-field row can hold NULL.
+        # This rollup reads node.zone RAW (it returns a plain dict, bypassing the
+        # FactoryLayoutNodeResponse heal), so a NULL would surface here as a zone
+        # bucket literally labelled null — a display of the missing value, not a real
+        # zone (ADR-0010: a NULL/default must never leak into a displayed value).
+        # Coalesce to the column's own declared default, matching the response heal.
+        node_zone = node.zone or "Production"
         zone = zone_summary.setdefault(
-            node.zone,
-            {"zone": node.zone, "nodes": 0, "running": 0, "breakdown": 0, "idle": 0, "maintenance": 0},
+            node_zone,
+            {"zone": node_zone, "nodes": 0, "running": 0, "breakdown": 0, "idle": 0, "maintenance": 0},
         )
         zone["nodes"] += 1
 

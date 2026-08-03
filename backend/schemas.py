@@ -24,6 +24,25 @@ def _coalesce_null_count(value):
     return 0 if value is None else value
 
 
+def _coalesce_null_int(default: int):
+    """Factory: heal a NULL integer column to its declared NON-ZERO default.
+
+    The integer twin of ``_coalesce_null_text``, for columns whose declared default
+    is not 0 (so ``_coalesce_null_count`` — which heals to 0 — would substitute the
+    WRONG value). ``FactoryLayoutNode.x_position`` / ``y_position`` (``default=50``),
+    ``width`` (``default=160``) and ``height`` (``default=100``) are
+    ``Column(Integer, default=...)`` WITHOUT ``nullable=False``, so a raw-SQL /
+    migration / cleared-field row can hold NULL; healing such a node to 0 would
+    render it at the origin with zero size (invisible on the floor map) rather than
+    at the spawn position the column default describes. Coalesce a NULL to the
+    column's own declared default; a real recorded value (including a real 0) is
+    untouched (``mode="before"`` only rewrites None).
+    """
+    def _coalesce(value):
+        return default if value is None else value
+    return _coalesce
+
+
 def _coalesce_null_text(default: str):
     """Factory: heal a NULL text column to its declared default on the way OUT.
 
@@ -500,6 +519,30 @@ class FactoryLayoutNodeResponse(BaseModel):
     height: int
     zone: str
     created_at: Optional[datetime] = None
+
+    # node_type / x_position / y_position / width / height / zone are all
+    # Column(..., default=...) WITHOUT nullable=False (models.FactoryLayoutNode), so
+    # the ORM default only fills a value the *inserter* omitted — a row written by
+    # raw SQL, a migration, or a PATCH that cleared the field can legitimately hold
+    # NULL. These are typed non-optional here, so a single such NULL row raised
+    # Pydantic ValidationError during response serialisation and 500-ed the WHOLE
+    # GET /factory-layout/nodes list (one bad row hiding the entire digital-twin
+    # floor map) as well as the PATCH response that wrote it — the same
+    # response-serialisation NULL class already healed on the machine roster
+    # (#375), the operator-execution list (#456) and the saas-tenants list (#465).
+    # The NULL is API-reachable: FactoryLayoutNodeUpdate types every field
+    # Optional[...]=None and the PATCH setattr loop over model_dump(
+    # exclude_unset=True) persists an explicit {"zone": null}. Coalesce each NULL to
+    # the column's own declared default on the way out; a real value is untouched
+    # (mode="before" only rewrites None).
+    # Each heal restores the column's OWN declared default, so a NULL renders as the
+    # value create would have stored — not 0 (which would put the node at the origin
+    # with zero size). x/y share default 50; width=160 and height=100 differ.
+    _heal_node_type = field_validator("node_type", mode="before")(_coalesce_null_text("Machine"))
+    _heal_zone = field_validator("zone", mode="before")(_coalesce_null_text("Production"))
+    _heal_xy = field_validator("x_position", "y_position", mode="before")(_coalesce_null_int(50))
+    _heal_width = field_validator("width", mode="before")(_coalesce_null_int(160))
+    _heal_height = field_validator("height", mode="before")(_coalesce_null_int(100))
 
     class Config:
         from_attributes = True

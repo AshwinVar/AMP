@@ -748,6 +748,29 @@ class ComplianceDocumentResponse(BaseModel):
     notes: Optional[str] = None
     created_at: Optional[datetime] = None
 
+    # version / approval_status are Column(String, default="1.0" / "Draft") WITHOUT
+    # nullable=False, but this response types them as non-optional `str` — so a row
+    # holding a genuine NULL in either raised Pydantic ValidationError during
+    # response serialisation and 500-ed the WHOLE GET /documents list (one bad row
+    # hiding every good document), AND the PATCH response for that row. The NULL is
+    # not hypothetical: ComplianceDocumentUpdate types both fields Optional[str], and
+    # update_document does `setattr(row, key, value)` over exclude_unset — so a client
+    # PATCH of `{"approval_status": null}` (or `{"version": null}`) stores a real NULL;
+    # a raw-SQL / migration / cleared-field row can hold one too. This is the same
+    # response-serialisation NULL class already healed on the maintenance-task
+    # (#445) / machine / production-plan / operator-execution lists.
+    #
+    # Coalesce each NULL to the column's own declared default on the way out. Healing
+    # approval_status -> "Draft" keeps this list on the SAME basis as its readers
+    # (rule-3): the compliance read-model already counts a NULL as "Draft"
+    # (ai/compliance.py `d.approval_status or "Draft"`), and both the review-due
+    # generator (generate_document_review_escalations) and the /analytics/documents
+    # review_due count treat a NULL as active (not Obsolete) — and "Draft" is likewise
+    # active — so the per-row status now agrees with the headline it feeds. A real
+    # recorded value is untouched.
+    _heal_version = field_validator("version", mode="before")(_coalesce_null_text("1.0"))
+    _heal_approval_status = field_validator("approval_status", mode="before")(_coalesce_null_text("Draft"))
+
     class Config:
         from_attributes = True
 

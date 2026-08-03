@@ -297,6 +297,51 @@ def test_production_plan_analytics_empty_table_is_zero_not_a_crash():
     print("PASS production-plan analytics: empty table -> zeros, no divide-by-zero")
 
 
+def test_production_plan_analytics_folds_in_progress_into_running_and_reconciles():
+    # "Running" (the UI status dropdown, ProductionPlanSection) and "In Progress"
+    # (the factory simulator's _production_plans, which copies the work order's
+    # status — 3-of-6 work orders are seeded "In Progress") are two spellings of the
+    # same state. The endpoint used to read the "Running" bucket alone, so every
+    # simulator-written "In Progress" plan was counted in total_plans but fell into
+    # NONE of the four named buckets — the "Running" KPI read 0 while in-progress
+    # plans sat in the table, and the parts no longer summed to the whole. Folding
+    # the synonym must fix both, mirroring the already-fixed work-order (#470) and
+    # production-schedule (#463) siblings. Every expected number below is derived by
+    # hand, not read back from the endpoint.
+    db = _fresh_session()
+    db.add(models.ProductionPlan(id=1, plan_no="P1", status="Planned",     planned_quantity=100,
+                                 actual_quantity=0,   plan_date=date(2026, 1, 1), shift_name="A"))
+    db.add(models.ProductionPlan(id=2, plan_no="P2", status="Running",     planned_quantity=100,
+                                 actual_quantity=40,  plan_date=date(2026, 1, 1), shift_name="A"))
+    db.add(models.ProductionPlan(id=3, plan_no="P3", status="In Progress", planned_quantity=100,
+                                 actual_quantity=30,  plan_date=date(2026, 1, 1), shift_name="B"))
+    db.add(models.ProductionPlan(id=4, plan_no="P4", status="In Progress", planned_quantity=100,
+                                 actual_quantity=20,  plan_date=date(2026, 1, 1), shift_name="B"))
+    db.add(models.ProductionPlan(id=5, plan_no="P5", status="Completed",   planned_quantity=100,
+                                 actual_quantity=100, plan_date=date(2026, 1, 1), shift_name="C"))
+    db.add(models.ProductionPlan(id=6, plan_no="P6", status="Behind",      planned_quantity=100,
+                                 actual_quantity=10,  plan_date=date(2026, 1, 1), shift_name="C"))
+    db.commit()
+
+    out = analytics_routes.get_production_plan_analytics(db=db, current_user={})
+    assert out["total_plans"] == 6, out
+    assert out["planned"] == 1, out
+    # running = Running(1) + In Progress(2) = 3 — NOT 1, and NOT 0
+    assert out["running"] == 3, out
+    assert out["completed"] == 1 and out["behind"] == 1, out
+    # the four named buckets partition every row -> they sum to the headline
+    assert out["planned"] + out["running"] + out["completed"] + out["behind"] \
+        == out["total_plans"], out
+    # planned_quantity: 100 x 6 = 600 (planned_quantity is NOT NULL, all counted)
+    assert out["planned_quantity"] == 600, out
+    # actual: 0 + 40 + 30 + 20 + 100 + 10 = 200
+    assert out["actual_quantity"] == 200, out
+    # achievement = round(200/600*100) = round(33.33) = 33
+    assert out["achievement"] == 33, out
+    print("PASS production-plan analytics: 'In Progress' folds into running=3, "
+          "buckets reconcile with total=6 (600 planned / 200 actual / 33%)")
+
+
 def _schedule(**kw):
     kw.setdefault("shift_name", "A")
     kw.setdefault("scheduled_date", date(2026, 1, 1))
@@ -1747,6 +1792,7 @@ if __name__ == "__main__":
     test_work_order_analytics_folds_in_progress_into_running_and_reconciles()
     test_production_plan_analytics_null_actual_and_reconciled_totals()
     test_production_plan_analytics_empty_table_is_zero_not_a_crash()
+    test_production_plan_analytics_folds_in_progress_into_running_and_reconciles()
     test_production_schedule_analytics_folds_in_progress_into_running_and_reconciles()
     test_production_schedule_analytics_empty_table_is_zero_not_a_crash()
     test_analytics_summary_null_utilization_averages_only_readings()

@@ -34,10 +34,22 @@ def _non_negative_int(value):
     -5 + 15 == 10) yet write a negative good_count that drags pooled OEE below
     zero (pooled_oee's quality = good/total is not floored at 0). None means
     "no usable value" so the caller skips the production record rather than
-    recording a physically-impossible one or throwing mid-handler."""
+    recording a physically-impossible one or throwing mid-handler.
+
+    OverflowError is caught alongside TypeError/ValueError: JSON permits
+    Infinity/-Infinity (Python's json.loads decodes them by default, so
+    on_message reads a raw float('inf') straight off the payload), and a
+    disconnected analog input on an edge gateway commonly reads infinity. A
+    non-numeric ("--") and a NaN both raise ValueError, but int(float('inf'))
+    raises OverflowError — NOT caught by (TypeError, ValueError) — so an infinite
+    count escaped this guard and threw mid-handler, aborting the WHOLE message
+    (its status / breakdown-downtime write and live broadcast with it) instead of
+    skipping just the production record. This is the same non-finite reading
+    clamp_utilization already rejects via isfinite; here int() raises directly, so
+    catching OverflowError is the precise guard."""
     try:
         n = int(value)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         return None
     return n if n >= 0 else None
 

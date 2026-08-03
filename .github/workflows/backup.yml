@@ -1,0 +1,244 @@
+# Daily off-box backup of the production database, and a nightly proof it restores.
+#
+# WHY THIS EXISTS. Until this file landed, AMP had no database backups of any
+# kind. Railway's Postgres plugin does not back up on the hobby tier and nothing
+# else was taking a copy, so one dropped table, one bad migration or one deleted
+# volume would have ended the company with no route back.
+# docs/ENGINEERING-HISTORY.md records the gap; docs/Production-Setup.md §2
+# specified this exact workflow as the free fallback and it was never built;
+# docs/GMATS-Pilot-Proposal.md §6 already sells "daily database backups" to a
+# paying customer, which made the gap a contractual exposure as well as an
+# operational one. This is that specification, built.
+#
+# WHY THERE ARE TWO JOBS. Taking a dump is the easy half and the half that lulls
+# you. The audit's actual finding was "a backup you have never restored is not a
+# backup", so the second job downloads the artifact the first job just produced,
+# restores it into a throwaway Postgres and asserts the result is a real
+# database. A green tick here means the round trip works, not merely that
+# pg_dump exited 0.
+#
+# HOW THE CONNECTION STRING IS HANDLED. It is never interpolated into a `run:`
+# block. GitHub substitutes `${{ secrets.X }}` into the step's shell script
+# *before* execution, so the credential would sit in a file on the runner and
+# would be printed verbatim by any command tracing. It is passed through `env:`
+# instead and referenced only as "$BACKUP_DATABASE_URL"; no step enables
+# `set -x`; no step echoes it. GitHub's automatic log masking is treated as a
+# backstop, not as the design. The one residual exposure is that pg_dump takes
+# the URL as an argument, so it is visible in the runner's own process table —
+# acceptable on an ephemeral single-tenant runner, and a reason not to move this
+# workflow to a shared self-hosted runner.
+#
+# THIS DOES NOTHING UNTIL A HUMAN SETS THE SECRET. See §"Manual setup" in
+# docs/BACKUP-AND-RESTORE.md — the workflow fails loudly on the first run rather
+# than pretending to back anything up.
+name: Database backup
+
+on:
+  schedule:
+    # 02:17 UTC daily. Deliberately off the hour: GitHub queues scheduled
+    # workflows globally, and top-of-hour crons are the ones that get delayed or
+    # silently dropped under load.
+    - cron: "17 2 * * *"
+  # Manual runs: before a risky migration, and to re-prove the pipeline after
+  # changing the secret.
+  workflow_dispatch:
+
+# Least privilege. This workflow reads the repository and writes an artifact; it
+# never needs to write code, issues or packages.
+permissions:
+  contents: read
+
+# A run holds an open connection to production. Never let two overlap, and never
+# cancel one in flight — a half-written dump is worse than a late one.
+concurrency:
+  group: db-backup
+  cancel-in-progress: false
+
+env:
+  # Floors that turn "the command exited 0" into "the file is actually a
+  # backup". Kept here rather than buried in the shell so they are reviewable.
+  # MIN_TABLES is a floor, not an equality: models.py declares 48 tables today
+  # and equality would fail the backup every time someone adds one, which is how
+  # a check gets muted.
+  MIN_DUMP_BYTES: "10240"
+  MIN_TABLES: "40"
+  # 30 daily dumps. Long enough to survive a corruption discovered a few weeks
+  # late, short enough that the artifact store stays cheap.
+  RETENTION_DAYS: "30"
+
+jobs:
+  dump:
+    name: pg_dump to artifact
+    # A fork inherits the workflow file but not the secret, so its nightly run
+    # would fail forever on a confusing empty-string error. Skip it there.
+    if: github.repository == 'AshwinVar/AMP'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    outputs:
+      artifact_name: ${{ steps.dump.outputs.artifact_name }}
+      dump_file: ${{ steps.dump.outputs.dump_file }}
+    steps:
+      - name: Install a pg_dump at least as new as the server
+        # pg_dump refuses point-blank to dump a server newer than itself
+        # ("server version mismatch") and the hosted runner image trails the
+        # current Postgres release. Without this step a routine Railway Postgres
+        # upgrade would end the backups, and the first anyone would know is when
+        # they needed one. Pinned to a major version, never "latest".
+        run: |
+          set -euo pipefail
+          sudo install -d /usr/share/postgresql-common/pgdg
+          sudo curl -fsSL -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc \
+            https://www.postgresql.org/media/keys/ACCC4CF8.asc
+          echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] https://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" \
+            | sudo tee /etc/apt/sources.list.d/pgdg.list > /dev/null
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends postgresql-client-17
+          pg_dump --version
+
+      - name: Dump and compress
+        id: dump
+        env:
+          # Railway's private DATABASE_URL (*.railway.internal) does not resolve
+          # from a GitHub runner; only the public proxy string does, which is why
+          # docs/Production-Setup.md names DATABASE_PUBLIC_URL. The fallback to
+          # DATABASE_URL exists so that setting the more obvious name still gets
+          # you backups rather than silence — it will work wherever the value is
+          # a publicly reachable URL.
+          BACKUP_DATABASE_URL: ${{ secrets.DATABASE_PUBLIC_URL || secrets.DATABASE_URL }}
+        run: |
+          set -euo pipefail
+          # No `set -x` in this step, ever: tracing would print the credential.
+          if [ -z "${BACKUP_DATABASE_URL:-}" ]; then
+            echo "::error::No connection string. Add the DATABASE_PUBLIC_URL repository secret under Settings -> Secrets and variables -> Actions, then re-run. See docs/BACKUP-AND-RESTORE.md."
+            exit 1
+          fi
+          stamp="$(date -u +%Y%m%dT%H%M%SZ)"
+          file="amp-${stamp}.sql.gz"
+          # --no-owner / --no-privileges: the dump has to restore into a database
+          # owned by whichever role the restorer happens to have (a local
+          # `postgres` during the drill, Railway's own role in production).
+          # Ownership metadata is not worth losing a restore over.
+          # --clean --if-exists: makes the file self-sufficient for an in-place
+          # restore over a live database, which is what the incident runbook
+          # does. It is also why that runbook step is flagged destructive.
+          # --format=plain: greppable and diffable, and restorable with nothing
+          # but psql — which matters at 3am on a laptop you did not plan on using.
+          # The pipeline runs under `pipefail`, so a pg_dump that dies mid-stream
+          # fails this step instead of leaving a truncated file that gzip was
+          # perfectly happy to write.
+          pg_dump \
+            --dbname="$BACKUP_DATABASE_URL" \
+            --format=plain \
+            --no-owner \
+            --no-privileges \
+            --clean \
+            --if-exists \
+            | gzip -9 > "$file"
+          echo "dump_file=$file" >> "$GITHUB_OUTPUT"
+          echo "artifact_name=amp-db-backup-${stamp}" >> "$GITHUB_OUTPUT"
+
+      - name: Assert the file is a backup and not an empty file
+        # pg_dump can exit 0 having written almost nothing (wrong database, a
+        # permissions-shaped connection, a schema-only accident). These three
+        # assertions are what separate "a file exists" from "a backup exists".
+        env:
+          DUMP_FILE: ${{ steps.dump.outputs.dump_file }}
+        run: |
+          set -euo pipefail
+          bytes="$(wc -c < "$DUMP_FILE")"
+          gzip -t "$DUMP_FILE"
+          # awk, not grep, and one pass: `grep -q` would close the pipe early and
+          # SIGPIPE the decompressor, which trips pipefail; `grep -c` exits 1 on
+          # zero matches, which would need a `|| true` that also swallows real
+          # failures. awk counts both markers and always exits 0.
+          counts="$(gzip -dc "$DUMP_FILE" | awk '/^CREATE TABLE /{t++} /^COPY /{c++} END{print t+0, c+0}')"
+          tables="${counts% *}"
+          copies="${counts#* }"
+          echo "size=${bytes} bytes  CREATE TABLE=${tables}  COPY blocks=${copies}"
+          failed=0
+          if [ "$bytes" -lt "$MIN_DUMP_BYTES" ]; then
+            echo "::error::Dump is ${bytes} bytes, below the ${MIN_DUMP_BYTES}-byte floor. Treat as a truncated or empty dump."
+            failed=1
+          fi
+          if [ "$tables" -lt "$MIN_TABLES" ]; then
+            echo "::error::Dump defines ${tables} tables, below the ${MIN_TABLES} expected. The connection string may point at the wrong database."
+            failed=1
+          fi
+          if [ "$copies" -lt 1 ]; then
+            echo "::error::Dump contains no COPY blocks - this is a schema-only dump with no rows in it."
+            failed=1
+          fi
+          [ "$failed" -eq 0 ]
+          {
+            echo "### Database backup"
+            echo ""
+            echo "| Metric | Value |"
+            echo "| --- | --- |"
+            echo "| File | \`${DUMP_FILE}\` |"
+            echo "| Compressed size | ${bytes} bytes |"
+            echo "| Tables | ${tables} |"
+            echo "| COPY blocks | ${copies} |"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload the dump as an artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.dump.outputs.artifact_name }}
+          path: ${{ steps.dump.outputs.dump_file }}
+          retention-days: ${{ env.RETENTION_DAYS }}
+          # Silence is the failure mode this whole file exists to prevent.
+          if-no-files-found: error
+          # The payload is already gzip -9. Re-compressing it inside the artifact
+          # zip buys nothing and costs minutes once the database is large.
+          compression-level: 0
+
+  restore-drill:
+    name: Restore the dump into a throwaway database
+    # Runs against the artifact the job above just uploaded, so it exercises the
+    # download path too: an artifact you cannot retrieve is not a backup either.
+    needs: dump
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    services:
+      postgres:
+        # Pinned major version, kept >= the production server: a plain-SQL dump
+        # restores forward far more reliably than it restores backward.
+        image: postgres:17
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Ensure a psql client is present
+        # The hosted image normally ships one, but the drill must not depend on
+        # an image detail that can change without notice.
+        run: |
+          set -euo pipefail
+          if ! command -v psql > /dev/null 2>&1; then
+            sudo apt-get update -qq
+            sudo apt-get install -y --no-install-recommends postgresql-client
+          fi
+          psql --version
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: ${{ needs.dump.outputs.artifact_name }}
+          # scripts/restore_check.sh looks in ./backups by default.
+          path: backups
+
+      - name: Restore drill
+        env:
+          # The service container above, not anything of consequence. The script
+          # refuses to run against a hosted host precisely so this cannot be
+          # pointed at production by a careless edit.
+          RESTORE_CHECK_ADMIN_URL: postgres://postgres:postgres@localhost:5432/postgres
+        # Invoked via `bash` rather than as an executable: the file is authored on
+        # Windows, where git will not necessarily carry the +x bit.
+        run: bash scripts/restore_check.sh

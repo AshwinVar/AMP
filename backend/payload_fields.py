@@ -48,7 +48,17 @@ def int_field(payload: dict, key: str, where: str = "", *, required: bool = True
         return default
     try:
         value = int(raw)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
+        # OverflowError is caught alongside TypeError/ValueError: JSON permits an
+        # out-of-range exponent, and Python's json.loads decodes "1e999" straight
+        # to float('inf') (a UI that sends Number(input) uncapped, or a fat-finger,
+        # produces exactly this). int(float('inf')) raises OverflowError — NOT one of
+        # (TypeError, ValueError) — so an infinite quantity escaped this guard and
+        # threw out of the handler as an unhandled 500, defeating the whole point of
+        # this module (turn a bad field into a 400 naming it). A NaN ("NaN" in JSON)
+        # already raised ValueError and was caught; +-inf raise OverflowError, so
+        # catching it here is the precise fix, the same OverflowError guard
+        # mqtt_service._non_negative_int already applies to int() on a raw reading.
         raise HTTPException(
             status_code=400,
             detail=f"{_label(key, where)} must be a whole number (got {raw!r})")

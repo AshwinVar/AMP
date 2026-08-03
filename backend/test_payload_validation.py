@@ -101,6 +101,33 @@ def test_bounds_are_enforced_with_a_readable_message():
     print("PASS negative and absurd quantities are refused with a readable reason")
 
 
+def test_non_finite_numbers_answer_400_not_500():
+    """A JSON body with an out-of-range exponent decodes to float('inf') (Python's
+    json.loads turns "1e999" into inf), and int(inf) raises OverflowError — which is
+    NOT a (TypeError, ValueError), so it escaped int_field as an unhandled 500 before
+    this fix. NaN already raised ValueError and was caught; +-inf raise OverflowError.
+    All three must land as a 400 naming the field, never a 500."""
+    # Prove the JSON path really produces these (not just a hand-built float).
+    import json
+    assert json.loads("1e999") == float("inf"), "json.loads('1e999') must be inf"
+
+    for label, value in [("+inf", float("inf")), ("-inf", float("-inf")), ("nan", float("nan"))]:
+        try:
+            int_field({"qty": value}, "qty")
+            assert False, f"{label} must be rejected, not returned"
+        except HTTPException as e:
+            assert e.status_code == 400, f"{label}: got {e.status_code}, want 400"
+            assert "qty" in e.detail, f"{label}: message must name the field, got {e.detail!r}"
+        except Exception as e:                       # noqa: BLE001 — that IS the bug
+            raise AssertionError(f"{label}: raised {type(e).__name__} -> HTTP 500 ({e})") from e
+
+    # And the same infinity driven through a REAL raw-body handler (not just the
+    # helper): gmats_stock_in reads qty via int_field, so an inf qty must 400, not 500.
+    _expect_400("gmats_stock_in.qty (inf)", gir.gmats_stock_in,
+                db=_fresh_session(), item_id=1, payload={"qty": float("inf")})
+    print("PASS non-finite (+inf / -inf / NaN) quantities answer 400, never 500")
+
+
 def test_the_line_label_survives_for_multi_line_bodies():
     """#379's per-line messages must keep naming the row."""
     try:
@@ -228,6 +255,7 @@ def test_the_guard_detects_a_bare_read():
 if __name__ == "__main__":
     test_the_int_helper_covers_every_bad_shape()
     test_bounds_are_enforced_with_a_readable_message()
+    test_non_finite_numbers_answer_400_not_500()
     test_the_line_label_survives_for_multi_line_bodies()
     test_every_raw_body_handler_answers_400()
     test_the_valid_paths_still_work()

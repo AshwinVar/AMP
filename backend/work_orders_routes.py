@@ -109,7 +109,16 @@ def update_work_order(
         if payload.actual_quantity < 0:
             raise HTTPException(status_code=400, detail="quantities must be non-negative")
         work_order.actual_quantity = payload.actual_quantity
-        if work_order.actual_quantity >= work_order.target_quantity:
+        # Guard the auto-complete against a NULL target_quantity. The column is
+        # nullable=False, but that constraint is not retro-applied to a raw-SQL /
+        # migration / legacy row (the same reason WorkOrderResponse heals it, and
+        # the sibling production_planning_routes guards this exact comparison —
+        # production_planning_routes.py:104), and `int >= None` raised TypeError
+        # here — 500-ing the PATCH. With no known target we cannot say the order is
+        # complete, so leave the status untouched rather than fabricate a
+        # "Completed" from a missing target (ADR-0010: a state the data can't
+        # support must not be invented).
+        if work_order.target_quantity is not None and work_order.actual_quantity >= work_order.target_quantity:
             work_order.status = "Completed"
     if payload.status is not None:
         work_order.status = payload.status

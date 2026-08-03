@@ -1,0 +1,97 @@
+# Build context filter for the root Dockerfile.
+#
+# WHY THIS EXISTS
+# The repo root carries ~1.7 MB of docs/tree dumps, a ~900 KB pair of committed
+# SQLite files under backend/, a Windows virtualenv, and a full node_modules
+# tree. Without this file every one of them is uploaded to the Docker daemon on
+# every build and most of them land in the image — slow builds, a fat image, and
+# (for .env and the .db files) real data inside a shipped artefact.
+#
+# Rule of thumb: the image contains only what `python -m uvicorn main:app` needs
+# to serve a request. Everything else is developer or repository furniture.
+#
+# NOTE: this file governs builds that use the REPO ROOT as context (the backend
+# image). The commented-out frontend service in docker-compose.yml builds with
+# ./frontend as its context, so it reads frontend/.dockerignore instead and is
+# unaffected by the `frontend/` exclusion below.
+
+# ── Version control and CI ──────────────────────────────────────────────
+.git
+.gitignore
+.gitignore.txt
+.github
+.claude
+
+# ── Virtualenvs ─────────────────────────────────────────────────────────
+# backend/venv is a *Windows* venv on the dev machine. Copying it in would both
+# bloat the image and shadow the Linux site-packages pip installs below it.
+venv/
+.venv/
+**/venv/
+**/.venv/
+
+# ── Python bytecode ─────────────────────────────────────────────────────
+__pycache__/
+**/__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# ── Secrets ─────────────────────────────────────────────────────────────
+# The dev .env points DATABASE_URL at localhost, which would be wrong inside a
+# container anyway — but the real reason is that credentials must never be baked
+# into an image layer. Config arrives as environment variables at run time.
+# .env.example is excluded too: it is documentation, and documentation lives in
+# the repo, not in the runtime image.
+.env
+**/.env
+**/.env.*
+
+# ── Tests ───────────────────────────────────────────────────────────────
+# Deliberately NOT in the production image. The `tests` service in
+# docker-compose.yml bind-mounts ./backend over /app so the suites are present
+# when — and only when — you are running them. Keeping them out means the
+# shipped image cannot be talked into executing test code.
+**/test_*.py
+**/*_test.py
+.pytest_cache/
+**/.pytest_cache/
+**/conftest.py
+
+# ── Local databases ─────────────────────────────────────────────────────
+# backend/ci.db and backend/flowmes.db are committed SQLite files. Production is
+# Postgres; shipping a stale SQLite snapshot is exactly the confusion this whole
+# change set is trying to end.
+*.db
+*.sqlite3
+**/*.db
+**/*.sqlite3
+
+# ── Documentation and repository furniture ──────────────────────────────
+# (backend/modules.json is NOT documentation — module_manifest.py reads it at
+# import time to build the plan gate, so it must stay in the image. It is a
+# .json and none of the patterns here touch it.)
+docs/
+*.md
+tree.txt
+privacy-policy.html
+generate_pdf.py
+*.pdf
+FlowMES-Enterprise/
+
+# ── Historical SQL migrations ───────────────────────────────────────────
+# The application does not read these at run time — the boot path in main.py
+# applies its own idempotent Python migrations. They are kept in the repo as
+# history; they have no business in the image.
+backend/migration_*.sql
+
+# ── Frontend ────────────────────────────────────────────────────────────
+# The backend image serves an API only. node_modules alone is larger than
+# everything else in this repo combined.
+frontend/
+
+# ── Editor / OS noise ───────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/

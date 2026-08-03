@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from currency import CURRENCY
+from currency import money
 
 
 def build_daily_summary_text(summary: dict, shift_kpis: list, alerts: list):
@@ -17,7 +17,16 @@ def build_daily_summary_text(summary: dict, shift_kpis: list, alerts: list):
         f"Total Downtime: {summary.get('total_downtime_minutes', 0)} minutes",
         f"Top Loss Reason: {summary.get('top_loss_reason', 'No data')}",
         f"Worst Machine: {summary.get('worst_machine', 'No data')}",
-        f"Estimated Downtime Loss: {CURRENCY}{summary.get('estimated_loss_value', 0)}",
+        # Format through the shared money() helper (currency.py) — the single money
+        # renderer every other surface uses — rather than re-spelling "{CURRENCY}{n}"
+        # here. The inline version emitted no thousands separator, so a five/six-figure
+        # loss printed as "£49740" in this downloadable report while the exact same
+        # figure reads "£49,740" on every card, the weekly report and the scorecard
+        # (rule-1: reuse the shared helper, don't render a money value a second way).
+        # `... or 0` coalesces a missing/None value to a real £0 (build_management_summary
+        # always sets an int, but this keeps the pre-existing `.get(.., 0)` null-safety
+        # and avoids money(None) raising on a hand-built summary dict).
+        f"Estimated Downtime Loss: {money(summary.get('estimated_loss_value') or 0)}",
         "",
         "Shift KPIs",
         "----------",

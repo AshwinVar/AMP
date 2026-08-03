@@ -194,6 +194,61 @@ def test_non_numeric_count_skips_production_not_the_whole_message():
     print("PASS MQTT survives a non-numeric count and still applies status/utilization")
 
 
+def test_infinite_count_skips_production_and_still_logs_the_breakdown():
+    # JSON permits Infinity, and json.loads decodes it to float('inf'), so an edge
+    # gateway with a disconnected analog input can publish {"total_count": Infinity}.
+    # int(float('inf')) raises OverflowError, which the OLD _non_negative_int did NOT
+    # catch (only TypeError/ValueError) — so the exception escaped mid-handler and
+    # aborted the WHOLE message: the Idle->Breakdown transition's DowntimeLog and the
+    # status write were lost along with the (rightly-skipped) production record.
+    #
+    # Build the encoded payload directly so the wire bytes carry the literal JSON
+    # token `Infinity`, which json.loads (as on_message calls it) decodes to
+    # float('inf') — the exact value a real gateway would put on the topic.
+    Session = _setup()
+    _send("Running")     # created Idle -> Running (baseline transition)
+
+    class _RawMsg:
+        topic = "flowmes/machines"
+        payload = (
+            b'{"machine": "PRESS-01", "status": "Breakdown", "downtime": "30 min", '
+            b'"total_count": Infinity, "good_count": 5, "rejected_count": 5}'
+        )
+
+    with redirect_stdout(io.StringIO()):
+        mqtt_service.on_message(None, None, _RawMsg())
+
+    db = Session()
+    records = db.query(models.ProductionRecord).all()
+    logs = db.query(models.DowntimeLog).all()
+    machine = db.query(models.Machine).filter(models.Machine.name == "PRESS-01").first()
+    db.close()
+
+    assert len(records) == 0, len(records)           # infinite count -> no phantom record
+    assert machine.status == "Breakdown", machine.status  # status still applied
+    # The transition INTO Breakdown must still have written its downtime row — the
+    # infinite production count must not swallow the rest of the message.
+    assert len(logs) == 1, len(logs)
+    assert logs[0].reason == "Breakdown"
+    print("PASS MQTT survives an infinite count, skips only production, still logs the breakdown")
+
+
+def test_non_negative_int_maps_infinity_and_nan_to_none():
+    # Unit-level pin on the guard itself: every non-usable numeric maps to None (so
+    # production_valid is False and the record is skipped), never an exception.
+    assert mqtt_service._non_negative_int(float("inf")) is None
+    assert mqtt_service._non_negative_int(float("-inf")) is None
+    assert mqtt_service._non_negative_int(float("nan")) is None
+    assert mqtt_service._non_negative_int("--") is None
+    assert mqtt_service._non_negative_int(None) is None
+    assert mqtt_service._non_negative_int(-4) is None        # negative -> not usable
+    # ...and a valid non-negative reading still passes through unchanged.
+    assert mqtt_service._non_negative_int(0) == 0
+    assert mqtt_service._non_negative_int(95) == 95
+    assert mqtt_service._non_negative_int(3.9) == 3          # float truncates, as before
+    print("PASS _non_negative_int maps inf/-inf/NaN/garbage to None, keeps valid counts")
+
+
 if __name__ == "__main__":
     test_breakdown_logs_once_per_transition_not_per_message()
     test_lowercase_breakdown_is_canonicalised_and_logs_downtime()
@@ -202,4 +257,6 @@ if __name__ == "__main__":
     test_valid_production_counts_are_recorded()
     test_negative_counts_skip_production_but_keep_status()
     test_non_numeric_count_skips_production_not_the_whole_message()
+    test_infinite_count_skips_production_and_still_logs_the_breakdown()
+    test_non_negative_int_maps_infinity_and_nan_to_none()
     print("MQTT SERVICE OK: downtime logged once per breakdown event")

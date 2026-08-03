@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { apiGet } from "../lib/api";
+import { barPct } from "../lib/bar";
 import { money } from "../lib/money";
 
 // Mirrors the backend cost read-model (ai/cost.py build_cost_summary).
@@ -82,7 +83,10 @@ export default function CostSnapshot({ onOpen }: { onOpen?: (viewKey: string) =>
       <div className="mt-5 space-y-3">
         {s.losses.map((l) => {
           const isBiggest = l.key === s.biggest;
-          const w = Math.max(2, Math.round((l.cost / peak) * 100));
+          // A zero-cost component (e.g. no scrap all week) renders an empty bar,
+          // not a 2% sliver next to its "£0" — the display-honesty guard #464
+          // applied to the daily sparklines. A nonzero cost keeps its 2% floor.
+          const w = barPct(l.cost, peak, 2);
           return (
             <div key={l.key}>
               <div className="flex items-center justify-between text-sm mb-1">
@@ -108,7 +112,11 @@ export default function CostSnapshot({ onOpen }: { onOpen?: (viewKey: string) =>
               <div
                 key={d.date}
                 className="flex-1 rounded-sm bg-red-500/60"
-                style={{ height: `${Math.max(3, Math.round((d.cost / dailyPeak) * 100))}%` }}
+                // A zero-loss day (no downtime, no scrap) renders no bar, not a
+                // 3% phantom sliver that reads as a loss that never happened —
+                // the money twin of the downtime daily series #464 already
+                // guarded. A nonzero day keeps its 3% floor to stay visible.
+                style={{ height: `${barPct(d.cost, dailyPeak, 3)}%` }}
                 title={`${d.date}: ${money(d.cost)}`}
               />
             ))}

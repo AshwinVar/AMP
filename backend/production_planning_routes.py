@@ -94,11 +94,28 @@ def update_production_plan(
         if payload.actual_quantity < 0:
             raise HTTPException(status_code=400, detail="quantities must be non-negative")
         plan.actual_quantity = payload.actual_quantity
-        if plan.actual_quantity >= plan.planned_quantity:
+        # Guard the auto-complete against a NULL planned_quantity. The column is
+        # nullable=False but that is not retro-applied to a raw-SQL / migration /
+        # legacy row (the same reason ProductionPlanResponse heals it), and
+        # `int >= None` raised TypeError here — 500-ing the PATCH. With no known
+        # target we cannot say the plan is complete, so leave the status untouched
+        # rather than fabricate a "Completed" from a missing target (ADR-0010: a
+        # metric/state the data can't support must not be invented).
+        if plan.planned_quantity is not None and plan.actual_quantity >= plan.planned_quantity:
             plan.status = "Completed"
 
     if payload.status is not None:
         plan.status = payload.status
+
+    # Self-heal a legacy NULL planned_quantity to 0 on write — AFTER the auto-complete
+    # decision above, so a missing target never fabricates a "Completed". The column
+    # is nullable=False, but that constraint is not retro-applied to a raw-SQL /
+    # migration / legacy row, and committing the NULL back would trip the DB's NOT
+    # NULL. 0 means "no planned target recorded" — the same value the healed
+    # ProductionPlanResponse and the /analytics rollup already read for a NULL —
+    # matching the in-handler self-heal the operator / quality PATCH handlers apply.
+    if plan.planned_quantity is None:
+        plan.planned_quantity = 0
 
     db.commit()
     db.refresh(plan)

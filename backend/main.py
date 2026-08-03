@@ -32,6 +32,7 @@ import tenancy
 import sim_state
 import onboard_tenant
 import offboard_tenant
+import http_security
 import plan_gate
 
 
@@ -459,6 +460,12 @@ ALLOWED_ORIGINS = [
 # instead of a readable 403 — so it is added BEFORE CORSMiddleware.
 app.add_middleware(plan_gate.PlanGateMiddleware)
 
+# Rate limiting sits INSIDE CORS for the same reason the plan gate does: a
+# 429 that a cross-origin browser cannot read is indistinguishable from the
+# API being down, and the frontend would show "network unreachable" instead
+# of "you are being throttled".
+app.add_middleware(http_security.RateLimitMiddleware)
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=ALLOWED_ORIGINS,
@@ -467,6 +474,12 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Added LAST so it runs FIRST (Starlette runs the last-added middleware
+# outermost). Security headers must wrap everything — including CORS
+# preflights, 404s, and the plan gate's and throttle's own rejections — so
+# there is no response path that escapes without them.
+app.add_middleware(http_security.SecurityHeadersMiddleware)
 
 
 # Bind the caller's tenant (from the JWT) per request so the ORM auto-scopes

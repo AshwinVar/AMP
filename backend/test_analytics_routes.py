@@ -219,6 +219,72 @@ def test_production_plan_analytics_empty_table_is_zero_not_a_crash():
     print("PASS production-plan analytics: empty table -> zeros, no divide-by-zero")
 
 
+def _schedule(**kw):
+    kw.setdefault("shift_name", "A")
+    kw.setdefault("scheduled_date", date(2026, 1, 1))
+    return models.ProductionSchedule(**kw)
+
+
+def test_production_schedule_analytics_folds_in_progress_into_running_and_reconciles():
+    # "Running" (the UI status dropdown) and "In Progress" (the factory simulator)
+    # are two spellings of the same state. The endpoint used to read the "Running"
+    # bucket alone, so every simulator-written "In Progress" schedule was counted in
+    # total_schedules but fell into NONE of the four named buckets — the "Running"
+    # KPI read 0 while in-progress schedules sat in the table, and the parts no
+    # longer summed to the whole. Folding the synonym must fix both. Every expected
+    # number below is derived by hand, not read back from the endpoint.
+    db = _fresh_session()
+    db.add(models.Machine(id=1, name="A", status="Running", utilization=80))
+    db.add(models.Machine(id=2, name="B", status="Running", utilization=80))
+    db.add(_schedule(id=1, schedule_no="S1", status="Scheduled",   machine_id=1,
+                     shift_name="A", planned_quantity=50,  estimated_minutes=100))
+    db.add(_schedule(id=2, schedule_no="S2", status="Running",     machine_id=1,
+                     shift_name="A", planned_quantity=60,  estimated_minutes=120))
+    db.add(_schedule(id=3, schedule_no="S3", status="In Progress", machine_id=2,
+                     shift_name="B", planned_quantity=70,  estimated_minutes=200))
+    db.add(_schedule(id=4, schedule_no="S4", status="In Progress", machine_id=2,
+                     shift_name="B", planned_quantity=80,  estimated_minutes=300))
+    db.add(_schedule(id=5, schedule_no="S5", status="Completed",   machine_id=1,
+                     shift_name="A", planned_quantity=90,  estimated_minutes=400))
+    db.add(_schedule(id=6, schedule_no="S6", status="Delayed",     machine_id=2,
+                     shift_name="B", planned_quantity=100, estimated_minutes=500))
+    db.commit()
+
+    out = analytics_routes.get_production_schedule_analytics(db=db, current_user={})
+    assert out["total_schedules"] == 6, out
+    assert out["scheduled"] == 1, out
+    # running = Running(1) + In Progress(2) = 3 — NOT 1, and NOT 0
+    assert out["running"] == 3, out
+    assert out["completed"] == 1 and out["delayed"] == 1, out
+    # the four named buckets partition every row -> they sum to the headline
+    assert out["scheduled"] + out["running"] + out["completed"] + out["delayed"] \
+        == out["total_schedules"], out
+    # quantity/minutes totals (planned_quantity / estimated_minutes are both counted)
+    assert out["total_quantity"] == 50 + 60 + 70 + 80 + 90 + 100 == 450, out
+    assert out["total_minutes"] == 100 + 120 + 200 + 300 + 400 + 500 == 1620, out
+    # per-machine load reconciles with total_minutes (A: 100+120+400; B: 200+300+500)
+    assert out["machine_load"] == {"A": 620, "B": 1000}, out
+    assert sum(out["machine_load"].values()) == out["total_minutes"], out
+    # per-shift load reconciles with total_quantity (A: 50+60+90; B: 70+80+100)
+    assert out["shift_load"] == {"A": 200, "B": 250}, out
+    assert sum(out["shift_load"].values()) == out["total_quantity"], out
+    # bottlenecks heaviest-first, load B (1000) before A (620)
+    assert [b["machine"] for b in out["bottlenecks"]] == ["B", "A"], out
+    print("PASS production-schedule analytics: 'In Progress' folds into running=3, "
+          "buckets reconcile with total=6 (450 qty / 1620 min)")
+
+
+def test_production_schedule_analytics_empty_table_is_zero_not_a_crash():
+    db = _fresh_session()
+    out = analytics_routes.get_production_schedule_analytics(db=db, current_user={})
+    assert out["total_schedules"] == 0
+    assert out["scheduled"] == 0 and out["running"] == 0
+    assert out["completed"] == 0 and out["delayed"] == 0
+    assert out["total_quantity"] == 0 and out["total_minutes"] == 0
+    assert out["machine_load"] == {} and out["shift_load"] == {} and out["bottlenecks"] == []
+    print("PASS production-schedule analytics: empty table -> zeros, no crash")
+
+
 def _null_utilization(db, *machine_ids):
     # Force a genuine SQL NULL. The ORM applies the column default=0 when you pass
     # utilization=None on insert, so a real NULL — the state that arises from raw
@@ -1601,6 +1667,8 @@ if __name__ == "__main__":
     test_work_order_analytics_empty_table_is_zero_not_a_crash()
     test_production_plan_analytics_null_actual_and_reconciled_totals()
     test_production_plan_analytics_empty_table_is_zero_not_a_crash()
+    test_production_schedule_analytics_folds_in_progress_into_running_and_reconciles()
+    test_production_schedule_analytics_empty_table_is_zero_not_a_crash()
     test_analytics_summary_null_utilization_averages_only_readings()
     test_analytics_summary_all_null_utilization_is_zero_not_a_crash()
     test_analytics_summary_shift_efficiency_is_pooled_not_mean_of_ratios()

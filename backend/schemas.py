@@ -921,6 +921,34 @@ class CompanyTenantResponse(BaseModel):
     created_at: Optional[datetime] = None
     trial_days_left: Optional[int] = None   # model property; None off-trial
 
+    # plan_name / subscription_status / seats / monthly_fee are declared
+    # Column(..., default=...) WITHOUT nullable=False (models.CompanyTenant), so —
+    # like every other nullable-default column on the sibling response models above
+    # (machine / plan / operator / order / maintenance / production-schedule) — a
+    # row written by raw SQL, a migration, or a PATCH that cleared the field can
+    # legitimately hold NULL. This was the LAST counted response schema still
+    # missing the heal: these four are typed non-optional, so one such NULL row
+    # raised Pydantic ValidationError during serialisation and 500-ed the WHOLE
+    # GET /saas/tenants list — one poisoned row hiding the entire tenant registry.
+    # update_company_tenant already rejects a PATCH that nulls seats/monthly_fee at
+    # the WRITE boundary, but that cannot heal a pre-existing NULL (a raw-SQL /
+    # migration / legacy row from before that guard), and never covered plan_name /
+    # subscription_status at all — so the READ path needs its own heal.
+    #
+    # seats / monthly_fee heal to 0 (NOT the column's 5 / 0 default): the sibling
+    # /analytics/saas rollup counts a NULL fee/seat as 0 (COALESCE(SUM(..), 0)), so
+    # showing 0 here keeps the per-tenant list on the SAME basis as the MRR /
+    # total-seats headline it sums into (rule-3: the parts reconcile with the
+    # whole). plan_name / subscription_status heal to their declared string
+    # defaults — the honest "no value recorded" reading, matching how the other
+    # _coalesce_null_text sibling heals read (downtime / status / source). A real
+    # recorded value — including a real 0 — is untouched; only NULL is rewritten.
+    _heal_plan_name = field_validator("plan_name", mode="before")(_coalesce_null_text("Starter"))
+    _heal_subscription_status = field_validator("subscription_status", mode="before")(
+        _coalesce_null_text("Trial")
+    )
+    _heal_seats = field_validator("seats", "monthly_fee", mode="before")(_coalesce_null_count)
+
     class Config:
         from_attributes = True
 

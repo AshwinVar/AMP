@@ -8,6 +8,8 @@ solely by the module.
 
 Run:  python backend/test_gmats_inventory_routes.py     (exit 0 = pass)
 """
+import asyncio
+
 import main
 
 from fastapi import HTTPException
@@ -17,6 +19,7 @@ from sqlalchemy.orm import sessionmaker
 import gmats_inventory_routes as gmats
 import models
 from database import Base
+from payload_fields import MAX_QTY, int_cell
 
 _ADMIN = {"tenant": "DEFAULT", "role": "Admin", "sub": "founder"}
 
@@ -792,6 +795,142 @@ def test_min_listing_batches_lines_and_bounds_to_newest_500():
     print("PASS MIN listing batches lines and bounds to the newest 500")
 
 
+# --- CSV import quantity bounds. gmats_import_csv parsed physical_stock /
+# reorder_level / purchase_rate with a bare int(float(cell)) — decimal-tolerant
+# (Excel/Tally write "5.0") but UNBOUNDED — while every JSON write of these columns
+# is bounded to [0, MAX_QTY] by int_field (gmats_create_item / gmats_update_item)
+# and the proforma/MIN line paths reject a negative qty. So the CSV path was the one
+# write that stored a "-5" as a NEGATIVE physical_stock and widened an out-of-range
+# value silently, both then dragging the displayed available_stock and the
+# /gmats/summary totals off the truth. int_cell now applies the same bound on the
+# CSV side: a bad cell raises, and the importer's per-row except reports it as a
+# skipped row rather than writing a corrupt one. Expected values are derived by hand.
+
+
+class _Upload:
+    """Minimal stand-in for FastAPI's UploadFile (async read of fixed bytes)."""
+
+    def __init__(self, text: str):
+        self._data = text.encode("utf-8")
+
+    async def read(self):
+        return self._data
+
+
+def _import(db, csv_text, tenant="GMATS", user=_ADMIN):
+    return asyncio.run(
+        gmats.gmats_import_csv(file=_Upload(csv_text), tenant=tenant, db=db, current_user=user)
+    )
+
+
+def test_int_cell_coerces_defaults_and_bounds():
+    # Blank / missing cell -> the default 0 (a blank quantity cell means 0, matching
+    # the `or "0"` the call sites applied). None here stands for an absent column.
+    assert int_cell(None) == 0
+    assert int_cell("") == 0
+    assert int_cell("   ") == 0
+    # Decimal-tolerant and truncating, exactly like the old int(float(cell)).
+    assert int_cell("5") == 5
+    assert int_cell("5.0") == 5
+    assert int_cell("5.9") == 5
+    assert int_cell(0) == 0
+    # A negative cell is refused (it used to be stored as a negative stock).
+    for bad in ("-1", "-5", -3):
+        try:
+            int_cell(bad, "physical_stock")
+            assert False, f"{bad!r} should be rejected"
+        except ValueError as e:
+            assert "physical_stock" in str(e) and "less than 0" in str(e), str(e)
+    # Non-numeric text is refused, naming the column.
+    try:
+        int_cell("abc", "reorder_level")
+        assert False, "'abc' should be rejected"
+    except ValueError as e:
+        assert "reorder_level" in str(e) and "whole number" in str(e), str(e)
+    # Out-of-range / non-finite refused: "1e999" -> int(inf) OverflowError; "1e20"
+    # and MAX_QTY+1 are finite ints past the ceiling. All rejected, none stored.
+    for bad in ("1e999", "1e20", str(MAX_QTY + 1)):
+        try:
+            int_cell(bad, "purchase_rate")
+            assert False, f"{bad!r} should be rejected"
+        except ValueError as e:
+            assert "purchase_rate" in str(e), str(e)
+    # The exact ceiling: MAX_QTY passes.
+    assert int_cell(str(MAX_QTY)) == MAX_QTY
+    print("PASS int_cell coerces decimals, defaults blanks to 0, and bounds to [0, MAX_QTY]")
+
+
+def test_import_csv_rejects_negative_stock_and_reports_the_row():
+    db = _db()
+    csv_text = (
+        "item_code,item_name,physical_stock,reorder_level,purchase_rate\n"
+        "GOOD-1,Good Part,40,10,650\n"     # valid -> created
+        "NEG-1,Neg Part,-5,10,650\n"        # negative physical -> raised, reported, NOT stored
+    )
+    r = _import(db, csv_text)
+    assert r["created"] == 1, r
+    assert r["updated"] == 0 and r["skipped"] == 0, r
+    # The bad row is reported (Row 3 = second data row; header is row 1), naming the field.
+    assert any("Row 3" in e and "physical_stock" in e for e in r["errors"]), r["errors"]
+    # Only the valid row was written, with its exact values.
+    codes = {i.item_code for i in db.query(models.GmatsItem).all()}
+    assert codes == {"GOOD-1"}, codes
+    good = db.query(models.GmatsItem).filter(models.GmatsItem.item_code == "GOOD-1").first()
+    assert good.physical_stock == 40 and good.reorder_level == 10 and good.purchase_rate == 650
+    print("PASS CSV import rejects a negative-stock row (reported, not stored) and keeps the valid one")
+
+
+def test_import_csv_rejects_overflow_quantity():
+    db = _db()
+    csv_text = (
+        "item_code,item_name,physical_stock\n"
+        "BIG-1,Big Part,99999999999999999999\n"   # ~1e20, past MAX_QTY -> rejected, not widened
+    )
+    r = _import(db, csv_text)
+    assert r["created"] == 0, r
+    assert any("physical_stock" in e for e in r["errors"]), r["errors"]
+    assert db.query(models.GmatsItem).count() == 0, "an out-of-range quantity must not be stored"
+    print("PASS CSV import rejects an out-of-range stock quantity instead of widening it silently")
+
+
+def test_import_csv_valid_rows_create_update_and_reconcile():
+    db = _db()
+    # Pre-existing item to exercise the update branch.
+    db.add(models.GmatsItem(tenant_code="GMATS", item_code="UPD-1", item_name="Old Name",
+                            physical_stock=1, reserved_stock=0, reorder_level=1,
+                            purchase_rate=1, unit="Nos"))
+    db.commit()
+    csv_text = (
+        "item_code,item_name,physical_stock,reorder_level,purchase_rate\n"
+        "UPD-1,New Name,25.0,5,700\n"    # update; decimal "25.0" truncates to 25
+        "NEW-1,New Part,8,20,\n"          # create; blank rate -> 0 (not a crash)
+    )
+    r = _import(db, csv_text)
+    assert r["created"] == 1 and r["updated"] == 1 and r["errors"] == [], r
+    upd = db.query(models.GmatsItem).filter(models.GmatsItem.item_code == "UPD-1").first()
+    assert upd.item_name == "New Name"
+    assert upd.physical_stock == 25            # "25.0" -> 25
+    assert upd.reorder_level == 5 and upd.purchase_rate == 700
+    new = db.query(models.GmatsItem).filter(models.GmatsItem.item_code == "NEW-1").first()
+    assert new.physical_stock == 8 and new.reorder_level == 20
+    assert new.purchase_rate == 0              # blank purchase_rate coalesced to 0
+    # The summary reconciles over the two clean rows — no negative dragging it below:
+    #   UPD-1 physical 25 + NEW-1 physical 8 = 33 ; reserved 0 ; available 33
+    s = gmats.gmats_summary(tenant="GMATS", db=db, current_user=_ADMIN)
+    assert s["total_physical"] == 33
+    assert s["total_available"] == 33
+    assert s["total_available"] == s["total_physical"] - s["total_reserved"]
+    print("PASS CSV import creates/updates valid rows (decimals, blanks) and the summary reconciles")
+
+
+def test_import_csv_header_only_is_a_noop():
+    db = _db()
+    r = _import(db, "item_code,item_name,physical_stock\n")
+    assert r["created"] == 0 and r["updated"] == 0 and r["skipped"] == 0 and r["errors"] == [], r
+    assert db.query(models.GmatsItem).count() == 0
+    print("PASS CSV import over a header-only file creates nothing")
+
+
 if __name__ == "__main__":
     test_gmats_inventory_paths_registered_once_and_owned()
     test_proforma_listing_resolves_only_same_tenant_item_names()
@@ -828,4 +967,9 @@ if __name__ == "__main__":
     test_proforma_listing_bounds_to_newest_500()
     test_invoice_listing_bounds_to_newest_500()
     test_min_listing_batches_lines_and_bounds_to_newest_500()
+    test_int_cell_coerces_defaults_and_bounds()
+    test_import_csv_rejects_negative_stock_and_reports_the_row()
+    test_import_csv_rejects_overflow_quantity()
+    test_import_csv_valid_rows_create_update_and_reconcile()
+    test_import_csv_header_only_is_a_noop()
     print("ALL GMATS-INVENTORY ROUTE TESTS PASSED")

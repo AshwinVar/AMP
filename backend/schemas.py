@@ -279,9 +279,22 @@ class ProductionPlanResponse(BaseModel):
     status: str
     created_at: Optional[datetime] = None
 
-    _heal_actual_quantity = field_validator("actual_quantity", mode="before")(
-        _coalesce_null_count
-    )
+    # actual_quantity is Column(Integer, default=0) and planned_quantity is
+    # Column(Integer, nullable=False) WITHOUT a default. Neither constraint protects
+    # a row written by raw SQL / a migration / a legacy insert — a nullable=False
+    # column is NOT retro-applied to pre-existing rows, exactly the reasoning that
+    # made the quality-inspection list heal its own nullable=False inspected_quantity
+    # (#447) after #423 healed only the default-0 counts beside it. Both fields are
+    # typed non-optional int here, so a single NULL row raised Pydantic
+    # ValidationError during response serialisation and 500-ed the WHOLE GET
+    # /production-plans list — one poisoned row hiding every good plan. actual_quantity
+    # was already healed; planned_quantity was the last unhealed count on this model.
+    # Heal a NULL to 0 ("no planned target recorded"), matching the basis the
+    # attainment read-model (ai/schedule.py) and the analytics rollups already take
+    # for these columns; a real value — including a real 0 — is untouched.
+    _heal_counts = field_validator(
+        "planned_quantity", "actual_quantity", mode="before"
+    )(_coalesce_null_count)
 
     class Config:
         from_attributes = True
@@ -848,8 +861,8 @@ class ProductionScheduleResponse(BaseModel):
     # such NULL row raised Pydantic ValidationError during serialisation and 500-ed
     # BOTH the PATCH response AND every subsequent GET /production-schedules for the
     # tenant — one poisoned row hiding all schedules, the same class already healed
-    # on the plan / operator / order / machine lists. It was the only counted
-    # response schema still missing the heal.
+    # on the plan / operator / order / machine lists (planned_quantity below closes
+    # the matching nullable=False gap).
     #
     # Heals to 0 (NOT the column's 480 default): both readers of this column already
     # treat a NULL as 0 — the /analytics/production-schedules rollup does
@@ -858,9 +871,18 @@ class ProductionScheduleResponse(BaseModel):
     # list on the SAME basis as the booked-minutes headline and per-machine load it
     # sums into (rule-3: the parts reconcile with the whole). A real recorded value —
     # including a real 0 — is untouched; only NULL is rewritten.
-    _heal_estimated_minutes = field_validator("estimated_minutes", mode="before")(
-        _coalesce_null_count
-    )
+    #
+    # planned_quantity is Column(Integer, nullable=False) WITHOUT a default — the
+    # same half-healed gap the quality-inspection list closed on its nullable=False
+    # inspected_quantity (#447): the constraint is not retro-applied to a raw-SQL /
+    # migration / legacy row, so a NULL slips in and — typed non-optional int — 500s
+    # the whole list exactly as estimated_minutes did. It heals to 0 for the same
+    # reconciliation reason: the /analytics/production-schedules rollup sums it with
+    # COALESCE(SUM(planned_quantity), 0), so a NULL row reads as 0 there, and the
+    # per-schedule list now matches that basis (rule-3). A real value is untouched.
+    _heal_counts = field_validator(
+        "estimated_minutes", "planned_quantity", mode="before"
+    )(_coalesce_null_count)
 
     class Config:
         from_attributes = True

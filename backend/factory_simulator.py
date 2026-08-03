@@ -857,18 +857,38 @@ def tick_work_order_progress(db):
     # the utilization-drift fix (#341) cured for the same loop. Coalesce a missing
     # count to the column's own default 0 (the NULL is healed on write below).
     actual = (wo.actual_quantity or 0) if wo else 0
-    if wo and actual < wo.target_quantity:
-        wo.actual_quantity = min(wo.target_quantity, actual + random.randint(8, 35))
-        if wo.actual_quantity >= wo.target_quantity:
+    # target_quantity is Column(Integer, nullable=False) WITHOUT a default, but
+    # that constraint is not retro-applied to a raw-SQL / migration / legacy row,
+    # so such a row can hold a genuine NULL — the exact threat model the
+    # work-order PATCH auto-complete and the GET /work-orders list were just
+    # hardened against (#471). Here it was still bare: `actual < wo.target_quantity`
+    # is `int < None` and `min(wo.target_quantity, ...)` is `min(None, int)`, both
+    # of which raise TypeError. And because this tick runs first and unconditionally
+    # in the background loop (main._simulation_loop), that rolled back the WHOLE
+    # per-tenant tick every 45s — every other tick's writes lost with it, the same
+    # failure the actual_quantity / utilization-drift guards (#341) already cured
+    # for this loop. Coalesce to the column's own default 0: with no known target
+    # (0) the `actual < target` branch is skipped, so the WO is left In Progress
+    # rather than crashing the tick — mirroring #471's "no known target -> can't
+    # say it's complete, leave the status untouched".
+    target = (wo.target_quantity or 0) if wo else 0
+    if wo and actual < target:
+        wo.actual_quantity = min(target, actual + random.randint(8, 35))
+        if wo.actual_quantity >= target:
             wo.status = "Completed"
             plan = db.query(models.ProductionPlan).filter(
                 models.ProductionPlan.work_order_id == wo.id
             ).first()
             if plan:
                 plan.status     = "Completed"
-                plan.actual_quantity = plan.planned_quantity
+                # planned_quantity is nullable=False WITHOUT a default too, so a
+                # legacy / raw-SQL row can present a NULL just like target_quantity;
+                # coalesce so a NULL plan target doesn't propagate a fresh NULL onto
+                # actual_quantity (which the GET /production-plans list then has to
+                # heal, #468/#442). No known plan target -> 0 output.
+                plan.actual_quantity = plan.planned_quantity or 0
         db.commit()
-        print(f"  WO {wo.work_order_no}: {wo.actual_quantity}/{wo.target_quantity} [{wo.status}]")
+        print(f"  WO {wo.work_order_no}: {wo.actual_quantity}/{target} [{wo.status}]")
 
 
 def tick_shift_entry(db):

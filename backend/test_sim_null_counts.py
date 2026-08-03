@@ -105,6 +105,47 @@ def test_work_order_progress_completes_from_null_when_target_is_tiny():
     print("PASS work-order tick completes cleanly from a NULL actual_quantity")
 
 
+def test_work_order_progress_survives_null_target_quantity():
+    """target_quantity is nullable=False WITHOUT a default, so a raw-SQL / migration
+    / legacy row can hold a genuine NULL (the exact case the #471 route fix defends).
+    The tick's `actual < wo.target_quantity` (int < None) and `min(wo.target_quantity,
+    ...)` (min(None, int)) both raised TypeError, rolling back the whole per-tenant
+    tick. With target coalesced to 0, `actual (0) < 0` is False, so the increment
+    branch is skipped and the WO is left In Progress — no crash, status untouched.
+
+    SQLite enforces the nullable=False NOT NULL a pre-existing row predates, so a real
+    on-disk NULL is impossible here (a raw UPDATE ... SET target_quantity = NULL is
+    rejected). set_committed_value reproduces the exact attribute state a loaded
+    legacy-NULL row presents (target_quantity reads None) WITHOUT marking the instance
+    dirty, so the tick's own commit never tries to persist the NULL — the same
+    "reproduce the loaded state, don't write it" approach test_work_orders_routes uses
+    for this column's route-side fix (#471)."""
+    from sqlalchemy.orm.attributes import set_committed_value
+
+    db = _fresh_session()
+    db.add(models.Machine(name="M1", status="Running", utilization=80, tenant_code="DEFAULT"))
+    db.commit()
+    wo = models.WorkOrder(
+        work_order_no="WO-N", part_number="P", batch_number="B",
+        machine_id=1, target_quantity=1000, actual_quantity=200,
+        status="In Progress", tenant_code="DEFAULT",
+    )
+    db.add(wo)
+    db.commit()
+    set_committed_value(wo, "target_quantity", None)   # loaded legacy-NULL state
+    assert db.query(models.WorkOrder).one().target_quantity is None
+
+    tick_work_order_progress(db)                       # must not TypeError / roll back
+
+    healed = db.query(models.WorkOrder).one()
+    # No known target -> the progression branch is skipped, so actual_quantity is
+    # left exactly as recorded (200) and the WO stays In Progress. Independently
+    # derived from the "no known target, leave untouched" rule, not the crash path.
+    assert healed.actual_quantity == 200, healed.actual_quantity
+    assert healed.status == "In Progress", healed.status
+    print("PASS work-order tick survives a NULL target_quantity (no crash, WO untouched)")
+
+
 def test_work_order_progress_preserves_normal_increment():
     """Control: with a real (non-NULL) count the coalesce is a no-op — the tick
     still advances by random(8, 35) from the recorded value, so 50 -> [58, 85]."""
@@ -181,6 +222,7 @@ def test_customer_order_tick_survives_null_dispatched_quantity():
 if __name__ == "__main__":
     test_work_order_progress_survives_null_actual_quantity()
     test_work_order_progress_completes_from_null_when_target_is_tiny()
+    test_work_order_progress_survives_null_target_quantity()
     test_work_order_progress_preserves_normal_increment()
     test_operator_tick_survives_null_good_count()
     test_customer_order_tick_survives_null_dispatched_quantity()

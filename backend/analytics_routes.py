@@ -458,7 +458,21 @@ def get_production_plan_analytics(db: Session = Depends(_get_db), current_user: 
         "actual_quantity": actual_quantity,
         "achievement": achievement,
         "planned": status_counts.get("Planned", 0),
-        "running": status_counts.get("Running", 0),
+        # "Running" and "In Progress" are two spellings of the SAME state (the plan
+        # is actively being worked) written by two code paths in this app: the UI
+        # status dropdown (ProductionPlanSection) writes "Running", the factory
+        # simulator (_production_plans copies the work order's status, and the
+        # work-order statuses are 3-of-6 "In Progress") writes "In Progress".
+        # Reading the "Running" bucket alone reported 0 in-progress plans on a
+        # seeded/simulated plant while those rows sat plainly in the plan table below
+        # it — and, because total_plans counts EVERY row, the four named buckets no
+        # longer summed to the headline (an "In Progress" row landed in none of them).
+        # Fold the synonym so the Running headline counts every in-progress plan and
+        # the breakdown reconciles with the total (rule-1: one metric, not two
+        # spellings; rule-3: a breakdown must reconcile with its headline) — exactly
+        # the fold the sibling /analytics/work-orders (#470) and
+        # /analytics/production-schedules (#463) rollups already apply.
+        "running": status_counts.get("Running", 0) + status_counts.get("In Progress", 0),
         "completed": status_counts.get("Completed", 0),
         "behind": status_counts.get("Behind", 0),
     }

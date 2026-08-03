@@ -232,20 +232,26 @@ class WorkOrderResponse(BaseModel):
     planned_end: Optional[datetime] = None
     created_at: Optional[datetime] = None
 
-    # WorkOrder.actual_quantity is Column(Integer, default=0) WITHOUT
-    # nullable=False — the same profile as ProductionPlan.actual_quantity above —
-    # so a row written by raw SQL, a migration, or a cleared write can hold a true
-    # NULL, and this non-optional int would raise ValidationError and 500 the WHOLE
-    # GET /work-orders list on a single such row (one bad row hiding every good
-    # one, the class already healed for GET /production-plans, /inventory/items
-    # #423, /customer-orders #631, quality). This response model was the one that
-    # was missed; coalesce a NULL to the column's own default of 0, exactly as its
-    # sibling ProductionPlanResponse.actual_quantity does. target_quantity is
-    # nullable=False (a required order size, not a default-0 count), so — like
-    # planned_quantity / order_quantity / inspected_quantity — it is left unhealed.
-    _heal_actual_quantity = field_validator("actual_quantity", mode="before")(
-        _coalesce_null_count
-    )
+    # WorkOrder.actual_quantity is Column(Integer, default=0) and target_quantity
+    # is Column(Integer, nullable=False) WITHOUT a default. Neither constraint
+    # protects a row written by raw SQL / a migration / a legacy insert — a
+    # nullable=False column is NOT retro-applied to pre-existing rows, exactly the
+    # reasoning that made ProductionPlanResponse heal its nullable=False
+    # planned_quantity (a NULL planned_quantity 500'd the whole GET /production-plans
+    # list AND the plan PATCH) and the quality list heal its nullable=False
+    # inspected_quantity (#447) after the "leave a nullable=False size unhealed"
+    # assumption was found mistaken. Both fields are typed non-optional int here, so
+    # a single NULL row raised Pydantic ValidationError during response
+    # serialisation and 500-ed the WHOLE GET /work-orders list — one poisoned row
+    # hiding every good order. actual_quantity was already healed; target_quantity
+    # was the last unhealed count, and the PATCH auto-complete now guards a NULL
+    # target the same way. Heal a NULL to 0 ("no value recorded" = the column's own
+    # declared default), the basis the /analytics/work-orders achievement rollup
+    # already reads (achievement = actual/target, guarded when target is 0); a real
+    # value — including a real 0 — is untouched.
+    _heal_counts = field_validator(
+        "target_quantity", "actual_quantity", mode="before"
+    )(_coalesce_null_count)
 
     class Config:
         from_attributes = True

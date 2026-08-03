@@ -311,8 +311,8 @@ def test_get_work_orders_survives_a_null_actual_quantity_row():
     # behind it — the exact class already healed for GET /production-plans and the
     # inventory / orders / quality lists. The response model now coalesces a NULL to
     # the column's own default of 0 (honest: NULL = "no value recorded", declared
-    # default is 0), while a real value is preserved untouched and the required
-    # target_quantity (nullable=False) is never coerced.
+    # default is 0), while a real value is preserved untouched — here the real
+    # target_quantity of 100 passes through the heal unchanged.
     db = _iso_session()
     machine = _seed_machine(db, "TA")
     _create_as(db, "TA", _wo("WO-OK", machine.id, 100, 42))
@@ -377,6 +377,72 @@ def test_work_order_response_heals_only_null_not_a_real_zero():
     assert schemas.WorkOrderResponse.model_validate(zero).actual_quantity == 0
     assert schemas.WorkOrderResponse.model_validate(full).actual_quantity == 50
     print("PASS WorkOrderResponse heals only NULL; a real 0 and a real value pass through unchanged")
+
+
+def test_update_work_order_survives_a_null_target_quantity_row():
+    # The PATCH auto-complete crash: `actual_quantity >= target_quantity` on a legacy
+    # NULL target_quantity ran `int >= None` -> TypeError -> unhandled 500, exactly
+    # the class the sibling production_planning PATCH already guards
+    # (production_planning_routes.py:104). Logging an actual against such a row must
+    # NOT 500 — and, with no known target, must NOT fabricate a "Completed" (we
+    # cannot say the order is done): the status stays "Planned" and the value applies.
+    #
+    # SQLite enforces the nullable=False NOT NULL a pre-existing row predates, so a
+    # real on-disk NULL is impossible here; set_committed_value reproduces the exact
+    # attribute state a loaded legacy-NULL row presents (target_quantity is None when
+    # read) WITHOUT marking the instance dirty, so the handler's own query and commit
+    # never try to persist the NULL — the same "reproduce the loaded state, don't
+    # write it" approach test_production_planning_null_safe takes for planned_quantity.
+    from sqlalchemy.orm.attributes import set_committed_value
+    db = _iso_session()
+    machine = _seed_machine(db, "TA")
+    wo = _create_as(db, "TA", _wo("WO-NT", machine.id, 100, 0))
+
+    tok = T.set_current_tenant("TA")
+    try:
+        row = db.query(models.WorkOrder).filter(models.WorkOrder.id == wo.id).first()
+        set_committed_value(row, "target_quantity", None)   # loaded legacy-NULL state
+        updated = WO.update_work_order(
+            wo.id, schemas.WorkOrderUpdate(actual_quantity=250),
+            db=db, current_user={"tenant": "TA"})   # this line raised TypeError -> 500 before the guard
+    finally:
+        T.reset_current_tenant(tok)
+
+    assert updated.actual_quantity == 250, updated.actual_quantity   # value applied
+    assert updated.status == "Planned", updated.status               # unknown target -> not auto-completed
+    print("PASS update work order survives a NULL target_quantity (no 500, no fabricated completion)")
+
+
+def test_work_order_response_heals_null_target_quantity_not_500():
+    # The GET-list twin of the actual_quantity heal: a single row with a NULL
+    # target_quantity (nullable=False, but the constraint is not retro-applied to a
+    # legacy / raw-SQL / migration row) used to 500 the WHOLE list — WorkOrderResponse
+    # types target_quantity as a non-optional int, so the NULL raised ValidationError
+    # during serialisation and hid every good order behind it (the exact class already
+    # healed for GET /production-plans' nullable=False planned_quantity and the quality
+    # list's nullable=False inspected_quantity #447). The response model now coalesces a
+    # NULL target to the column's own "no value recorded" reading of 0, while a real
+    # target is preserved untouched. Validated exactly as FastAPI serialises the
+    # response_model (from_attributes); a SimpleNamespace reproduces the loaded-row
+    # attribute state without needing an on-disk NULL SQLite would reject.
+    from types import SimpleNamespace
+    good = SimpleNamespace(
+        id=1, work_order_no="WO-OK", part_number="P", batch_number="B", machine_id=1,
+        target_quantity=100, actual_quantity=42, status="Running", material_state="RAW",
+        planned_start=None, planned_end=None, created_at=None)
+    legacy = SimpleNamespace(
+        id=2, work_order_no="WO-NULLT", part_number="P", batch_number="B", machine_id=1,
+        target_quantity=None, actual_quantity=None, status="Running", material_state="RAW",
+        planned_start=None, planned_end=None, created_at=None)   # loaded legacy raw-SQL / migration row
+
+    good_s = schemas.WorkOrderResponse.model_validate(good)     # must NOT raise
+    bad_s = schemas.WorkOrderResponse.model_validate(legacy)    # was a 500
+
+    # NULL -> 0 (a concrete int, not None); a real value passes through verbatim.
+    assert bad_s.target_quantity == 0 and bad_s.actual_quantity == 0, (bad_s.target_quantity, bad_s.actual_quantity)
+    assert isinstance(bad_s.target_quantity, int), type(bad_s.target_quantity)
+    assert good_s.target_quantity == 100 and good_s.actual_quantity == 42, (good_s.target_quantity, good_s.actual_quantity)
+    print("PASS WorkOrderResponse heals a NULL target_quantity to 0 (not a 500 that hides every order)")
 
 
 def test_completion_reaching_target_publishes_actual_quantity():
@@ -632,6 +698,8 @@ if __name__ == "__main__":
     test_get_work_orders_survives_a_null_actual_quantity_row()
     test_status_only_patch_on_a_null_actual_row_serialises()
     test_work_order_response_heals_only_null_not_a_real_zero()
+    test_update_work_order_survives_a_null_target_quantity_row()
+    test_work_order_response_heals_null_target_quantity_not_500()
     test_completion_reaching_target_publishes_actual_quantity()
     test_reopening_and_recompleting_does_not_move_the_bom_again()
     test_a_repeat_completed_patch_still_moves_nothing()

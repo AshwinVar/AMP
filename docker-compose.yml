@@ -1,0 +1,263 @@
+# AMP — the whole stack, locally, shaped like production.
+#
+# WHY THIS EXISTS
+# Two gaps, both of which have cost us real bugs:
+#
+#   1. Production is PostgreSQL. Every backend suite runs on SQLite: about 140 of
+#      the ~163 files build their own in-memory `sqlite://` engine, and the two
+#      dozen that go through database.py have only ever been pointed at a SQLite
+#      file by CI. The boot path in main.py — create_all, ~40 idempotent ALTER
+#      TABLE / CREATE INDEX migrations, the completed_at backfill, the
+#      tenant-column migration in tenancy.py — therefore only ever meets Postgres
+#      in production, on a deploy, in front of a customer. The `tests` service
+#      below runs the suites against a real Postgres so that stops being true.
+#      docs/DOCKER.md is explicit about which suites this converts and which it
+#      does not.
+#
+#   2. mqtt_service.start_mqtt_service() is called on every startup and connects
+#      to MQTT_BROKER (default 127.0.0.1:1883). No developer machine has ever had
+#      a broker there, so the MQTT ingest path has never run locally: the connect
+#      fails, the exception is swallowed with a print, and the whole ingest half
+#      of the product is invisible until it is deployed.
+#
+# Quick start:  docker compose up --build   →  http://localhost:8000/health
+# Full guide:   docs/DOCKER.md
+#
+# Requires Docker Compose v2.23.1+ (the `configs: content:` inline-file form used
+# to create the test database). `docker compose version` to check; docs/DOCKER.md
+# has the fallback for older versions.
+
+name: amp
+
+services:
+
+  # ── PostgreSQL ────────────────────────────────────────────────────────
+  # 16 because that is the major version Railway provisions. Matching the major
+  # version is the entire point — a parity environment on Postgres 13 would just
+  # be a different lie.
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: amp
+      POSTGRES_PASSWORD: amp
+      POSTGRES_DB: amp
+    ports:
+      # Published so you can psql into it, point a GUI at it, or run the backend
+      # on the host against containerised Postgres. If 5432 is already taken by a
+      # local Postgres, change the LEFT number only.
+      - "5432:5432"
+    volumes:
+      - amp_pgdata:/var/lib/postgresql/data
+    configs:
+      # Runs once, on first initialisation of an empty data volume, to create the
+      # separate database the test suites use. `docker compose down -v` wipes the
+      # volume and it runs again.
+      - source: amp_create_test_db
+        target: /docker-entrypoint-initdb.d/10-create-test-db.sql
+    healthcheck:
+      # `-h 127.0.0.1` is load-bearing, not decoration. While the official image
+      # is running its init scripts it starts a TEMPORARY server bound to the
+      # unix socket only, with TCP disabled. A plain `pg_isready` talks to that
+      # socket and reports "ready" mid-initialisation — so a dependent service
+      # would start before 10-create-test-db.sql had run and fail on a missing
+      # database. Forcing the check over TCP means it can only pass once the real
+      # server is listening, which is after init has finished.
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U amp -d amp"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+
+  # ── MQTT broker ───────────────────────────────────────────────────────
+  # Mosquitto 2.x refuses anonymous connections and binds to loopback only unless
+  # it is given a config. The official image ships /mosquitto-no-auth.conf
+  # (listener 1883 + allow_anonymous true) for exactly this case, so we can run a
+  # usable dev broker without mounting a config file of our own. This is a LOCAL
+  # convenience: never point a production deployment at an anonymous broker.
+  mosquitto:
+    image: eclipse-mosquitto:2
+    command: ["mosquitto", "-c", "/mosquitto-no-auth.conf"]
+    ports:
+      # Published so you can publish test telemetry from the host, e.g.
+      #   mosquitto_pub -h localhost -t flowmes/machines -m '{"machine":"SMT-1",...}'
+      - "1883:1883"
+    healthcheck:
+      # Subscribe to one retained broker-stats message and exit. `$$` is compose's
+      # escape for a literal `$`, and the single quotes stop the container shell
+      # expanding $SYS itself. Nothing depends on this check passing — it is here
+      # so `docker compose ps` tells you whether the broker is actually accepting
+      # connections rather than merely running.
+      test: ["CMD-SHELL", "mosquitto_sub -h 127.0.0.1 -p 1883 -t '$$SYS/broker/uptime' -C 1 -W 3 -i healthcheck"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
+
+  # ── AMP backend ───────────────────────────────────────────────────────
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    depends_on:
+      postgres:
+        # Not `service_started`. main.py opens the database at IMPORT time —
+        # Base.metadata.create_all(bind=engine) runs before FastAPI exists — so a
+        # backend that starts first does not wait and retry, it dies during
+        # import with a connection error.
+        condition: service_healthy
+      mosquitto:
+        # Only "started": the MQTT connect happens in a daemon thread and its
+        # failure is caught and printed, so a slow broker must not hold up the
+        # API. Ordering is enough.
+        condition: service_started
+    ports:
+      - "8000:8000"
+    environment:
+      # `postgres` is the compose service name — Docker's embedded DNS resolves
+      # it. This is the one line that makes local development Postgres-shaped.
+      DATABASE_URL: postgresql://amp:amp@postgres:5432/amp
+
+      # auth.py falls back to a hardcoded key when SECRET_KEY is unset. Set an
+      # obviously-local value so a token minted here can never be mistaken for,
+      # or replayed against, a real environment.
+      SECRET_KEY: local-development-only-not-a-real-secret
+
+      # main.py's CORS allowlist. localhost:3000 is where `npm run dev` serves
+      # the Next.js frontend.
+      ALLOWED_ORIGINS: http://localhost:3000,http://127.0.0.1:3000
+
+      # mqtt_service.py reads all three at import.
+      MQTT_BROKER: mosquitto
+      MQTT_PORT: "1883"
+      MQTT_TOPIC: flowmes/machines
+
+      # Which tenants the 45-second simulation loop animates (sim_state.py).
+      # DEFAULT alone keeps the local box quiet; add GMATS to exercise both.
+      SIM_TENANTS: DEFAULT
+
+      # Only consumed when SENTRY_DSN is set; tags the environment in Sentry.
+      ENV: development
+
+      # The Dockerfile already defaults PORT to 8000. Repeated here so the
+      # published port above and the port the process binds are visibly the same
+      # number in one file.
+      PORT: "8000"
+
+      # Passed through from your shell if set, empty otherwise. The AI copilot
+      # truth-tests these (ai_copilot.py), so an empty string leaves it off
+      # exactly as an unset variable would.
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      AI_PROVIDER: ${AI_PROVIDER:-}
+
+      # Deliberately NOT set here:
+      #   RESEED_FACTORY — rebuilds the DEFAULT tenant from scratch. A forgotten
+      #     value of this wiped production ~41 times on 2026-07-18 before the
+      #     single-shot guard in main.py landed. Set it on the command line for a
+      #     single run instead:
+      #       docker compose run --rm -e RESEED_FACTORY=$(date +%s) backend
+      #   SENTRY_DSN — local errors belong in your terminal, not in the shared
+      #     Sentry project where they will be mistaken for production noise.
+      #   GMATS_ADMIN_PASSWORD — setting it seeds a real Admin login. Uncomment
+      #     below only when you are specifically testing that seed path.
+      # GMATS_ADMIN_USERNAME: gmats_admin
+      # GMATS_ADMIN_PASSWORD: change-me-locally
+
+    # No `restart:` on purpose. A boot failure here is almost always a migration
+    # or a schema problem you need to READ, and an auto-restarting container
+    # scrolls the traceback away and looks like a healthy service that is merely
+    # slow. postgres and mosquitto are not restarted either, for consistency.
+
+    # Live-reload development. Off by default because the default stack is meant
+    # to be a faithful rehearsal of production, and reload changes the process
+    # model (a reloader parent plus a child). Uncomment BOTH blocks together:
+    # volumes:
+    #   - ./backend:/app
+    # command: ["sh", "-c", "python -m uvicorn main:app --host 0.0.0.0 --port $PORT --reload"]
+
+  # ── Test runner: the suites against real Postgres ─────────────────────
+  # Not started by `docker compose up` — it sits behind a profile. Run it with:
+  #   docker compose run --rm tests
+  # See docs/DOCKER.md for what this does and does not prove.
+  tests:
+    profiles: ["tests"]
+    build:
+      context: .
+      dockerfile: Dockerfile
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      # The image deliberately excludes test_*.py (see /.dockerignore), so the
+      # suites are bind-mounted in for this service only. It also means an edit
+      # to a test runs immediately, with no rebuild.
+      #
+      # This mounts your real ./backend over /app, INCLUDING backend/.env — whose
+      # DATABASE_URL points at a host-local Postgres that does not exist inside
+      # this container. That is harmless: python-dotenv's load_dotenv() does not
+      # override variables that are already set, so the DATABASE_URL below wins.
+      # If you ever change that call to override=True, this service breaks.
+      - ./backend:/app
+    environment:
+      # A SEPARATE database from the dev stack. Importing main runs create_all,
+      # the migrations and the GMATS/tenant seeding, and several suites write
+      # rows — pointing that at `amp` would quietly reshape the data you were
+      # developing against. Created by the init script in `configs` below.
+      DATABASE_URL: postgresql://amp:amp@postgres:5432/amp_test
+      SECRET_KEY: local-development-only-not-a-real-secret
+      # start_mqtt_service() only runs on FastAPI's startup event, which the
+      # suites never trigger, so no broker is needed here.
+      PYTHONDONTWRITEBYTECODE: "1"
+    # The same loop .github/workflows/ci.yml runs, so a failure here means the
+    # same thing a red build does. Every suite runs even if one fails, so one
+    # invocation reports ALL the breakage rather than only the first file.
+    # `$$` is compose's escape for a literal `$` reaching the shell.
+    command:
+      - sh
+      - -c
+      - |
+        failed=""
+        for f in test_*.py; do
+          if python "$$f"; then echo "PASS $$f"; else echo "FAIL $$f"; failed="$$failed $$f"; fi
+        done
+        if [ -n "$$failed" ]; then
+          echo "Failing suites:$$failed"
+          exit 1
+        fi
+        echo "All $$(ls test_*.py | wc -l) suites passed against PostgreSQL."
+
+  # ── Frontend (not yet containerised) ──────────────────────────────────
+  # Left commented out because there is no frontend/Dockerfile in this repo and
+  # creating one is not part of this change. The frontend deploys on Vercel and
+  # runs locally with `cd frontend && npm run dev`, which already talks to
+  # http://localhost:8000 and is already in ALLOWED_ORIGINS above.
+  #
+  # When a frontend/Dockerfile does exist, this is the shape it should take —
+  # note `context: ./frontend`, so it reads frontend/.dockerignore and is
+  # unaffected by the root /.dockerignore excluding the frontend directory:
+  #
+  # frontend:
+  #   build:
+  #     context: ./frontend
+  #     dockerfile: Dockerfile
+  #   depends_on:
+  #     - backend
+  #   ports:
+  #     - "3000:3000"
+  #   environment:
+  #     NEXT_PUBLIC_API_URL: http://localhost:8000
+
+configs:
+  # Inline file — no separate .sql in the repo to drift out of sync with the
+  # DATABASE_URL of the `tests` service above. Requires Compose v2.23.1+.
+  amp_create_test_db:
+    content: |
+      -- Separate database for the test suites, so running them never touches
+      -- the data you are developing against. Created once, when the postgres
+      -- data volume is first initialised.
+      CREATE DATABASE amp_test OWNER amp;
+
+volumes:
+  # Named, not anonymous: `docker compose down` then `up` keeps your data.
+  # `docker compose down -v` is the deliberate way to start clean.
+  amp_pgdata:

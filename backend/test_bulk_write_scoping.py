@@ -37,6 +37,15 @@ SKIP_FILES = {
     "reseed_inventory.py",   # local dev reseed
     "reset_factory.py",      # founder's factory reset (RESEED_FACTORY=1)
     "offboard_tenant.py",    # purge — filters cls.tenant_code == code itself
+    # Operational retention job: prunes by AGE across every tenant, on purpose.
+    # It runs from a CLI with no request context, so there is no tenant to scope
+    # to and scoping would be wrong — a per-tenant prune would leave the
+    # unbounded tables unbounded for whichever tenant nobody ran it for. Its own
+    # safety comes from a different direction: dry-run by default, an explicit
+    # policy table, and a refusal to accept a policy on any table whose tenant
+    # column is nullable (see retention.py) — so it can never delete rows a
+    # tenant-scoped read would have hidden.
+    "retention.py",
 }
 
 # Bulk writes that carry NO tenant_code of their own but are safe because the

@@ -124,6 +124,47 @@ def test_executive_oee_no_production_is_zero_not_fabricated():
     print("PASS executive-oee reports 0 plant OEE on no production (no fabricated number)")
 
 
+def test_downtime_reason_empty_renders_unknown_not_blank():
+    # POST /machines/downtime-logs types reason as a bare `str` (no min_length), so
+    # `{"reason": ""}` is valid input and writes an empty reason — and a legacy /
+    # raw-SQL row can hold a genuine NULL (DowntimeLog.reason is nullable=False, but
+    # that isn't retro-applied to pre-existing rows; the NULL variant is pinned in
+    # the engine unit test, since SQLite's live NOT NULL blocks reproducing it via
+    # create_all). Used RAW as a grouping key / a displayed label, an empty/NULL
+    # reason leaked into the payload as a blank/`null` label: /analytics/summary's
+    # top_reason + reason_counts and /analytics/executive-oee's downtime_pareto.
+    # Both must coalesce it to "Unknown" (the read-model's own label). Numbers below
+    # are derived by hand, not read back from the endpoint.
+    db = _fresh_session()
+    db.add(models.Machine(id=1, name="M1", status="Running", utilization=80))
+    # Three downtime logs on machine 1: a real reason, and two empty-reason rows —
+    # the empty ones together carry the MOST minutes and the MOST events.
+    db.add(models.DowntimeLog(id=1, machine_id=1, reason="Tool Change", duration="30 min"))  # 30
+    db.add(models.DowntimeLog(id=2, machine_id=1, reason="",            duration="2 hrs"))    # 120
+    db.add(models.DowntimeLog(id=3, machine_id=1, reason="",            duration="15 min"))   # 15
+    db.commit()
+
+    # ── /analytics/summary ──────────────────────────────────────────
+    summary = analytics_routes.analytics_summary(db=db, current_user={})
+    # reason_counts is by EVENT count: the two "" rows fold into ONE "Unknown"
+    # bucket (parts sum to the whole: 1 + 2 == 3 events, not a stray "" key).
+    assert summary["reason_counts"] == {"Tool Change": 1, "Unknown": 2}, summary["reason_counts"]
+    assert "" not in summary["reason_counts"] and None not in summary["reason_counts"]
+    assert sum(summary["reason_counts"].values()) == summary["downtime_events"] == 3
+    # top_reason is the most FREQUENT reason: "Unknown" (2 events) > "Tool Change" (1).
+    assert summary["top_reason"] == "Unknown", summary["top_reason"]
+
+    # ── /analytics/executive-oee ────────────────────────────────────
+    exec_oee = analytics_routes.get_executive_oee(db=db, current_user={})
+    pareto = {row["reason"]: row["minutes"] for row in exec_oee["downtime_pareto"]}
+    # By MINUTES: {"Unknown": 135 (120 + 15), "Tool Change": 30}. No blank/null key.
+    assert pareto == {"Unknown": 135, "Tool Change": 30}, pareto
+    assert all(row["reason"] not in ("", None) for row in exec_oee["downtime_pareto"])
+    # Highest-minutes reason is first in the Pareto and it is the coalesced label.
+    assert exec_oee["downtime_pareto"][0]["reason"] == "Unknown", exec_oee["downtime_pareto"]
+    print("PASS downtime reason: empty/NULL -> 'Unknown' in summary top_reason/counts and exec Pareto")
+
+
 def _work_order(**kw):
     kw.setdefault("part_number", "PN")
     kw.setdefault("batch_number", "BN")
@@ -1700,6 +1741,7 @@ if __name__ == "__main__":
     test_module_has_no_relocated_helper_copies()
     test_executive_oee_plant_rollup_is_pooled_not_a_per_machine_mean()
     test_executive_oee_no_production_is_zero_not_fabricated()
+    test_downtime_reason_empty_renders_unknown_not_blank()
     test_work_order_analytics_null_actual_and_reconciled_totals()
     test_work_order_analytics_empty_table_is_zero_not_a_crash()
     test_work_order_analytics_folds_in_progress_into_running_and_reconciles()

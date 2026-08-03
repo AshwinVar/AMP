@@ -31,6 +31,7 @@ from analytics_engine import (
     calculate_fallback_oee,
     calculate_oee_from_record,
     generate_alerts,
+    normalize_downtime_reason,
     parse_duration_to_minutes,
     pooled_oee_from_sums,
 )
@@ -145,7 +146,11 @@ def analytics_summary(db: Session = Depends(_get_db), current_user: dict = Depen
     reason_counts = {}
     machine_downtime = {}
     for log in logs:
-        reason_counts[log.reason] = reason_counts.get(log.reason, 0) + 1
+        # Coalesce a NULL/empty reason to "Unknown" (normalize_downtime_reason) so
+        # neither the reason_counts keys nor the derived top_reason surface a literal
+        # `null` label — the same convention the canonical downtime read-model uses.
+        reason = normalize_downtime_reason(log.reason)
+        reason_counts[reason] = reason_counts.get(reason, 0) + 1
         machine_downtime[log.machine_id] = machine_downtime.get(log.machine_id, 0) + parse_duration_to_minutes(log.duration)
 
     top_reason = max(reason_counts.items(), key=lambda x: x[1])[0] if reason_counts else "No data"
@@ -701,7 +706,10 @@ def get_executive_oee(
     for log in downtime_logs:
         minutes = parse_duration_to_minutes(log.duration)
         downtime_by_machine[log.machine_id] = downtime_by_machine.get(log.machine_id, 0) + minutes
-        reason_counts[log.reason] = reason_counts.get(log.reason, 0) + minutes
+        # Coalesce a NULL/empty reason to "Unknown" so the downtime Pareto never
+        # emits a `{"reason": null, ...}` slice — matching the read-model convention.
+        reason = normalize_downtime_reason(log.reason)
+        reason_counts[reason] = reason_counts.get(reason, 0) + minutes
 
     # Only `inspected` and `passed` are ever read (the no-production quality
     # fallback below); the old loop also summed failed/scrap/rework and threw

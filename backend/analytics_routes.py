@@ -1245,7 +1245,20 @@ def get_production_schedule_analytics(
     return {
         "total_schedules": total_schedules,
         "scheduled": status_counts.get("Scheduled", 0),
-        "running": status_counts.get("Running", 0),
+        # "Running" and "In Progress" are two spellings of the SAME state (the
+        # schedule is actively being worked) written by two code paths in this
+        # app: the UI status dropdown (SchedulingSection) writes "Running", the
+        # factory simulator (_schedules) writes "In Progress". Reading the "Running"
+        # bucket alone reported 0 in-progress schedules on a seeded/simulated
+        # plant while those rows sat plainly in the schedule table below it — and,
+        # because total_schedules counts EVERY row, the four named buckets no
+        # longer summed to the headline (an "In Progress" row landed in none of
+        # them). Fold the synonym so the Running headline counts every in-progress
+        # schedule and the breakdown reconciles with the total (rule-1: one metric,
+        # not two spellings; rule-3: a breakdown must reconcile with its headline) —
+        # exactly the fold the sibling customer-order rollup already applies to
+        # "Partial"/"Partially Dispatched" (#444).
+        "running": status_counts.get("Running", 0) + status_counts.get("In Progress", 0),
         "completed": status_counts.get("Completed", 0),
         "delayed": status_counts.get("Delayed", 0),
         "total_quantity": total_quantity,

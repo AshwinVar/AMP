@@ -146,7 +146,7 @@ function BarPanel({ title, unit, series, colorClass }: { title: string; unit: st
       ) : (
         <div className="mt-4 flex items-end gap-2 h-28">
           {series.map((d) => {
-            const h = peak ? Math.max(4, Math.round((d.count / peak) * 96)) : 4;
+            const h = d.count === 0 ? 0 : Math.max(4, Math.round((d.count / peak) * 96));
             return (
               <div
                 key={d.date}

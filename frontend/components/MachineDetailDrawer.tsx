@@ -118,7 +118,7 @@ function DowntimeSparkline({ series }: { series: { date: string; count: number }
       ) : (
         <div className="mt-3 flex items-end gap-2 h-20">
           {series.map((d) => {
-            const h = peak ? Math.max(4, Math.round((d.count / peak) * 72)) : 4;
+            const h = d.count === 0 ? 0 : Math.max(4, Math.round((d.count / peak) * 72));
             return (
               <div
                 key={d.date}
@@ -300,7 +300,7 @@ export default function MachineDetailDrawer({
                   <div className="mt-3 flex items-end gap-2 h-16">
                     {detail.production_7d.daily.map((d) => {
                       const peak = Math.max(1, ...detail.production_7d.daily.map((x) => x.count));
-                      const h = Math.max(4, Math.round((d.count / peak) * 56));
+                      const h = d.count === 0 ? 0 : Math.max(4, Math.round((d.count / peak) * 56));
                       return (
                         <div key={d.date} className="flex-1 flex flex-col items-center justify-end gap-1" title={`${d.count} on ${d.date}`}>
                           <div className="w-full bg-emerald-500/60 rounded-t" style={{ height: `${h}px` }} />

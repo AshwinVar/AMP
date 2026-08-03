@@ -210,7 +210,7 @@ export default function AgentDetailDrawer({
               ) : (
                 <div className="mt-3 flex items-end gap-2 h-20">
                   {detail.daily.map((d) => {
-                    const h = peak ? Math.max(4, Math.round((d.count / peak) * 72)) : 4;
+                    const h = d.count === 0 ? 0 : Math.max(4, Math.round((d.count / peak) * 72));
                     return (
                       <div
                         key={d.date}

@@ -33,6 +33,7 @@ import sim_state
 import onboard_tenant
 import offboard_tenant
 import http_security
+import logging_config
 import plan_gate
 
 
@@ -76,6 +77,13 @@ ai.subscribers.register(event_bus)
 # AI agents act on the stream - autonomy, not just advice (ADR-0004).
 ai.agents.register(event_bus)
 
+
+# Structured logging before anything else runs: the boot migrations below are
+# the first things that report, and their output is exactly what you need when
+# a deploy goes wrong. Called again at startup (see startup_event) because
+# uvicorn installs its own plain-text handlers AFTER this module is imported.
+logging_config.configure_logging()
+log = logging_config.get_logger(__name__)
 
 Base.metadata.create_all(bind=engine)
 
@@ -377,6 +385,9 @@ async def _simulation_loop():
 
 @app.on_event("startup")
 async def startup_event():
+    # Re-apply: uvicorn installs its own plain-text handlers after import, which
+    # would otherwise emit a second, unstructured copy of every access line.
+    logging_config.configure_logging()
     start_mqtt_service()
     asyncio.create_task(_simulation_loop())
     try:
@@ -480,6 +491,12 @@ app.add_middleware(
 # preflights, 404s, and the plan gate's and throttle's own rejections — so
 # there is no response path that escapes without them.
 app.add_middleware(http_security.SecurityHeadersMiddleware)
+
+# Added after the header middleware, so it runs just inside it: every log line
+# emitted while handling a request — including from the plan gate and the
+# throttle — carries the same request id, and the id is echoed to the caller so
+# a support report can be grepped straight to the failing request.
+app.add_middleware(logging_config.RequestContextMiddleware)
 
 
 # Bind the caller's tenant (from the JWT) per request so the ORM auto-scopes

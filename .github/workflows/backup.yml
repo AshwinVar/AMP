@@ -78,22 +78,39 @@ jobs:
       artifact_name: ${{ steps.dump.outputs.artifact_name }}
       dump_file: ${{ steps.dump.outputs.dump_file }}
     steps:
-      - name: Install a pg_dump at least as new as the server
-        # pg_dump refuses point-blank to dump a server newer than itself
-        # ("server version mismatch") and the hosted runner image trails the
-        # current Postgres release. Without this step a routine Railway Postgres
-        # upgrade would end the backups, and the first anyone would know is when
-        # they needed one. Pinned to a major version, never "latest".
+      - name: Install a pg_dump matching the server's major version
+        # pg_dump refuses point-blank to dump a server newer than itself, and
+        # the hosted runner ships an older client than Railway runs. Pinning a
+        # major version here is what broke the first three runs: the workflow
+        # asked for 17, the runner's preinstalled 16 stayed ahead of it on PATH,
+        # and Railway had already moved to 18.
+        #
+        # So do not guess. Ask the server what it is, install exactly that
+        # client, and invoke it by absolute path so PATH ordering cannot pick a
+        # different binary. psql is used for the probe because psql tolerates a
+        # version gap; only pg_dump treats one as fatal.
+        env:
+          BACKUP_DATABASE_URL: ${{ secrets.DATABASE_PUBLIC_URL || secrets.DATABASE_URL }}
         run: |
           set -euo pipefail
+          if [ -z "${BACKUP_DATABASE_URL:-}" ]; then
+            echo "::error::No connection string. Add DATABASE_PUBLIC_URL under Settings -> Secrets and variables -> Actions -> Secrets tab -> New repository secret. See docs/BACKUP-AND-RESTORE.md."
+            exit 1
+          fi
           sudo install -d /usr/share/postgresql-common/pgdg
-          sudo curl -fsSL -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc \
-            https://www.postgresql.org/media/keys/ACCC4CF8.asc
-          echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] https://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" \
-            | sudo tee /etc/apt/sources.list.d/pgdg.list > /dev/null
+          sudo curl -fsSL -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc             https://www.postgresql.org/media/keys/ACCC4CF8.asc
+          echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] https://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main"             | sudo tee /etc/apt/sources.list.d/pgdg.list > /dev/null
           sudo apt-get update -qq
-          sudo apt-get install -y --no-install-recommends postgresql-client-17
-          pg_dump --version
+          # No `set -x`: the URL is a credential.
+          major="$(psql "$BACKUP_DATABASE_URL" -tAX -c "SELECT current_setting('server_version_num')::int / 10000")"
+          if ! printf '%s' "$major" | grep -qE '^[0-9]+$'; then
+            echo "::error::Could not read the server version (got '$major'). Check the connection string is reachable."
+            exit 1
+          fi
+          echo "Server major version: $major"
+          sudo apt-get install -y --no-install-recommends "postgresql-client-${major}"
+          echo "PG_BIN=/usr/lib/postgresql/${major}/bin" >> "$GITHUB_ENV"
+          "/usr/lib/postgresql/${major}/bin/pg_dump" --version
 
       - name: Dump and compress
         id: dump
@@ -105,11 +122,31 @@ jobs:
           # you backups rather than silence — it will work wherever the value is
           # a publicly reachable URL.
           BACKUP_DATABASE_URL: ${{ secrets.DATABASE_PUBLIC_URL || secrets.DATABASE_URL }}
+          # Presence flags for the diagnostic above. `!= ''` yields a literal
+          # true/false string, so no credential is ever interpolated.
+          SEEN_PUBLIC: ${{ secrets.DATABASE_PUBLIC_URL != '' }}
+          SEEN_PRIVATE: ${{ secrets.DATABASE_URL != '' }}
+          SEEN_VAR_PUBLIC: ${{ vars.DATABASE_PUBLIC_URL != '' }}
+          SEEN_VAR_PRIVATE: ${{ vars.DATABASE_URL != '' }}
         run: |
           set -euo pipefail
           # No `set -x` in this step, ever: tracing would print the credential.
           if [ -z "${BACKUP_DATABASE_URL:-}" ]; then
-            echo "::error::No connection string. Add the DATABASE_PUBLIC_URL repository secret under Settings -> Secrets and variables -> Actions, then re-run. See docs/BACKUP-AND-RESTORE.md."
+            # Report WHICH names this job can actually see. Booleans only —
+            # never the values. Without this the failure is indistinguishable
+            # from a bad password or an unreachable host, and the fix for each
+            # is completely different.
+            echo "Visible to this job:"
+            echo "  secrets.DATABASE_PUBLIC_URL  set: ${SEEN_PUBLIC}"
+            echo "  secrets.DATABASE_URL         set: ${SEEN_PRIVATE}"
+            echo "  vars.DATABASE_PUBLIC_URL     set: ${SEEN_VAR_PUBLIC}"
+            echo "  vars.DATABASE_URL            set: ${SEEN_VAR_PRIVATE}"
+            echo ""
+            if [ "${SEEN_VAR_PUBLIC}" = "true" ] || [ "${SEEN_VAR_PRIVATE}" = "true" ]; then
+              echo "::error::The connection string was added as a VARIABLE, not a SECRET. Settings -> Secrets and variables -> Actions has two tabs; a database URL is a credential and belongs on the Secrets tab. Delete the variable and re-add it under Secrets -> New repository secret."
+            else
+              echo "::error::No connection string reached this job. Add it at Settings -> Secrets and variables -> Actions -> Secrets tab -> New repository secret, named DATABASE_PUBLIC_URL. Two things that look right but do not work: (1) adding it on the Variables tab instead of Secrets, (2) adding it as an Environment secret, which only reaches jobs that declare an environment: — this one does not. See docs/BACKUP-AND-RESTORE.md."
+            fi
             exit 1
           fi
           stamp="$(date -u +%Y%m%dT%H%M%SZ)"
@@ -126,7 +163,7 @@ jobs:
           # The pipeline runs under `pipefail`, so a pg_dump that dies mid-stream
           # fails this step instead of leaving a truncated file that gzip was
           # perfectly happy to write.
-          pg_dump \
+          "$PG_BIN/pg_dump" \
             --dbname="$BACKUP_DATABASE_URL" \
             --format=plain \
             --no-owner \
@@ -203,7 +240,7 @@ jobs:
       postgres:
         # Pinned major version, kept >= the production server: a plain-SQL dump
         # restores forward far more reliably than it restores backward.
-        image: postgres:17
+        image: postgres:18
         env:
           POSTGRES_PASSWORD: postgres
         ports:

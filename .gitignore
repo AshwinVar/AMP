@@ -29,3 +29,14 @@ FlowMES-Enterprise/
 frontend/test-results/
 frontend/playwright-report/
 frontend/blob-report/
+
+# Coverage artefacts. .coverage is a binary SQLite database of line hits — it is
+# a measurement of one run on one machine, it changes on every run, and nothing
+# reads it but the report command. htmlcov/ is the rendered version of it.
+.coverage
+.coverage.*
+htmlcov/
+
+# conftest.py's fallback DATABASE_URL points here, so a bare `pytest` cannot
+# scribble on a developer's real database. Throwaway by design.
+backend/.pytest.db

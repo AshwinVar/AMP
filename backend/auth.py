@@ -1,4 +1,5 @@
 import os
+import secrets
 from datetime import datetime, timedelta
 
 from dotenv import load_dotenv
@@ -8,7 +9,37 @@ from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 
 load_dotenv()
 
-SECRET_KEY = os.environ.get("SECRET_KEY", "flowmes_super_secret_key_change_in_production")
+
+def _resolve_secret_key() -> str:
+    """FAIL CLOSED on the JWT signing key (PR3 of the security tier).
+
+    The old fallback was a constant published in this repository — anyone who
+    read the source could mint a valid Admin token for any deployment that
+    forgot to set SECRET_KEY. Now:
+
+      * SECRET_KEY set        -> used verbatim (production path; Railway env).
+      * unset, in production  -> refuse to boot. A crash with a clear message
+        is strictly better than an API silently accepting forged tokens.
+        (Production is detected by RAILWAY_ENVIRONMENT, which Railway sets on
+        every deploy, or an explicit PRODUCTION=1.)
+      * unset, in dev/CI      -> a random EPHEMERAL key for this process only.
+        Local sessions reset on restart — harmless in dev, and never a key an
+        attacker can look up.
+    """
+    key = (os.environ.get("SECRET_KEY") or "").strip()
+    if key:
+        return key
+    if os.environ.get("RAILWAY_ENVIRONMENT") or os.environ.get("PRODUCTION"):
+        raise RuntimeError(
+            "SECRET_KEY is not set. Refusing to start in production with a "
+            "known JWT signing key — set SECRET_KEY in the environment "
+            "(Railway: Variables tab) and redeploy."
+        )
+    print("[AUTH] SECRET_KEY not set — using an ephemeral dev key (sessions reset on restart)")
+    return secrets.token_urlsafe(64)
+
+
+SECRET_KEY = _resolve_secret_key()
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 240
 

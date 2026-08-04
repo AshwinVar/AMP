@@ -1,0 +1,72 @@
+# Coverage configuration for the backend.
+#
+# Read by both `pytest --cov` (pytest-cov defers to this file) and a plain
+# `coverage run`. Neither is installed by requirements.txt — coverage is a
+# measurement tool run on demand, not a runtime dependency. See docs/TESTING.md.
+
+[run]
+# Branch coverage, not just line coverage. This codebase is full of read-models
+# that branch on NULL/empty/zero-denominator cases — exactly the paths that 500
+# in production. Line coverage marks `if x is None:` covered the moment the
+# happy path walks past it; branch coverage does not, and the difference is the
+# whole reason for measuring at all.
+branch = True
+
+# Measure the whole backend tree, not only what the tests happened to import.
+# With `source` set, coverage reports modules with zero executed lines too, so a
+# module nobody tests shows up as 0% instead of vanishing from the report.
+source = .
+
+omit =
+    # Not our code.
+    venv/*
+    .venv/*
+    */site-packages/*
+    # The tests themselves. Measuring them inflates the total with ~9,000 lines
+    # that are 100% covered by construction (a test file is executed by running
+    # it), which would flatter the number to the point of uselessness.
+    test_*.py
+    conftest.py
+    # Copy-paste scaffolding from the phase-11 build, never imported by anything
+    # (`grep -rn phase11 --include=*.py` matches only the files themselves) and
+    # not even importable in isolation: phase11_routes_to_merge.py decorates
+    # with a bare @app, phase11_model_to_add.py subclasses an undefined Base.
+    # They are notes-to-self kept in-tree, not shipped code, and counting them
+    # would depress the total with lines no test could ever legitimately reach.
+    phase11_*.py
+    # Standalone operator scripts: run by hand against a live deployment or a
+    # local broker, never imported by the app. Nothing a unit test can drive.
+    e2e_sim.py
+    phase30_plc_simulator.py
+    mqtt_machine_publisher.py
+    reseed_inventory.py
+    # Alembic migration scripts: exercised by running a migration, not by the
+    # unit suites, and each version file is dead the moment it has been applied.
+    alembic/*
+
+[report]
+# Show which branches were missed, not just which lines.
+show_missing = True
+skip_covered = False
+precision = 1
+
+# Deliberately NO `fail_under` here. The threshold belongs on the CI command line
+# (--cov-fail-under=78), because a config-level floor also applies to partial
+# runs: `pytest test_oee.py --cov` covers a tenth of the codebase by definition
+# and would exit non-zero every time, training everyone to ignore the number.
+# The threshold and the reasoning behind 78 are in docs/TESTING.md.
+
+exclude_lines =
+    pragma: no cover
+    # The standalone-runner blocks. Every suite ends with an
+    # `if __name__ == "__main__":` ladder, and so do several operational
+    # scripts. Under pytest that block never runs by design, so counting it as
+    # missed would penalise the exact convention CI depends on.
+    if __name__ == .__main__.:
+    # Defensive re-raises and abstract stubs: real lines, but reaching them
+    # means the process is already failing in a way a unit test should not fake.
+    raise NotImplementedError
+    if TYPE_CHECKING:
+
+[html]
+directory = htmlcov

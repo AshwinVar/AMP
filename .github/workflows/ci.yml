@@ -45,6 +45,59 @@ jobs:
         working-directory: backend
         run: python -c "import main; print(f'{len(main.app.routes)} routes registered')"
 
+  # Branch-coverage floor. A SEPARATE job from `backend` on purpose.
+  #
+  # The `backend` job's answer is "do the tests pass", and that answer must not
+  # be polluted by a second, weaker question. If the floor lived in that job, a
+  # coverage dip would turn the checks list red with the same colour as a real
+  # failure and the first instinct would be to lower the number. Kept apart, the
+  # two failures are told apart at a glance.
+  #
+  # It re-runs the suites rather than reusing the other job's run because the
+  # per-file runner CI contracts on (`python test_X.py`, one process per suite)
+  # cannot be measured without combining 169 coverage files. pytest collects the
+  # same functions in one process — see backend/conftest.py for the two shims
+  # that makes possible, and docs/TESTING.md for why the runner stays as it is.
+  #
+  # pytest-cov is installed HERE and not in requirements.txt: it is a measurement
+  # tool, not something the application needs at runtime, and putting it in the
+  # runtime image to satisfy a CI job is how deployment images grow.
+  coverage:
+    runs-on: ubuntu-latest
+    env:
+      DATABASE_URL: "sqlite:///./ci.db"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install backend dependencies
+        run: pip install -r backend/requirements.txt
+      - name: Install coverage tooling
+        run: pip install "pytest-cov>=5,<8"
+      # --cov-fail-under lives on the command line, NOT in .coveragerc. A
+      # config-level floor also applies to a partial run, so `pytest test_oee.py
+      # --cov` would exit non-zero every single time and train everyone to
+      # ignore the number. The threshold is derived from a measurement and the
+      # arithmetic behind it is in docs/TESTING.md — raise it as the number
+      # climbs, never lower it to make a build pass.
+      - name: Branch coverage floor
+        working-directory: backend
+        run: python -m pytest -q --cov --cov-report=term-missing --cov-fail-under=78
+      # The full report is worth reading even when the gate passes: it is the
+      # only place the untested modules are named.
+      - name: Publish the report
+        if: always()
+        working-directory: backend
+        run: |
+          {
+            echo '### Backend branch coverage'
+            echo
+            echo '```'
+            python -m coverage report --skip-covered || true
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
   frontend:
     runs-on: ubuntu-latest
     steps:

@@ -111,6 +111,16 @@ jobs:
         run: cd frontend && npm test
       - name: Build frontend
         run: cd frontend && npm run build
+      # The load harness's endpoint catalogue is a hand transcription of
+      # fetchAll() in app/dashboard/page.tsx. The moment someone adds a card and
+      # forgets to update it, the harness stops measuring the real dashboard
+      # while still printing confident-looking numbers — and a silently wrong
+      # benchmark is worse than none, because people act on it.
+      #
+      # Plain Node, no k6 and no server, so it costs a second and can be a
+      # required check rather than something that runs when someone remembers.
+      - name: Load-harness endpoint drift
+        run: node load/check-drift.mjs
 
   # Browser tests. A separate job from `frontend` on purpose: it needs a browser
   # binary (~150MB) that the unit-test job has no use for, and keeping them

@@ -34,6 +34,27 @@ import os
 
 import logging_config
 
+# Imported for its SIDE EFFECT, deliberately, and it is not unused.
+#
+# auth.py emits one WARNING at import time when SECRET_KEY is unset — the
+# "running on an ephemeral signing key" notice. That is correct behaviour and
+# must stay at import time (test_jwt_secret_fail_closed.py asserts a bare
+# `import auth` says so), but it interacts badly with this file: _capture()
+# below installs a handler on the ROOT logger, so it captures every record the
+# PROCESS emits, not only the ones a test made. logging_config's tenant lookup
+# imports tenancy, which imports auth — so without this line, auth's warning
+# lands in the first test's buffer and breaks `len(records) == 1`.
+#
+# It only bit on CI. A developer machine has backend/.env with SECRET_KEY set,
+# so _resolve_secret_key() returns early and never warns; CI has no .env. That
+# is the same shape as the bug in #487 — real, and invisible locally.
+#
+# Importing it HERE, before any capture exists, lets that one record go to the
+# unconfigured stream where it belongs. The alternative — narrowing the
+# assertion to one logger — would have hidden a genuine signal: that
+# configure_logging emits each record exactly once.
+import auth  # noqa: F401
+
 
 # ── Helpers ─────────────────────────────────────────────────────────
 

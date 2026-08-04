@@ -16,6 +16,13 @@ The frontend company switcher supplies the tenant; defaults to "GMATS".
 import csv as csv_lib
 import io
 import re
+
+from logging_config import get_logger
+
+# Structured logger. These modules run INSIDE the web process — the seed helpers
+# on the startup hook, the tick helpers on the simulation loop — so anything they
+# emit belongs in the JSON stream with a level, not on raw stdout.
+log = get_logger(__name__)
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
@@ -751,4 +758,4 @@ def seed_gmats(db):
             db.add(models.GmatsAlias(tenant_code="GMATS", item_id=item.id, alias_name=a))
         db.commit()
 
-    print("[SEED] GMATS compressor inventory")
+    log.info("[SEED] GMATS compressor inventory")

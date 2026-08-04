@@ -8,6 +8,23 @@ Run: python factory_simulator.py
 
 import os
 import random
+
+from logging_config import get_logger
+
+# Structured logger. This module is DUAL-USE: main.py imports it and runs the
+# tick_* helpers on the simulation loop inside the web process, while the
+# __main__ block below is a seeding CLI a human runs at a terminal.
+#
+# That split is why the print()s here are not all the same kind of thing. The
+# tick_* and startup-seed paths log; the CLI seeders keep print(), because
+# their output IS the command's result and routing it through JSON logging
+# would make the tool useless to the person running it.
+#
+# The tick lines are DEBUG, not INFO: they fire every ~45s per tenant, and at
+# INFO they would bury everything else in production. %-formatting, not
+# f-strings, so the interpolation is skipped entirely when the level filters
+# the record out — which in production is always.
+log = get_logger(__name__)
 import time
 from datetime import datetime, date, timedelta
 
@@ -688,7 +705,7 @@ def _production_records(db):
                 rejected_count=rejected,
             ))
     db.commit()
-    print("[SEED] Production Records")
+    log.info("[SEED] Production Records")
 
 
 def _machine_events(db):
@@ -708,7 +725,7 @@ def _machine_events(db):
                 utilization=machine.utilization, source="simulator",
             ))
     db.commit()
-    print("[SEED] Machine Events")
+    log.info("[SEED] Machine Events")
 
 
 def tick_production(db):
@@ -752,7 +769,7 @@ def tick_production(db):
         good_count=total - rejected, rejected_count=rejected,
     ))
     db.commit()
-    print(f"  Production record added for {machine.name}")
+    log.debug("tick: production record added for %s", machine.name)
 
 
 def tick_machine_status(db):
@@ -775,7 +792,7 @@ def tick_machine_status(db):
         utilization=machine.utilization, source="simulator",
     ))
     db.commit()
-    print(f"  {machine.name}: {old} -> {new}")
+    log.debug("tick: %s status %s -> %s", machine.name, old, new)
 
 
 def seed_all(db):
@@ -888,7 +905,8 @@ def tick_work_order_progress(db):
                 # heal, #468/#442). No known plan target -> 0 output.
                 plan.actual_quantity = plan.planned_quantity or 0
         db.commit()
-        print(f"  WO {wo.work_order_no}: {wo.actual_quantity}/{target} [{wo.status}]")
+        log.debug("tick: WO %s %s/%s [%s]", wo.work_order_no, wo.actual_quantity,
+                  target, wo.status)
 
 
 def tick_shift_entry(db):
@@ -910,7 +928,7 @@ def tick_shift_entry(db):
         target_output=target, actual_output=actual,
     ))
     db.commit()
-    print(f"  Shift log: {shift} | actual {actual}/{target}")
+    log.debug("tick: shift log %s actual %s/%s", shift, actual, target)
 
 
 def tick_quality(db):
@@ -935,7 +953,7 @@ def tick_quality(db):
         status="Passed" if failed == 0 else random.choice(["Failed", "Rework"]),
     ))
     db.commit()
-    print(f"  Quality: {inspected} inspected, {passed} passed, {failed} failed")
+    log.debug("tick: quality %s inspected, %s passed, %s failed", inspected, passed, failed)
 
 
 def tick_operator(db):
@@ -954,7 +972,8 @@ def tick_operator(db):
             job.job_status  = "Completed"
             job.completed_at = datetime.utcnow()
         db.commit()
-        print(f"  Operator {job.execution_no}: {job.job_status} | good={job.good_count}")
+        log.debug("tick: operator %s %s good=%s", job.execution_no, job.job_status,
+                  job.good_count)
     else:
         machines = db.query(models.Machine).filter(models.Machine.status == "Running").all()
         wos      = db.query(models.WorkOrder).filter(models.WorkOrder.status == "In Progress").all()
@@ -969,7 +988,7 @@ def tick_operator(db):
                 good_count=0, rejected_count=0,
             ))
             db.commit()
-            print("  New operator job started")
+            log.debug("tick: new operator job started")
 
 
 def tick_iot(db):
@@ -992,7 +1011,7 @@ def tick_iot(db):
             signal_value=str(val), numeric_value=val, unit=unit, source="MQTT",
         ))
     db.commit()
-    print(f"  IoT: signals pushed for {machine.name}")
+    log.debug("tick: IoT signals pushed for %s", machine.name)
 
 
 # tick_inventory stamps this exact note on every consumption row it writes, and
@@ -1030,7 +1049,8 @@ def tick_inventory(db):
     ))
     item.current_stock = max(0, item.current_stock - qty)
     db.commit()
-    print(f"  Inventory: issued {qty} {item.unit} of {item.item_name} (remaining: {item.current_stock})")
+    log.debug("tick: inventory issued %s %s of %s (remaining %s)", qty, item.unit,
+              item.item_name, item.current_stock)
 
 
 def tick_escalation(db):

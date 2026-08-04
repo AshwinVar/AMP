@@ -32,6 +32,10 @@ from database import SessionLocal
 from platform_routes import log_audit
 from security import hash_password
 
+import logging_config
+
+log = logging_config.get_logger(__name__)
+
 
 def _get_db():
     db = SessionLocal()
@@ -101,12 +105,12 @@ def create_company_tenant(tenant: schemas.CompanyTenantCreate, db: Session = Dep
     try:
         onboard_tenant.seed_starter_factory(db, row.company_code, row.company_name or "")
     except Exception as e:
-        print(f"[ONBOARD] starter seed for {row.company_code} failed: {e}")
+        log.info(f"[ONBOARD] starter seed for {row.company_code} failed: {e}")
     # Licence follows the chosen plan (Starter/Professional/Enterprise tiers).
     try:
         platform_routes.apply_plan_tier(db, row.company_code, row.plan_name)
     except Exception as e:
-        print(f"[ONBOARD] plan tier for {row.company_code} failed: {e}")
+        log.info(f"[ONBOARD] plan tier for {row.company_code} failed: {e}")
     return row
 
 
@@ -161,7 +165,7 @@ def update_company_tenant(tenant_id: int, payload: schemas.CompanyTenantUpdate, 
         try:
             platform_routes.apply_plan_tier(db, row.company_code, row.plan_name)
         except Exception as e:
-            print(f"[SAAS] plan tier for {row.company_code} failed: {e}")
+            log.info(f"[SAAS] plan tier for {row.company_code} failed: {e}")
     return row
 
 

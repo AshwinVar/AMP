@@ -36,6 +36,10 @@ from auth import get_current_user
 from currency import money
 from database import SessionLocal
 
+import logging_config
+
+log = logging_config.get_logger(__name__)
+
 # Cheap + fast models by default; override with AI_MODEL / GEMINI_MODEL.
 # Keys are never in code — only in the env.
 AI_MODEL = os.environ.get("AI_MODEL", "claude-haiku-4-5")
@@ -190,7 +194,7 @@ def _build_factory_context(db: Session, tenant: str) -> str:
             lines.append(f"COMPLIANCE: {comp['total']} controlled documents, "
                          f"{comp['overdue']} review(s) overdue.")
     except Exception as e:  # pragma: no cover - defensive; context must never 500 the copilot
-        print(f"[AI COPILOT] context enrichment skipped: {e}")
+        log.info(f"[AI COPILOT] context enrichment skipped: {e}")
 
     return "\n".join(lines) if lines else "No factory data available yet."
 
@@ -322,7 +326,7 @@ def _ask_gemini(system: str, user: str) -> str:
                 last = retry_err
                 continue
             _GEMINI_DISCOVERED = candidate
-            print(f"[AI COPILOT] Gemini model '{model}' unusable; discovered and using '{candidate}'")
+            log.info(f"[AI COPILOT] Gemini model '{model}' unusable; discovered and using '{candidate}'")
             return result
         raise last
 
@@ -394,7 +398,7 @@ def ai_ask(payload: dict, db: Session = Depends(get_db), current_user: dict = De
         # outage) must never surface a raw API error in a customer's
         # copilot. Answer from the rule-based assistant instead, honestly
         # labelled — the factory data is all local, so this always works.
-        print(f"[AI COPILOT] LLM failed, answering from rules: {e}")
+        log.info(f"[AI COPILOT] LLM failed, answering from rules: {e}")
         import ai
         fallback = ai.assistant.answer(db, tenant, question)
         return {
@@ -423,7 +427,7 @@ def ai_report(db: Session = Depends(get_db), current_user: dict = Depends(get_cu
     except Exception as e:
         # Same graceful degradation as /ai/ask: fall back to the
         # rule-composed weekly report rather than erroring.
-        print(f"[AI COPILOT] LLM failed, reporting from rules: {e}")
+        log.info(f"[AI COPILOT] LLM failed, reporting from rules: {e}")
         import ai
         built = ai.report.build_weekly_report(db, tenant)
         return {

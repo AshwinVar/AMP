@@ -3,6 +3,10 @@ import asyncio
 from typing import List
 from fastapi import WebSocket
 
+import logging_config
+
+log = logging_config.get_logger(__name__)
+
 
 class ConnectionManager:
     """Tracks live WebSocket clients with the tenant each is authenticated as, so a
@@ -17,11 +21,11 @@ class ConnectionManager:
     async def connect(self, websocket: WebSocket, tenant=None):
         await websocket.accept()
         self.active_connections.append((websocket, tenant))
-        print(f"WebSocket connected (tenant={tenant}). Active clients: {len(self.active_connections)}")
+        log.info(f"WebSocket connected (tenant={tenant}). Active clients: {len(self.active_connections)}")
 
     def disconnect(self, websocket: WebSocket):
         self.active_connections = [(ws, t) for (ws, t) in self.active_connections if ws is not websocket]
-        print(f"WebSocket disconnected. Active clients: {len(self.active_connections)}")
+        log.info(f"WebSocket disconnected. Active clients: {len(self.active_connections)}")
 
     async def broadcast(self, payload: dict):
         target = payload.get("tenant_code")

@@ -7,6 +7,10 @@ frontend nav. Adding or removing a module is a one-file change (modules.json).
 import json
 import os
 
+import logging_config
+
+log = logging_config.get_logger(__name__)
+
 _PATH = os.path.join(os.path.dirname(__file__), "modules.json")
 
 
@@ -19,7 +23,7 @@ try:
     MANIFEST = _load()
     PACKS = MANIFEST.get("packs", [])
 except Exception as e:  # pragma: no cover - the manifest ships with the code
-    print(f"[MODULES] manifest load failed, using empty manifest: {e}")
+    log.info(f"[MODULES] manifest load failed, using empty manifest: {e}")
     MANIFEST = {"version": 0, "plans": [], "packs": []}
     PACKS = []
 

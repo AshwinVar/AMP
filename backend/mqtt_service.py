@@ -12,11 +12,15 @@ from database import SessionLocal
 import models
 from machine_status import clamp_utilization, normalize_machine_status
 
+import logging_config
+
+log = logging_config.get_logger(__name__)
+
 try:
     from live_ws import broadcast_live_event
 except Exception:
     async def broadcast_live_event(event):
-        print("Live WebSocket broadcast skipped:", event)
+        log.info("Live WebSocket broadcast skipped:", event)
 
 
 MQTT_BROKER = os.environ.get("MQTT_BROKER", "127.0.0.1")
@@ -86,37 +90,37 @@ def safe_broadcast(event: dict):
             loop.run_until_complete(broadcast_live_event(event))
             loop.close()
         except Exception as ws_error:
-            print("WebSocket broadcast error:", repr(ws_error))
+            log.info("WebSocket broadcast error:", repr(ws_error))
     except Exception as ws_error:
-        print("WebSocket broadcast error:", repr(ws_error))
+        log.info("WebSocket broadcast error:", repr(ws_error))
 
 
 def on_connect(client, userdata, flags, rc):
-    print(f"FastAPI MQTT connected with code: {rc}")
+    log.info(f"FastAPI MQTT connected with code: {rc}")
 
     if rc == 0:
         client.subscribe(TOPIC)
-        print(f"FastAPI MQTT subscribed to {TOPIC}")
+        log.info(f"FastAPI MQTT subscribed to {TOPIC}")
     else:
-        print("FastAPI MQTT connection failed")
+        log.info("FastAPI MQTT connection failed")
 
 
 def on_message(client, userdata, msg):
     db = SessionLocal()
 
     try:
-        print("\nRAW MQTT MESSAGE RECEIVED")
-        print("Topic:", msg.topic)
+        log.info("\nRAW MQTT MESSAGE RECEIVED")
+        log.info("Topic:", msg.topic)
 
         raw_payload = msg.payload.decode()
-        print("Payload:", raw_payload)
+        log.info("Payload:", raw_payload)
 
         payload = json.loads(raw_payload)
 
         machine_name = payload.get("machine")
 
         if not machine_name:
-            print("MQTT payload skipped: missing machine name")
+            log.info("MQTT payload skipped: missing machine name")
             return
 
         downtime_value = payload.get("downtime", "0 min")
@@ -147,7 +151,7 @@ def on_message(client, userdata, msg):
         db.commit()
         db.refresh(machine)
 
-        print(
+        log.info(
             f"DB UPDATED → {machine.name} | "
             f"{old_status} → {status} | "
             f"{old_utilization}% → {utilization}% | "
@@ -242,14 +246,14 @@ def on_message(client, userdata, msg):
 
         safe_broadcast(live_event)
 
-        print(
+        log.info(
             f"FASTAPI MQTT → WS BROADCAST: "
             f"{machine.name} | {status} | {utilization}%"
         )
 
     except Exception as e:
         db.rollback()
-        print("FastAPI MQTT service error:", repr(e))
+        log.info("FastAPI MQTT service error:", repr(e))
 
     finally:
         db.close()
@@ -265,9 +269,9 @@ def start_mqtt_service():
             client.connect(MQTT_BROKER, MQTT_PORT, 60)
             client.loop_forever()
         except Exception as e:
-            print("FastAPI MQTT connection error:", repr(e))
+            log.info("FastAPI MQTT connection error:", repr(e))
 
     thread = threading.Thread(target=run, daemon=True)
     thread.start()
 
-    print("FastAPI embedded MQTT service started")
+    log.info("FastAPI embedded MQTT service started")

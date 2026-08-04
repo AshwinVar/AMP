@@ -33,6 +33,7 @@ import sim_state
 import onboard_tenant
 import offboard_tenant
 import http_security
+import logging_config
 import plan_gate
 
 
@@ -77,6 +78,13 @@ ai.subscribers.register(event_bus)
 ai.agents.register(event_bus)
 
 
+# Structured logging before anything else runs: the boot migrations below are
+# the first things that report, and their output is exactly what you need when
+# a deploy goes wrong. Called again at startup (see startup_event) because
+# uvicorn installs its own plain-text handlers AFTER this module is imported.
+logging_config.configure_logging()
+log = logging_config.get_logger(__name__)
+
 Base.metadata.create_all(bind=engine)
 
 
@@ -90,9 +98,9 @@ def _ensure_user_tenant_column():
         if "tenant_code" not in cols:
             with engine.begin() as conn:
                 conn.execute(text("ALTER TABLE users ADD COLUMN tenant_code VARCHAR DEFAULT 'DEFAULT'"))
-            print("[MIGRATE] users.tenant_code added")
+            log.info("[MIGRATE] users.tenant_code added")
     except Exception as e:
-        print(f"[MIGRATE] tenant_code skipped: {e}")
+        log.info(f"[MIGRATE] tenant_code skipped: {e}")
 
 
 def _ensure_column(table: str, column: str, ddl: str):
@@ -104,9 +112,9 @@ def _ensure_column(table: str, column: str, ddl: str):
         if column not in cols:
             with engine.begin() as conn:
                 conn.execute(text(ddl))
-            print(f"[MIGRATE] {table}.{column} added")
+            log.info(f"[MIGRATE] {table}.{column} added")
     except Exception as e:
-        print(f"[MIGRATE] {table}.{column} skipped: {e}")
+        log.info(f"[MIGRATE] {table}.{column} skipped: {e}")
 
 
 def _backfill_completed_at():
@@ -137,9 +145,9 @@ def _backfill_completed_at():
                 "UPDATE work_orders SET completed_at = created_at "
                 "WHERE status = 'Completed' AND completed_at IS NULL"))
         if result.rowcount:
-            print(f"[MIGRATE] work_orders.completed_at backfilled for {result.rowcount} row(s)")
+            log.info(f"[MIGRATE] work_orders.completed_at backfilled for {result.rowcount} row(s)")
     except Exception as e:
-        print(f"[MIGRATE] work_orders.completed_at backfill skipped: {e}")
+        log.info(f"[MIGRATE] work_orders.completed_at backfill skipped: {e}")
 
 
 def _ensure_index(table: str, column: str):
@@ -151,7 +159,7 @@ def _ensure_index(table: str, column: str):
         with engine.begin() as conn:
             conn.execute(text(f"CREATE INDEX IF NOT EXISTS ix_{table}_{column} ON {table} ({column})"))
     except Exception as e:
-        print(f"[MIGRATE] index {table}.{column} skipped: {e}")
+        log.info(f"[MIGRATE] index {table}.{column} skipped: {e}")
 
 
 _ensure_user_tenant_column()
@@ -225,9 +233,9 @@ if _SENTRY_DSN:
     try:
         import sentry_sdk
         sentry_sdk.init(dsn=_SENTRY_DSN, traces_sample_rate=0.1, environment=os.environ.get("ENV", "production"))
-        print("[sentry] error monitoring enabled")
+        log.info("[sentry] error monitoring enabled")
     except Exception as e:
-        print(f"[sentry] init skipped: {e}")
+        log.info(f"[sentry] init skipped: {e}")
 
 app = FastAPI(title="AMP API")
 
@@ -346,7 +354,7 @@ async def _simulation_loop():
                     db.commit()
                 except Exception as tick_err:
                     db.rollback()
-                    print(f"[SIM TICK ERROR] {sim_tenant}: {tick_err}")
+                    log.info(f"[SIM TICK ERROR] {sim_tenant}: {tick_err}")
                 finally:
                     reset_current_tenant(scope)
             sim_state.last_tick = datetime.utcnow()
@@ -366,17 +374,20 @@ async def _simulation_loop():
                         db.commit()
                     except Exception as esc_err:
                         db.rollback()
-                        print(f"[SIM ESCALATE ERROR] {tc}: {esc_err}")
+                        log.info(f"[SIM ESCALATE ERROR] {tc}: {esc_err}")
                     finally:
                         reset_current_tenant(token)
             db.close()
         except Exception as e:
-            print(f"[SIM TICK ERROR] {e}")
+            log.info(f"[SIM TICK ERROR] {e}")
         await asyncio.sleep(45)
 
 
 @app.on_event("startup")
 async def startup_event():
+    # Re-apply: uvicorn installs its own plain-text handlers after import, which
+    # would otherwise emit a second, unstructured copy of every access line.
+    logging_config.configure_logging()
     start_mqtt_service()
     asyncio.create_task(_simulation_loop())
     try:
@@ -395,7 +406,7 @@ async def startup_event():
                                 models.EventLog.payload.contains(f'"flag": "{reseed_flag}"'))
                         .first())
             if consumed:
-                print(f"[RESEED] flag '{reseed_flag}' already consumed — skipping "
+                log.info(f"[RESEED] flag '{reseed_flag}' already consumed — skipping "
                       "(set a new value to reseed again, and remove the variable when done)")
             else:
                 try:
@@ -405,11 +416,11 @@ async def startup_event():
                                            event_version=1,
                                            payload=_json.dumps({"flag": reseed_flag})))
                     db.commit()
-                    print(f"[RESEED] DEFAULT rebuilt to the SMT->IC factory "
+                    log.info(f"[RESEED] DEFAULT rebuilt to the SMT->IC factory "
                           f"(flag '{reseed_flag}' consumed; future boots skip it)")
                 except Exception as e:
                     db.rollback()
-                    print(f"[RESEED] factory reset failed: {e}")
+                    log.info(f"[RESEED] factory reset failed: {e}")
         gmats_inventory_routes.seed_gmats(db)
         # Core MES: ensure OEE + timeline have data (production records & machine events).
         from factory_simulator import _production_records, _machine_events
@@ -423,14 +434,14 @@ async def startup_event():
         if not db.query(models.User).filter(models.User.username == "gmats").first():
             db.add(models.User(username="gmats", password=hash_password("gmats@2026"), role="Supervisor", tenant_code="GMATS"))
             db.commit()
-            print("[SEED] GMATS client login (gmats / gmats@2026)")
+            log.info("[SEED] GMATS client login (gmats / gmats@2026)")
         # Seed a GMATS Admin from env (password never hardcoded — set GMATS_ADMIN_PASSWORD in Railway).
         gmats_admin_user = os.environ.get("GMATS_ADMIN_USERNAME", "gmats_admin")
         gmats_admin_pw = os.environ.get("GMATS_ADMIN_PASSWORD")
         if gmats_admin_pw and not db.query(models.User).filter(models.User.username == gmats_admin_user).first():
             db.add(models.User(username=gmats_admin_user, password=hash_password(gmats_admin_pw), role="Admin", tenant_code="GMATS"))
             db.commit()
-            print(f"[SEED] GMATS Admin '{gmats_admin_user}' created from GMATS_ADMIN_PASSWORD env")
+            log.info(f"[SEED] GMATS Admin '{gmats_admin_user}' created from GMATS_ADMIN_PASSWORD env")
         # Reconcile client logins to their correct tenant. Users created before the
         # tenant_code column existed were backfilled to DEFAULT by the migration.
         for uname, tcode in tenancy.CLIENT_TENANTS.items():
@@ -438,10 +449,10 @@ async def startup_event():
             if u and (u.tenant_code or "DEFAULT") != tcode:
                 u.tenant_code = tcode
                 db.commit()
-                print(f"[MIGRATE] {uname} tenant_code -> {tcode}")
+                log.info(f"[MIGRATE] {uname} tenant_code -> {tcode}")
         db.close()
     except Exception as e:
-        print(f"[GMATS SEED ERROR] {e}")
+        log.info(f"[GMATS SEED ERROR] {e}")
 
 
 # Locked-down CORS. Extra production origins can be added via ALLOWED_ORIGINS
@@ -481,6 +492,12 @@ app.add_middleware(
 # there is no response path that escapes without them.
 app.add_middleware(http_security.SecurityHeadersMiddleware)
 
+# Added after the header middleware, so it runs just inside it: every log line
+# emitted while handling a request — including from the plan gate and the
+# throttle — carries the same request id, and the id is echoed to the caller so
+# a support report can be grepped straight to the failing request.
+app.add_middleware(logging_config.RequestContextMiddleware)
+
 
 # Bind the caller's tenant (from the JWT) per request so the ORM auto-scopes
 # core-table queries (ADR-0002). Pure-ASGI (tenancy.TenantScopeMiddleware) to
@@ -511,10 +528,10 @@ async def websocket_live_dashboard(websocket: WebSocket):
             except Exception:
                 break
     except WebSocketDisconnect:
-        print("WebSocket client disconnected")
+        log.info("WebSocket client disconnected")
     except ConnectionResetError:
-        print("WebSocket forcibly closed by client")
+        log.info("WebSocket forcibly closed by client")
     except Exception as e:
-        print("WebSocket error:", repr(e))
+        log.info("WebSocket error:", repr(e))
     finally:
         manager.disconnect(websocket)

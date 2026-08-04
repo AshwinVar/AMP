@@ -17,6 +17,13 @@ is unchanged.
 import random
 import re
 
+from logging_config import get_logger
+
+# Structured logger. These modules run INSIDE the web process — the seed helpers
+# on the startup hook, the tick helpers on the simulation loop — so anything they
+# emit belongs in the JSON stream with a level, not on raw stdout.
+log = get_logger(__name__)
+
 import models
 from fastapi import APIRouter
 
@@ -176,7 +183,7 @@ def seed_industrial(db):
             status="Online",
         ))
     db.commit()
-    print("[SEED] Industrial devices (6 protocols)")
+    log.info("[SEED] Industrial devices (6 protocols)")
 
 
 def tick_industrial(db):

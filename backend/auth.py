@@ -1,3 +1,4 @@
+import logging
 import os
 import secrets
 from datetime import datetime, timedelta
@@ -35,7 +36,34 @@ def _resolve_secret_key() -> str:
             "known JWT signing key — set SECRET_KEY in the environment "
             "(Railway: Variables tab) and redeploy."
         )
-    print("[AUTH] SECRET_KEY not set — using an ephemeral dev key (sessions reset on restart)")
+    # WARNING, not print(). A process serving requests on a per-restart
+    # ephemeral signing key is a security-relevant state, and it deserves a
+    # record with a level something can alert on rather than an anonymous line
+    # of stdout.
+    #
+    # BE HONEST ABOUT WHAT THIS DOES AND DOES NOT GET YOU. This module body runs
+    # at IMPORT time — main.py:31 `import tenancy` pulls auth in roughly 55
+    # lines before main.py calls logging_config.configure_logging(). So this one
+    # record is emitted before any handler exists and goes out through logging's
+    # lastResort handler (stderr, WARNING, bare message). It is NOT JSON and
+    # cannot be, short of configuring logging from inside auth.py — which would
+    # make log configuration depend on import order, exactly what
+    # logging_config.get_logger's docstring refuses to do.
+    #
+    # What it buys over print(): a level, a logger name, and capturability by
+    # whatever logging config an embedding process installs.
+    #
+    # Deliberately stdlib logging rather than `from logging_config import
+    # get_logger`: auth is imported extremely early by almost everything, and
+    # logging_config's tenant lookup imports tenancy, which imports auth. That
+    # cycle is only avoided today because the import is function-local. Not
+    # taking the dependency at all is cheaper than relying on that staying true.
+    #
+    # The substring "ephemeral dev key" is asserted by
+    # test_jwt_secret_fail_closed.py against the subprocess's combined
+    # stdout+stderr — keep it if you reword this.
+    logging.getLogger("amp.auth").warning(
+        "SECRET_KEY not set — using an ephemeral dev key (sessions reset on restart)")
     return secrets.token_urlsafe(64)
 
 

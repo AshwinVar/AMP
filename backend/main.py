@@ -532,6 +532,6 @@ async def websocket_live_dashboard(websocket: WebSocket):
     except ConnectionResetError:
         log.info("WebSocket forcibly closed by client")
     except Exception as e:
-        log.info("WebSocket error:", repr(e))
+        log.info("WebSocket error: %s", repr(e))
     finally:
         manager.disconnect(websocket)

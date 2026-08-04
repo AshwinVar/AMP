@@ -105,11 +105,31 @@ jobs:
           # you backups rather than silence — it will work wherever the value is
           # a publicly reachable URL.
           BACKUP_DATABASE_URL: ${{ secrets.DATABASE_PUBLIC_URL || secrets.DATABASE_URL }}
+          # Presence flags for the diagnostic above. `!= ''` yields a literal
+          # true/false string, so no credential is ever interpolated.
+          SEEN_PUBLIC: ${{ secrets.DATABASE_PUBLIC_URL != '' }}
+          SEEN_PRIVATE: ${{ secrets.DATABASE_URL != '' }}
+          SEEN_VAR_PUBLIC: ${{ vars.DATABASE_PUBLIC_URL != '' }}
+          SEEN_VAR_PRIVATE: ${{ vars.DATABASE_URL != '' }}
         run: |
           set -euo pipefail
           # No `set -x` in this step, ever: tracing would print the credential.
           if [ -z "${BACKUP_DATABASE_URL:-}" ]; then
-            echo "::error::No connection string. Add the DATABASE_PUBLIC_URL repository secret under Settings -> Secrets and variables -> Actions, then re-run. See docs/BACKUP-AND-RESTORE.md."
+            # Report WHICH names this job can actually see. Booleans only —
+            # never the values. Without this the failure is indistinguishable
+            # from a bad password or an unreachable host, and the fix for each
+            # is completely different.
+            echo "Visible to this job:"
+            echo "  secrets.DATABASE_PUBLIC_URL  set: ${SEEN_PUBLIC}"
+            echo "  secrets.DATABASE_URL         set: ${SEEN_PRIVATE}"
+            echo "  vars.DATABASE_PUBLIC_URL     set: ${SEEN_VAR_PUBLIC}"
+            echo "  vars.DATABASE_URL            set: ${SEEN_VAR_PRIVATE}"
+            echo ""
+            if [ "${SEEN_VAR_PUBLIC}" = "true" ] || [ "${SEEN_VAR_PRIVATE}" = "true" ]; then
+              echo "::error::The connection string was added as a VARIABLE, not a SECRET. Settings -> Secrets and variables -> Actions has two tabs; a database URL is a credential and belongs on the Secrets tab. Delete the variable and re-add it under Secrets -> New repository secret."
+            else
+              echo "::error::No connection string reached this job. Add it at Settings -> Secrets and variables -> Actions -> Secrets tab -> New repository secret, named DATABASE_PUBLIC_URL. Two things that look right but do not work: (1) adding it on the Variables tab instead of Secrets, (2) adding it as an Environment secret, which only reaches jobs that declare an environment: — this one does not. See docs/BACKUP-AND-RESTORE.md."
+            fi
             exit 1
           fi
           stamp="$(date -u +%Y%m%dT%H%M%SZ)"

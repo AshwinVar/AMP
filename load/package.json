@@ -1,0 +1,5 @@
+{
+  "//": "Scopes load/ as ES modules for Node. The k6 scripts are ESM (import/export) and Node otherwise guesses, emitting a MODULE_TYPELESS_PACKAGE_JSON warning every time CI runs check-drift.mjs. k6 resolves relative imports itself and never reads this file. Deliberately not a real package: no name, no deps, nothing to install.",
+  "type": "module",
+  "private": true
+}

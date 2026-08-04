@@ -146,6 +146,36 @@ POLICIES = (
         "stock ledger with financial and traceability weight; 3 years",
     ),
     RetentionPolicy(
+        models.AIRecommendation, "created_at", 365,
+        # The AI advice log. A recommendation is a claim the platform made about
+        # the plant on a given day, so it is not disposable chatter: a year lets
+        # you ask "did the maintenance agent warn us before that failure?" — the
+        # single most valuable question anyone asks of an AI system after an
+        # incident, and the one you cannot answer if you pruned the evidence.
+        # Beyond a year the thresholds that produced it have usually moved and
+        # the row is archaeology rather than evidence.
+        "AI advice log; a year of 'did it warn us?' evidence",
+    ),
+    RetentionPolicy(
+        models.AgentAction, "decided_at", 365,
+        # The agent oversight trail (ADR-0005): what an agent proposed, who
+        # approved or rejected it, and when. Pruned on decided_at, NOT created_at
+        # — an action still sitting Proposed in someone's approval queue has no
+        # decision date, so a NULL timestamp keeps it forever by the module's
+        # own NULL rule. That is the correct behaviour and it falls out of the
+        # design rather than needing a special case: an undecided proposal is
+        # pending work, and a retention job must never quietly clear a queue.
+        "agent oversight trail; undecided proposals never expire (NULL decided_at)",
+    ),
+    RetentionPolicy(
+        models.ReportRequest, "created_at", 180,
+        # Who asked for which report, when. The reports themselves are generated
+        # on demand and never stored, so this is a request log, not an archive —
+        # six months is ample to see usage patterns and to answer a billing or
+        # access question.
+        "report request log; the reports themselves are never stored",
+    ),
+    RetentionPolicy(
         models.AuditLog, "created_at", KEEP_FOREVER,
         # EXEMPT — the security audit trail. It exists precisely to answer "who
         # did what, when" long after the fact, usually about an incident nobody

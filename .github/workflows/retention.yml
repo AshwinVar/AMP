@@ -1,0 +1,99 @@
+# Weekly data retention prune.
+#
+# WHY HERE AND NOT IN THE APP. AMP has no worker process — the Procfile defines
+# only `web:`, and the one piece of recurring work that exists (the demo
+# simulator) runs inside the web process on an asyncio loop. Adding a scheduler
+# to the web process to delete rows would mean every future replica racing to
+# prune the same tables, and it would couple data lifecycle to request serving.
+#
+# A scheduled workflow is the right shape for this architecture: it runs
+# exactly once regardless of how many app instances exist, it leaves a log
+# anyone can read, and it fails visibly rather than silently.
+#
+# WHAT IT DOES NOT DO. It does not delete anything on its own schedule without
+# a human having chosen the retention windows: those live in
+# backend/retention.py, each with a comment arguing its number. This workflow
+# applies that policy, it does not invent one.
+#
+# The dry-run job runs on EVERY schedule and reports what would go. The apply
+# job runs only when dispatched manually with apply=true. That asymmetry is
+# deliberate — an automated job that deletes production rows unattended is a
+# thing you regret once, and the report is enough to notice a table growing
+# before it becomes a problem.
+name: Data retention
+
+on:
+  schedule:
+    # 03:41 UTC Sundays. Off the hour for the same reason the backup is: GitHub
+    # queues scheduled workflows globally and top-of-hour crons get delayed.
+    # After the nightly backup, so a week's prune is always recoverable from a
+    # dump taken hours earlier rather than days.
+    - cron: "41 3 * * 0"
+
+  workflow_dispatch:
+    inputs:
+      apply:
+        description: "Actually delete (otherwise dry run)"
+        type: boolean
+        default: false
+      days:
+        description: "Override the retention window in days (optional, blank = per-table policy)"
+        type: string
+        default: ""
+
+permissions:
+  contents: read
+
+concurrency:
+  # Never two prunes at once: batched deletes against the same tables would
+  # contend, and a second run cannot make the first more correct.
+  group: db-retention
+  cancel-in-progress: false
+
+jobs:
+  prune:
+    name: Prune expired rows
+    # A fork inherits the workflow but not the secret; its schedule would fail
+    # forever on a confusing empty-string error.
+    if: github.repository == 'AshwinVar/AMP'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        working-directory: backend
+        run: pip install -r requirements.txt
+
+      - name: Report what would be pruned
+        working-directory: backend
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_PUBLIC_URL || secrets.DATABASE_URL }}
+        run: |
+          set -euo pipefail
+          # No `set -x`: the URL is a credential.
+          if [ -z "${DATABASE_URL:-}" ]; then
+            echo "::error::No connection string. Add DATABASE_PUBLIC_URL under Settings -> Secrets and variables -> Actions -> Secrets tab. See docs/BACKUP-AND-RESTORE.md."
+            exit 1
+          fi
+          ARGS=""
+          if [ -n "${{ inputs.days }}" ]; then ARGS="--days ${{ inputs.days }}"; fi
+          python retention.py $ARGS | tee "$GITHUB_STEP_SUMMARY"
+
+      - name: Apply
+        # Only on a manual dispatch that explicitly asked for it. The scheduled
+        # run can never reach this step, by construction rather than by a flag
+        # someone might flip and forget.
+        if: github.event_name == 'workflow_dispatch' && inputs.apply
+        working-directory: backend
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_PUBLIC_URL || secrets.DATABASE_URL }}
+        run: |
+          set -euo pipefail
+          ARGS="--apply"
+          if [ -n "${{ inputs.days }}" ]; then ARGS="$ARGS --days ${{ inputs.days }}"; fi
+          python retention.py $ARGS | tee -a "$GITHUB_STEP_SUMMARY"

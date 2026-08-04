@@ -1,0 +1,10 @@
+{
+  "//": "Typechecks the e2e suite on its own: `npx tsc -p e2e --noEmit`. The root tsconfig already picks these files up via its **/*.ts include, so this exists for the case where the integrator excludes e2e/ there to keep `next build` independent of the Playwright devDependencies.",
+  "extends": "../tsconfig.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "incremental": false,
+    "types": ["node"]
+  },
+  "include": ["**/*.ts", "../playwright.config.ts"]
+}

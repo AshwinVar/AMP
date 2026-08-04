@@ -23,6 +23,10 @@ from sqlalchemy.orm import Session, with_loader_criteria
 import models
 from auth import decode_token_optional
 
+import logging_config
+
+log = logging_config.get_logger(__name__)
+
 DEFAULT_TENANT = "DEFAULT"
 
 # Client logins whose tenant isn't stored on the user row (legacy accounts created
@@ -90,9 +94,9 @@ def ensure_tenant_columns(engine, tables=CORE_TENANT_TABLES, backfill=True):
                 conn.execute(text(
                     f"CREATE INDEX IF NOT EXISTS ix_{table}_tenant_code ON {table} (tenant_code)"
                 ))
-            print(f"[MIGRATE] {table}.tenant_code added (backfill={backfill})")
+            log.info(f"[MIGRATE] {table}.tenant_code added (backfill={backfill})")
         except Exception as e:
-            print(f"[MIGRATE] {table}.tenant_code skipped: {e}")
+            log.info(f"[MIGRATE] {table}.tenant_code skipped: {e}")
 
 
 def tenant_of(current_user, default=DEFAULT_TENANT):

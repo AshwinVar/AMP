@@ -44,6 +44,7 @@ not, so the simulator loop, the MQTT ingestion and one-shot operator scripts
 log through the same path as a request handler without special-casing.
 """
 import contextvars
+import time
 import json
 import logging
 import os
@@ -59,6 +60,11 @@ from datetime import datetime, timezone
 # so the value set here is visible all the way down (same reasoning as the
 # tenant contextvar in tenancy.py).
 _request_id = contextvars.ContextVar("amp_request_id", default=None)
+# The authenticated caller, bound by RequestContextMiddleware from the JWT.
+# Deliberately the `sub` claim (a username), not a database id: a support report
+# says "Priya cannot approve cycle counts", and grepping for the name she logs in
+# with is the shortest path from that sentence to her failing request.
+_user = contextvars.ContextVar("amp_user", default=None)
 
 # The inbound header is attacker-controlled and ends up in every log line for
 # that request, so it is treated as untrusted input: restricted alphabet and a
@@ -96,6 +102,31 @@ def set_request_id(request_id):
 
 def reset_request_id(token):
     _request_id.reset(token)
+
+
+_ACCESS_LOGGER = None
+
+
+def _access_logger():
+    """Cached: getLogger does a dict lookup plus a lock on every call, and this
+    runs once per request on the hot path."""
+    global _ACCESS_LOGGER
+    if _ACCESS_LOGGER is None:
+        _ACCESS_LOGGER = logging.getLogger("amp.access")
+    return _ACCESS_LOGGER
+
+
+def get_user():
+    """The authenticated caller for this request, or None."""
+    return _user.get()
+
+
+def set_user(user):
+    return _user.set(user)
+
+
+def reset_user(token):
+    _user.reset(token)
 
 
 # ── Tenant lookup ───────────────────────────────────────────────────
@@ -180,7 +211,7 @@ _RECORD_FIELDS = frozenset(
 # The fields every line is guaranteed to carry. An extra named the same thing
 # is kept but prefixed, so a caller cannot overwrite the level or the timestamp
 # that an alert rule keys on — and cannot have their value silently dropped.
-_CORE_FIELDS = ("timestamp", "level", "logger", "message", "request_id", "tenant")
+_CORE_FIELDS = ("timestamp", "level", "logger", "message", "request_id", "tenant", "user")
 
 
 class JsonFormatter(logging.Formatter):
@@ -230,6 +261,9 @@ class JsonFormatter(logging.Formatter):
         tenant = _current_tenant()
         if tenant:
             payload["tenant"] = tenant
+        user = get_user()
+        if user:
+            payload["user"] = user
 
         for key, value in record.__dict__.items():
             if key in _RECORD_FIELDS or key.startswith("_"):
@@ -371,10 +405,57 @@ class RequestContextMiddleware:
                     headers.append((b"x-request-id", request_id.encode("latin-1")))
             await send(message)
 
-        token = set_request_id(request_id)
+        # Bind the caller from the JWT so every line of this request carries it.
+        # decode_token_optional never raises: an unauthenticated or expired
+        # request still gets logged, just without a user — which is exactly the
+        # request you want to see when someone reports being logged out.
+        user = None
         try:
-            await self.app(scope, receive, send_with_id)
+            for key, value in scope.get("headers") or []:
+                if key == b"authorization":
+                    raw = value.decode("latin-1")
+                    if raw.lower().startswith("bearer "):
+                        from auth import decode_token_optional
+                        claims = decode_token_optional(raw[7:].strip())
+                        if claims:
+                            user = claims.get("sub")
+                    break
+        except Exception:
+            # Never let logging enrichment break a request. A missing user field
+            # costs a little context; a 500 from the logger costs the request.
+            user = None
+
+        token = set_request_id(request_id)
+        user_token = set_user(user)
+        started = time.perf_counter()
+        status_holder = {"code": None}
+
+        async def send_timed(message):
+            if message["type"] == "http.response.start":
+                status_holder["code"] = message["status"]
+            await send_with_id(message)
+
+        try:
+            await self.app(scope, receive, send_timed)
         finally:
+            # One line per request with the timing. This is the access log: it
+            # replaces uvicorn's plain-text one (which carries no request id, no
+            # tenant and no user) and it is what makes "which endpoint got slow
+            # last Tuesday" answerable at all.
+            try:
+                elapsed_ms = round((time.perf_counter() - started) * 1000, 1)
+                status = status_holder["code"]
+                _access_logger().info(
+                    "%s %s %s %sms" % (scope.get("method", "?"), scope.get("path", "?"),
+                                       status if status is not None else "-", elapsed_ms),
+                    extra={"http_method": scope.get("method"),
+                           "http_path": scope.get("path"),
+                           "http_status": status,
+                           "duration_ms": elapsed_ms},
+                )
+            except Exception:
+                pass
+            reset_user(user_token)
             # Reset even on failure: the ASGI server reuses the context for the
             # next request on that task, and a leaked id would attribute one
             # customer's log lines to another customer's request.

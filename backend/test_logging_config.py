@@ -241,9 +241,48 @@ def test_an_id_is_generated_when_none_is_supplied():
     assert id_one and id_two, (first, second)
     assert id_one != id_two, "each request must get its own id"
 
-    logged = [r["request_id"] for r in _lines(buf)]
+    # Every request now also emits one access line (amp.access), so filter to
+    # the application's own lines rather than counting everything on the stream.
+    logged = [r["request_id"] for r in _lines(buf) if r.get("logger") != "amp.access"]
     assert logged == [id_one, id_two], logged
     print("PASS an id is generated per request and matches the one returned")
+
+
+def test_every_request_emits_one_access_line_with_its_timing():
+    """THE ACCESS LOG. uvicorn's own access line carries no request id, no tenant
+    and no user, which makes "which endpoint got slow last Tuesday" unanswerable.
+    One structured line per request, with method, path, status and duration, is
+    what makes it answerable.
+
+    CONTROL: the line must carry a REAL status and a numeric duration. A version
+    that logged the request but not its outcome would satisfy "an access line
+    exists" while being useless for the question it exists to answer.
+    """
+    buf = _capture()
+    _drive(logging_config.RequestContextMiddleware(_logging_app), _scope(path="/machines"))
+
+    access = [r for r in _lines(buf) if r.get("logger") == "amp.access"]
+    assert len(access) == 1, access
+    line = access[0]
+    assert line["http_path"] == "/machines", line
+    assert line["http_status"] == 200, line
+    assert isinstance(line["duration_ms"], (int, float)), line
+    assert line["request_id"], "the access line must carry the correlation id"
+    print("PASS each request emits one access line with method, path, status and duration")
+
+
+def test_the_access_line_records_a_failed_response_too():
+    """A 500 or a 403 is the request you most want timing for. The line is
+    emitted from a finally block precisely so a failing response still gets one."""
+    async def failing_app(scope, receive, send):
+        await send({"type": "http.response.start", "status": 503, "headers": []})
+        await send({"type": "http.response.body", "body": b""})
+
+    buf = _capture()
+    _drive(logging_config.RequestContextMiddleware(failing_app), _scope(path="/health"))
+    access = [r for r in _lines(buf) if r.get("logger") == "amp.access"]
+    assert len(access) == 1 and access[0]["http_status"] == 503, access
+    print("PASS a failing response still produces an access line")
 
 
 def test_the_id_is_echoed_on_responses_that_never_reach_a_route():
@@ -516,6 +555,8 @@ if __name__ == "__main__":
     test_the_level_comes_from_the_environment()
     test_an_inbound_request_id_is_honoured()
     test_an_id_is_generated_when_none_is_supplied()
+    test_every_request_emits_one_access_line_with_its_timing()
+    test_the_access_line_records_a_failed_response_too()
     test_the_id_is_echoed_on_responses_that_never_reach_a_route()
     test_a_hostile_inbound_id_is_sanitised()
     test_the_id_survives_a_sync_endpoint_on_the_threadpool()

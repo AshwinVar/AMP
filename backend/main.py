@@ -43,6 +43,7 @@ _tenant = tenancy.request_tenant
 
 import enterprise_inventory_routes
 import gmats_inventory_routes
+import monitoring
 import platform_routes
 from platform_routes import log_audit
 import read_model_routes
@@ -250,6 +251,18 @@ app.include_router(gmats_inventory_routes.router)
 # Register the platform layer: per-tenant licensing/feature-flags, white-label
 # branding, audit log and health check.
 app.include_router(platform_routes.router)
+
+# The deployment-health read-model (ADR-0007) — GET /system-health, the
+# operator's diagnostic view: database round-trip and pool, MQTT ingest
+# liveness, live WebSocket clients, growth of the append-only tables, build sha
+# and whether Sentry is configured.
+#
+# Deliberately separate from /health. /health is the Railway probe and the
+# uptime monitor's contract: public, and its STATUS CODE carries the answer
+# (503 when the database is unreachable). /system-health is authenticated,
+# always 200, and its BODY carries the detail. Merging them would mean either
+# leaking internals publicly or breaking the probe's contract.
+app.include_router(monitoring.router)
 
 # Register the read-model projection endpoints (ADR-0007) — the pillar summaries,
 # briefing, scorecard, twin, search, weekly report and rule-first copilot.

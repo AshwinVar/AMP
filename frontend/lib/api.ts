@@ -101,6 +101,32 @@ function handleUnauthorized() {
   window.location.href = "/login";
 }
 
+/**
+ * Read a SUCCESSFUL response's body, tolerating a 2xx that does not have one.
+ *
+ * `res.json()` throws a SyntaxError on an empty body, so a 204 No Content — or
+ * any 2xx that arrives empty — made a committed write look like a failed one.
+ * The operator then retries, and on a non-idempotent endpoint the retry is a
+ * duplicate: the worst outcome available, from a request that worked.
+ *
+ * Reading as text and deciding is deliberate rather than sniffing `res.status`
+ * for 204. A gateway, a proxy, or a handler returning "" all produce a 2xx with
+ * nothing to parse, and a status check would still throw on those.
+ *
+ * ON THE `as T`. This lies to the type system: the signature promises T and
+ * this can hand back null. The honest alternative is `Promise<T | null>`, which
+ * would force a null check at every one of the dozens of call sites that
+ * destructure the result — to describe a case that only arises on endpoints
+ * returning no body, where the caller is not reading the result anyway. The
+ * unsoundness is contained to those endpoints and is the lesser cost, but it IS
+ * one, so it is written down rather than hidden.
+ */
+async function readBody<T>(res: Response): Promise<T> {
+  const text = await res.text();
+  if (!text) return null as T;
+  return JSON.parse(text) as T;
+}
+
 export async function apiGet<T>(path: string): Promise<T> {
   maybeRefreshToken();
   const sep = path.includes("?") ? "&" : "?";
@@ -116,6 +142,13 @@ export async function apiGet<T>(path: string): Promise<T> {
     throw new Error(`Failed request: ${path} | ${res.status} | ${text}`);
   }
 
+  // Deliberately NOT readBody(). Left as res.json() because every GET in this
+  // API returns data by definition — a read with nothing to read is not a case
+  // this backend has — and this is the hot path: the dashboard issues 46 of
+  // these every 3 seconds per open tab. Changing it would be a behaviour change
+  // on the busiest code in the app to cover a case that does not exist. If a
+  // GET ever legitimately 204s, move it to readBody and add a test alongside
+  // the write ones.
   return res.json();
 }
 
@@ -136,7 +169,7 @@ export async function apiPost<T>(path: string, body: unknown): Promise<T> {
     throw new Error(text || `Failed request: ${path}`);
   }
 
-  return res.json();
+  return readBody<T>(res);
 }
 
 export async function apiPut<T>(path: string, body: unknown): Promise<T> {
@@ -154,7 +187,7 @@ export async function apiPut<T>(path: string, body: unknown): Promise<T> {
     throw new Error(text || `Failed request: ${path}`);
   }
 
-  return res.json();
+  return readBody<T>(res);
 }
 
 export async function apiPatch<T>(path: string, body?: unknown): Promise<T> {
@@ -172,7 +205,7 @@ export async function apiPatch<T>(path: string, body?: unknown): Promise<T> {
     throw new Error(`Failed request: ${path} | ${res.status} | ${text}`);
   }
 
-  return res.json();
+  return readBody<T>(res);
 }
 
 export async function apiDelete(path: string): Promise<void> {

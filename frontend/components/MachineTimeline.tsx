@@ -1,19 +1,19 @@
 import type { MachineEvent } from "../lib/phase8-types";
 import { parseApiDate } from "../lib/apiDate";
 
+import { statusHue, type StatusHue } from "../lib/utils";
+// The timeline's chip treatment — lighter than the twin's nodes on purpose,
+// since a timeline shows many at once. Meaning comes from lib/utils.statusHue.
+const CHIP: Record<StatusHue, string> = {
+  green:   "border-green-500/40 bg-green-500/10 text-green-300",
+  yellow:  "border-yellow-500/40 bg-yellow-500/10 text-yellow-300",
+  red:     "border-red-500/40 bg-red-500/10 text-red-300",
+  blue:    "border-blue-500/40 bg-blue-500/10 text-blue-300",
+  neutral: "border-slate-500/40 bg-slate-500/10 text-slate-300",
+};
+
 function statusStyle(status: string) {
-  switch (status) {
-    case "Running":
-      return "border-green-500/40 bg-green-500/10 text-green-300";
-    case "Idle":
-      return "border-yellow-500/40 bg-yellow-500/10 text-yellow-300";
-    case "Breakdown":
-      return "border-red-500/40 bg-red-500/10 text-red-300";
-    case "Maintenance":
-      return "border-blue-500/40 bg-blue-500/10 text-blue-300";
-    default:
-      return "border-slate-500/40 bg-slate-500/10 text-slate-300";
-  }
+  return CHIP[statusHue(status)];
 }
 
 export default function MachineTimeline({ events }: { events: MachineEvent[] }) {

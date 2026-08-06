@@ -5,6 +5,7 @@ import { apiGet } from "../lib/api";
 import MachineDetailDrawer from "./MachineDetailDrawer";
 import DowntimeSnapshot from "./DowntimeSnapshot";
 
+import { statusHue, type StatusHue } from "../lib/utils";
 // Mirrors the backend twin (ai/twin.py build_twins).
 type Twin = {
   machine_id: number;
@@ -51,12 +52,20 @@ function lineStyle(line: string) {
   return "border-slate-600/40 bg-slate-500/10 text-slate-300";
 }
 
+// A solid dot rather than a pill. `green` renders as emerald-400 here and has
+// since this section shipped — kept deliberately so this refactor changes no
+// pixels; it is a shade choice, and shade choices are local. The MEANING comes
+// from lib/utils.statusHue like everywhere else.
+const DOT: Record<StatusHue, string> = {
+  green:   "bg-emerald-400",
+  red:     "bg-red-400",
+  blue:    "bg-blue-400",
+  yellow:  "bg-yellow-400",
+  neutral: "bg-slate-400",
+};
+
 function statusDot(status: string) {
-  if (status === "Running") return "bg-emerald-400";
-  if (status === "Breakdown") return "bg-red-400";
-  if (status === "Maintenance") return "bg-blue-400";
-  if (status === "Idle") return "bg-yellow-400";
-  return "bg-slate-400";
+  return DOT[statusHue(status)];
 }
 
 export default function MachineHealthSection() {

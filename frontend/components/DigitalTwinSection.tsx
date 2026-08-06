@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import { apiGet } from "../lib/api";
 import type { FactoryCommandCenter, FactoryLayoutNode } from "../lib/phase16-types";
 
+import { statusHue, type StatusHue } from "../lib/utils";
 type Machine = {
   id: number;
   name: string;
@@ -14,19 +15,19 @@ type Machine = {
 
 type Overlay = "status" | "oee" | "cost";
 
+// The twin's node treatment. Only the SHADES are local — which status means
+// which colour comes from lib/utils.statusHue, so this cannot drift from the
+// dashboard's pills. Whole class names, because Tailwind cannot see built ones.
+const NODE: Record<StatusHue, string> = {
+  green:   "border-green-500/60 bg-green-500/20 text-green-300",
+  red:     "border-red-500/60 bg-red-500/20 text-red-300",
+  blue:    "border-blue-500/60 bg-blue-500/20 text-blue-300",
+  yellow:  "border-yellow-500/60 bg-yellow-500/20 text-yellow-300",
+  neutral: "border-slate-500/60 bg-slate-500/20 text-slate-300",
+};
+
 function statusStyle(status: string) {
-  switch (status) {
-    case "Running":
-      return "border-green-500/60 bg-green-500/20 text-green-300";
-    case "Breakdown":
-      return "border-red-500/60 bg-red-500/20 text-red-300";
-    case "Maintenance":
-      return "border-blue-500/60 bg-blue-500/20 text-blue-300";
-    case "Idle":
-      return "border-yellow-500/60 bg-yellow-500/20 text-yellow-300";
-    default:
-      return "border-slate-500/60 bg-slate-500/20 text-slate-300";
-  }
+  return NODE[statusHue(status)];
 }
 
 // OEE heat: green world-class, amber ok, red dragging, slate when no data.

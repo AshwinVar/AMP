@@ -1820,7 +1820,12 @@ export default function DashboardPage() {
       );
     }
     if (!isViewEnabledIn(viewKey, enabledModules, navItems)) {
-      return <LockedModuleView moduleKey={getViewModuleIn(viewKey, navItems)} />;
+      // Both arguments come from the LIVE manifest. Resolving the key from
+      // navItems while looking its copy up in the compiled-in catalogue was the
+      // bug: a pack backend/modules.json added after this bundle shipped had a
+      // key nothing in the bundle could describe, so the locked screen rendered
+      // blank.
+      return <LockedModuleView moduleKey={getViewModuleIn(viewKey, navItems)} catalog={moduleCatalog} />;
     }
     return <>{node}</>;
   }

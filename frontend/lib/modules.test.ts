@@ -209,14 +209,13 @@ describe("view enablement", () => {
     // list even though NAV_ITEMS here has never heard of it. If getViewModuleIn
     // consulted the compiled-in table instead of the list it was handed, the new
     // pack's locked screen would pitch Core MES.
-    // THE CAST IS PART OF THE POINT, not a convenience. `ModuleKey` is a closed
-    // union of the five packs that existed when it was written, so a pack the
-    // backend adds later is literally unrepresentable in the frontend's types —
-    // which is the type-level shape of the very gap #304 set out to remove.
-    // The runtime path handles it correctly, as the assertions below show; only
-    // the type does not. Widen ModuleKey to `string` (or derive it from the
-    // manifest) and this cast becomes unnecessary.
-    const NEW_PACK = "traceability" as ModuleKey;
+    // No cast any more. This used to need `as ModuleKey`, because the type was a
+    // closed union of the five packs that existed when it was written — a pack
+    // the backend added later was unrepresentable in the frontend's own types,
+    // which is the type-level shape of the gap #304 set out to remove. ModuleKey
+    // now accepts any id while keeping the known five for autocomplete, so a
+    // manifest-only pack can simply be written down.
+    const NEW_PACK: ModuleKey = "traceability";
 
     const liveNav = navItemsFromPacks([
       pack({ id: NEW_PACK, views: [{ key: "genealogy", label: "Genealogy", icon: "◇" }] }),

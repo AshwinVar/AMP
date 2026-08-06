@@ -1,4 +1,26 @@
-export type ModuleKey = "core" | "operations" | "factory" | "intelligence" | "admin";
+/**
+ * A pack id.
+ *
+ * The five literals are the packs that ship in this bundle — listing them keeps
+ * editor autocomplete and still catches a typo in PLAN_MODULES or
+ * ALWAYS_OPEN_MODULES, where a wrong key silently un-gates or over-gates a
+ * module.
+ *
+ * `(string & {})` widens it to accept any other id WITHOUT collapsing the union
+ * to plain `string` (which would erase both the autocomplete and the typo
+ * check). That is not decoration: #304's promise is that a pack can be added to
+ * backend/modules.json and appear in the product with no frontend release, and
+ * a closed union made such a pack literally inexpressible in this file's own
+ * types — every function handling one needed an `as ModuleKey` cast, and the
+ * casts are what let LockedModuleView's blank-pane bug through typechecking.
+ */
+export type ModuleKey =
+  | "core"
+  | "operations"
+  | "factory"
+  | "intelligence"
+  | "admin"
+  | (string & {});
 export type PlanName = "starter" | "growth" | "enterprise" | "demo";
 
 export type NavItem = {
@@ -109,7 +131,7 @@ export const ALWAYS_OPEN_MODULES: readonly ModuleKey[] = ["core", "admin"];
 
 /** A licence plus the packs the API serves regardless of licence. */
 export function withAlwaysOpen(modules: readonly string[]): ModuleKey[] {
-  return Array.from(new Set<ModuleKey>([...(modules as ModuleKey[]), ...ALWAYS_OPEN_MODULES]));
+  return Array.from(new Set<ModuleKey>([...modules, ...ALWAYS_OPEN_MODULES]));
 }
 
 export function getEnabledModules(plan: PlanName): ModuleKey[] {
@@ -194,7 +216,7 @@ export function navItemsFromPacks(packs: ModulePack[]): NavItem[] {
       key: v.key,
       label: v.label,
       icon: v.icon,
-      module: p.id as ModuleKey,
+      module: p.id,
     }))
   );
 }
@@ -202,7 +224,7 @@ export function navItemsFromPacks(packs: ModulePack[]): NavItem[] {
 // The sidebar group headers, from the manifest packs.
 export function catalogFromPacks(packs: ModulePack[]): ModuleInfo[] {
   return packs.map((p) => ({
-    key: p.id as ModuleKey,
+    key: p.id,
     label: p.label,
     description: p.description,
     tagline: p.tagline,
@@ -216,7 +238,7 @@ export function catalogFromPacks(packs: ModulePack[]): ModuleInfo[] {
 export function enabledModulesFromPacks(packs: ModulePack[]): ModuleKey[] {
   const on = packs
     .filter((p) => p.enabled || !p.gated)
-    .map((p) => p.id as ModuleKey);
+    .map((p) => p.id);
   return withAlwaysOpen(on);
 }
 
@@ -224,7 +246,7 @@ export function enabledModulesFromPacks(packs: ModulePack[]): ModuleKey[] {
 // manifest one, or the static fallback). Using the live list means a module the
 // manifest adds resolves correctly even before this file is updated.
 export function getViewModuleIn(viewKey: string, navItems: NavItem[]): ModuleKey {
-  return (navItems.find((n) => n.key === viewKey)?.module as ModuleKey) ?? "core";
+  return navItems.find((n) => n.key === viewKey)?.module ?? "core";
 }
 
 export function isViewEnabledIn(

@@ -8,7 +8,18 @@ export default defineConfig({
   plugins: [react()],
   test: {
     environment: "jsdom",
-    include: ["lib/**/*.test.{ts,tsx}"],
+    // components/ is included so a component CAN be unit-tested where that is
+    // the right tool — LockedModuleView is the first, because its bug was
+    // "renders nothing", which no amount of lib/ testing can catch and which a
+    // Playwright run would only notice if someone happened to lock the exact
+    // pack. Only test FILES are matched, so this picks up nothing that does not
+    // exist yet.
+    //
+    // Note what this does NOT do: coverage.include below stays at lib/. Running
+    // a component test and gating on component coverage are different
+    // decisions, and 95 components with no tests would drag the floor to ~5%
+    // and make the gate meaningless. See docs/TESTING.md.
+    include: ["lib/**/*.test.{ts,tsx}", "components/**/*.test.{ts,tsx}"],
     globals: true,
 
     coverage: {

@@ -37,6 +37,10 @@ frontend/blob-report/
 .coverage.*
 htmlcov/
 
+# Vitest writes its HTML coverage report here. Same reasoning as htmlcov/: it is
+# a rendering of one run on one machine.
+frontend/coverage/
+
 # conftest.py's fallback DATABASE_URL points here, so a bare `pytest` cannot
 # scribble on a developer's real database. Throwaway by design.
 backend/.pytest.db

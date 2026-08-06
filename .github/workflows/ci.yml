@@ -107,8 +107,19 @@ jobs:
           node-version: "22"
       - name: Install frontend dependencies
         run: cd frontend && npm ci
-      - name: Unit tests
-        run: cd frontend && npm test
+      # Runs the same 184 tests as `npm test` plus the coverage thresholds from
+      # vitest.config.ts, so it replaces rather than duplicates the unit-test
+      # step. Unlike the backend — where coverage is a separate job because
+      # re-running the suites costs 90s — Vitest measures in the same pass for
+      # about a second, so a second job would buy nothing but a second npm ci.
+      #
+      # The thresholds are scoped to lib/. That is deliberate and it is NOT a
+      # claim about the whole frontend: components/ and app/ have no unit tests
+      # and are covered by the e2e job instead. docs/TESTING.md has the numbers
+      # for both scopes side by side so the figure cannot be quoted out of
+      # context.
+      - name: Unit tests + coverage floor
+        run: cd frontend && npm run test:coverage
       - name: Build frontend
         run: cd frontend && npm run build
       # The load harness's endpoint catalogue is a hand transcription of

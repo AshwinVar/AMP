@@ -69,6 +69,238 @@ describe("useLoadError", () => {
 });
 
 /**
+ * ONE HOOK, SEVERAL LOADERS — the case #383 did not cover.
+ *
+ * Three shipped panels share a single useLoadError() across concurrent fetches:
+ * IndustrialConnectivity runs three (protocols, devices, signals) and
+ * GmatsInventory runs two (item list, stock summary). The hook kept ONE error
+ * slot and every success cleared it unconditionally, so the last request to
+ * settle decided what the user saw.
+ *
+ * Both directions are wrong, and both are reachable on a normal page load:
+ *
+ *   fail then succeed — the failure is erased, the failed list stays [], and the
+ *     panel renders its empty state with nothing wrong showing. That is exactly
+ *     the #383 symptom (a failure reading as "you have no data") coming back
+ *     through the shared slot rather than through `.catch(() => {})`.
+ *
+ *   succeed then fail — an error is painted over rows that loaded perfectly
+ *     well, which teaches people to ignore the error bar.
+ *
+ * These use manually-settled promises rather than timers because the ORDER of
+ * settlement is the whole variable; a sleep would only make it probabilistic.
+ */
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  // Attach a no-op catch so a rejection settled before the hook's own handler
+  // runs cannot surface as an unhandled rejection and fail the suite for the
+  // wrong reason.
+  promise.catch(() => {});
+  return { promise, resolve, reject };
+}
+
+describe("one hook shared by several loaders", () => {
+  it("keeps a failure when a DIFFERENT loader succeeds after it", async () => {
+    // IndustrialConnectivity, exactly: /industrial/protocols 500s, then
+    // /industrial/devices comes back fine 50ms later. The user must still be
+    // told protocols failed — otherwise the protocols table renders empty and
+    // reads as "this plant has no protocols configured".
+    const { result } = renderHook(() => useLoadError());
+    const applyProtocols = vi.fn();
+    const applyDevices = vi.fn();
+
+    const protocols = deferred<string[]>();
+    const devices = deferred<string[]>();
+
+    let tracked: Promise<unknown>;
+    await act(async () => {
+      tracked = Promise.all([
+        result.current.track(protocols.promise, applyProtocols, "protocols"),
+        result.current.track(devices.promise, applyDevices, "devices"),
+      ]);
+    });
+
+    await act(async () => {
+      protocols.reject(new Error("500"));
+      await Promise.resolve();
+    });
+    expect(result.current.error).toContain("protocols");
+
+    await act(async () => {
+      devices.resolve(["plc-1"]);
+      await tracked;
+    });
+
+    // The good loader applied its rows — the fix must not cost us that.
+    expect(applyDevices).toHaveBeenCalledWith(["plc-1"]);
+    expect(applyProtocols).not.toHaveBeenCalled();
+    // ...and the failure it knows nothing about is still on screen.
+    expect(result.current.error).toContain("protocols");
+  });
+
+  it("does not paint an error over a loader that succeeded, when a different one fails later", async () => {
+    // The converse, and the reason this cannot be fixed by simply never
+    // clearing: a slow failure must name ITS OWN loader, not condemn the whole
+    // panel. Without this control, "keep every error forever" would pass the
+    // test above.
+    const { result } = renderHook(() => useLoadError());
+    const applyItems = vi.fn();
+
+    const items = deferred<string[]>();
+    const summary = deferred<string[]>();
+
+    let tracked: Promise<unknown>;
+    await act(async () => {
+      tracked = Promise.all([
+        result.current.track(items.promise, applyItems, "the item list"),
+        result.current.track(summary.promise, vi.fn(), "the stock summary"),
+      ]);
+    });
+
+    await act(async () => {
+      items.resolve(["A-100"]);
+      await Promise.resolve();
+    });
+    expect(result.current.error).toBeNull();
+
+    await act(async () => {
+      summary.reject(new Error("500"));
+      await tracked;
+    });
+
+    expect(applyItems).toHaveBeenCalledWith(["A-100"]);
+    expect(result.current.error).toContain("the stock summary");
+    // The one that worked is not blamed.
+    expect(result.current.error).not.toContain("the item list");
+  });
+
+  it("names every loader that is currently failing, not just the newest", async () => {
+    // Two of the three panels on IndustrialConnectivity can fail together — a
+    // dropped connection takes all of them. Reporting only the last one to land
+    // sends the operator chasing a single endpoint when the network is down.
+    const { result } = renderHook(() => useLoadError());
+
+    await act(async () => {
+      await Promise.all([
+        result.current.track(Promise.reject(new Error("x")), vi.fn(), "protocols"),
+        result.current.track(Promise.reject(new Error("x")), vi.fn(), "signals"),
+      ]);
+    });
+
+    expect(result.current.error).toContain("protocols");
+    expect(result.current.error).toContain("signals");
+  });
+
+  it("recovers cleanly once every failing loader has succeeded again", async () => {
+    // CONTROL. Without it, "remember every failure that ever happened" would
+    // satisfy all three tests above and leave a permanent error bar on a healthy
+    // page — the mirror image of the bug, and just as misleading.
+    const { result } = renderHook(() => useLoadError());
+
+    await act(async () => {
+      await Promise.all([
+        result.current.track(Promise.reject(new Error("x")), vi.fn(), "protocols"),
+        result.current.track(Promise.reject(new Error("x")), vi.fn(), "signals"),
+      ]);
+    });
+    expect(result.current.error).not.toBeNull();
+
+    await act(async () => {
+      await result.current.track(Promise.resolve([]), vi.fn(), "protocols");
+    });
+    // One recovered, one still down: still an error, and it names the right one.
+    expect(result.current.error).toContain("signals");
+    expect(result.current.error).not.toContain("protocols");
+
+    await act(async () => {
+      await result.current.track(Promise.resolve([]), vi.fn(), "signals");
+    });
+    expect(result.current.error).toBeNull();
+  });
+
+  it("does not accumulate a loader that keeps failing", async () => {
+    // usePolling re-runs these loaders every few seconds. If each failed round
+    // appended, the message would grow without bound: "Could not load protocols,
+    // protocols, protocols and protocols."
+    const { result } = renderHook(() => useLoadError());
+
+    for (let i = 0; i < 3; i++) {
+      await act(async () => {
+        await result.current.track(Promise.reject(new Error("x")), vi.fn(), "protocols");
+      });
+    }
+
+    expect(result.current.error).toBe(
+      "Could not load protocols. Check your connection and try again.",
+    );
+  });
+
+  it("reads naturally however many loaders are down", async () => {
+    // The message is assembled rather than concatenated, because
+    // "Could not load protocols, devices, signals." is the kind of sentence
+    // that gets ignored. Three is the real case — IndustrialConnectivity.
+    const { result } = renderHook(() => useLoadError());
+
+    await act(async () => {
+      await Promise.all(
+        ["protocols", "devices", "signals"].map((what) =>
+          result.current.track(Promise.reject(new Error("x")), vi.fn(), what),
+        ),
+      );
+    });
+
+    expect(result.current.error).toBe(
+      "Could not load protocols, devices and signals. Check your connection and try again.",
+    );
+  });
+});
+
+describe("useLoadError's manual setError", () => {
+  // It has no callers in this repo today, but it is exported, so its behaviour
+  // is a contract someone can rely on — and after the per-loader change there
+  // are two plausible readings of it. These pin the one that shipped.
+
+  it("lets a caller override what the tracked loaders are saying", async () => {
+    const { result } = renderHook(() => useLoadError());
+
+    await act(async () => {
+      await result.current.track(Promise.reject(new Error("x")), vi.fn(), "protocols");
+    });
+    expect(result.current.error).toContain("protocols");
+
+    act(() => result.current.setError("Your session expired. Sign in again."));
+
+    // A caller who knows something more specific than "check your connection"
+    // wins — otherwise the generic message would bury the actionable one.
+    expect(result.current.error).toBe("Your session expired. Sign in again.");
+  });
+
+  it("resets the tracked loaders too, not just the override", async () => {
+    // The footgun this closes: if setError(null) cleared only the override, a
+    // caller trying to dismiss the error bar would watch it immediately repaint
+    // itself from state they cannot see.
+    const { result } = renderHook(() => useLoadError());
+
+    await act(async () => {
+      await Promise.all([
+        result.current.track(Promise.reject(new Error("x")), vi.fn(), "protocols"),
+        result.current.track(Promise.reject(new Error("x")), vi.fn(), "signals"),
+      ]);
+    });
+    act(() => result.current.setError("something else"));
+
+    act(() => result.current.setError(null));
+
+    expect(result.current.error).toBeNull();
+  });
+});
+
+/**
  * `LoadError` is the half of #383 the user actually sees, and until now nothing
  * exercised it. The hook can record a failure perfectly and the fix still ships
  * broken if the component decides not to render it — the reassuring empty state

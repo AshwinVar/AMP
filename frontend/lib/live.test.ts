@@ -220,4 +220,81 @@ describe("connectLiveSocket", () => {
     connectLiveSocket(vi.fn(), vi.fn());
     expect(latest().url).toContain("token=header.payload.signature");
   });
+
+  it("reports an error, and leaves the reconnect to the close that follows", async () => {
+    const onStatus = vi.fn();
+    connectLiveSocket(vi.fn(), onStatus);
+    latest().open();
+    onStatus.mockClear();
+
+    // A rejected handshake (expired JWT, backend mid-redeploy) surfaces as
+    // onerror. Without this the status dot stays on its last value and the
+    // dashboard looks healthy while the feed is dead.
+    latest().onerror?.({});
+    expect(onStatus).toHaveBeenCalledWith("error");
+
+    // A socket can report an error and stay up. Reconnecting off onerror would
+    // throw away a working connection - and when the error IS fatal, onclose
+    // fires straight after, so we would have scheduled the retry twice.
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(FakeSocket.instances).toHaveLength(1);
+
+    // Control for the assertion above: the retry path is alive, it is just
+    // driven by close rather than error.
+    latest().drop();
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(FakeSocket.instances).toHaveLength(2);
+  });
+
+  it("reconnects even when the caller wants events and no status", async () => {
+    const onEvent = vi.fn();
+    connectLiveSocket(onEvent); // onStatus is optional in the signature
+
+    latest().open();
+    latest().onerror?.({});
+    latest().drop();
+    await vi.advanceTimersByTimeAsync(1000);
+
+    // If any of those handlers called onStatus unguarded, the TypeError would
+    // escape before scheduleRetry and this caller would silently lose its feed
+    // for the rest of the session.
+    expect(FakeSocket.instances).toHaveLength(2);
+    latest().open();
+    latest().onmessage?.({ data: JSON.stringify({ event: "machine_status" }) });
+    expect(onEvent).toHaveBeenCalledWith({ event: "machine_status" });
+  });
+
+  it("cancels a reconnect that is already pending when the caller closes", async () => {
+    const connection = connectLiveSocket(vi.fn(), vi.fn());
+    latest().open();
+    // Counted as a delta, not an absolute: earlier cases in this file leave
+    // their own timers parked on the clock.
+    const idle = vi.getTimerCount();
+
+    latest().drop();
+    // Control: without a genuinely armed timer here, "it cancelled the retry"
+    // would pass just as well against a client that never retried at all.
+    expect(vi.getTimerCount()).toBe(idle + 1);
+
+    connection.close();
+
+    // close() is documented as stopping for good. Leaving the timer armed means
+    // every mount of the dashboard hands the tab a wake-up that outlives it -
+    // navigate back and forth a few times and they stack up.
+    expect(vi.getTimerCount()).toBe(idle);
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(FakeSocket.instances).toHaveLength(1);
+  });
+
+  it("omits the token entirely when there is none to send", () => {
+    localStorage.removeItem("token");
+
+    connectLiveSocket(vi.fn(), vi.fn());
+
+    // Before login (or after a logout) there is no JWT. Sending `?token=null`
+    // would hand the backend a string it has to reject rather than an honest
+    // anonymous handshake.
+    expect(latest().url).not.toContain("token=");
+    expect(latest().url).toContain("/ws/live");
+  });
 });

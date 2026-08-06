@@ -291,15 +291,72 @@ error; the warning is the ratchet that stops it being forgotten.
 
 ## Frontend
 
-`frontend/` runs Vitest (`npm test` → `vitest run`) over 19 test files in `lib/`.
-There is no coverage measurement yet: it needs `@vitest/coverage-v8` as a
-devDependency and a `test:coverage` script, plus a `coverage` block in
-`vitest.config.ts`. Once those land the equivalent commands are:
+`frontend/` runs Vitest (`npm test` → `vitest run`) over the test files in `lib/`.
 
 ```bash
 cd frontend
 npm run test:coverage
 ```
 
-Do not set a frontend threshold before measuring one, for the same reason the
-backend threshold is 78 and not a round number somebody liked.
+### The number, and what it is not
+
+**92.6% branch coverage of `lib/`** across 223 tests. The floor is **89** — the
+same ~3 points of slack, for the same reasons, as the backend's 78.
+
+The first measurement was 74.9%, and the floor was going to be 72. Then the
+modules that were actually uncovered got tests, so the floor was raised to match
+rather than left where the ratchet started. That is the intended ritual.
+
+Read the next paragraph before quoting that figure anywhere.
+
+**It measures `lib/`, not "the frontend".** Point the same run at `components/`
+and `app/` and it reads **4.5%** branch coverage, because 95 components and a
+2,900-line dashboard have no unit tests at all. They are exercised by the
+Playwright suite in `e2e/`, which drives a real browser and produces no Vitest
+coverage data — so their real coverage is neither 4.5% nor 74.9%; it is
+*unmeasured by this tool*.
+
+Widening `include` to make the number look comprehensive would make it dishonest
+instead: it would still be measuring only what Vitest ran. A coverage figure is
+only meaningful next to a statement of what it covered.
+
+| Scope | Branch coverage | Gated |
+| --- | --- | --- |
+| `lib/` — shared hooks and logic | 92.6% | **yes, at 89** |
+| `components/`, `app/` | 4.5% by Vitest | no — see `e2e/` |
+
+### Why branch and not statement
+
+Same argument as the backend. Statement coverage marks `if (!res.ok)` covered the
+moment the happy path walks past it; branch coverage does not. The error paths
+are the entire reason these modules have tests — `#383` (empty state on error),
+`#385` (double submit), `#393` (session expiry on writes) were all failures in a
+branch the happy path never takes.
+
+### Where the gaps were, and where they went
+
+The first measurement named them precisely, which is the point of `all: true` —
+a module nobody tests shows up as 0% instead of vanishing from the report:
+
+| Module | Branch before | After | Why it mattered |
+| --- | --- | --- | --- |
+| `lib/utils.ts` | **0%** | 100% | never imported by a test at all |
+| `lib/useLoadError.tsx` | **0%** | 100% | every conditional in the `#383` error hook untested |
+| `lib/api.ts` | 56.4% | 92.3% | the layer every HTTP request goes through |
+| `lib/modules.ts` | 72.7% | 100% | pack gating; `#413` was a fallback-path bug |
+| `lib/live.ts` | 75.0% | 87.5% | the live socket (`#400` reconnect) |
+
+Raise the threshold as the number climbs. Never lower it to make a build pass.
+
+### The gate is a gate
+
+Checked rather than assumed, the same way the backend floor was: set
+`branches` to 99 and `npm run test:coverage` exits non-zero; at 89 it exits 0.
+A threshold that can never fail is decoration.
+
+Every test added in that pass was also mutation-checked — the source was broken
+deliberately and the test had to notice. One survived, and the finding is
+recorded in `lib/api.test.ts` rather than papered over: "navigate once on a
+401 storm" is enforced by *two* independent mechanisms, so deleting either alone
+cannot fail any assertion. The comment there states exactly which mutations the
+test does and does not catch.

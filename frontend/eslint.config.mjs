@@ -12,6 +12,14 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     "next-env.d.ts",
+    // Vitest's HTML coverage report. Generated, gitignored, and vendored from
+    // istanbul — linting it reports on code nobody here wrote and cannot fix.
+    // Without this it contributes a phantom problem to the eslint count, which
+    // is the number this repo gates on.
+    "coverage/**",
+    // Playwright's generated report and trace output, for the same reason.
+    "playwright-report/**",
+    "test-results/**",
   ]),
 ]);
 

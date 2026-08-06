@@ -9,9 +9,13 @@ import {
   catalogFromPacks,
   enabledModulesFromPacks,
   getEnabledModules,
+  getViewModule,
+  getViewModuleIn,
+  isViewEnabled,
   isViewEnabledIn,
   navItemsFromPacks,
   withAlwaysOpen,
+  type ModuleKey,
   type ModulePack,
 } from "./modules";
 
@@ -180,6 +184,96 @@ describe("view enablement", () => {
 
   it("blocks an unknown view rather than defaulting it open", () => {
     expect(isViewEnabledIn("no-such-view", ["core", "admin"], nav)).toBe(false);
+  });
+
+  it("resolves an unknown view to a pack the locked screen can actually render", () => {
+    // renderSection pairs these two: when isViewEnabledIn says no, the module
+    // key goes straight into <LockedModuleView>, which does
+    // MODULE_CATALOG.find(...) and returns null on a miss. An unknown view key
+    // is exactly the case that reaches here — isViewEnabledIn already returned
+    // false for it — so without the `?? "core"` fallback the user gets a blank
+    // pane where the "Contact Sales to Unlock" upsell should be.
+    expect(getViewModuleIn("no-such-view", nav)).toBe("core");
+    expect(getViewModule("no-such-view")).toBe("core");
+    expect(MODULE_CATALOG.map((m) => m.key)).toContain(getViewModuleIn("no-such-view", nav));
+
+    // Control: a view the nav does know must report its own pack, not the
+    // fallback — otherwise every locked screen would advertise Core MES.
+    expect(getViewModuleIn("workorders", nav)).toBe("operations");
+    expect(getViewModule("workorders")).toBe("operations");
+  });
+
+  it("gates a view the live manifest added, without a frontend release", () => {
+    // The whole point of the manifest path (#304): a pack added to
+    // backend/modules.json must gate and label correctly against the live nav
+    // list even though NAV_ITEMS here has never heard of it. If getViewModuleIn
+    // consulted the compiled-in table instead of the list it was handed, the new
+    // pack's locked screen would pitch Core MES.
+    // THE CAST IS PART OF THE POINT, not a convenience. `ModuleKey` is a closed
+    // union of the five packs that existed when it was written, so a pack the
+    // backend adds later is literally unrepresentable in the frontend's types —
+    // which is the type-level shape of the very gap #304 set out to remove.
+    // The runtime path handles it correctly, as the assertions below show; only
+    // the type does not. Widen ModuleKey to `string` (or derive it from the
+    // manifest) and this cast becomes unnecessary.
+    const NEW_PACK = "traceability" as ModuleKey;
+
+    const liveNav = navItemsFromPacks([
+      pack({ id: NEW_PACK, views: [{ key: "genealogy", label: "Genealogy", icon: "◇" }] }),
+    ]);
+
+    expect(getViewModuleIn("genealogy", liveNav)).toBe(NEW_PACK);
+    expect(isViewEnabledIn("genealogy", ["core", NEW_PACK], liveNav)).toBe(true);
+    expect(isViewEnabledIn("genealogy", ["core", "admin"], liveNav)).toBe(false);
+  });
+});
+
+describe("the offline fallback gate", () => {
+  // isViewEnabled/getViewModule are the compiled-in twins of the *In variants:
+  // they answer from NAV_ITEMS, which is what the dashboard falls back to when
+  // GET /modules can't be reached. #413 was a fallback-only bug, so this is the
+  // path that goes wrong while everything looks fine on a healthy network.
+
+  it("opens the never-gated screens for a starter tenant while /modules is down", () => {
+    // #413 end to end: the starter bundle is [core], but the API never gates the
+    // admin pack, so User Management / Documents / Costing keep serving 200s.
+    // A fallback that hid them left the user staring at a "Contact Sales" screen
+    // for pages their own tenant was already allowed to open.
+    const starter = getEnabledModules("starter");
+
+    expect(isViewEnabled("users", starter)).toBe(true);
+    expect(isViewEnabled("documents", starter)).toBe(true);
+    expect(isViewEnabled("machines", starter)).toBe(true);
+
+    // Control: the overlay must not open everything. Operations is genuinely
+    // unlicensed on starter, and the API really does 403 it.
+    expect(isViewEnabled("workorders", starter)).toBe(false);
+  });
+
+  it("fails closed on a view key it does not recognise", () => {
+    // A renamed or typo'd view key must lock, not inherit the last thing the
+    // caller happened to have enabled. Note the deliberate asymmetry with
+    // getViewModule, which fails *open* to "core": one decides access, the
+    // other only decides which upsell copy to print.
+    const everything: ModuleKey[] = ["core", "operations", "factory", "intelligence", "admin"];
+
+    expect(isViewEnabled("no-such-view", everything)).toBe(false);
+    // Control: with the same module list a real view opens, so the false above
+    // is the unknown key being rejected and not a gate that never opens.
+    expect(isViewEnabled("quality", everything)).toBe(true);
+  });
+
+  it("answers identically to the manifest pair for the same nav list", () => {
+    // The dashboard swaps navItems between the manifest and NAV_ITEMS depending
+    // on whether one fetch succeeded. If the two pairs disagreed, a screen would
+    // open or lock based purely on that request's luck — the nav changing shape
+    // under the user is the failure mode #413 was about.
+    const mods: ModuleKey[] = ["core", "admin", "operations"];
+
+    for (const key of [...NAV_ITEMS.map((n) => n.key), "no-such-view"]) {
+      expect(isViewEnabled(key, mods), key).toBe(isViewEnabledIn(key, mods, NAV_ITEMS));
+      expect(getViewModule(key), key).toBe(getViewModuleIn(key, NAV_ITEMS));
+    }
   });
 });
 

@@ -1,6 +1,6 @@
 import React, { useState } from "react";
 import type { User } from "../lib/types";
-import { INPUT_CLASS } from "../lib/utils";
+import { BTN_CLASS, INPUT_CLASS } from "../lib/utils";
 
 export default function UsersSection({
   users,
@@ -92,7 +92,7 @@ export default function UsersSection({
           <option>Supervisor</option>
           <option>Admin</option>
         </select>
-        <button type="submit" disabled={busy} className="rounded-xl bg-white text-slate-950 font-semibold px-4 py-3 disabled:opacity-50">
+        <button type="submit" disabled={busy} className={BTN_CLASS}>
           {busy ? "Adding…" : "Add Employee"}
         </button>
         {error && <p className="md:col-span-4 text-red-400 text-sm">{error}</p>}

@@ -140,6 +140,7 @@ import {
 } from "../../lib/modules";
 import LockedModuleView from "../../components/LockedModuleView";
 
+import { getStatusStyle } from "../../lib/utils";
 type Machine = {
   id: number;
   name: string;
@@ -189,20 +190,9 @@ function getUserName(): string {
   }
 }
 
-function getStatusStyle(status: string) {
-  switch (status) {
-    case "Running":
-      return "bg-green-500/20 text-green-400 border-green-500/40";
-    case "Idle":
-      return "bg-yellow-500/20 text-yellow-400 border-yellow-500/40";
-    case "Breakdown":
-      return "bg-red-500/20 text-red-400 border-red-500/40";
-    case "Maintenance":
-      return "bg-blue-500/20 text-blue-400 border-blue-500/40";
-    default:
-      return "bg-gray-500/20 text-gray-400 border-gray-500/40";
-  }
-}
+// getStatusStyle now lives in lib/utils.ts. The copy that used to be here was
+// byte-identical to it and was the one actually on screen, which is exactly how
+// a shared helper rots into decoration.
 
 export default function DashboardPage() {
   const [machines, setMachines] = useState<Machine[]>([]);

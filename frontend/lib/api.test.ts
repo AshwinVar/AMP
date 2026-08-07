@@ -516,3 +516,88 @@ describe("getUserRole", () => {
     expect(api.getUserRole()).toBe("");
   });
 });
+
+/**
+ * A 2xx with no body.
+ *
+ * apiPost/apiPut/apiPatch called res.json() unconditionally on any successful
+ * response. A 204 No Content — or any 2xx whose body is empty — makes that
+ * throw a JSON parse error, so the caller's `.catch` fires and the UI reports a
+ * failed write for a write the server actually committed. That is the worst
+ * shape of wrong: the operator retries, and on a non-idempotent endpoint the
+ * retry is a duplicate.
+ *
+ * LATENT TODAY, NOT LIVE. No backend endpoint currently returns 204 — checked
+ * by grepping backend/ for `status_code=204`, `HTTP_204` and
+ * `Response(status_code=`, which match nothing. A FastAPI handler returning
+ * None serialises as the JSON literal `null`, which parses fine. So this is a
+ * trap laid for the first person to add a 204, not a bug users are hitting.
+ * These tests exist so that person's endpoint works instead of silently
+ * reporting failure.
+ *
+ * The contract chosen: an empty body resolves to `null`. Not undefined —
+ * `null` is what "the server said nothing" already means everywhere else in
+ * this file (getToken, the catch in handleUnauthorized), and it survives
+ * JSON.stringify if a caller stores it.
+ */
+const emptyResponse = (status: number) =>
+  vi.fn().mockResolvedValue({
+    ok: status >= 200 && status < 300,
+    status,
+    // Matches the real thing: fetch's json() on an empty body rejects with a
+    // SyntaxError rather than returning undefined.
+    json: async () => {
+      throw new SyntaxError("Unexpected end of JSON input");
+    },
+    text: async () => "",
+  });
+
+describe("a successful write with no response body", () => {
+  const writes: [string, (a: typeof api) => Promise<unknown>][] = [
+    ["apiPost", (a) => a.apiPost("/work-orders/1/close", {})],
+    ["apiPut", (a) => a.apiPut("/work-orders/1", { x: 1 })],
+    ["apiPatch", (a) => a.apiPatch("/work-orders/1", { x: 1 })],
+  ];
+
+  beforeEach(() => {
+    localStorage.setItem("token", LIVE_AND_FRESH);
+  });
+
+  for (const [name, call] of writes) {
+    it(`${name} resolves on a 204 instead of reporting a failed write`, async () => {
+      vi.stubGlobal("fetch", emptyResponse(204));
+
+      await expect(call(api)).resolves.toBeNull();
+    });
+
+    it(`${name} resolves on a 200 whose body is empty`, async () => {
+      // Not only 204. A proxy, a gateway, or a handler that returns an empty
+      // string all produce a 2xx with nothing to parse, and status-sniffing
+      // alone would still throw on those.
+      vi.stubGlobal("fetch", emptyResponse(200));
+
+      await expect(call(api)).resolves.toBeNull();
+    });
+  }
+
+  it("still returns the parsed body when there is one", async () => {
+    // CONTROL. Without it, "return null on 2xx" would pass every test above
+    // while throwing away every real response in the product — every create
+    // handler reads the new row's id back out of this.
+    vi.stubGlobal("fetch", respond(201, { id: 42, work_order_no: "WO-9" }));
+
+    await expect(api.apiPost("/work-orders", { x: 1 })).resolves.toEqual({
+      id: 42,
+      work_order_no: "WO-9",
+    });
+  });
+
+  it("still throws on a failure, empty body or not", async () => {
+    // CONTROL. A 500 with an empty body must not be mistaken for a successful
+    // write with nothing to say — that would turn every server error into a
+    // silent success.
+    vi.stubGlobal("fetch", emptyResponse(500));
+
+    await expect(api.apiPost("/work-orders", { x: 1 })).rejects.toThrow();
+  });
+});

@@ -21,6 +21,7 @@ from sqlalchemy import event, inspect, text
 from sqlalchemy.orm import Session, with_loader_criteria
 
 import models
+import oem_auth
 from auth import decode_token_optional
 
 import logging_config
@@ -192,7 +193,7 @@ def tenant_from_token(token):
     return payload.get("tenant") if payload else None
 
 
-def effective_tenant(claim_tenant, header_tenant, claim_role=None):
+def effective_tenant(claim_tenant, header_tenant, claim_role=None, claims=None):
     """The tenant a request is scoped to. Only a founder-workspace ADMIN may
     preview another tenant via the X-Tenant header — that's how the top-bar
     company switcher works. A client token always stays locked to its own
@@ -220,7 +221,17 @@ def effective_tenant(claim_tenant, header_tenant, claim_role=None):
     never brought in line. It is now.
 
     Fail-closed: a token with no role claim is not an Admin, so no preview.
+
+    OEM PRINCIPALS (ADR-0017). An OEM token binds a SENTINEL tenant that no
+    factory can hold, and this branch is TERMINAL — an OEM claim must not fall
+    through into the founder-preview branch below, or an X-Tenant header would
+    aim a manufacturer straight at a customer's factory. Returning the sentinel
+    rather than None is the whole point: None disables the ADR-0002 filter for
+    the entire request, so every scoped table would return every tenant's rows.
     """
+    oem_code = oem_auth.oem_of_claims(claims)
+    if oem_code:
+        return oem_auth.sentinel_tenant(oem_code)
     if claim_tenant == DEFAULT_TENANT and header_tenant and claim_role == "Admin":
         return header_tenant
     return claim_tenant
@@ -303,7 +314,7 @@ class TenantScopeMiddleware:
         # every 3 seconds, and would leave room for the two to disagree.
         claims = decode_token_optional(token) or {}
         reset = set_current_tenant(effective_tenant(
-            claims.get("tenant"), header_tenant, claims.get("role")))
+            claims.get("tenant"), header_tenant, claims.get("role"), claims))
         try:
             await self.app(scope, receive, send)
         finally:

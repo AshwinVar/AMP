@@ -44,3 +44,7 @@ frontend/coverage/
 # conftest.py's fallback DATABASE_URL points here, so a bare `pytest` cannot
 # scribble on a developer's real database. Throwaway by design.
 backend/.pytest.db
+
+# Load-test run artifacts (the results JSON IS committed; these are not)
+backend/loadtest_server.log
+backend/dr_drill.sql

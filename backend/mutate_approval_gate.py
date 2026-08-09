@@ -53,16 +53,14 @@ MUTATIONS = [
      "    if False:"),
     ("the tenant check runs AFTER state and freshness (leaks the state)",
      "approvals.py",
-     "    if require_actor:\n"
-     "        tenant = (actor or {}).get(\"tenant\")\n"
-     "        _check_tenant(action, tenant)\n"
+     "        _check_tenant(action, (actor or {}).get(\"tenant\"))\n"
      "    _check_state(action)\n"
      "    _check_freshness(action, now)",
+     "        pass\n"
      "    _check_state(action)\n"
      "    _check_freshness(action, now)\n"
      "    if require_actor:\n"
-     "        tenant = (actor or {}).get(\"tenant\")\n"
-     "        _check_tenant(action, tenant)"),
+     "        _check_tenant(action, (actor or {}).get(\"tenant\"))"),
     ("a cross-tenant probe is told the action exists (403 not 404)",
      "approvals.py",
      '        # 404 rather than 403: a cross-tenant probe must not learn that the id\n'
@@ -75,6 +73,11 @@ MUTATIONS = [
     ("Approved and Rejected become decidable states", "approvals.py",
      'DECIDABLE = ("Proposed",)',
      'DECIDABLE = ("Proposed", "Approved", "Rejected")'),
+    ("a non-dict actor crashes instead of refusing", "approvals.py",
+     "        if actor is not None and not isinstance(actor, dict):\n"
+     '            raise ApprovalDenied(401, "Not authenticated")',
+     "        if False:\n"
+     '            raise ApprovalDenied(401, "Not authenticated")'),
     ("a misspelled decision is let through (and silently rejects)",
      "approvals.py",
      '    if decision not in ("approve", "reject"):\n'

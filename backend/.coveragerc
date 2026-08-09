@@ -66,6 +66,24 @@ omit =
     mutate_bom.py
     mutate_oee_contract.py
     pg_scratch.py
+    # Same category again, added closing the customer-readiness blockers. Left
+    # off this list they cost 4.2 points — 80.24% to 76.07%, under the 78 floor
+    # — without one line of application code changing, which is the perverse
+    # incentive the block above was written to prevent.
+    #   verify_pg_approvals   migration 0005 against a disposable PostgreSQL 18
+    #   mutate_approval_gate  26 mutations of the approval gate
+    #   mutate_ws_auth        17 mutations of WebSocket authentication
+    #   audit_three_customers three tenants sharing every identifier
+    #   audit_adversarial_final  37 attacks on the six shipped fixes
+    #   loadtest              starts its own uvicorn and hammers it
+    #   restore_drill         pg_dump -> restore -> migrate -> boot -> log in
+    verify_pg_approvals.py
+    mutate_approval_gate.py
+    mutate_ws_auth.py
+    audit_three_customers.py
+    audit_adversarial_final.py
+    loadtest.py
+    restore_drill.py
     # Alembic migration scripts: exercised by running a migration, not by the
     # unit suites, and each version file is dead the moment it has been applied.
     alembic/*

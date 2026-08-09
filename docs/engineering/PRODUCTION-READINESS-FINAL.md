@@ -5,7 +5,35 @@ PostgreSQL 18.3 (local, disposable databases) + production Railway + CI.
 
 ---
 
+> ## ⚠ SUPERSEDED — this document's verdict is no longer current
+>
+> This audit ended at **NO**, with seven "minimum blockers before a YES"
+> (§ *Minimum blockers*, at the end). **All seven are now closed and verified.**
+>
+> | Blocker | Closed by | Record |
+> |---|---|---|
+> | 1 · MQTT tenant dimension | [#502](https://github.com/AshwinVar/AMP/pull/502) | ADR-0011 |
+> | 5 · tenant-safe document numbering | [#503](https://github.com/AshwinVar/AMP/pull/503) | ADR-0012 |
+> | 2 · per-tenant BOM | [#504](https://github.com/AshwinVar/AMP/pull/504) | ADR-0013 |
+> | 3 · OEE correctness | [#505](https://github.com/AshwinVar/AMP/pull/505) | ADR-0014 |
+> | 4 · server-side approval gate | [#506](https://github.com/AshwinVar/AMP/pull/506) | ADR-0015 |
+> | 6 · authenticate `/ws/live` | [#507](https://github.com/AshwinVar/AMP/pull/507) | ADR-0016 |
+> | 7 · load test + timed restore drill | this branch | see closure doc |
+>
+> **The current verdict is YES, WITH CONDITIONS** — see
+> [`CUSTOMER-READINESS-CLOSURE.md`](CUSTOMER-READINESS-CLOSURE.md) for the
+> evidence, the measured load and recovery numbers, the remaining risks and the
+> conditions.
+>
+> Everything below is kept unedited. It is the record of what was true before
+> the fixes, and the reason each fix exists — an audit rewritten to match its
+> outcome stops being evidence.
+
+---
+
 ## 1. Executive verdict
+
+*(Superseded — see the banner above. Kept as written on the day.)*
 
 **NO — not yet approved for three independent manufacturing customers.**
 
@@ -341,3 +369,19 @@ commercial friction rather than safety risks.
 **Green tests did not make AMP production-ready, and this campaign is the
 demonstration: 1086 passing tests coexisted with two P0s, both found only by
 running the multi-tenant case against a real database.**
+
+---
+
+## Closure
+
+All seven blockers above were closed in PRs #502-#507 and this branch, and
+re-verified on PostgreSQL 18.3 against three customers sharing every identifier
+(CNC-01, LINE-01, WO-001, INV-001, PO-001, FG-001).
+
+The sentence above still holds, and the closure campaign proved it a second
+time: 1115 passing tests coexisted with an approval gate that a deleted user
+could walk through, and a live telemetry feed that authenticated nothing at all.
+Neither was found by a test. Both were found by attacking the running system.
+
+Current verdict, evidence and remaining risks:
+[`CUSTOMER-READINESS-CLOSURE.md`](CUSTOMER-READINESS-CLOSURE.md).

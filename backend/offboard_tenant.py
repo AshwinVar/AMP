@@ -12,6 +12,8 @@ Deliberately paranoid:
     the offboarding itself should remain traceable after the data is gone.
   * Returns per-table delete counts for the audit log.
 """
+from datetime import datetime
+
 import models
 from tenancy import DEFAULT_TENANT
 
@@ -44,6 +46,13 @@ def purge_tenant_data(db, tenant_code: str) -> dict:
     counts = {}
     remaining = list(targets)
     try:
+        # BEFORE the sweep, not after. machine_installations.machine_id is a
+        # foreign key onto machines.id, so an installation still pointing at a
+        # machine row BLOCKS that row's delete — measured on PostgreSQL as
+        # "purge blocked by constraints on: machines", i.e. offboarding a tenant
+        # failed outright. SQLite does not enforce foreign keys by default and
+        # showed nothing.
+        counts.update(_unlink_oem_installations(db, code))
         for _ in range(len(targets) + 1):
             if not remaining:
                 break
@@ -72,3 +81,30 @@ def purge_tenant_data(db, tenant_code: str) -> dict:
         db.rollback()
         raise
     return counts
+
+
+def _unlink_oem_installations(db, code: str) -> dict:
+    """A departing factory releases its OEM equipment; it does not destroy it.
+
+    An OEM's record of a machine it BUILT belongs to the OEM, not to the customer
+    that happened to be running it. The sweep above hard-deletes every row whose
+    class has a ``tenant_code`` attribute, so had MachineInstallation used that
+    name, offboarding one customer would have erased another company's fleet
+    history — a cross-owner deletion, from a routine admin action.
+
+    ADR-0017 names the column ``factory_tenant_code`` precisely so the sweep
+    cannot see it, which leaves this function owing the correct behaviour:
+    unlink the installation from the factory (and from the factory Machine row
+    that is about to be deleted), and record that it is no longer installed.
+    The serial number, model, warranty and service history are untouched.
+    """
+    rows = (db.query(models.MachineInstallation)
+              .filter(models.MachineInstallation.factory_tenant_code == code)
+              .all())
+    for row in rows:
+        row.factory_tenant_code = None
+        row.machine_id = None          # the machines row is being deleted above
+        row.site = ""
+        row.status = "Decommissioned"
+        row.decommissioned_at = datetime.utcnow()
+    return {"machine_installations_unlinked": len(rows)} if rows else {}

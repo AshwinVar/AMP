@@ -1,6 +1,7 @@
 import os
 from datetime import datetime
-from sqlalchemy import Column, Integer, String, ForeignKey, DateTime, Date, Text, Float
+from sqlalchemy import (Column, Integer, String, ForeignKey, DateTime, Date, Text, Float,
+                        UniqueConstraint)
 from sqlalchemy.orm import relationship
 
 from database import Base
@@ -10,10 +11,28 @@ TRIAL_DAYS = int(os.environ.get("TRIAL_DAYS", "30"))
 
 
 class Machine(Base):
+    """A physical machine, identified by (tenant, site, name).
+
+    IDENTITY IS A TRIPLE, NOT A NAME. `name` used to be the whole identity for
+    ingest, and it is not unique — two factories both run a "CNC-01". MQTT
+    resolved by name alone, so a packet from one customer's gateway landed on
+    whichever row the database returned first. Measured before the fix: one
+    factory's CNC-01 was flipped to Breakdown by the other factory's telemetry.
+
+    `site` is the middle term because a single customer legitimately runs the
+    same machine name at two plants. It is NOT NULL with an empty-string default
+    rather than nullable: in PostgreSQL NULL != NULL, so a UNIQUE constraint over
+    a nullable column does not actually prevent duplicates.
+    """
+
     __tablename__ = "machines"
+    __table_args__ = (
+        UniqueConstraint("tenant_code", "site", "name", name="uq_machine_identity"),
+    )
 
     id = Column(Integer, primary_key=True, index=True)
     tenant_code = Column(String, index=True, nullable=False, default="DEFAULT")
+    site = Column(String, nullable=False, default="", server_default="")
     name = Column(String, nullable=False)
     status = Column(String, nullable=False)
     utilization = Column(Integer, default=0)

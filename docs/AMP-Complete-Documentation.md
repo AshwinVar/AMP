@@ -182,7 +182,7 @@ AMP stays live through **two independent mechanisms**:
 ```
  Machine / PLC  ──▶  MQTT broker  ──▶  AMP MQTT service  ──▶  Database
  (or simulator)      (topic:            (mqtt_service.py:            │
-                     flowmes/machines)   updates machine,            │
+            flowmes/<tenant>/<site>/machines)  updates machine,      │
                                          logs events, records        ▼
                                          production)          WebSocket broadcast
                                                               (live_ws.py) ──▶ Dashboard
@@ -349,7 +349,7 @@ The intelligence layer is built from **read‑models** (ADR‑0007): pure functi
 
 ### `backend/mqtt_service.py` — the machine listener
 - **Plain English:** Sits with an ear to the "machine radio" (MQTT). When a machine reports its status, this saves it to the database and instantly pushes the change to every open dashboard.
-- **Technical:** An embedded paho‑mqtt client running on a background thread subscribes to `flowmes/machines`; `on_message` parses the JSON payload, upserts the `Machine`, logs a `MachineEvent` on status change, writes a `ProductionRecord` when a batch completes, logs downtime on breakdown, and calls `safe_broadcast` → the WebSocket manager.
+- **Technical:** An embedded paho‑mqtt client running on a background thread subscribes to `flowmes/+/+/machines`, where the two wildcards are the TENANT and the SITE. `on_message` resolves the owning tenant from the topic before it touches the database and drops anything it cannot attribute to exactly one provisioned tenant — the topic is used rather than any `tenant` field in the body because a broker ACL can enforce a topic and cannot enforce a payload. It then parses the JSON payload, upserts the `Machine` identified by (tenant, site, name), logs a `MachineEvent` on status change, writes a `ProductionRecord` when a batch completes, logs downtime on breakdown, and calls `safe_broadcast` → the WebSocket manager.
 
 ### `backend/live_ws.py` — the live push pipe
 - **Plain English:** Keeps a permanent open line to every dashboard so the server can push updates the instant they happen.
@@ -398,7 +398,7 @@ The intelligence layer is built from **read‑models** (ADR‑0007): pure functi
 | File | Plain English | Technical |
 |---|---|---|
 | `phase30_plc_simulator.py` | Pretends to be a real PLC, broadcasting live machine telemetry over MQTT. | Publishes JSON payloads to the MQTT broker so `mqtt_service.py` ingests them via the real pipeline. |
-| `mqtt_machine_publisher.py` | An earlier/simpler MQTT machine‑telemetry publisher for testing. | Standalone paho‑mqtt publisher to `flowmes/machines`. |
+| `mqtt_machine_publisher.py` | An earlier/simpler MQTT machine‑telemetry publisher for testing. | Standalone paho‑mqtt publisher to `flowmes/<tenant>/<site>/machines`. |
 | `mqtt_listener.py` | A standalone MQTT debug listener. | Subscribes and prints incoming messages. |
 | `live_simulator.py` | Older standalone live‑data simulator (predecessor of `factory_simulator.py`). | Loops and writes rows directly. |
 | `reseed_inventory.py` | Resets/reloads inventory demo data. | Deletes and re‑seeds inventory rows. |

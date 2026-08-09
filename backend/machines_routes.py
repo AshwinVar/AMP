@@ -15,6 +15,7 @@ import io
 from typing import List
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 import models
@@ -76,7 +77,23 @@ def create_machine(machine: schemas.MachineCreate, db: Session = Depends(_get_db
     data["utilization"] = clamped if clamped is not None else 0
     new_machine = models.Machine(**data)
     db.add(new_machine)
-    db.commit()
+    # (tenant_code, site, name) is a database UNIQUE constraint (alembic 0002),
+    # so a second machine with a name this tenant already uses is an
+    # IntegrityError, and an unhandled one is a 500 plus a poisoned session for
+    # the rest of the request. The name is the operator's own label and typing an
+    # existing one is an ordinary mistake, not a server fault — 409 with the name
+    # in it says what to change. Caught here rather than pre-checked with a SELECT
+    # because a pre-check races: two operators submitting the same name at once
+    # both see "free" and one still hits the constraint. The constraint is the
+    # authority; this only translates it.
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(
+            status_code=409,
+            detail=f"A machine named '{data.get('name')}' already exists in this workspace.",
+        )
     db.refresh(new_machine)
     return new_machine
 

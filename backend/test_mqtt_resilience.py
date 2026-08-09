@@ -45,6 +45,7 @@ from sqlalchemy.pool import StaticPool
 from sqlalchemy.orm import sessionmaker
 
 import models
+import mqtt_identity
 import mqtt_listener
 import mqtt_service
 from database import Base
@@ -56,6 +57,14 @@ _REAL_SAFE_BROADCAST = mqtt_service.safe_broadcast
 # Live events the fixture's stub captured for the test that is running.
 _BROADCASTS = []
 
+# Every packet has to be ROUTABLE before any of the payload-robustness questions
+# below become reachable: on_message resolves the owning tenant from the topic
+# and drops anything it cannot attribute (see test_mqtt_tenant_identity.py).
+# These tests are about what happens to a WELL-ADDRESSED message with a hostile
+# body, so they all ride on one provisioned tenant.
+_TENANT = "MQTT_TEST"
+_TOPIC = f"{mqtt_service.TOPIC_PREFIX}/{_TENANT}/-/machines"
+
 
 class _Msg:
     """Paho message stand-in. on_message reads only .topic and .payload (bytes),
@@ -63,7 +72,7 @@ class _Msg:
     including bytes that are not valid UTF-8 or not valid JSON."""
 
     def __init__(self, payload, topic=None):
-        self.topic = topic if topic is not None else mqtt_service.TOPIC
+        self.topic = topic if topic is not None else _TOPIC
         self.payload = payload
 
 
@@ -72,6 +81,13 @@ def _setup():
     engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
     Base.metadata.create_all(engine)
     mqtt_service.SessionLocal = sessionmaker(bind=engine)
+    # Provision the tenant these packets address. Without it ingest correctly
+    # rejects every message as belonging to an unknown customer, and every test
+    # below would pass vacuously by writing nothing.
+    db = mqtt_service.SessionLocal()
+    db.add(models.TenantConfig(tenant_code=_TENANT))
+    db.commit()
+    db.close()
     _BROADCASTS.clear()
     mqtt_service.safe_broadcast = _BROADCASTS.append
     return mqtt_service.SessionLocal
@@ -142,7 +158,9 @@ def test_reconnect_restores_the_subscription():
         mqtt_service.on_connect(client, None, {}, 0)   # first connect
         mqtt_service.on_connect(client, None, {}, 0)   # paho's automatic reconnect
 
-    assert client.subscribed == [mqtt_service.TOPIC, mqtt_service.TOPIC], client.subscribed
+    expected = mqtt_identity.topic_filters(mqtt_service.TOPIC_PREFIX,
+                                          mqtt_service.LEGACY_TENANT)
+    assert client.subscribed == expected * 2, client.subscribed
 
     # CONTROL: a REFUSED connection must not subscribe. Without this, the
     # assertion above would also pass for an on_connect that subscribes
@@ -410,7 +428,8 @@ def test_messages_after_a_reconnect_are_still_ingested():
     reconnected = _RecordingClient()             # paho's post-drop client
     with redirect_stdout(io.StringIO()):
         mqtt_service.on_connect(reconnected, None, {}, 0)
-    assert reconnected.subscribed == [mqtt_service.TOPIC]
+    assert reconnected.subscribed == mqtt_identity.topic_filters(
+        mqtt_service.TOPIC_PREFIX, mqtt_service.LEGACY_TENANT)
 
     # The machine is still down; the first packet after the reconnect repeats that
     # and must NOT re-log the stoppage.
@@ -527,13 +546,19 @@ def test_the_live_event_carries_a_tenant_and_no_null_counts():
     block coalesces rejected readings to 0: a raw None would reach the browser as
     JSON null and render as a blank or NaN tile rather than 'nothing was
     recorded'.
+
+    This assertion used to read `== "DEFAULT"`, and it passed. It was pinning
+    the bug: the machine was auto-created with no tenant, so the column default
+    supplied one, and the live event told the WS layer to deliver one customer's
+    telemetry to whoever happened to be on DEFAULT. The tenant now comes from
+    the topic the broker authorised.
     """
     Session = _setup()
     _send(status="Running", total_count="--", good_count=5, rejected_count=None)
 
     assert len(_BROADCASTS) == 1, _BROADCASTS
     event = _BROADCASTS[0]
-    assert event["tenant_code"] == "DEFAULT", event["tenant_code"]
+    assert event["tenant_code"] == _TENANT, event["tenant_code"]
     assert event["production"] == {"total_count": 0, "good_count": 5, "rejected_count": 0}, event["production"]
     assert _counts(Session)["production"] == 0, _counts(Session)   # nothing was actually recorded
 

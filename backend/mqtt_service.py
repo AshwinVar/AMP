@@ -8,8 +8,12 @@ import paho.mqtt.client as mqtt
 
 load_dotenv()
 
+from sqlalchemy.exc import IntegrityError
+
 from database import SessionLocal
 import models
+import mqtt_identity
+import tenancy
 from machine_status import clamp_utilization, normalize_machine_status
 
 import logging_config
@@ -25,7 +29,14 @@ except Exception:
 
 MQTT_BROKER = os.environ.get("MQTT_BROKER", "127.0.0.1")
 MQTT_PORT = int(os.environ.get("MQTT_PORT", "1883"))
-TOPIC = os.environ.get("MQTT_TOPIC", "flowmes/machines")
+
+# The prefix, not the whole topic: the tenant and site are segments of it now
+# (see mqtt_identity). MQTT_TOPIC is still read so an existing deployment that
+# set it to a custom single-tenant topic keeps that topic working via the legacy
+# path below rather than silently going deaf after this upgrade.
+TOPIC_PREFIX = os.environ.get("MQTT_TOPIC_PREFIX", "flowmes")
+LEGACY_TENANT = os.environ.get("MQTT_LEGACY_TENANT", "").strip()
+LEGACY_SITE = os.environ.get("MQTT_LEGACY_SITE", "").strip()
 
 
 def _non_negative_int(value):
@@ -58,15 +69,59 @@ def _non_negative_int(value):
     return n if n >= 0 else None
 
 
-def get_or_create_machine(db, name: str):
-    machine = db.query(models.Machine).filter(
-        models.Machine.name == name
-    ).first()
+def tenant_is_provisioned(db, tenant: str) -> bool:
+    """Has this tenant actually been onboarded?
 
+    Fail-closed needs something to close against, and the honest answer to "is
+    FACTORY_D a real customer?" is "does anything in this deployment already
+    belong to FACTORY_D". Three signals, any one of which is enough:
+
+      * a TenantConfig row  — created by platform onboarding
+      * a User row          — every real customer has at least one login
+      * a Machine row       — the tenant was seeded or imported
+
+    Without this, a typo'd or hostile topic segment would auto-create machines
+    under a tenant nobody owns. Those rows are invisible to every real tenant
+    (the ADR-0002 scoping hook filters them out), so the failure is silent: the
+    customer reports missing telemetry and nothing in the product explains where
+    it went. Rejecting at the door puts the reason in the log instead.
+
+    The consequence is deliberate and is the correct order of operations: a new
+    customer must be provisioned BEFORE their gateway is pointed at the broker.
+    """
+    if db.query(models.TenantConfig).filter(
+            models.TenantConfig.tenant_code == tenant).first():
+        return True
+    if db.query(models.User).filter(models.User.tenant_code == tenant).first():
+        return True
+    return bool(db.query(models.Machine).filter(
+        models.Machine.tenant_code == tenant).first())
+
+
+def get_or_create_machine(db, route, name: str):
+    """Resolve a machine WITHIN a tenant and site, never by name alone.
+
+    The filter carries all three terms because the name alone is not unique and
+    never was: with FACTORY_A/CNC-01 and FACTORY_B/CNC-01 both present, a
+    name-only `.first()` returns whichever row the database happens to order
+    first — a coin flip that silently wrote one customer's telemetry onto
+    another customer's machine. Measured before this change: FACTORY_B's
+    breakdown packet flipped FACTORY_A's CNC-01 to Breakdown.
+    """
+    def find():
+        return db.query(models.Machine).filter(
+            models.Machine.tenant_code == route.tenant,
+            models.Machine.site == route.site,
+            models.Machine.name == name,
+        ).first()
+
+    machine = find()
     if machine:
         return machine
 
     machine = models.Machine(
+        tenant_code=route.tenant,
+        site=route.site,
         name=name,
         status="Idle",
         utilization=0,
@@ -74,7 +129,34 @@ def get_or_create_machine(db, name: str):
     )
 
     db.add(machine)
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError:
+        # Lost a race for the SAME identity, which is now possible precisely
+        # BECAUSE this change added the uniqueness constraint. AMP can run more
+        # than one instance (Railway scales the web service), each with its own
+        # MQTT listener, so two processes can both miss on the SELECT above and
+        # both try to insert the first packet for a newly-seen machine.
+        #
+        # The loser must not drop the message: a dropped first packet is a
+        # permanent hole in that machine's history, and it would happen exactly
+        # once per new machine — during commissioning, when someone is watching
+        # the screen to check the integration works.
+        #
+        # Re-selecting rather than retrying the insert is the correct recovery:
+        # the winner has committed the row we wanted, so there is nothing left
+        # to create. If it is somehow still missing the exception propagates,
+        # because inventing a machine after a constraint violation would be
+        # guessing about identity, which is the whole thing this module refuses
+        # to do.
+        db.rollback()
+        machine = find()
+        if machine is None:
+            raise
+        log.info("machine %s/%s/%s was created concurrently; using the "
+                 "committed row", route.tenant, route.site, name)
+        return machine
+
     db.refresh(machine)
 
     return machine
@@ -99,14 +181,16 @@ def on_connect(client, userdata, flags, rc):
     log.info(f"FastAPI MQTT connected with code: {rc}")
 
     if rc == 0:
-        client.subscribe(TOPIC)
-        log.info(f"FastAPI MQTT subscribed to {TOPIC}")
+        for topic_filter in mqtt_identity.topic_filters(TOPIC_PREFIX, LEGACY_TENANT):
+            client.subscribe(topic_filter)
+            log.info("FastAPI MQTT subscribed to %s", topic_filter)
     else:
         log.info("FastAPI MQTT connection failed")
 
 
 def on_message(client, userdata, msg):
     db = SessionLocal()
+    tenant_token = None
 
     try:
         log.info("\nRAW MQTT MESSAGE RECEIVED")
@@ -116,16 +200,40 @@ def on_message(client, userdata, msg):
         log.info("Payload: %s", raw_payload)
 
         payload = json.loads(raw_payload)
-
-        machine_name = payload.get("machine")
-
-        if not machine_name:
-            log.info("MQTT payload skipped: missing machine name")
+        if not isinstance(payload, dict):
+            log.warning("MQTT payload skipped: not a JSON object")
             return
+
+        # ---- ROUTE BEFORE ANYTHING ELSE -----------------------------------
+        # Nothing below may run until the message has exactly one owner. Every
+        # failure here is a drop with a logged reason, never a default tenant:
+        # "DEFAULT" was what the old code fell back to via the column default,
+        # and it is precisely the wrong answer — it silently pooled three
+        # customers' production into a tenant none of them can see.
+        try:
+            route = mqtt_identity.parse_topic(
+                msg.topic, TOPIC_PREFIX, LEGACY_TENANT, LEGACY_SITE)
+            mqtt_identity.check_payload_agrees(route, payload)
+            machine_name = mqtt_identity.machine_identifier(payload)
+        except mqtt_identity.RouteError as route_error:
+            log.warning("MQTT message REJECTED (unroutable): %s", route_error)
+            return
+
+        if not tenant_is_provisioned(db, route.tenant):
+            log.warning(
+                "MQTT message REJECTED: tenant %r is not provisioned in this "
+                "deployment (topic=%s)", route.tenant, msg.topic)
+            return
+
+        # Bind the thread to the resolved tenant for the rest of the handler so
+        # the ADR-0002 scoping hook filters any read taken below, not just the
+        # ones written with an explicit predicate. Defence in depth: the
+        # explicit filters are the primary control.
+        tenant_token = tenancy.set_current_tenant(route.tenant)
 
         downtime_value = payload.get("downtime", "0 min")
 
-        machine = get_or_create_machine(db, machine_name)
+        machine = get_or_create_machine(db, route, machine_name)
 
         old_status = machine.status
         old_utilization = machine.utilization
@@ -161,6 +269,7 @@ def on_message(client, userdata, msg):
         if old_status != status:
             event = models.MachineEvent(
                 machine_id=machine.id,
+                tenant_code=machine.tenant_code,
                 machine_name=machine.name,
                 old_status=old_status,
                 new_status=status,
@@ -193,6 +302,7 @@ def on_message(client, userdata, msg):
                 and good_count + rejected_count == total_count):
             production = models.ProductionRecord(
                 machine_id=machine.id,
+                tenant_code=machine.tenant_code,
                 planned_minutes=planned_minutes,
                 runtime_minutes=runtime_minutes,
                 ideal_cycle_time_seconds=ideal_cycle_time_seconds,
@@ -211,6 +321,7 @@ def on_message(client, userdata, msg):
         if old_status != status and status == "Breakdown":
             downtime = models.DowntimeLog(
                 machine_id=machine.id,
+                tenant_code=machine.tenant_code,
                 reason="Breakdown",
                 duration=downtime_value,
                 notes="MQTT auto-generated downtime event",
@@ -225,6 +336,11 @@ def on_message(client, userdata, msg):
             "tenant_code": machine.tenant_code,
             "machine": {
                 "id": machine.id,
+                # Name alone does not identify a machine — three customers own a
+                # CNC-01. A consumer that filters or renders on name needs the
+                # site to tell two of one customer's plants apart, and the
+                # tenant_code above to tell customers apart.
+                "site": machine.site,
                 "name": machine.name,
                 "status": machine.status,
                 "utilization": machine.utilization,
@@ -256,6 +372,8 @@ def on_message(client, userdata, msg):
         log.info("FastAPI MQTT service error: %s", repr(e))
 
     finally:
+        if tenant_token is not None:
+            tenancy.reset_current_tenant(tenant_token)
         db.close()
 
 

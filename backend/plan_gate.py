@@ -20,6 +20,7 @@ import time
 import module_manifest
 from database import SessionLocal
 from platform_routes import get_or_create_config
+from auth import decode_token_optional
 from tenancy import DEFAULT_TENANT, effective_tenant, tenant_from_token
 
 # Route-prefix -> module pack, derived from the manifest (modules.json) so the
@@ -96,13 +97,17 @@ class PlanGateMiddleware:
                     token = parts[1].strip()
             elif key == b"x-tenant":
                 header_tenant = value.decode("latin-1").strip() or None
-        claim = tenant_from_token(token)
+        # Decode once and read both claims: the plan gate must evaluate the SAME
+        # tenant the ORM will bind, or a founder previewing a customer would be
+        # gated on the founder's plan while reading the customer's data.
+        claims = decode_token_optional(token) or {}
+        claim = claims.get("tenant")
         if claim is None:
             # Unauthenticated: let the auth layer produce its usual 401.
             await self.app(scope, receive, send)
             return
 
-        tenant = effective_tenant(claim, header_tenant) or DEFAULT_TENANT
+        tenant = effective_tenant(claim, header_tenant, claims.get("role")) or DEFAULT_TENANT
         packs = licensed_packs(tenant)
         if packs is None or pack in packs:
             await self.app(scope, receive, send)

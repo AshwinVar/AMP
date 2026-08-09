@@ -40,6 +40,12 @@ omit =
     phase30_plc_simulator.py
     mqtt_machine_publisher.py
     reseed_inventory.py
+    # Pre-commercial audit harnesses: run by hand against a disposable
+    # PostgreSQL database to produce evidence (tenant isolation, read-model
+    # latency at factory scale). Never imported by the app, and measuring them
+    # would count an operator tool against the application's floor.
+    audit_isolation.py
+    audit_perf.py
     # Alembic migration scripts: exercised by running a migration, not by the
     # unit suites, and each version file is dead the moment it has been applied.
     alembic/*

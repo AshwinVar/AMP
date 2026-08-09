@@ -182,12 +182,36 @@ def tenant_from_token(token):
     return payload.get("tenant") if payload else None
 
 
-def effective_tenant(claim_tenant, header_tenant):
-    """The tenant a request is scoped to. Only the founder workspace (a DEFAULT
-    claim) may preview another tenant via the X-Tenant header — that's how the
-    top-bar company switcher works. A client token always stays locked to its
-    own tenant: the header is ignored for every non-DEFAULT claim."""
-    if claim_tenant == DEFAULT_TENANT and header_tenant:
+def effective_tenant(claim_tenant, header_tenant, claim_role=None):
+    """The tenant a request is scoped to. Only a founder-workspace ADMIN may
+    preview another tenant via the X-Tenant header — that's how the top-bar
+    company switcher works. A client token always stays locked to its own
+    tenant: the header is ignored for every non-DEFAULT claim.
+
+    ROLE, NOT JUST WORKSPACE. This used to test the claim alone, so EVERY role
+    inside the founder DEFAULT workspace — an Operator demo login, a Supervisor
+    — could set one header and be scoped to any customer's factory. That is not
+    a read-only leak: the bound tenant drives the ADR-0002 filter for writes as
+    well, so the preview granted full read AND write over another tenant's
+    operational data. Measured before this fix, through the real middleware:
+
+        DEFAULT Operator   GET /customer-orders/export  X-Tenant: ACME
+            -> ACME's entire order book
+        DEFAULT Supervisor PATCH /machines/1/status?status=Breakdown  X-Tenant: ACME
+            -> 200; ACME's machine Running -> Breakdown, and a
+               MachineEvent(tenant_code='ACME') written
+
+    That last one is the one that matters: availability, downtime and OEE are
+    computed from those events, so a user with no business in that factory
+    silently corrupts its production truth.
+
+    This is the same class as the registry leak fixed in saas_routes._registry_scope
+    (#438) — that fix added `role == "Admin"` there and the operational path was
+    never brought in line. It is now.
+
+    Fail-closed: a token with no role claim is not an Admin, so no preview.
+    """
+    if claim_tenant == DEFAULT_TENANT and header_tenant and claim_role == "Admin":
         return header_tenant
     return claim_tenant
 
@@ -263,7 +287,13 @@ class TenantScopeMiddleware:
                     token = parts[1].strip()
             elif key == b"x-tenant":
                 header_tenant = value.decode("latin-1").strip() or None
-        reset = set_current_tenant(effective_tenant(tenant_from_token(token), header_tenant))
+        # Decode ONCE and read both claims from the same payload. Calling
+        # tenant_from_token and a separate role_from_token would verify the
+        # signature twice per request on a path the dashboard hits 46 times
+        # every 3 seconds, and would leave room for the two to disagree.
+        claims = decode_token_optional(token) or {}
+        reset = set_current_tenant(effective_tenant(
+            claims.get("tenant"), header_tenant, claims.get("role")))
         try:
             await self.app(scope, receive, send)
         finally:

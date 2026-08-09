@@ -37,18 +37,35 @@ from database import SessionLocal
 
 def _effective_tenant(current_user, requested):
     """The tenant a request may actually touch.
-    A DEFAULT (internal/founder) login may view any tenant it asks for;
-    a client login is locked to its own tenant regardless of what it requests."""
+
+    A founder-workspace ADMIN may view any tenant it asks for; everyone else is
+    locked to their own tenant regardless of what they request.
+
+    ROLE, NOT JUST WORKSPACE. This used to grant the `?tenant=` override to any
+    DEFAULT-workspace login, so an Operator demo account read — and a Supervisor
+    MUTATED — another customer's item master, rates and physical stock with a
+    one-word query parameter. Same class as the X-Tenant header hole in
+    tenancy.effective_tenant and the registry leak in saas_routes (#438).
+
+    Fail-closed: a token with no role claim is not an Admin."""
     jwt_tenant = (current_user.get("tenant") or "DEFAULT")
-    if jwt_tenant == "DEFAULT":
+    if jwt_tenant == "DEFAULT" and current_user.get("role") == "Admin":
         return requested or "GMATS"
+    if jwt_tenant == "DEFAULT":
+        return "GMATS"
     return jwt_tenant
 
 
 def _guard_record(current_user, record_tenant):
-    """Block a client from touching a record outside its own tenant (by guessing an id)."""
-    jwt_tenant = (current_user.get("tenant") or "DEFAULT")
-    if jwt_tenant != "DEFAULT" and record_tenant != jwt_tenant:
+    """Block anyone from touching a record outside the tenant they may act in.
+
+    Previously this returned early for every DEFAULT login, so a founder-workspace
+    Operator could reach ANY record by id with no tenant selector at all — the
+    by-id routes had no boundary whatsoever. The check is now expressed in terms
+    of the tenant the caller is actually allowed to act in, which is the same
+    answer _effective_tenant gives, so the two cannot disagree."""
+    allowed = _effective_tenant(current_user, record_tenant)
+    if record_tenant != allowed:
         raise HTTPException(status_code=403, detail="This record belongs to another company")
 
 

@@ -319,6 +319,40 @@ def test_the_gate_still_lets_real_work_through():
     check("...and the purchase order was not cancelled",
           po_status(db, pid) == "Draft", po_status(db, pid))
 
+    # A malformed actor must REFUSE, not raise. Measured in the final
+    # adversarial re-audit: passing the username as a bare string raised
+    # AttributeError from `.get`, which reaches a customer as a 500 with a
+    # stack trace rather than "not authenticated". No caller does this today;
+    # the point of this module is that it does not depend on that staying true.
+    aid, pid = propose(db)
+    tok = tenancy.set_current_tenant(None)
+    action = db.query(models.AgentAction).filter(models.AgentAction.id == aid).first()
+    for label, bad_actor in (("a bare string", "a-admin"),
+                             ("a list", ["a-admin"]),
+                             ("an int", 7)):
+        try:
+            approvals.authorise(db, action, bad_actor, "approve")
+            check(f"an actor that is {label} is refused", False, "ACCEPTED")
+        except HTTPException as e:
+            check(f"an actor that is {label} is refused cleanly",
+                  e.status_code in (401, 404), str(e.status_code))
+        except Exception as e:
+            check(f"an actor that is {label} is refused cleanly", False,
+                  f"{type(e).__name__} — a 500, not a refusal")
+    # ...and a tenant claim of the wrong TYPE is a 404, not a crash.
+    for label, bad_tenant in (("a list", ["FACTORY_A"]), ("an int", 1)):
+        try:
+            approvals.authorise(db, action, {"sub": "a-admin",
+                                             "tenant": bad_tenant}, "approve")
+            check(f"a tenant claim that is {label} is refused", False, "ACCEPTED")
+        except HTTPException as e:
+            check(f"a tenant claim that is {label} is refused cleanly",
+                  e.status_code == 404, str(e.status_code))
+        except Exception as e:
+            check(f"a tenant claim that is {label} is refused cleanly", False,
+                  f"{type(e).__name__} — a 500, not a refusal")
+    tenancy.reset_current_tenant(tok)
+
 
 def test_expiry_semantics():
     db = fresh_db()

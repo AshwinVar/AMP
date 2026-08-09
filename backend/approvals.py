@@ -169,8 +169,21 @@ def authorise(db, action, actor, decision, now=None, require_actor=True):
         raise ApprovalDenied(400, f"Unknown decision {decision!r}")
 
     if require_actor:
-        tenant = (actor or {}).get("tenant")
-        _check_tenant(action, tenant)
+        # An actor that is not a mapping is a caller bug, and it must still be
+        # a REFUSAL rather than an AttributeError from `.get`. Measured in the
+        # final adversarial re-audit: passing the username as a bare string
+        # raised AttributeError, which reaches a customer as a 500 with a stack
+        # trace instead of "not authenticated". No caller does this today --
+        # the route passes a dict -- but the whole reason this module exists is
+        # that a guard which only works for well-behaved callers is not a guard.
+        if actor is not None and not isinstance(actor, dict):
+            raise ApprovalDenied(401, "Not authenticated")
+        # No isinstance check on the tenant claim: a list, an int or False are
+        # all refused by _check_tenant already -- falsy ones by `not tenant`,
+        # truthy ones by inequality with a string column. A type check here
+        # mutation-tested as changing nothing, which makes it a comment wearing
+        # an if-statement.
+        _check_tenant(action, (actor or {}).get("tenant"))
     _check_state(action)
     _check_freshness(action, now)
     if require_actor:

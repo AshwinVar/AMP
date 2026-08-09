@@ -13,12 +13,27 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 import models
+import tenancy
 from database import Base
 import ai_copilot
 from analytics_engine import pooled_oee
 
 
 def _fresh_session():
+    """A private database AND a known tenant binding.
+
+    Binding the tenant is not decoration. Every row below is DEFAULT's, and
+    `_build_factory_context` reads through the ADR-0002 scoping hook, so if an
+    EARLIER suite in the same process left a different tenant bound and never
+    reset it, every query here returns nothing and the OEE assertions fail.
+
+    That is an order-dependent flake, and it was observed once in a full pytest
+    run before being reproduced deterministically: bind FACTORY_Z first and
+    this file fails; bind DEFAULT and it passes regardless of what ran before.
+    A test that depends on the tenant its predecessor happened to leave behind
+    is not testing the copilot.
+    """
+    tenancy.set_current_tenant("DEFAULT")
     engine = create_engine("sqlite://", connect_args={"check_same_thread": False})
     Base.metadata.create_all(bind=engine)
     return sessionmaker(bind=engine)()

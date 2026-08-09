@@ -14,6 +14,7 @@ Approve advances the item, reject cancels it. Five agents today:
 import os
 from datetime import datetime, timedelta
 
+import approvals
 import models
 from ai import prediction
 from events import (
@@ -96,9 +97,23 @@ def set_agent_policy(db, tenant, agent_keys) -> list:
     return keys
 
 
-def apply_decision(db, action, decision, decided_by=None) -> None:
+def apply_decision(db, action, decision, decided_by=None, actor=None,
+                   require_actor=True) -> None:
     """Approve or reject a proposed action, advancing or cancelling its item.
-    approve -> task Open / PO Approved; reject -> item Cancelled."""
+    approve -> task Open / PO Approved; reject -> item Cancelled.
+
+    THE GATE IS HERE, not only in the route. Measured before it was: calling
+    this function directly approved a purchase order with decided_by set to an
+    arbitrary string, and calling it a SECOND time flipped the AgentAction to
+    "Rejected" while the PO stayed "Approved" — an audit record contradicting
+    what the system actually did, which is worse than no audit record because it
+    is believed.
+
+    `require_actor=False` is the auto-approval path (AgentPolicy): a human made
+    the decision in advance, in writing, so there is no actor to verify — but
+    tenant, state and freshness are still checked.
+    """
+    approvals.authorise(db, action, actor, decision, require_actor=require_actor)
     approve = decision == "approve"
     action.status = "Approved" if approve else "Rejected"
     action.decided_by = decided_by
@@ -129,7 +144,11 @@ def _propose(db, tenant, agent, action_type, summary, ref_kind, ref_id,
     db.add(action)
     db.flush()
     if should_auto_approve(action, db):
-        apply_decision(db, action, "approve", decided_by="auto-policy")
+        # The tenant declared in advance that this agent may act unattended, so
+        # there is no human actor to verify — but the action must still be
+        # Proposed, in this tenant, and fresh.
+        apply_decision(db, action, "approve", decided_by="auto-policy",
+                       require_actor=False)
     else:
         # A human needs to decide — surface it in the notifications feed.
         db.add(models.Notification(

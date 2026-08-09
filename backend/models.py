@@ -2,6 +2,7 @@ import os
 from datetime import datetime
 from sqlalchemy import (Boolean, Column, Integer, String, ForeignKey, DateTime, Date,
                         Text, Float, UniqueConstraint)
+from sqlalchemy import true as sa_true
 from sqlalchemy.orm import relationship
 
 from database import Base
@@ -104,6 +105,15 @@ class User(Base):
     password = Column(String, nullable=False)
     role = Column(String, nullable=False)
     tenant_code = Column(String, default="DEFAULT", nullable=True)
+    # Whether this login may still act. There was no way to revoke access at all:
+    # auth.get_current_user decodes the JWT and performs no database lookup, so a
+    # DELETED user's token kept working until it expired on its own. Measured —
+    # a user removed from the database still approved a purchase order.
+    #
+    # Deliberately NOT enforced on every request (that would add a SELECT to each
+    # one). It is enforced at the boundaries where it matters: approving or
+    # rejecting an agent action, which moves money and material.
+    is_active = Column(Boolean, nullable=False, default=True, server_default=sa_true())
 
 
 class MachineEvent(Base):
@@ -445,10 +455,22 @@ class AgentAction(Base):
     ref_kind = Column(String, nullable=False)          # "maintenance_task" | "purchase_order"
     ref_id = Column(Integer, nullable=True)
     severity = Column(String, default="Medium")
-    status = Column(String, default="Proposed")        # Proposed | Approved | Rejected
+    # Proposed | Approved | Rejected | Expired | Cancelled
+    #
+    # Expired and Cancelled are new. Before them the only way an action left the
+    # queue was a human decision, so a proposal made a year ago was still
+    # approvable — measured: a 400-day-old draft PO was approved and advanced.
+    # A recommendation is evidence about a moment; acting on it much later is
+    # acting on a fact that has probably stopped being true.
+    status = Column(String, default="Proposed")
     related_machine_id = Column(Integer, nullable=True)
     decided_by = Column(String, nullable=True)
     decided_at = Column(DateTime, nullable=True)
+    # After this instant the proposal may no longer be acted on. Nullable so a
+    # row written before this column existed (or by a path that declines to set
+    # it) is treated as "no explicit expiry" and falls back to the age limit in
+    # approvals.py — a NULL must not mean "never expires".
+    expires_at = Column(DateTime, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow, index=True)
 
 

@@ -19,7 +19,23 @@ import ai.agents as agents
 def _fresh_session():
     engine = create_engine("sqlite://", connect_args={"check_same_thread": False})
     Base.metadata.create_all(bind=engine)
-    return sessionmaker(bind=engine)()
+    db = sessionmaker(bind=engine)()
+    # The two humans who decide agent actions below. They have to be real rows:
+    # apply_decision now runs approvals.authorise first, which verifies the
+    # approver against the DATABASE (exists, active, right tenant, approving
+    # role) rather than trusting whatever the caller passed.
+    db.add_all([
+        models.User(username="alice", password="x", role="Admin",
+                    tenant_code="DEFAULT", is_active=True),
+        models.User(username="bob", password="x", role="Supervisor",
+                    tenant_code="DEFAULT", is_active=True),
+    ])
+    db.commit()
+    return db
+
+
+def _actor(username, tenant="DEFAULT"):
+    return {"sub": username, "tenant": tenant}
 
 
 def _completed(machine_id):
@@ -100,13 +116,15 @@ def test_approve_and_reject_agent_actions():
     db.commit()
 
     task_action = db.query(models.AgentAction).filter_by(id=1).first()
-    agents.apply_decision(db, task_action, "approve", decided_by="alice")
+    agents.apply_decision(db, task_action, "approve", decided_by="alice",
+                          actor=_actor("alice"))
     db.commit()
     assert task_action.status == "Approved" and task_action.decided_by == "alice"
     assert db.query(models.MaintenanceTask).filter_by(id=1).first().status == "Open"   # task went live
 
     po_action = db.query(models.AgentAction).filter_by(id=2).first()
-    agents.apply_decision(db, po_action, "reject", decided_by="bob")
+    agents.apply_decision(db, po_action, "reject", decided_by="bob",
+                          actor=_actor("bob"))
     db.commit()
     assert po_action.status == "Rejected"
     assert db.query(models.PurchaseOrder).filter_by(id=1).first().status == "Cancelled"  # PO cancelled

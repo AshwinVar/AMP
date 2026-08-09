@@ -38,15 +38,51 @@ def _count(db, model, tenant):
         reset_current_tenant(token)
 
 
+def test_only_a_founder_ADMIN_may_preview_another_tenant():
+    """The X-Tenant company switcher is an ADMIN capability, not a workspace one.
+
+    THE HOLE THIS PINS. effective_tenant tested the claim alone, so every role in
+    the founder DEFAULT workspace could set one header and be scoped to any
+    customer's factory. The bound tenant drives the ADR-0002 filter for WRITES as
+    well as reads, so this was not a read-only leak. Measured through the real
+    middleware before the fix:
+
+        DEFAULT Operator   GET /customer-orders/export  X-Tenant: ACME
+            -> ACME's entire order book
+        DEFAULT Supervisor PATCH /machines/1/status?status=Breakdown  X-Tenant: ACME
+            -> 200; ACME's machine Running -> Breakdown, MachineEvent stamped ACME
+
+    Availability, downtime and OEE are computed from those events, so a user with
+    no business in that factory could silently corrupt its production truth.
+
+    Same class as the registry leak fixed in saas_routes._registry_scope (#438),
+    which added a role check there and left the operational path behind.
+    """
+    # The capability: a founder ADMIN still previews, or the switcher is dead.
+    assert effective_tenant("DEFAULT", "APEX", "Admin") == "APEX"
+    assert effective_tenant("DEFAULT", "GMATS", "Admin") == "GMATS"
+
+    # The hole: every lesser role in the founder workspace stays home.
+    for role in ("Operator", "Supervisor", "Viewer", "", None):
+        assert effective_tenant("DEFAULT", "APEX", role) == "DEFAULT", role
+
+    # Fail-closed on a token carrying no role claim at all.
+    assert effective_tenant("DEFAULT", "APEX") == "DEFAULT"
+    print("PASS only a founder ADMIN may preview another tenant")
+
+
 def test_effective_tenant_matrix():
-    # founder (DEFAULT claim) may preview any tenant via the header
-    assert effective_tenant("DEFAULT", "APEX") == "APEX"
-    assert effective_tenant("DEFAULT", "GMATS") == "GMATS"
-    # no header → everyone stays on their claim
-    assert effective_tenant("DEFAULT", None) == "DEFAULT"
-    assert effective_tenant("GMATS", None) == "GMATS"
+    # founder ADMIN may preview any tenant via the header
+    assert effective_tenant("DEFAULT", "APEX", "Admin") == "APEX"
+    assert effective_tenant("DEFAULT", "GMATS", "Admin") == "GMATS"
+    # no header -> everyone stays on their claim
+    assert effective_tenant("DEFAULT", None, "Admin") == "DEFAULT"
+    assert effective_tenant("GMATS", None, "Admin") == "GMATS"
     # a client token can never escape its tenant via the header
     assert effective_tenant("GMATS", "DEFAULT") == "GMATS"
+    # CONTROL: role does not help a CLIENT token escape — a client Admin is
+    # an admin of its own factory, not of the platform.
+    assert effective_tenant("GMATS", "APEX", "Admin") == "GMATS"
     assert effective_tenant("GMATS", "APEX") == "GMATS"
     assert effective_tenant("APEX", "GMATS") == "APEX"
     # unauthenticated (no claim) is never granted a preview
@@ -361,6 +397,7 @@ def test_sim_diagnostics_founder_only():
 
 
 if __name__ == "__main__":
+    test_only_a_founder_ADMIN_may_preview_another_tenant()
     test_effective_tenant_matrix()
     test_seed_scopes_to_new_tenant_only()
     test_two_tenants_can_seed_in_the_same_database()

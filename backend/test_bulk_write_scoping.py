@@ -34,6 +34,11 @@ BACKEND = os.path.dirname(os.path.abspath(__file__))
 # Files that are one-shot operator scripts run by hand against a chosen database
 # (never mounted on the API), so a request tenant does not exist for them.
 SKIP_FILES = {
+    # Audit harness, never mounted on the API. It deliberately performs an
+    # unguarded bulk UPDATE to MEASURE that the ADR-0002 hook scopes SELECTs
+    # only — the very property this file is the control for. Its writes are
+    # confined to the three disposable FACTORY_* audit tenants.
+    "audit_isolation.py",
     "reseed_inventory.py",   # local dev reseed
     "reset_factory.py",      # founder's factory reset (RESEED_FACTORY=1)
     "offboard_tenant.py",    # purge — filters cls.tenant_code == code itself

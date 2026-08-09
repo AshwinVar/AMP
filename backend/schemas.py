@@ -223,7 +223,17 @@ class WorkOrderResponse(BaseModel):
     work_order_no: str
     part_number: str
     batch_number: str
-    machine_id: int
+    # WorkOrder.machine_id is Column(Integer, ForeignKey(...)) — NULLABLE, and
+    # legitimately so: an order is planned before a machine is assigned to it.
+    # Typed `int`, ONE unassigned work order raised ResponseValidationError and
+    # 500'd the ENTIRE GET /work-orders list — not just its own row. Found by the
+    # OEM adversarial audit, whose fixture created work orders the ordinary way.
+    #
+    # Optional, NOT coalesced to 0: there is no machine 0, and inventing one
+    # would point the scheduling views at a machine that does not exist. Same
+    # NULL-response class as ProductionPlanResponse.planned_quantity and
+    # MachineResponse.utilization (#375) — this model was missed.
+    machine_id: Optional[int] = None
     target_quantity: int
     actual_quantity: int
     status: str

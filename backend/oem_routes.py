@@ -17,7 +17,9 @@ from sqlalchemy.orm import Session
 
 import models
 import oem_auth
+import oem_service
 import oem_sharing
+import oem_telemetry
 from database import SessionLocal
 
 router = APIRouter(prefix="/oem", tags=["OEM"])
@@ -182,6 +184,81 @@ def sharing_summary(db: Session = Depends(_get_db),
         "available": list(oem_sharing.ALL_GRANTS),
     } for t in tenants],
         "grant_labels": oem_sharing.GRANT_LABELS}
+
+
+@router.get("/service")
+def service_queue(db: Session = Depends(_get_db),
+                  principal: dict = Depends(oem_auth.require_oem("read_fleet"))):
+    """The service queue: every recommendation across this manufacturer's fleet.
+
+    Built from the installations `oem_sharing` returns, so the oem_code filter
+    lives in ONE place rather than being re-implemented here — a second copy of a
+    security filter is a second chance to get it subtly wrong.
+
+    Service position comes from the OEM's OWN records (serial, hours it reported,
+    the interval on its own model), so it needs no grant from the factory. What a
+    grant controls is the FACTORY's data — status, utilisation — which is why a
+    recommendation never quotes them.
+    """
+    rows = oem_sharing.installations_for(db, principal["oem"])
+    catalogue = _models_by_id(db, principal["oem"])
+    recs = oem_service.fleet_recommendations(db, principal["oem"], rows, catalogue)
+    by_severity = {}
+    for r in recs:
+        by_severity[r["severity"]] = by_severity.get(r["severity"], 0) + 1
+    return {"total": len(recs), "by_severity": by_severity,
+            "recommendations": recs}
+
+
+@router.get("/machines/{installation_id}/service")
+def machine_service(installation_id: int, db: Session = Depends(_get_db),
+                    principal: dict = Depends(oem_auth.require_oem("read_fleet"))):
+    """Service, warranty and commissioning position for one machine."""
+    inst = oem_sharing.get_installation(db, principal["oem"], installation_id)
+    if inst is None:
+        raise HTTPException(status_code=404, detail="Machine not found")
+    model = _models_by_id(db, principal["oem"]).get(inst.model_id)
+    try:
+        profile = oem_telemetry.parse(getattr(model, "telemetry_profile", None))
+        profile_error = None
+    except oem_telemetry.ProfileError as e:
+        # A broken profile is REPORTED, not swallowed into "no signals": a
+        # corrupted configuration otherwise looks like a machine that reports
+        # nothing, and somebody spends a day chasing a healthy gateway.
+        profile, profile_error = [], str(e)
+    return {
+        "installation_id": inst.id,
+        "serial_number": inst.serial_number,
+        "lifecycle_status": inst.status,
+        "service": oem_service.service_state(inst, model),
+        "warranty": oem_service.warranty_state(inst),
+        "commissioning": oem_service.commissioning_report(inst, model, profile),
+        "telemetry_signals": [s["name"] for s in profile],
+        "telemetry_profile_error": profile_error,
+        "recommendations": oem_service.recommendations(inst, model),
+    }
+
+
+@router.get("/models/{model_id}/telemetry")
+def model_telemetry(model_id: int, db: Session = Depends(_get_db),
+                    principal: dict = Depends(oem_auth.require_oem("read_fleet"))):
+    """The telemetry profile for one of this manufacturer's models.
+
+    Filtered by oem_code, so a competitor's model id is a 404 for the same reason
+    a competitor's installation id is: a 403 would confirm it exists.
+    """
+    model = (db.query(models.MachineModel)
+               .filter(models.MachineModel.oem_code == principal["oem"],
+                       models.MachineModel.id == model_id).first())
+    if model is None:
+        raise HTTPException(status_code=404, detail="Model not found")
+    try:
+        return {"model_id": model.id, "model_code": model.model_code,
+                "signals": oem_telemetry.parse(model.telemetry_profile),
+                "error": None}
+    except oem_telemetry.ProfileError as e:
+        return {"model_id": model.id, "model_code": model.model_code,
+                "signals": [], "error": str(e)}
 
 
 def register(app):

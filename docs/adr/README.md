@@ -21,6 +21,7 @@ Guiding principles: incremental (strangler) evolution, never a rewrite; backward
 | [0013](0013-per-tenant-bill-of-materials.md) | A bill of materials belongs to a tenant, and lives in the database | Accepted |
 | [0014](0014-canonical-oee-contract.md) | One canonical OEE contract, and an honesty rule | Accepted |
 | [0015](0015-server-side-approval-gate.md) | The backend is authoritative about approvals | Accepted |
+| [0016](0016-authenticated-live-websocket.md) | The live WebSocket authenticates before it accepts | Accepted |
 
 **Recommended order:** 0001 first (smaller, proves the pattern; events carry `tenant_code`), then 0002.
 

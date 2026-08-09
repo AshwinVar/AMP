@@ -29,6 +29,7 @@ from mqtt_service import start_mqtt_service
 import models
 import schemas
 import tenancy
+import ws_auth
 import sim_state
 import onboard_tenant
 import offboard_tenant
@@ -537,13 +538,42 @@ def get_db():
 @app.websocket("/ws/live")
 async def websocket_live_dashboard(websocket: WebSocket):
     # Authenticate the live feed by the JWT passed as ?token= (browsers can't set
-    # WS auth headers). The connection then only receives its own tenant's updates.
-    tenant = tenancy.tenant_from_token(websocket.query_params.get("token"))
-    await manager.connect(websocket, tenant)
+    # WS auth headers), BEFORE accepting. This used to accept every connection
+    # and merely bind the decoded tenant, so a missing, forged or expired token
+    # still got an open socket, and a DELETED user's token still bound to their
+    # factory and streamed its telemetry (ADR-0016).
+    db = SessionLocal()
+    try:
+        tenant = ws_auth.resolve(db, websocket.query_params.get("token"))
+    except ws_auth.WsDenied as denied:
+        # close() without accept() is the ASGI refusal: the handshake never
+        # completes, so there is no socket to leak or to account for.
+        await websocket.close(code=denied.code, reason=denied.reason)
+        log.info("WebSocket refused (%s): %s", denied.code, denied.reason)
+        return
+    finally:
+        db.close()
+
+    if not await manager.connect(websocket, tenant):
+        await websocket.close(code=ws_auth.REFUSED, reason="No workspace")
+        return
     try:
         await websocket.send_json({"event": "connected", "message": "AMP live WebSocket connected"})
         while True:
-            await asyncio.sleep(30)
+            # The server has no inbound protocol: the feed is one-way. Race the
+            # heartbeat against a client frame so an unexpected frame is
+            # REFUSED rather than merely ignored -- "the server never reads" is
+            # fail-closed by accident, and an accident is not a contract.
+            receive = asyncio.ensure_future(websocket.receive())
+            done, _ = await asyncio.wait({receive}, timeout=30)
+            if receive in done:
+                message = receive.result()
+                if message.get("type") == "websocket.disconnect":
+                    break
+                await websocket.close(code=ws_auth.NO_CLIENT_FRAMES,
+                                      reason="This feed accepts no client messages")
+                break
+            receive.cancel()
             try:
                 await websocket.send_json({"event": "heartbeat", "message": "alive"})
             except Exception:

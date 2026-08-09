@@ -51,6 +51,12 @@ class FakeSocket {
     this.readyState = 3;
     this.onclose?.({ code: 1006 });
   }
+
+  /** Server REFUSED the connection (backend/ws_auth.py close codes). */
+  refuse(code: number) {
+    this.readyState = 3;
+    this.onclose?.({ code });
+  }
 }
 
 const latest = () => FakeSocket.instances[FakeSocket.instances.length - 1];
@@ -296,5 +302,44 @@ describe("connectLiveSocket", () => {
     // anonymous handshake.
     expect(latest().url).not.toContain("token=");
     expect(latest().url).toContain("/ws/live");
+  });
+
+  // The backend now refuses a connection it cannot authenticate, instead of
+  // accepting every socket and binding whatever tenant it could decode
+  // (ADR-0016). Retrying a refusal cannot succeed: the same token will be
+  // refused again. Without this the retry schedule turns every revoked session
+  // into a request every 30 seconds, forever.
+  it.each([
+    [4400, "the server accepts no client frames"],
+    [4401, "the token is missing, malformed or expired"],
+    [4403, "the account is gone, disabled, or in another workspace"],
+  ])("stops retrying when the server refuses with %i (%s)", async (code) => {
+    const onStatus = vi.fn();
+    connectLiveSocket(vi.fn(), onStatus);
+    latest().open();
+    onStatus.mockClear();
+
+    latest().refuse(code);
+
+    expect(onStatus).toHaveBeenCalledWith("refused");
+    expect(onStatus).not.toHaveBeenCalledWith("disconnected");
+    await vi.advanceTimersByTimeAsync(120_000);
+    expect(FakeSocket.instances).toHaveLength(1);
+  });
+
+  it("still retries a genuine drop, so a refusal is not a blanket give-up", async () => {
+    // CONTROL for the three cases above. Each of them is equally satisfied by a
+    // client that never reconnects at all, which is the bug #400 fixed.
+    const onStatus = vi.fn();
+    connectLiveSocket(vi.fn(), onStatus);
+    latest().open();
+    onStatus.mockClear();
+
+    latest().drop();
+
+    expect(onStatus).toHaveBeenCalledWith("disconnected");
+    expect(onStatus).not.toHaveBeenCalledWith("refused");
+    await vi.advanceTimersByTimeAsync(2_000);
+    expect(FakeSocket.instances).toHaveLength(2);
   });
 });

@@ -421,7 +421,7 @@ export default function DashboardPage() {
   });
 
   const [liveStatus, setLiveStatus] = useState<
-    "connected" | "disconnected" | "error"
+    "connected" | "disconnected" | "error" | "refused"
   >("disconnected");
   const [lastLiveEvent, setLastLiveEvent] = useState(
     "Waiting for live events..."
@@ -2201,7 +2201,7 @@ export default function DashboardPage() {
           className={`px-3 py-1 rounded-full text-sm border w-fit ${
             liveStatus === "connected"
               ? "border-green-500/40 text-green-400 bg-green-500/10"
-              : liveStatus === "error"
+              : liveStatus === "error" || liveStatus === "refused"
               ? "border-red-500/40 text-red-400 bg-red-500/10"
               : "border-yellow-500/40 text-yellow-300 bg-yellow-500/10"
           }`}

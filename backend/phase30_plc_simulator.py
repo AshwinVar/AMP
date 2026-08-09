@@ -1,11 +1,18 @@
 import json
+import os
 import random
 import time
 import paho.mqtt.client as mqtt
 
 BROKER = "127.0.0.1"
 PORT = 1883
-TOPIC = "flowmes/machines"
+# A gateway publishes to ONE tenant's topic, because the tenant is a segment of
+# the topic and a broker ACL is what makes it trustworthy (see mqtt_identity).
+# Override with MQTT_TENANT / MQTT_SITE to simulate a different customer or
+# plant; "-" is the wire spelling of "no site".
+TENANT = os.environ.get("MQTT_TENANT", "DEFAULT")
+SITE = os.environ.get("MQTT_SITE", "-")
+TOPIC = f"{os.environ.get('MQTT_TOPIC_PREFIX', 'flowmes')}/{TENANT}/{SITE}/machines"
 
 MACHINES = ["CNC-01", "CNC-02", "Laser-Cutter-01", "Packaging-01", "Assembly-Robot-01"]
 

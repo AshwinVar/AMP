@@ -22,8 +22,15 @@ import mqtt_service
 from database import Base
 
 
+# Every packet must be addressed to a provisioned tenant before on_message will
+# process it at all — routing happens before any of the ingest behaviour these
+# tests cover. See test_mqtt_tenant_identity.py for the routing rules themselves.
+_TENANT = "SERVICE_TEST"
+_TOPIC = f"flowmes/{_TENANT}/-/machines"
+
+
 class _Msg:
-    topic = "flowmes/machines"
+    topic = _TOPIC
 
     def __init__(self, payload):
         self.payload = json.dumps(payload).encode()
@@ -33,6 +40,10 @@ def _setup():
     engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
     Base.metadata.create_all(engine)
     mqtt_service.SessionLocal = sessionmaker(bind=engine)
+    db = mqtt_service.SessionLocal()
+    db.add(models.TenantConfig(tenant_code=_TENANT))
+    db.commit()
+    db.close()
     mqtt_service.safe_broadcast = lambda event: None   # no websocket in a unit test
     return mqtt_service.SessionLocal
 
@@ -209,7 +220,7 @@ def test_infinite_count_skips_production_and_still_logs_the_breakdown():
     _send("Running")     # created Idle -> Running (baseline transition)
 
     class _RawMsg:
-        topic = "flowmes/machines"
+        topic = _TOPIC
         payload = (
             b'{"machine": "PRESS-01", "status": "Breakdown", "downtime": "30 min", '
             b'"total_count": Infinity, "good_count": 5, "rejected_count": 5}'

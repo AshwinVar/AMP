@@ -165,6 +165,12 @@ def _ensure_index(table: str, column: str):
 
 _ensure_user_tenant_column()
 _ensure_column("machines", "line", "ALTER TABLE machines ADD COLUMN line VARCHAR DEFAULT ''")
+# Half of a machine's identity (tenant, site, name) — see alembic 0002. Added at
+# boot as well as by the migration because the app can start before the release
+# command's migrate step has run, and every Machine query selects this column;
+# a missing column is a 500 on the dashboard, not a degraded feature. The
+# migration owns the UNIQUE constraint, which cannot be expressed here.
+_ensure_column("machines", "site", "ALTER TABLE machines ADD COLUMN site VARCHAR DEFAULT ''")
 _ensure_column("work_orders", "material_state", "ALTER TABLE work_orders ADD COLUMN material_state VARCHAR DEFAULT 'RAW'")
 _ensure_column("work_orders", "completed_at", "ALTER TABLE work_orders ADD COLUMN completed_at TIMESTAMP")
 _backfill_completed_at()

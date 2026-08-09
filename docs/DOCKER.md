@@ -200,7 +200,7 @@ time you genuinely want a rebuild, and never put it in `docker-compose.yml`.
 With the stack up, publish a machine reading from the host and watch it land:
 
 ```bash
-mosquitto_pub -h localhost -p 1883 -t flowmes/machines \
+mosquitto_pub -h localhost -p 1883 -t flowmes/DEFAULT/-/machines \
   -m '{"machine":"SMT-1","status":"Running","utilization":72,
        "total_count":100,"good_count":97,"rejected_count":3}'
 
@@ -210,7 +210,7 @@ docker compose logs -f backend    # look for "DB UPDATED -> SMT-1"
 No local `mosquitto_pub`? Use the broker container's own client:
 
 ```bash
-docker compose exec mosquitto mosquitto_pub -t flowmes/machines -m '{"machine":"SMT-1","status":"Breakdown"}'
+docker compose exec mosquitto mosquitto_pub -t flowmes/DEFAULT/-/machines -m '{"machine":"SMT-1","status":"Breakdown"}'
 ```
 
 This is the first time that path has been runnable off the deployed box. It is

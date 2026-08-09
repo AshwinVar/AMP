@@ -129,7 +129,10 @@ services:
       # mqtt_service.py reads all three at import.
       MQTT_BROKER: mosquitto
       MQTT_PORT: "1883"
-      MQTT_TOPIC: flowmes/machines
+      MQTT_TOPIC_PREFIX: flowmes
+      # The compose stack has no real gateways; DEFAULT owns the old topic so a
+      # hand-published test message still lands somewhere sensible.
+      MQTT_LEGACY_TENANT: DEFAULT
 
       # Which tenants the 45-second simulation loop animates (sim_state.py).
       # DEFAULT alone keeps the local box quiet; add GMATS to exercise both.

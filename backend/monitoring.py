@@ -366,8 +366,18 @@ def _mqtt_health(db, db_reachable: bool) -> dict:
         # factory, and monitoring must never be the reason the application fails
         # to boot. Using mqtt_service's own constants rather than re-reading the
         # environment keeps one source of truth for the broker defaults.
+        import mqtt_identity
         import mqtt_service
-        broker, port, topic = mqtt_service.MQTT_BROKER, mqtt_service.MQTT_PORT, mqtt_service.TOPIC
+        broker, port = mqtt_service.MQTT_BROKER, mqtt_service.MQTT_PORT
+        # The subscription is a LIST of filters now, not one topic: the tenant
+        # and site are segments of it, so ingest listens on a wildcard plus an
+        # optional legacy topic. Reported as the joined filters because "which
+        # topics is this deployment actually listening on" is the operational
+        # question, and a deployment that has not configured MQTT_LEGACY_TENANT
+        # is deaf to the old single-tenant topic — visible here rather than
+        # discovered when telemetry stops arriving.
+        topic = ", ".join(mqtt_identity.topic_filters(
+            mqtt_service.TOPIC_PREFIX, mqtt_service.LEGACY_TENANT))
     except Exception:
         importable = False
 

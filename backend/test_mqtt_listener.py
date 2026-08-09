@@ -31,8 +31,14 @@ import mqtt_listener
 from database import Base
 
 
+# on_message resolves the owning tenant from the TOPIC and drops anything it
+# cannot attribute, so a packet has to be addressed to a provisioned tenant
+# before any of the canonicalisation below is even reached.
+_TENANT = "LISTENER_TEST"
+
+
 class _Msg:
-    topic = "flowmes/machines"
+    topic = f"flowmes/{_TENANT}/-/machines"
 
     def __init__(self, payload):
         self.payload = json.dumps(payload).encode()
@@ -59,6 +65,10 @@ def test_handler_canonicalises_status_clamps_utilization_and_broadcasts():
     )
     Base.metadata.create_all(engine)
     mqtt_service.SessionLocal = sessionmaker(bind=engine)
+    db = mqtt_service.SessionLocal()
+    db.add(models.TenantConfig(tenant_code=_TENANT))
+    db.commit()
+    db.close()
     broadcasts = []
     mqtt_service.safe_broadcast = lambda event: broadcasts.append(event)
 
@@ -72,6 +82,7 @@ def test_handler_canonicalises_status_clamps_utilization_and_broadcasts():
     db.close()
 
     assert machine is not None
+    assert machine.tenant_code == _TENANT, machine.tenant_code   # routed, not DEFAULT
     assert machine.status == "Running", machine.status          # canonicalised, not raw "running"
     assert machine.utilization == 100, machine.utilization      # clamped into [0, 100]
     assert len(broadcasts) == 1, broadcasts                     # broadcast fired (NameError gone)

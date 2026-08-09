@@ -51,6 +51,16 @@ SKIP_FILES = {
     # column is nullable (see retention.py) — so it can never delete rows a
     # tenant-scoped read would have hidden.
     "retention.py",
+    # OEM fleet performance harness (ADR-0017). Never mounted on the API: it
+    # builds and tears down its OWN fleet in a disposable scratch database, and
+    # the tables it wipes (machine_installations, machine_models,
+    # oem_organizations, oem_data_sharing_policies) are keyed by `oem_code`, not
+    # `tenant_code` — there is no tenant filter to add, because these rows have
+    # no owning tenant. It refuses to run on anything but a scratch PostgreSQL.
+    "oem_perf.py",
+    # Two-OEM / three-factory adversarial audit. Same category: it seeds and
+    # attacks a disposable database and is never served.
+    "audit_oem_adversarial.py",
 }
 
 # Bulk writes that carry NO tenant_code of their own but are safe because the

@@ -15,7 +15,10 @@ What this proves, on PostgreSQL 18.3:
      still share a serial;
   4. the sharing-policy uniqueness is enforced by the database;
   5. the whole foundation suite is green on this engine;
-  6. downgrade() removes the OEM layer and leaves the factory schema intact.
+  6. migration 0007 adds the service clock to a table that ALREADY HAS ROWS,
+     leaves those rows NULL rather than inventing a service that never happened,
+     and reverses without destroying an installation;
+  7. downgrade() removes the OEM layer and leaves the factory schema intact.
 
 Run: python backend/verify_pg_oem.py [port]
 """
@@ -177,8 +180,61 @@ def main():
     check(f"test_oem_foundation.py green on PostgreSQL ({passed} assertions)",
           r.returncode == 0, r.stdout[-900:])
 
-    # --- 5. it reverses ------------------------------------------------------
-    print("\n5. THE MIGRATION REVERSES")
+    # --- 5. migration 0007, against rows that already exist ------------------
+    #
+    # 0006 creates machine_installations and 0007 adds two columns to it, so a
+    # plain `upgrade head` never exercises the case that matters: adding those
+    # columns to a table that is ALREADY FULL. Section 3 filled it, so step back
+    # one revision and forward again — that is the real deployment order.
+    print("\n5. THE SERVICE CLOCK (0007) LANDS ON A POPULATED TABLE")
+    with engine.begin() as c:
+        rows_before = c.execute(text("SELECT count(*) FROM machine_installations")).scalar()
+    check("installations exist before 0007 is re-applied", rows_before >= 2, str(rows_before))
+
+    r = subprocess.run([sys.executable, "-m", "alembic", "downgrade", "0006_oem_foundation"],
+                       cwd=HERE, env=env, capture_output=True, text=True, errors="replace")
+    check("alembic downgrade 0006", r.returncode == 0, r.stderr[-400:])
+    with engine.begin() as c:
+        cols = {r[0] for r in c.execute(text(
+            "SELECT column_name FROM information_schema.columns "
+            "WHERE table_name='machine_installations'"))}
+        check("downgrade removed BOTH service-clock columns",
+              "last_service_hours" not in cols and "last_service_at" not in cols,
+              str(sorted(cols)))
+        kept = c.execute(text("SELECT count(*) FROM machine_installations")).scalar()
+        check("...and dropping them destroyed no installation", kept == rows_before,
+              f"{rows_before} -> {kept}")
+
+    r = subprocess.run([sys.executable, "-m", "alembic", "upgrade", "head"],
+                       cwd=HERE, env=env, capture_output=True, text=True, errors="replace")
+    check("alembic upgrade head (0007 re-applied)", r.returncode == 0, r.stderr[-400:])
+    with engine.begin() as c:
+        meta = {r[0]: r[1] for r in c.execute(text(
+            "SELECT column_name, is_nullable FROM information_schema.columns "
+            "WHERE table_name='machine_installations' "
+            "AND column_name IN ('last_service_hours','last_service_at')"))}
+        check("both service-clock columns are back", len(meta) == 2, str(meta))
+        # NULLABLE is the whole design: NOT NULL would need a default, and every
+        # candidate default is a lie -- 0 claims the machine was serviced at zero
+        # hours, `operating_hours` claims it was serviced just now.
+        check("both are NULLABLE",
+              set(meta.values()) == {"YES"}, str(meta))
+        nulls = c.execute(text(
+            "SELECT count(*) FROM machine_installations "
+            "WHERE last_service_hours IS NULL AND last_service_at IS NULL")).scalar()
+        check("NO BACKFILL: every pre-existing row reads NULL, not an invented service",
+              nulls == rows_before, f"{nulls} of {rows_before}")
+        # CONTROL: prove the column can actually HOLD a value, so the NULLs above
+        # are the migration's choice and not a column nothing can be written to.
+        c.execute(text("UPDATE machine_installations SET last_service_hours = 1500 "
+                       "WHERE serial_number = 'SN-0001' AND oem_code = 'OEM_ALPHA'"))
+        wrote = c.execute(text(
+            "SELECT last_service_hours FROM machine_installations "
+            "WHERE serial_number='SN-0001' AND oem_code='OEM_ALPHA'")).scalar()
+        check("CONTROL: a service reading can be recorded", float(wrote) == 1500.0, str(wrote))
+
+    # --- 6. it reverses ------------------------------------------------------
+    print("\n6. THE MIGRATION REVERSES")
     r = subprocess.run([sys.executable, "-m", "alembic", "downgrade", "0005_approval_gate"],
                        cwd=HERE, env=env, capture_output=True, text=True, errors="replace")
     check("alembic downgrade 0005", r.returncode == 0, r.stderr[-400:])

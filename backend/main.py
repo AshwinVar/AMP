@@ -28,6 +28,7 @@ from mqtt_service import start_mqtt_service
 
 import models
 import schemas
+import connected_equipment_routes
 import oem_routes
 import tenancy
 import ws_auth
@@ -317,6 +318,11 @@ app.include_router(core_routes.router)
 # principal, which binds a SENTINEL factory tenant, so these handlers cannot
 # reach a customer's operational data even if one of them forgets to filter.
 app.include_router(oem_routes.router)
+
+# Register the factory's own view of its connected equipment (ADR-0017) — which
+# machines came from an OEM, and exactly what that OEM can see about them. A
+# consent control nobody can read is not consent.
+app.include_router(connected_equipment_routes.router)
 
 # Register the AI Factory Copilot behind the platform (off until ANTHROPIC_API_KEY is set).
 ai.copilot.register(app)

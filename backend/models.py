@@ -1127,6 +1127,17 @@ class MachineInstallation(Base):
     # Operating hours as last reported — the OEM's service clock. NULL means
     # never reported, which is a different fact from zero.
     operating_hours = Column(Float, nullable=True)
+    # The hours reading at the LAST COMPLETED SERVICE. NULL means never serviced.
+    #
+    # This column exists because the obvious shortcut is wrong. Deriving hours
+    # since service as `operating_hours % service_interval` silently ASSUMES
+    # every service happened exactly on schedule, so a machine at 2,100 h that
+    # was never touched reports "1,900 h remaining" instead of "100 h OVERDUE".
+    # Under that scheme `overdue` was unreachable — the state existed and could
+    # never occur. Measured against a 2,000 h interval before this column was
+    # added.
+    last_service_hours = Column(Float, nullable=True)
+    last_service_at = Column(DateTime, nullable=True)
     last_seen_at = Column(DateTime, nullable=True)
     firmware_version = Column(String, nullable=True)
 

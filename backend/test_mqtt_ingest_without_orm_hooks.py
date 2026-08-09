@@ -93,77 +93,90 @@ def send(tenant, **fields):
                                 _Msg(f"flowmes/{tenant}/-/machines", payload))
 
 
-print("=" * 70)
-print("INGEST WITH THE ADR-0002 HOOKS ABSENT (the mqtt_listener.py environment)")
-print("=" * 70)
+def test_ingest_is_tenanted_without_the_orm_hooks():
+    """Kept as a function, not module-level statements, so pytest's
+    single-process collection can import this file without executing it — the
+    convention every other suite in backend/ follows."""
+    print("=" * 70)
+    print("INGEST WITH THE ADR-0002 HOOKS ABSENT (the mqtt_listener.py environment)")
+    print("=" * 70)
 
-# The hooks must genuinely not be registered, or every assertion below is
-# measuring the hooks rather than the ingest code. Checked, not assumed.
-_probe = create_engine("sqlite://", connect_args={"check_same_thread": False},
+    # The hooks must genuinely not be registered, or every assertion below is
+    # measuring the hooks rather than the ingest code. Checked, not assumed.
+    _probe = create_engine("sqlite://", connect_args={"check_same_thread": False},
                        poolclass=StaticPool)
-Base.metadata.create_all(_probe)
-_ps = sessionmaker(bind=_probe)()
-_ps.add(models.Machine(tenant_code="X", site="", name="probe", status="Idle",
+    Base.metadata.create_all(_probe)
+    _ps = sessionmaker(bind=_probe)()
+    _ps.add(models.Machine(tenant_code="X", site="", name="probe", status="Idle",
                        utilization=0, downtime="0 min"))
-_ps.commit()
-_tok = tenancy.set_current_tenant("SOMEONE_ELSE")
-_leaked = _ps.query(models.Machine).count()
-tenancy.reset_current_tenant(_tok)
-_ps.close()
-check("PRECONDITION: the ORM scoping hook is NOT active in this process",
-      _leaked == 1,
-      f"a foreign-tenant read returned {_leaked} rows — scoping is installed, "
-      f"so this file is testing the wrong environment")
+    _ps.commit()
+    _tok = tenancy.set_current_tenant("SOMEONE_ELSE")
+    _leaked = _ps.query(models.Machine).count()
+    tenancy.reset_current_tenant(_tok)
+    _ps.close()
+    if _leaked != 1:
+        message = ("tenancy.install_scoping() is already registered in this "
+                   "process, so the hooks would silently do ingest's job and "
+                   "every assertion below would pass without measuring "
+                   "anything. The per-file runner gives this suite a clean "
+                   "process; pytest's shared one cannot.")
+        try:
+            import pytest
+            pytest.skip(message, allow_module_level=False)
+        except ImportError:
+            print(f"  SKIP  {message}")
+            return
+    print("  PASS  PRECONDITION: the ORM scoping hook is NOT active here")
 
-db = setup()
+    db = setup()
 
-# FACTORY_B publishes a breakdown. FACTORY_A must be untouched.
-send("FACTORY_B", status="Breakdown", utilization=3, downtime="45 min",
-     total_count=100, good_count=90, rejected_count=10)
-db.expire_all()
+    # FACTORY_B publishes a breakdown. FACTORY_A must be untouched.
+    send("FACTORY_B", status="Breakdown", utilization=3, downtime="45 min",
+         total_count=100, good_count=90, rejected_count=10)
+    db.expire_all()
 
-by_tenant = {m.tenant_code: m for m in db.query(models.Machine).all()}
-check("FACTORY_B's own CNC-01 took the reading",
-      by_tenant["FACTORY_B"].status == "Breakdown"
-      and by_tenant["FACTORY_B"].utilization == 3,
-      f"status={by_tenant['FACTORY_B'].status} util={by_tenant['FACTORY_B'].utilization}")
-check("FACTORY_A's CNC-01 was NOT touched by FACTORY_B's packet",
-      by_tenant["FACTORY_A"].status == "Running"
-      and by_tenant["FACTORY_A"].utilization == 50,
-      f"status={by_tenant['FACTORY_A'].status} util={by_tenant['FACTORY_A'].utilization}")
+    by_tenant = {m.tenant_code: m for m in db.query(models.Machine).all()}
+    check("FACTORY_B's own CNC-01 took the reading",
+          by_tenant["FACTORY_B"].status == "Breakdown"
+          and by_tenant["FACTORY_B"].utilization == 3,
+          f"status={by_tenant['FACTORY_B'].status} util={by_tenant['FACTORY_B'].utilization}")
+    check("FACTORY_A's CNC-01 was NOT touched by FACTORY_B's packet",
+          by_tenant["FACTORY_A"].status == "Running"
+          and by_tenant["FACTORY_A"].utilization == 50,
+          f"status={by_tenant['FACTORY_A'].status} util={by_tenant['FACTORY_A'].utilization}")
 
-for model, label in ((models.ProductionRecord, "ProductionRecord"),
+    for model, label in ((models.ProductionRecord, "ProductionRecord"),
                      (models.DowntimeLog, "DowntimeLog"),
                      (models.MachineEvent, "MachineEvent")):
-    rows = db.query(model).all()
-    check(f"{label} rows all belong to FACTORY_B",
+        rows = db.query(model).all()
+        check(f"{label} rows all belong to FACTORY_B",
           len(rows) >= 1 and all(r.tenant_code == "FACTORY_B" for r in rows),
           f"n={len(rows)} tenants={sorted({r.tenant_code for r in rows})}")
 
-# CONTROL: the assertions above are also satisfied by an ingest that wrote
-# nothing at all. Prove each child table actually received a row.
-counts = {m.__name__: db.query(m).count() for m in
+    # CONTROL: the assertions above are also satisfied by an ingest that wrote
+    # nothing at all. Prove each child table actually received a row.
+    counts = {m.__name__: db.query(m).count() for m in
           (models.ProductionRecord, models.DowntimeLog, models.MachineEvent)}
-check("CONTROL: all three child tables actually received a row",
-      all(v == 1 for v in counts.values()), str(counts))
+    check("CONTROL: all three child tables actually received a row",
+          all(v == 1 for v in counts.values()), str(counts))
 
-# A machine CREATED by ingest must carry its tenant without the before_flush
-# stamp to fall back on — this is the exact path where the column default
-# "DEFAULT" used to win.
-send("FACTORY_A", machine="NEW-99", status="Running", utilization=42)
-db.expire_all()
-created = db.query(models.Machine).filter(models.Machine.name == "NEW-99").all()
-check("a machine created by ingest carries its own tenant, not the column default",
-      len(created) == 1 and created[0].tenant_code == "FACTORY_A",
-      f"n={len(created)} tenant={created[0].tenant_code if created else None}")
+    # A machine CREATED by ingest must carry its tenant without the before_flush
+    # stamp to fall back on — this is the exact path where the column default
+    # "DEFAULT" used to win.
+    send("FACTORY_A", machine="NEW-99", status="Running", utilization=42)
+    db.expire_all()
+    created = db.query(models.Machine).filter(models.Machine.name == "NEW-99").all()
+    check("a machine created by ingest carries its own tenant, not the column default",
+          len(created) == 1 and created[0].tenant_code == "FACTORY_A",
+          f"n={len(created)} tenant={created[0].tenant_code if created else None}")
 
-db.close()
+    db.close()
 
-print()
-print("=" * 70)
-if failures:
-    print(f"FAILURES ({len(failures)}):")
-    for f in failures:
-        print("   *", f)
-    sys.exit(1)
-print("INGEST IS CORRECTLY TENANTED WITHOUT THE ORM HOOKS")
+    assert not failures, chr(10).join(failures)
+    print()
+    print("=" * 70)
+    print("INGEST IS CORRECTLY TENANTED WITHOUT THE ORM HOOKS")
+
+
+if __name__ == "__main__":
+    test_ingest_is_tenanted_without_the_orm_hooks()

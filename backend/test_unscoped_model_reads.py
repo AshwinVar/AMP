@@ -43,6 +43,14 @@ MANUALLY_SCOPED = {
     "User":
         "auth rows: looked up by globally-unique username at login, and the by-id "
         "admin handlers call _same_tenant_or_403; list_users filters by hand",
+    "DocumentSequence":
+        "the per-tenant document-number counter (doc_numbers.py). Read by its "
+        "(tenant_code, doc_type) key with the tenant passed in EXPLICITLY, "
+        "because the number must come from the sequence of whichever tenant the "
+        "row will be stamped with — deriving it from the hook would make the "
+        "allocator depend on the very binding it is trying to agree with. The "
+        "UNIQUE (tenant_code, doc_type) constraint is what makes a wrong tenant "
+        "a hard error rather than a silent cross-tenant number",
     "TenantConfig":
         "platform-level row, one per tenant — read by tenant_code as the key, and "
         "the cross-tenant listing is gated on the DEFAULT platform owner",

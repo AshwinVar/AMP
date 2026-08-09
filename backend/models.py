@@ -122,10 +122,13 @@ class MachineEvent(Base):
 
 class WorkOrder(Base):
     __tablename__ = "work_orders"
+    __table_args__ = (
+        UniqueConstraint("tenant_code", "work_order_no", name="uq_work_orders_tenant_work_order_no"),
+    )
 
     id = Column(Integer, primary_key=True, index=True)
     tenant_code = Column(String, index=True, nullable=False, default="DEFAULT")
-    work_order_no = Column(String, unique=True, nullable=False)
+    work_order_no = Column(String, nullable=False)
     part_number = Column(String, nullable=False)
     batch_number = Column(String, nullable=False)
     machine_id = Column(Integer, ForeignKey("machines.id"))
@@ -145,10 +148,13 @@ class WorkOrder(Base):
 
 class ProductionPlan(Base):
     __tablename__ = "production_plans"
+    __table_args__ = (
+        UniqueConstraint("tenant_code", "plan_no", name="uq_production_plans_tenant_plan_no"),
+    )
 
     id = Column(Integer, primary_key=True, index=True)
     tenant_code = Column(String, index=True, nullable=False, default="DEFAULT")
-    plan_no = Column(String, unique=True, nullable=False)
+    plan_no = Column(String, nullable=False)
     work_order_id = Column(Integer, ForeignKey("work_orders.id"))
     machine_id = Column(Integer, ForeignKey("machines.id"))
     planned_quantity = Column(Integer, nullable=False)
@@ -181,10 +187,13 @@ class Escalation(Base):
 
 class InventoryItem(Base):
     __tablename__ = "inventory_items"
+    __table_args__ = (
+        UniqueConstraint("tenant_code", "item_code", name="uq_inventory_items_tenant_item_code"),
+    )
 
     id = Column(Integer, primary_key=True, index=True)
     tenant_code = Column(String, index=True, nullable=False, default="DEFAULT")
-    item_code = Column(String, unique=True, nullable=False)
+    item_code = Column(String, nullable=False)
     item_name = Column(String, nullable=False)
     category = Column(String, nullable=False)
     supplier = Column(String, nullable=True)
@@ -224,10 +233,13 @@ class EventLog(Base):
 
 class QualityInspection(Base):
     __tablename__ = "quality_inspections"
+    __table_args__ = (
+        UniqueConstraint("tenant_code", "inspection_no", name="uq_quality_inspections_tenant_inspection_no"),
+    )
 
     id = Column(Integer, primary_key=True, index=True)
     tenant_code = Column(String, index=True, nullable=False, default="DEFAULT")
-    inspection_no = Column(String, unique=True, nullable=False)
+    inspection_no = Column(String, nullable=False)
     work_order_id = Column(Integer, ForeignKey("work_orders.id"), nullable=True)
     production_plan_id = Column(Integer, ForeignKey("production_plans.id"), nullable=True)
     machine_id = Column(Integer, ForeignKey("machines.id"), nullable=True)
@@ -263,10 +275,13 @@ class FactoryLayoutNode(Base):
 
 class CustomerOrder(Base):
     __tablename__ = "customer_orders"
+    __table_args__ = (
+        UniqueConstraint("tenant_code", "order_no", name="uq_customer_orders_tenant_order_no"),
+    )
 
     id = Column(Integer, primary_key=True, index=True)
     tenant_code = Column(String, index=True, nullable=False, default="DEFAULT")
-    order_no = Column(String, unique=True, nullable=False)
+    order_no = Column(String, nullable=False)
     customer_name = Column(String, nullable=False)
     product_name = Column(String, nullable=False)
     linked_work_order_id = Column(Integer, ForeignKey("work_orders.id"), nullable=True)
@@ -283,10 +298,13 @@ class CustomerOrder(Base):
 
 class Supplier(Base):
     __tablename__ = "suppliers"
+    __table_args__ = (
+        UniqueConstraint("tenant_code", "supplier_code", name="uq_suppliers_tenant_supplier_code"),
+    )
 
     id = Column(Integer, primary_key=True, index=True)
     tenant_code = Column(String, index=True, nullable=False, default="DEFAULT")
-    supplier_code = Column(String, unique=True, nullable=False)
+    supplier_code = Column(String, nullable=False)
     supplier_name = Column(String, nullable=False)
     contact_person = Column(String, nullable=True)
     email = Column(String, nullable=True)
@@ -298,10 +316,13 @@ class Supplier(Base):
 
 class PurchaseOrder(Base):
     __tablename__ = "purchase_orders"
+    __table_args__ = (
+        UniqueConstraint("tenant_code", "po_no", name="uq_purchase_orders_tenant_po_no"),
+    )
 
     id = Column(Integer, primary_key=True, index=True)
     tenant_code = Column(String, index=True, nullable=False, default="DEFAULT")
-    po_no = Column(String, unique=True, nullable=False)
+    po_no = Column(String, nullable=False)
     supplier_id = Column(Integer, ForeignKey("suppliers.id"))
     item_id = Column(Integer, ForeignKey("inventory_items.id"), nullable=True)
     item_name = Column(String, nullable=False)
@@ -317,10 +338,13 @@ class PurchaseOrder(Base):
 
 class ComplianceDocument(Base):
     __tablename__ = "compliance_documents"
+    __table_args__ = (
+        UniqueConstraint("tenant_code", "document_no", name="uq_compliance_documents_tenant_document_no"),
+    )
 
     id = Column(Integer, primary_key=True, index=True)
     tenant_code = Column(String, index=True, nullable=False, default="DEFAULT")
-    document_no = Column(String, unique=True, nullable=False)
+    document_no = Column(String, nullable=False)
     title = Column(String, nullable=False)
     document_type = Column(String, nullable=False)
     department = Column(String, nullable=False)
@@ -335,10 +359,13 @@ class ComplianceDocument(Base):
 
 class MaintenanceTask(Base):
     __tablename__ = "maintenance_tasks"
+    __table_args__ = (
+        UniqueConstraint("tenant_code", "task_no", name="uq_maintenance_tasks_tenant_task_no"),
+    )
 
     id = Column(Integer, primary_key=True, index=True)
     tenant_code = Column(String, index=True, nullable=False, default="DEFAULT")
-    task_no = Column(String, unique=True, nullable=False)
+    task_no = Column(String, nullable=False)
     machine_id = Column(Integer, ForeignKey("machines.id"))
     task_type = Column(String, nullable=False)
     priority = Column(String, default="Medium")
@@ -354,10 +381,13 @@ class MaintenanceTask(Base):
 
 class ProductionSchedule(Base):
     __tablename__ = "production_schedules"
+    __table_args__ = (
+        UniqueConstraint("tenant_code", "schedule_no", name="uq_production_schedules_tenant_schedule_no"),
+    )
 
     id = Column(Integer, primary_key=True, index=True)
     tenant_code = Column(String, index=True, nullable=False, default="DEFAULT")
-    schedule_no = Column(String, unique=True, nullable=False)
+    schedule_no = Column(String, nullable=False)
     work_order_id = Column(Integer, ForeignKey("work_orders.id"), nullable=True)
     production_plan_id = Column(Integer, ForeignKey("production_plans.id"), nullable=True)
     machine_id = Column(Integer, ForeignKey("machines.id"))
@@ -460,6 +490,29 @@ class AgentPolicy(Base):
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
 
+class DocumentSequence(Base):
+    """The next number to issue for one (tenant, document type).
+
+    Replaces `count() + 1`, which is a population rather than a sequence: it
+    reused numbers after a deletion and handed the same number to two concurrent
+    requests. See doc_numbers.py for why a reused document number is a
+    reconciliation problem even when nothing crashes.
+
+    A new table, so create_all provisions it everywhere and the first allocation
+    per tenant seeds itself from the numbers already issued — no data migration.
+    """
+    __tablename__ = "document_sequences"
+    __table_args__ = (
+        UniqueConstraint("tenant_code", "doc_type",
+                         name="uq_document_sequences_tenant_type"),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    tenant_code = Column(String, index=True, nullable=False)
+    doc_type = Column(String, nullable=False)        # MIS / GRN / CC / RMN ...
+    next_value = Column(Integer, nullable=False, default=1)
+
+
 class CompanyTenant(Base):
     __tablename__ = "company_tenants"
 
@@ -489,10 +542,13 @@ class CompanyTenant(Base):
 
 class CostRecord(Base):
     __tablename__ = "cost_records"
+    __table_args__ = (
+        UniqueConstraint("tenant_code", "cost_no", name="uq_cost_records_tenant_cost_no"),
+    )
 
     id = Column(Integer, primary_key=True, index=True)
     tenant_code = Column(String, index=True, nullable=False, default="DEFAULT")
-    cost_no = Column(String, unique=True, nullable=False)
+    cost_no = Column(String, nullable=False)
     cost_type = Column(String, nullable=False)
     reference_type = Column(String, nullable=True)
     reference_id = Column(Integer, nullable=True)
@@ -504,10 +560,13 @@ class CostRecord(Base):
 
 class OperatorJobExecution(Base):
     __tablename__ = "operator_job_executions"
+    __table_args__ = (
+        UniqueConstraint("tenant_code", "execution_no", name="uq_operator_job_executions_tenant_execution_no"),
+    )
 
     id = Column(Integer, primary_key=True, index=True)
     tenant_code = Column(String, index=True, nullable=False, default="DEFAULT")
-    execution_no = Column(String, unique=True, nullable=False)
+    execution_no = Column(String, nullable=False)
     operator_name = Column(String, nullable=False)
     machine_id = Column(Integer, ForeignKey("machines.id"))
     work_order_id = Column(Integer, ForeignKey("work_orders.id"), nullable=True)
@@ -554,10 +613,13 @@ class Notification(Base):
 
 class ReportRequest(Base):
     __tablename__ = "report_requests"
+    __table_args__ = (
+        UniqueConstraint("tenant_code", "report_no", name="uq_report_requests_tenant_report_no"),
+    )
 
     id = Column(Integer, primary_key=True, index=True)
     tenant_code = Column(String, index=True, nullable=False, default="DEFAULT")
-    report_no = Column(String, unique=True, nullable=False)
+    report_no = Column(String, nullable=False)
     report_type = Column(String, nullable=False)
     requested_by = Column(String, default="Admin")
     format = Column(String, default="PDF")
@@ -655,10 +717,13 @@ class GmatsMINLine(Base):
 
 class Remnant(Base):
     __tablename__ = "remnants"
+    __table_args__ = (
+        UniqueConstraint("tenant_code", "tag_no", name="uq_remnants_tenant_tag_no"),
+    )
 
     id = Column(Integer, primary_key=True, index=True)
     tenant_code = Column(String, index=True, nullable=True)  # ADR-0002 fail-safe (see AuditLog)
-    tag_no = Column(String, unique=True, nullable=False)
+    tag_no = Column(String, nullable=False)
     item_id = Column(Integer, ForeignKey("inventory_items.id"))
     source_reference = Column(String, nullable=True)   # WO or PO that generated this remnant
     original_qty = Column(Integer, nullable=False)
@@ -672,10 +737,13 @@ class Remnant(Base):
 
 class MaterialIssueSlip(Base):
     __tablename__ = "material_issue_slips"
+    __table_args__ = (
+        UniqueConstraint("tenant_code", "slip_no", name="uq_material_issue_slips_tenant_slip_no"),
+    )
 
     id = Column(Integer, primary_key=True, index=True)
     tenant_code = Column(String, index=True, nullable=True)  # ADR-0002 fail-safe (see AuditLog)
-    slip_no = Column(String, unique=True, nullable=False)
+    slip_no = Column(String, nullable=False)
     item_id = Column(Integer, ForeignKey("inventory_items.id"))
     remnant_id = Column(Integer, ForeignKey("remnants.id"), nullable=True)
     work_order_ref = Column(String, nullable=True)
@@ -691,10 +759,13 @@ class MaterialIssueSlip(Base):
 
 class GoodsReceiptNote(Base):
     __tablename__ = "goods_receipt_notes"
+    __table_args__ = (
+        UniqueConstraint("tenant_code", "grn_no", name="uq_goods_receipt_notes_tenant_grn_no"),
+    )
 
     id = Column(Integer, primary_key=True, index=True)
     tenant_code = Column(String, index=True, nullable=True)  # ADR-0002 fail-safe (see AuditLog)
-    grn_no = Column(String, unique=True, nullable=False)
+    grn_no = Column(String, nullable=False)
     purchase_order_ref = Column(String, nullable=True)
     supplier_name = Column(String, nullable=False)
     received_by = Column(String, nullable=False)
@@ -721,10 +792,13 @@ class GRNItem(Base):
 
 class CycleCount(Base):
     __tablename__ = "cycle_counts"
+    __table_args__ = (
+        UniqueConstraint("tenant_code", "count_no", name="uq_cycle_counts_tenant_count_no"),
+    )
 
     id = Column(Integer, primary_key=True, index=True)
     tenant_code = Column(String, index=True, nullable=True)  # ADR-0002 fail-safe (see AuditLog)
-    count_no = Column(String, unique=True, nullable=False)
+    count_no = Column(String, nullable=False)
     counted_by = Column(String, nullable=False)
     status = Column(String, default="Draft")           # Draft / Submitted / Approved
     notes = Column(String, nullable=True)
@@ -746,10 +820,13 @@ class CycleCountItem(Base):
 
 class IndustrialDevice(Base):
     __tablename__ = "industrial_devices"
+    __table_args__ = (
+        UniqueConstraint("tenant_code", "device_code", name="uq_industrial_devices_tenant_device_code"),
+    )
 
     id = Column(Integer, primary_key=True, index=True)
     tenant_code = Column(String, index=True, nullable=False, default="DEFAULT")
-    device_code = Column(String, unique=True, nullable=False)
+    device_code = Column(String, nullable=False)
     device_name = Column(String, nullable=False)
     device_type = Column(String, default="PLC")
     protocol = Column(String, default="MQTT")
@@ -778,10 +855,13 @@ class IndustrialSignal(Base):
 
 class PlcSignalMapping(Base):
     __tablename__ = "plc_signal_mappings"
+    __table_args__ = (
+        UniqueConstraint("tenant_code", "mapping_code", name="uq_plc_signal_mappings_tenant_mapping_code"),
+    )
 
     id = Column(Integer, primary_key=True, index=True)
     tenant_code = Column(String, index=True, nullable=False, default="DEFAULT")
-    mapping_code = Column(String, unique=True, nullable=False)
+    mapping_code = Column(String, nullable=False)
     device_id = Column(Integer, ForeignKey("industrial_devices.id"))
     source_signal = Column(String, nullable=False)
     mes_field = Column(String, nullable=False)

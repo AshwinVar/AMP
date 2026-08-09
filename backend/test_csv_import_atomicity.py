@@ -62,8 +62,19 @@ def _as(tenant, fn):
         T.reset_current_tenant(tok)
 
 
-def test_inventory_import_keeps_the_good_rows_when_one_code_is_taken():
-    """THE BUG. A code owned by another workspace used to cost the whole file."""
+def test_a_code_another_workspace_owns_no_longer_collides_at_all():
+    """ADR-0012: item_code is unique per TENANT, so this file has no conflict.
+
+    This test used to assert the opposite - that row 3 was rejected and the file
+    kept its other two rows - because item_code carried a platform-wide UNIQUE
+    and "WIDGET" being taken by ALPHA genuinely blocked BETA. That constraint was
+    the bug, not the behaviour: a customer could not import their own part codes
+    if another customer had used the same string first.
+
+    The per-row atomicity guarantee that assertion protected has NOT gone away;
+    it is exercised by the test below, which collides a row against the
+    IMPORTING tenant's own data, and by the same-file duplicate test further on.
+    """
     db = _sess()
     _as("ALPHA", lambda: (
         db.add(models.InventoryItem(item_code="WIDGET", item_name="Alpha widget",
@@ -73,31 +84,81 @@ def test_inventory_import_keeps_the_good_rows_when_one_code_is_taken():
 
     csv_text = (
         "item_code,item_name,current_stock\n"
-        "BOLT-1,Beta bolt,10\n"      # file row 2 — valid
-        "WIDGET,Beta widget,7\n"     # file row 3 — collides with ALPHA
-        "NUT-2,Beta nut,3\n"         # file row 4 — valid
+        "BOLT-1,Beta bolt,10\n"
+        "WIDGET,Beta widget,7\n"     # the same code ALPHA owns
+        "NUT-2,Beta nut,3\n"
     )
     r = _as("BETA", lambda: asyncio.run(
         eir.import_inventory_csv(file=_Upload(csv_text), db=db, current_user=ADMIN)))
 
-    assert r["created"] == 2, r          # the two good rows, not 3 and not 0
-    assert len(r["errors"]) == 1, r
-    # Blamed on its OWN line. Before the fix the autoflush surfaced on the NEXT
-    # row, so the message accused row 4 — a row with nothing wrong with it.
-    assert r["errors"][0].startswith("Row 3:"), r["errors"]
-    assert "UNIQUE" in r["errors"][0].upper(), r["errors"]
+    assert r["created"] == 3, r
+    assert r["errors"] == [], r
 
     codes = _as("BETA", lambda: sorted(
         i.item_code for i in db.query(models.InventoryItem).all()))
-    assert codes == ["BOLT-1", "NUT-2"], codes
-    # ALPHA's row is untouched.
-    assert db.execute(text(
-        "SELECT COUNT(*) FROM inventory_items WHERE tenant_code='ALPHA'")).scalar() == 1
-    print("PASS inventory import keeps the good rows and blames the right one")
+    assert codes == ["BOLT-1", "NUT-2", "WIDGET"], codes
+    # ALPHA keeps its own row with its own name - BETA's import created a second
+    # WIDGET rather than updating somebody else's.
+    rows = db.execute(text(
+        "SELECT tenant_code, item_name FROM inventory_items "
+        "WHERE item_code='WIDGET' ORDER BY tenant_code")).fetchall()
+    assert [tuple(x) for x in rows] == [
+        ("ALPHA", "Alpha widget"), ("BETA", "Beta widget")], rows
+    print("PASS an item code another workspace owns no longer blocks an import")
 
 
-def test_supplier_import_keeps_the_good_rows_when_one_code_is_taken():
-    """supplier_code is UNIQUE globally too, and its lookup is equally scoped."""
+def test_importing_a_code_you_already_own_updates_it():
+    """The remaining meaning of a repeated item_code: it is YOUR row, so update.
+
+    I first wrote this as a collision test, expecting row 3 to be rejected the
+    way the cross-tenant version used to be. It is not: the import looks the
+    code up through the tenant-scoped ORM, finds the tenant's OWN row, and
+    updates it. So after ADR-0012 there is no reachable IntegrityError on
+    inventory item_code at all - which is worth pinning, because a future change
+    that reintroduced one would be a regression in exactly the direction this
+    ADR moved away from.
+
+    The per-row atomicity guarantee is not lost with it: it is exercised by
+    test_a_duplicate_inside_the_same_file_costs_only_that_row below, where two
+    rows of ONE file carry the same code and the second is genuinely rejected.
+    """
+    db = _sess()
+    _as("BETA", lambda: (
+        db.add(models.InventoryItem(item_code="WIDGET", item_name="Old name",
+                                    category="Raw", unit="pc", current_stock=5,
+                                    reorder_level=1)),
+        db.commit()))
+
+    csv_text = (
+        "item_code,item_name,current_stock\n"
+        "BOLT-1,Beta bolt,10\n"
+        "WIDGET,Beta widget,7\n"     # BETA's own existing code
+        "NUT-2,Beta nut,3\n"
+    )
+    r = _as("BETA", lambda: asyncio.run(
+        eir.import_inventory_csv(file=_Upload(csv_text), db=db, current_user=ADMIN)))
+
+    assert r["created"] == 2, r
+    assert r["updated"] == 1, r
+    assert r["errors"] == [], r
+
+    # CONTROL: the update really landed, so "updated: 1" is not just a counter.
+    stock = _as("BETA", lambda: db.query(models.InventoryItem).filter(
+        models.InventoryItem.item_code == "WIDGET").first().current_stock)
+    assert stock == 7, stock
+    codes = _as("BETA", lambda: sorted(
+        i.item_code for i in db.query(models.InventoryItem).all()))
+    assert codes == ["BOLT-1", "NUT-2", "WIDGET"], codes
+    print("PASS repeating your OWN item code updates the row you already have")
+
+
+def test_supplier_code_owned_by_another_workspace_no_longer_collides():
+    """supplier_code is per-tenant now (ADR-0012), same as item_code above.
+
+    This asserted the opposite until the platform-wide UNIQUE was removed: a
+    supplier code ALPHA had registered blocked BETA from registering the same
+    code for a completely different supplier of their own.
+    """
     db = _sess()
     _as("ALPHA", lambda: (
         db.add(models.Supplier(supplier_code="SUP-1", supplier_name="Alpha steel",
@@ -106,18 +167,28 @@ def test_supplier_import_keeps_the_good_rows_when_one_code_is_taken():
 
     csv_text = (
         "supplier_code,supplier_name\n"
-        "SUP-9,Beta fasteners\n"     # row 2 — valid
-        "SUP-1,Beta steel\n"         # row 3 — collides with ALPHA
-        "SUP-7,Beta coatings\n"      # row 4 — valid
+        "SUP-9,Beta fasteners\n"
+        "SUP-1,Beta steel\n"         # the same code ALPHA registered
+        "SUP-7,Beta coatings\n"
     )
     r = _as("BETA", lambda: asyncio.run(
-        orders_routes.import_suppliers_csv(file=_Upload(csv_text), db=db, current_user=ADMIN)))
+        orders_routes.import_suppliers_csv(file=_Upload(csv_text), db=db,
+                                           current_user=ADMIN)))
 
-    assert r["created"] == 2, r
-    assert len(r["errors"]) == 1 and r["errors"][0].startswith("Row 3:"), r["errors"]
-    codes = _as("BETA", lambda: sorted(s.supplier_code for s in db.query(models.Supplier).all()))
-    assert codes == ["SUP-7", "SUP-9"], codes
-    print("PASS supplier import keeps the good rows and blames the right one")
+    assert r["created"] == 3, r
+    assert r["errors"] == [], r
+    codes = _as("BETA", lambda: sorted(
+        s.supplier_code for s in db.query(models.Supplier).all()))
+    assert codes == ["SUP-1", "SUP-7", "SUP-9"], codes
+
+    # CONTROL: two different companies now hold SUP-1, each under its own owner
+    # - BETA created a row rather than renaming ALPHA's.
+    rows = db.execute(text(
+        "SELECT tenant_code, supplier_name FROM suppliers "
+        "WHERE supplier_code='SUP-1' ORDER BY tenant_code")).fetchall()
+    assert [tuple(x) for x in rows] == [
+        ("ALPHA", "Alpha steel"), ("BETA", "Beta steel")], rows
+    print("PASS a supplier code another workspace uses no longer blocks an import")
 
 
 def test_a_duplicate_inside_the_same_file_costs_only_that_row():
@@ -164,47 +235,84 @@ def test_a_parse_error_is_still_reported_per_row():
 
 def test_the_error_message_does_not_echo_the_uploaded_row_back():
     """A database error str()s into a multi-line dump ending in the bound
-    parameters — which are the customer's own row. Reporting only the first line
+    parameters - which are the customer's own row. Reporting only the first line
     keeps the reason and drops the SQL and the payload.
 
     Asserting "UNIQUE is in the message" does NOT test this: the full dump's
     first line contains it too, so that assertion cannot tell the two apart.
     Mutation testing caught that; this checks what actually differs.
-    """
-    db = _sess()
-    _as("ALPHA", lambda: (
-        db.add(models.InventoryItem(item_code="SHARED", item_name="Alpha part",
-                                    category="Raw", unit="pc", current_stock=1,
-                                    reorder_level=0)),
-        db.commit()))
-    csv_text = "item_code,item_name,current_stock\nSHARED,CONFIDENTIAL-PART-NAME,4\n"
-    r = _as("BETA", lambda: asyncio.run(
-        eir.import_inventory_csv(file=_Upload(csv_text), db=db, current_user=ADMIN)))
 
-    msg = r["errors"][0]
+    DRIVEN DIRECTLY, not through an import. This used to upload a code that
+    ALPHA owned, because item_code was unique across the whole platform. After
+    ADR-0012 that is not a conflict, and neither is a repeat of the tenant's own
+    code (the import finds it and updates), so the inventory import has no
+    remaining path that produces a per-row IntegrityError at all. Rather than
+    invent one, the guard is applied to the function that does the redacting.
+    That is also the more honest unit: import_row_error is what every import
+    calls, and a PostgreSQL error - whose `.orig` is multi-line and quotes the
+    offending key back in a DETAIL line - is a shape no SQLite fixture can
+    produce anyway.
+    """
+    from sqlalchemy.exc import IntegrityError
+    from csv_safe import import_row_error
+
+    # The real shape, including the psycopg2 DETAIL line that quotes the key
+    # back - the case the local SQLite database can never generate.
+    class _Orig(Exception):
+        def __str__(self):
+            return ('duplicate key value violates unique constraint '
+                    '"uq_inventory_items_tenant_item_code"\n'
+                    'DETAIL:  Key (tenant_code, item_code)=(BETA, SHARED) '
+                    'already exists.')
+
+    exc = IntegrityError(
+        "INSERT INTO inventory_items (tenant_code, item_code, item_name) "
+        "VALUES (%(tenant_code)s, %(item_code)s, %(item_name)s)",
+        {"tenant_code": "BETA", "item_code": "SHARED",
+         "item_name": "CONFIDENTIAL-PART-NAME"},
+        _Orig())
+
+    msg = import_row_error(exc)
     assert "\n" not in msg, msg
     assert "INSERT INTO" not in msg.upper(), msg
     assert "parameters" not in msg.lower(), msg
-    assert "CONFIDENTIAL-PART-NAME" not in msg, msg      # the row is not handed back
-    assert "UNIQUE constraint failed" in msg, msg        # ...but the reason survives
+    assert "CONFIDENTIAL-PART-NAME" not in msg, msg   # the row is not handed back
+    assert "DETAIL" not in msg, msg                   # nor the key it quotes back
+    assert "unique constraint" in msg.lower(), msg    # ...but the reason survives
+
+    # CONTROL: the full dump really does contain the things asserted absent, so
+    # the assertions above are distinguishing redaction from an empty string.
+    full = str(exc)
+    assert "CONFIDENTIAL-PART-NAME" in full and "INSERT INTO" in full.upper(), full
     print("PASS the row error names the reason without echoing the row")
 
 
 def test_the_counters_never_credit_a_row_that_did_not_land():
     """created/updated move only after the savepoint releases, so the response
-    cannot claim a row the database refused."""
+    cannot claim a row the database refused.
+
+    Triggered by a bad VALUE rather than a taken code. It used to upload a code
+    ALPHA owned, which is no longer a conflict (ADR-0012) and so no longer
+    produces a rejected row at all. A non-numeric quantity still does, and it is
+    the same savepoint path - the row is attempted, fails, and must not be
+    counted.
+    """
     db = _sess()
-    _as("ALPHA", lambda: (
-        db.add(models.InventoryItem(item_code="TAKEN", item_name="Alpha", category="Raw",
-                                    unit="pc", current_stock=1, reorder_level=0)),
-        db.commit()))
-    csv_text = "item_code,item_name,current_stock\nTAKEN,Beta wants it,4\n"
+    csv_text = "item_code,item_name,current_stock\nA-1,Beta wants it,not-a-number\n"
     r = _as("BETA", lambda: asyncio.run(
         eir.import_inventory_csv(file=_Upload(csv_text), db=db, current_user=ADMIN)))
 
     assert r["created"] == 0 and r["updated"] == 0, r
     assert len(r["errors"]) == 1, r
     assert _as("BETA", lambda: db.query(models.InventoryItem).count()) == 0
+
+    # CONTROL: the identical file with a VALID quantity is counted and lands, so
+    # the zeros above are the rejection and not an import that never ran.
+    ok = _as("BETA", lambda: asyncio.run(eir.import_inventory_csv(
+        file=_Upload("item_code,item_name,current_stock\nA-1,Beta wants it,4\n"),
+        db=db, current_user=ADMIN)))
+    assert ok["created"] == 1 and ok["errors"] == [], ok
+    assert _as("BETA", lambda: db.query(models.InventoryItem).count()) == 1
     print("PASS a rejected row is not counted as created")
 
 
@@ -229,8 +337,9 @@ def test_machines_import_still_imports_a_clean_file():
 
 
 if __name__ == "__main__":
-    test_inventory_import_keeps_the_good_rows_when_one_code_is_taken()
-    test_supplier_import_keeps_the_good_rows_when_one_code_is_taken()
+    test_a_code_another_workspace_owns_no_longer_collides_at_all()
+    test_importing_a_code_you_already_own_updates_it()
+    test_supplier_code_owned_by_another_workspace_no_longer_collides()
     test_a_duplicate_inside_the_same_file_costs_only_that_row()
     test_a_parse_error_is_still_reported_per_row()
     test_the_error_message_does_not_echo_the_uploaded_row_back()

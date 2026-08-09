@@ -20,6 +20,7 @@ Run:  python backend/test_migrate.py     (exit 0 = pass)
 """
 import io
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -200,6 +201,51 @@ def test_running_twice_is_a_no_op():
         print("PASS re-running migrations is idempotent")
 
 
+def test_every_revision_id_fits_the_version_column():
+    """alembic_version.version_num is VARCHAR(32). A longer revision id lets a
+    migration apply every one of its ALTERs and THEN fail on the stamp.
+
+    That is the worst possible shape of failure and it is not hypothetical:
+    measured against PostgreSQL 18, revision "0003_tenant_scoped_document_
+    numbers" (35 chars) ran its DDL and died on
+
+        UPDATE alembic_version SET version_num='0003_tenant_scoped_document_numbers'
+        psycopg2.errors.StringDataRightTruncation: value too long for type
+        character varying(32)
+
+    Alembic wraps a migration in a transaction so THAT case rolled back, but the
+    deploy still fails on every subsequent attempt and the release command stays
+    broken — the same dead-migrations outcome as #499, reached by a different
+    route. SQLite never shows it: it ignores VARCHAR lengths entirely, so the
+    whole suite passes locally while production cannot deploy.
+
+    32 is Alembic's own default and is not configurable per-revision, so the
+    only fix is short ids. Asserted here rather than left to review because the
+    id is chosen once, in a file nobody opens again.
+    """
+    versions = os.path.join(HERE, "alembic", "versions")
+    ids = []
+    for name in sorted(os.listdir(versions)):
+        if not name.endswith(".py"):
+            continue
+        src = io.open(os.path.join(versions, name), encoding="utf-8").read()
+        m = re.search(r'^revision = "([^"]+)"', src, re.M)
+        assert m, f"{name} declares no revision id"
+        ids.append((name, m.group(1)))
+
+    too_long = [(n, r, len(r)) for n, r, in
+                [(n, r) for n, r in ids] if len(r) > 32]
+    assert not too_long, (
+        "revision id longer than alembic_version.version_num VARCHAR(32): "
+        + ", ".join(f"{n}: {r!r} is {ln} chars" for n, r, ln in too_long))
+
+    # CONTROL: the check is reading real ids, not an empty list. An empty
+    # versions directory would satisfy the assertion above.
+    assert len(ids) >= 2, f"expected several revisions, found {ids}"
+    print(f"PASS all {len(ids)} revision ids fit VARCHAR(32) "
+          f"(longest: {max(len(r) for _, r in ids)})")
+
+
 def test_the_baseline_is_an_empty_anchor():
     """0001_baseline must contain no DDL. If it ever grows a create_table,
     adopting Alembic on production would try to build tables that already exist
@@ -263,6 +309,7 @@ if __name__ == "__main__":
     test_a_percent_url_survives_a_second_run()
     test_an_existing_schema_is_stamped_not_rebuilt()
     test_running_twice_is_a_no_op()
+    test_every_revision_id_fits_the_version_column()
     test_the_baseline_is_an_empty_anchor()
     test_downgrading_past_the_baseline_refuses()
     test_status_is_read_only()

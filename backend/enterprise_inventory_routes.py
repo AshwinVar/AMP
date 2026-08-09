@@ -11,7 +11,9 @@ from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from sqlalchemy import case, func
 from sqlalchemy.orm import Session
 
+import doc_numbers
 import models
+import tenancy
 from csv_safe import import_row_error, read_upload_text
 from payload_fields import int_field, str_field
 from auth import get_current_user, require_roles
@@ -143,9 +145,10 @@ def create_remnant(payload: dict, db: Session = Depends(get_db), current_user: d
     original_qty = int_field(payload, "original_qty", "Remnant")
     remaining_qty = int_field(payload, "remaining_qty", "Remnant")
     unit = str_field(payload, "unit", "Remnant")
-    count = db.query(models.Remnant).count()
     r = models.Remnant(
-        tag_no=payload.get("tag_no") or f"REM-{1000 + count + 1}",
+        tag_no=payload.get("tag_no") or doc_numbers.allocate(
+            db, tenancy.current_tenant() or "DEFAULT", "REM", models.Remnant, "tag_no",
+            "REM", start=1000),
         item_id=item_id,
         source_reference=payload.get("source_reference", ""),
         original_qty=original_qty,
@@ -215,9 +218,17 @@ def create_issue_slip(payload: dict, db: Session = Depends(get_db), current_user
     # remnant_id is optional (a slip may draw from general stock): parse only when
     # supplied, still validated so "abc" is a 400 rather than a 500.
     remnant_id = int_field(payload, "remnant_id", "Issue slip") if payload.get("remnant_id") else None
-    count = db.query(models.MaterialIssueSlip).count()
     s = models.MaterialIssueSlip(
-        slip_no=f"MIS-{5000 + count + 1}",
+        # The tenant comes from tenancy.current_tenant(), NOT from the JWT
+        # claim: the row's tenant_code is stamped by tenancy's before_flush hook
+        # from exactly that value, and the two differ for an Admin acting on
+        # another workspace through X-Tenant (the claim says DEFAULT, the write
+        # lands in the header tenant). Keying the sequence on the claim would
+        # draw the number from a different tenant's series than the document is
+        # filed under, which is the subtler half of the bug this change fixes.
+        slip_no=doc_numbers.allocate(
+            db, tenancy.current_tenant() or "DEFAULT", "MIS", models.MaterialIssueSlip,
+            "slip_no", "MIS", start=5000),
         item_id=item_id,
         remnant_id=remnant_id,
         work_order_ref=payload.get("work_order_ref", ""),
@@ -365,9 +376,10 @@ def create_grn(payload: dict, db: Session = Depends(get_db), current_user: dict 
             inspection_status=line.get("inspection_status", "Accepted"),
         ))
 
-    count = db.query(models.GoodsReceiptNote).count()
     g = models.GoodsReceiptNote(
-        grn_no=f"GRN-{3000 + count + 1}",
+        grn_no=doc_numbers.allocate(
+            db, tenancy.current_tenant() or "DEFAULT", "GRN", models.GoodsReceiptNote,
+            "grn_no", "GRN", start=3000),
         purchase_order_ref=payload.get("purchase_order_ref", ""),
         supplier_name=supplier_name,
         received_by=payload.get("received_by", current_user.get("sub", "Admin")),
@@ -469,9 +481,10 @@ def create_cycle_count(payload: dict, db: Session = Depends(get_db), current_use
         parsed.append((int_field(line, "item_id", where),
                        int_field(line, "physical_qty", where)))
 
-    count = db.query(models.CycleCount).count()
     c = models.CycleCount(
-        count_no=f"CC-{2000 + count + 1}",
+        count_no=doc_numbers.allocate(
+            db, tenancy.current_tenant() or "DEFAULT", "CC", models.CycleCount,
+            "count_no", "CC", start=2000),
         counted_by=payload.get("counted_by", current_user.get("sub", "Admin")),
         status="Draft",
         notes=payload.get("notes", ""),

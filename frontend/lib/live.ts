@@ -29,6 +29,17 @@ export type LiveConnection = {
   close: () => void;
 };
 
+// The backend refuses a connection it cannot authenticate, using the
+// application close-code range so a refusal cannot be confused with a network
+// drop (backend/ws_auth.py). Retrying a refusal is pointless — the same token
+// will be refused again — and with the schedule below it would mean a request
+// every 30 seconds, forever, from every revoked session.
+const REFUSAL_CODES = new Set([
+  4400, // the server accepts no client frames
+  4401, // no token, malformed, or expired — needs a NEW credential
+  4403, // account gone, disabled, or the token's workspace does not match
+]);
+
 // Retry schedule. Doubling from a second, capped so a long outage still gets a
 // try every half minute rather than drifting to hours away.
 const BASE_DELAY_MS = 1000;
@@ -62,7 +73,7 @@ function socketUrl() {
  */
 export function connectLiveSocket(
   onEvent: (event: LiveEvent) => void,
-  onStatus?: (status: "connected" | "disconnected" | "error") => void,
+  onStatus?: (status: "connected" | "disconnected" | "error" | "refused") => void,
 ): LiveConnection {
   let socket: WebSocket | null = null;
   let retryTimer: ReturnType<typeof setTimeout> | null = null;
@@ -109,8 +120,16 @@ export function connectLiveSocket(
       onStatus?.("error");
     };
 
-    ws.onclose = () => {
+    ws.onclose = (event) => {
       if (stopped) return;
+      if (REFUSAL_CODES.has(event.code)) {
+        // Refused, not dropped. Stop for good and say so — reporting
+        // "disconnected" here would look like a flaky network and hide the
+        // real cause (an expired session, or an account that was revoked).
+        stopped = true;
+        onStatus?.("refused");
+        return;
+      }
       onStatus?.("disconnected");
       scheduleRetry();
     };

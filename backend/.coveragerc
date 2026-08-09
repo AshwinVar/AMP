@@ -46,6 +46,23 @@ omit =
     # would count an operator tool against the application's floor.
     audit_isolation.py
     audit_perf.py
+    # Same category, added with the customer-readiness work: harnesses that
+    # produce evidence rather than serve traffic.
+    #   verify_pg_*   run a migration against a disposable PostgreSQL 18
+    #                 database and assert the resulting schema — the engine
+    #                 parity SQLite cannot show.
+    #   mutate_*      break one guard at a time and assert a suite goes red.
+    #                 By construction most of their lines run only while a
+    #                 mutation is applied.
+    #   pg_scratch    the shared helper both use to build a throwaway database.
+    # None is importable by the app (grep: nothing in main.py's closure imports
+    # them), and counting them would let adding verification LOWER the number
+    # that describes how well the application is tested.
+    verify_pg_migration.py
+    verify_pg_docnumbers.py
+    mutate_mqtt_identity.py
+    mutate_doc_numbers.py
+    pg_scratch.py
     # Alembic migration scripts: exercised by running a migration, not by the
     # unit suites, and each version file is dead the moment it has been applied.
     alembic/*

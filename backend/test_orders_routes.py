@@ -63,26 +63,31 @@ def _create_as(db, tenant, payload):
         T.reset_current_tenant(tok)
 
 
-def test_duplicate_order_no_across_tenants_is_409_not_500():
-    # order_no is globally unique, but the duplicate pre-check is tenant-scoped
-    # (CustomerOrder is in SCOPED_MODELS). Tenant B reusing Tenant A's number
-    # passes the check, then trips the DB constraint on commit — which must be a
-    # clean 409 with a rolled-back session, not an unhandled IntegrityError -> 500.
-    db = _iso_session()
-    _create_as(db, "TA", _order("ORD-1"))
-    try:
-        _create_as(db, "TB", _order("ORD-1"))
-        assert False, "cross-tenant duplicate order_no should raise, not succeed"
-    except HTTPException as e:
-        assert e.status_code == 409, e.status_code    # not 500, not a raw IntegrityError
+def test_duplicate_order_no_across_tenants_now_succeeds():
+    """ADR-0012: order_no is unique per TENANT, so TB may reuse TA's number.
 
-    # the session was rolled back (not poisoned): a fresh insert still works
-    order = _create_as(db, "TB", _order("ORD-2"))
-    assert order.order_no == "ORD-2"
-    tok = T.set_current_tenant("TB")
-    assert {o.order_no for o in db.query(models.CustomerOrder).all()} == {"ORD-2"}  # scoped to TB
+    This asserted a 409 while order_no carried a platform-wide UNIQUE. The 409
+    was the right handling of a constraint that should not have existed: a
+    customer could not raise their own ORD-1 because somebody else had. The
+    within-tenant duplicate is still refused - see the test below, which is
+    where that guard now lives.
+    """
+    db = _iso_session()
+    a = _create_as(db, "TA", _order("ORD-1"))
+    b = _create_as(db, "TB", _order("ORD-1"))
+    assert a.id != b.id, (a.id, b.id)
+    assert a.order_no == b.order_no == "ORD-1"
+
+    # CONTROL: each tenant sees exactly its own, so these are two rows and not
+    # one row read through two contexts.
+    for tenant in ("TA", "TB"):
+        tok = T.set_current_tenant(tenant)
+        assert {o.order_no for o in db.query(models.CustomerOrder).all()} == {"ORD-1"}
+        T.reset_current_tenant(tok)
+    tok = T.set_current_tenant(None)
+    assert db.query(models.CustomerOrder).count() == 2
     T.reset_current_tenant(tok)
-    print("PASS duplicate order_no across tenants -> 409, session survives (no 500, no poison)")
+    print("PASS two tenants may each raise their own ORD-1")
 
 
 def test_same_tenant_duplicate_order_no_is_400():
@@ -1088,7 +1093,7 @@ def test_overdue_po_generator_dedups_against_null_status_open_escalation():
 
 if __name__ == "__main__":
     test_procurement_paths_owned_by_orders_routes()
-    test_duplicate_order_no_across_tenants_is_409_not_500()
+    test_duplicate_order_no_across_tenants_now_succeeds()
     test_same_tenant_duplicate_order_no_is_400()
     test_purchasing_analytics_supplier_pending_reconciled_and_no_n_plus_1()
     test_purchasing_analytics_empty_book()

@@ -22,6 +22,7 @@ Guiding principles: incremental (strangler) evolution, never a rewrite; backward
 | [0014](0014-canonical-oee-contract.md) | One canonical OEE contract, and an honesty rule | Accepted |
 | [0015](0015-server-side-approval-gate.md) | The backend is authoritative about approvals | Accepted |
 | [0016](0016-authenticated-live-websocket.md) | The live WebSocket authenticates before it accepts | Accepted |
+| [0017](0017-oem-fleet-and-cross-tenant-equipment.md) | OEM fleet and cross-tenant equipment relationships | Accepted |
 
 **Recommended order:** 0001 first (smaller, proves the pattern; events carry `tenant_code`), then 0002.
 

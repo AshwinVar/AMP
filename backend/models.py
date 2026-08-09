@@ -973,3 +973,194 @@ class PlcSignalMapping(Base):
     transform_rule = Column(String, nullable=True)
     enabled = Column(String, default="Yes")
     created_at = Column(DateTime, default=datetime.utcnow)
+
+
+# ── OEM platform (ADR-0017) ────────────────────────────────────────────
+# A machine manufacturer that sells connected equipment into customer factories.
+# These tables carry `oem_code` — a SECOND ownership dimension, independent of
+# `tenant_code`. Nothing here changes an existing table: the OEM layer is
+# additive, so an AMP database with no OEM rows behaves exactly as it did.
+
+
+class OemOrganization(Base):
+    """A machine manufacturer. The root of the OEM ownership dimension.
+
+    `oem_code` is to OEM tables what `tenant_code` is to factory tables. It is
+    deliberately a separate namespace: an OEM is not a tenant, does not appear in
+    the tenant registry, and must never be reachable by binding a tenant.
+    """
+
+    __tablename__ = "oem_organizations"
+
+    id = Column(Integer, primary_key=True, index=True)
+    oem_code = Column(String, unique=True, index=True, nullable=False)
+    name = Column(String, nullable=False)
+    # White-label configuration (ADR-0017). Same shape as TenantConfig's branding
+    # so ONE frontend build serves every OEM from configuration, never a fork.
+    brand_name = Column(String, nullable=True)
+    brand_color = Column(String, default="#0f766e")
+    brand_logo_url = Column(String, nullable=True)
+    support_email = Column(String, nullable=True)
+    support_phone = Column(String, nullable=True)
+    # Revoking a whole organisation is one flag, checked at authentication.
+    is_active = Column(Boolean, nullable=False, default=True, server_default=sa_true())
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class OemUser(Base):
+    """An OEM principal. A SEPARATE TABLE from User, on purpose (ADR-0017).
+
+    A factory administrator's user-management surface operates on `User`, so it
+    cannot create, promote or disable an OEM login; an OEM administrator cannot
+    mint a factory user. The two principal types cannot impersonate each other
+    because they are not the same kind of row — not because a flag says so.
+    """
+
+    __tablename__ = "oem_users"
+
+    id = Column(Integer, primary_key=True, index=True)
+    oem_code = Column(String, index=True, nullable=False)
+    username = Column(String, unique=True, nullable=False)
+    password = Column(String, nullable=False)
+    # OEM_ADMIN | OEM_SERVICE_MANAGER | OEM_SERVICE_ENGINEER | OEM_VIEWER.
+    # Deliberately NOT the factory role strings: a token carrying "Admin" must
+    # never satisfy an OEM role check, and vice versa.
+    role = Column(String, nullable=False)
+    is_active = Column(Boolean, nullable=False, default=True, server_default=sa_true())
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class MachineModel(Base):
+    """A product in an OEM's catalogue — what a serial number is an instance of.
+
+    Scope is deliberately narrow: enough to manage a connected machine's
+    lifecycle, not a general PLM. `telemetry_profile` is the configuration that
+    keeps compressor-specific (or CNC-specific) signal vocabulary OUT of AMP core.
+    """
+
+    __tablename__ = "machine_models"
+    __table_args__ = (
+        UniqueConstraint("oem_code", "model_code", name="uq_machine_model_identity"),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    oem_code = Column(String, index=True, nullable=False)
+    family = Column(String, nullable=False, default="")
+    model_code = Column(String, nullable=False)
+    name = Column(String, nullable=False)
+    description = Column(Text, nullable=True)
+    rated_capacity = Column(String, nullable=True)
+    rated_capacity_unit = Column(String, nullable=True)
+    # Hours between scheduled services. NULL = this model has no hours-based
+    # interval; the service engine must then say "not configured" rather than
+    # invent a schedule.
+    service_interval_hours = Column(Integer, nullable=True)
+    warranty_months = Column(Integer, nullable=True)
+    telemetry_profile = Column(Text, nullable=True)      # JSON; see ADR-0017
+    documentation_url = Column(String, nullable=True)
+    image_url = Column(String, nullable=True)
+    status = Column(String, nullable=False, default="Active")   # Active | Discontinued
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class MachineInstallation(Base):
+    """One physical machine an OEM built, wherever it now lives.
+
+    THE DURABLE IDENTITY. `Machine` is UNIQUE(tenant_code, site, name) — a
+    factory-local identity that dies the moment somebody renames the machine
+    (ADR-0011). `serial_number` here is the identity that survives a rename, an
+    IP change, or a new MQTT topic.
+
+    UNIQUE PER OEM, NOT GLOBALLY. A global serial namespace would let one
+    manufacturer discover another's fleet by probing for collisions; per-OEM
+    uniqueness makes a guessed serial belong to nobody.
+
+    TWO OWNERS, BOTH REAL. The factory owns the machine; the OEM owns the
+    equipment relationship. This row carries BOTH codes and is filtered on
+    whichever dimension the request bound — a factory sees its own installations,
+    an OEM sees its own, and neither filter can widen the other. It is
+    deliberately absent from tenancy.SCOPED_MODELS: the OEM sentinel tenant would
+    filter it to nothing and the OEM could see no fleet at all.
+
+    `machine_id` is NULLABLE because an installation exists from manufacture —
+    before it is sold, shipped, installed, or linked to anything live. The link
+    REFERENCES the factory's machine; it never replaces its identity, so MQTT
+    ingest still resolves (tenant, site, name) exactly as ADR-0011 specifies.
+    """
+
+    __tablename__ = "machine_installations"
+    __table_args__ = (
+        UniqueConstraint("oem_code", "serial_number", name="uq_installation_serial"),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    oem_code = Column(String, index=True, nullable=False)
+    serial_number = Column(String, index=True, nullable=False)
+    model_id = Column(Integer, ForeignKey("machine_models.id"), nullable=False)
+
+    # Where it is installed. NULL = manufactured but not yet assigned to a
+    # customer: it belongs to no factory and appears in no factory's view.
+    #
+    # NAMED `factory_tenant_code`, NOT `tenant_code`, AND THAT IS LOAD-BEARING.
+    # Every other tenant_code in this file means "the tenant that OWNS this row".
+    # Here it means "the counterparty" — the OEM owns this row. Three mechanisms
+    # key off the literal attribute name `tenant_code`, and one of them destroys
+    # data: offboard_tenant.purge_tenant_data sweeps EVERY mapper that has the
+    # attribute and hard-deletes rows matching the departing tenant. With the
+    # obvious name, offboarding Factory A would have deleted the OEM's own record
+    # of machines it built and still owns. Offboarding UNLINKS an installation
+    # (see offboard_tenant._unlink_oem_installations); it never deletes it.
+    factory_tenant_code = Column(String, index=True, nullable=True)
+    site = Column(String, nullable=False, default="", server_default="")
+    machine_id = Column(Integer, ForeignKey("machines.id"), nullable=True)
+
+    # Lifecycle: Manufactured -> Sold -> Assigned -> Installed -> Commissioning
+    # -> Active -> Service -> Decommissioned.
+    status = Column(String, nullable=False, default="Manufactured")
+    installed_at = Column(DateTime, nullable=True)
+    commissioned_at = Column(DateTime, nullable=True)
+    decommissioned_at = Column(DateTime, nullable=True)
+
+    warranty_start = Column(Date, nullable=True)
+    warranty_end = Column(Date, nullable=True)
+
+    # Operating hours as last reported — the OEM's service clock. NULL means
+    # never reported, which is a different fact from zero.
+    operating_hours = Column(Float, nullable=True)
+    last_seen_at = Column(DateTime, nullable=True)
+    firmware_version = Column(String, nullable=True)
+
+    notes = Column(Text, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class OemDataSharingPolicy(Base):
+    """What a FACTORY has agreed to share with one OEM. Granted by the factory.
+
+    DEFAULT DENY. No row means nothing is shared beyond what the OEM already
+    knows from having sold the machine — its own serial, model, and which
+    customer site it went to. There is no "the OEM has a relationship with
+    Factory A, therefore the OEM may query Factory A": that inference is exactly
+    what this table exists to prevent.
+
+    `grants` is a CSV of grant keys (the TenantConfig.enabled_modules precedent).
+    An empty string is a real and distinct choice — "this factory considered the
+    question and shares nothing" — as against having no row at all.
+
+    Read at QUERY TIME, never baked into a cached projection, so revoking a grant
+    takes effect on the next request rather than whenever a projection next runs.
+    """
+
+    __tablename__ = "oem_data_sharing_policies"
+    __table_args__ = (
+        UniqueConstraint("oem_code", "tenant_code", name="uq_oem_sharing_policy"),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    oem_code = Column(String, index=True, nullable=False)
+    tenant_code = Column(String, index=True, nullable=False)
+    grants = Column(String, nullable=False, default="")
+    updated_by = Column(String, nullable=True)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime, default=datetime.utcnow)

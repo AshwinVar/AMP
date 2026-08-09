@@ -54,6 +54,15 @@ MANUALLY_SCOPED = {
     "TenantConfig":
         "platform-level row, one per tenant — read by tenant_code as the key, and "
         "the cross-tenant listing is gated on the DEFAULT platform owner",
+    "OemDataSharingPolicy":
+        "the factory-granted OEM sharing policy (ADR-0017). Read by its "
+        "(oem_code, tenant_code) key with BOTH passed in EXPLICITLY, for the same "
+        "reason as DocumentSequence: an OEM request binds a sentinel tenant that "
+        "matches no factory, so riding the hook would hide the very grant that "
+        "authorises the read and the policy check would answer 'not shared' for "
+        "every grant a factory had actually made. The UNIQUE (oem_code, "
+        "tenant_code) constraint makes a wrong pair a miss, not a silent "
+        "cross-customer grant. Factory-side handlers filter tenant_code by hand",
     "EventLog":
         "append-only event history; every consumer filters by tenant_code, and the "
         "startup RESEED_FACTORY flag check is a global operator concern",

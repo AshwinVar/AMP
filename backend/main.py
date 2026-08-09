@@ -28,6 +28,7 @@ from mqtt_service import start_mqtt_service
 
 import models
 import schemas
+import oem_routes
 import tenancy
 import ws_auth
 import sim_state
@@ -310,6 +311,12 @@ app.include_router(analytics_routes.router)
 app.include_router(recommendations_routes.router)
 app.include_router(bom_routes.router)
 app.include_router(core_routes.router)
+
+# Register the OEM portal (ADR-0017) — the machine manufacturer's view of its
+# installed fleet across customer factories. Every route authenticates as an OEM
+# principal, which binds a SENTINEL factory tenant, so these handlers cannot
+# reach a customer's operational data even if one of them forgets to filter.
+app.include_router(oem_routes.router)
 
 # Register the AI Factory Copilot behind the platform (off until ANTHROPIC_API_KEY is set).
 ai.copilot.register(app)

@@ -118,7 +118,25 @@ def decode_token_optional(token: str):
 def get_current_user(
     credentials: HTTPAuthorizationCredentials = Depends(security)
 ):
-    return verify_token(credentials.credentials)
+    claims = verify_token(credentials.credentials)
+    # An OEM principal has no business on a FACTORY route (ADR-0017).
+    #
+    # This is defence in depth, and it is not redundant. An OEM request already
+    # binds a sentinel tenant, so every ADR-0002-scoped read returns nothing —
+    # measured: GET /machines with an OEM token yields an empty list. But the
+    # sentinel only protects reads that go THROUGH the ORM hook. A handler using
+    # raw SQL, or one reading a model outside SCOPED_MODELS, would not be
+    # covered, and the failure would be silent.
+    #
+    # Rejecting here costs nothing: it reads a claim that is already decoded,
+    # with no database access, so it does not add a query to any of the 282
+    # factory routes. An empty response also LOOKS like a working, empty
+    # factory; a 403 says what actually happened.
+    if claims.get("principal") == "oem":
+        raise HTTPException(
+            status_code=403,
+            detail="This is an OEM session; use the /oem portal")
+    return claims
 
 
 def require_roles(allowed_roles: list[str]):

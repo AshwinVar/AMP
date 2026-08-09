@@ -73,6 +73,89 @@ def test_a_fresh_database_is_built_and_stamped():
         print("PASS a fresh database is created and stamped at head")
 
 
+class _TempDbWithPercent:
+    """A throwaway SQLite database whose URL contains a percent sign.
+
+    Percent is not exotic in a real connection string: it is what URL-encoding
+    produces. A Postgres password containing '@' arrives as %40, '/' as %2F,
+    ':' as %3A. Railway, RDS and Supabase all generate passwords from a
+    character set that includes them, so a large fraction of real deployments
+    hand AMP a DATABASE_URL with a % in it.
+    """
+
+    def __enter__(self):
+        self.dir = tempfile.mkdtemp()
+        # %40 is what a literal '@' in a password looks like once encoded.
+        self.path = os.path.join(self.dir, "amp%40audit.db")
+        return f"sqlite:///{self.path.replace(os.sep, '/')}"
+
+    def __exit__(self, *exc):
+        for p in (self.path,):
+            if os.path.exists(p):
+                try:
+                    os.unlink(p)
+                except OSError:
+                    pass
+        try:
+            os.rmdir(self.dir)
+        except OSError:
+            pass
+
+
+def test_a_url_containing_a_percent_sign_still_migrates():
+    """A DATABASE_URL with a % in it must migrate, not crash the deploy.
+
+    THE BUG THIS PINS. alembic/env.py handed the URL to
+    `config.set_main_option("sqlalchemy.url", ...)`. Alembic's Config is backed
+    by configparser, which treats % as interpolation syntax, so ANY url-encoded
+    character raised
+
+        ValueError: invalid interpolation syntax ... at position N
+
+    and the release command died.
+
+    WHY IT WAS WORSE THAN A CRASH. migrate.run() creates the schema BEFORE it
+    stamps. So the failure landed between the two: 48 tables created,
+    alembic_version absent. Every redeploy then hit the identical crash, and the
+    database could never be stamped without hand intervention — while the app
+    itself still booted fine, because main.py builds its own schema with
+    create_all. A customer would see a working product with dead migrations.
+
+    Production was unaffected only because Railway's current password happens to
+    contain no encodable character. That is luck, not design, and it is exactly
+    the kind of luck that runs out on the first customer you onboard.
+    """
+    with _TempDbWithPercent() as url:
+        assert "%" in url, url
+        rc, out = _run(
+            "import migrate; from database import engine;"
+            "migrate.run(verbose=False);"
+            "print('STAMPED', migrate._is_stamped(engine));"
+            "print('AT_HEAD', migrate.current_revision(engine)==migrate.head_revision())", url)
+        assert rc == 0, out
+        assert "STAMPED True" in out, out
+        assert "AT_HEAD True" in out, out
+        print("PASS a DATABASE_URL containing % migrates and stamps")
+
+
+def test_a_percent_url_survives_a_second_run():
+    """CONTROL for the half-migrated state.
+
+    The original failure left a schema with no stamp, so the interesting
+    question is not only "does the first run work" but "is the database in a
+    state the next deploy can proceed from". Running twice proves the stamp
+    took and the second pass is the intended no-op rather than a second crash.
+    """
+    with _TempDbWithPercent() as url:
+        rc, out = _run(
+            "import migrate; from database import engine;"
+            "migrate.run(verbose=False); migrate.run(verbose=False);"
+            "print('STILL_HEAD', migrate.current_revision(engine)==migrate.head_revision())", url)
+        assert rc == 0, out
+        assert "STILL_HEAD True" in out, out
+        print("PASS a second run against a %-url database is a clean no-op")
+
+
 def test_an_existing_schema_is_stamped_not_rebuilt():
     """THE LIVE CASE — the one that would break production.
 
@@ -176,6 +259,8 @@ def test_boot_still_works_untouched():
 
 if __name__ == "__main__":
     test_a_fresh_database_is_built_and_stamped()
+    test_a_url_containing_a_percent_sign_still_migrates()
+    test_a_percent_url_survives_a_second_run()
     test_an_existing_schema_is_stamped_not_rebuilt()
     test_running_twice_is_a_no_op()
     test_the_baseline_is_an_empty_anchor()

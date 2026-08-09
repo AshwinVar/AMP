@@ -36,7 +36,32 @@ if not DATABASE_URL:
         "DATABASE_URL is not set. Alembic will not guess a database — "
         "export the same DATABASE_URL the application uses."
     )
-config.set_main_option("sqlalchemy.url", DATABASE_URL)
+
+# NOTE: the URL is deliberately NOT written back into `config`.
+#
+# Alembic's Config is backed by configparser, and configparser treats % as
+# interpolation syntax. `config.set_main_option("sqlalchemy.url", DATABASE_URL)`
+# therefore raises
+#
+#     ValueError: invalid interpolation syntax in '...' at position N
+#
+# for ANY url-encoded character — and url-encoding is the normal case, not an
+# exotic one: a Postgres password containing '@' arrives as %40, '/' as %2F,
+# ':' as %3A. Railway, RDS and Supabase all generate passwords from character
+# sets that include them.
+#
+# That crash killed the release command, and it did so AFTER migrate.run() had
+# created the schema but BEFORE it stamped alembic_version — leaving a database
+# that no later deploy could migrate, while the app still booted because main.py
+# builds its own schema with create_all. A working product with dead migrations
+# is the worst version of this failure, because nothing surfaces it.
+#
+# Escaping (% -> %%) would also work, but it relies on writing an escaped value
+# and reading an un-escaped one back through the same interpolation pass. Not
+# putting a connection string through a templating engine at all is simpler and
+# cannot drift. Both consumers below take DATABASE_URL directly.
+#
+# alembic.ini keeps `sqlalchemy.url =` blank, which test_migrate.py asserts.
 
 target_metadata = Base.metadata
 
@@ -76,8 +101,14 @@ def run_migrations_offline() -> None:
 
 
 def run_migrations_online() -> None:
+    # The section is still read so any other sqlalchemy.* tuning in alembic.ini
+    # is honoured, but the URL is injected here rather than templated through
+    # configparser — see the note above DATABASE_URL. `alembic.ini` leaves
+    # sqlalchemy.url blank, so there is nothing to override.
+    section = dict(config.get_section(config.config_ini_section, {}) or {})
+    section["sqlalchemy.url"] = DATABASE_URL
     connectable = engine_from_config(
-        config.get_section(config.config_ini_section, {}),
+        section,
         prefix="sqlalchemy.",
         poolclass=pool.NullPool,
     )

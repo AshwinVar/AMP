@@ -2,7 +2,7 @@
 
 Auth & bootstrap (/, /me, /register, /login, /auth/refresh,
 /auth/change-password), the AI-platform self-report (/platform/status, which
-reads the simulator heartbeat from sim_state), the BOM view (/bom), and the
+reads the simulator heartbeat from sim_state), and the
 intelligence stragglers that lean on the shared engines — /briefing/escalate,
 /escalations/from-smart-alerts, /reports/daily-summary.txt, /ops-trends.
 
@@ -29,7 +29,6 @@ import tenancy
 from analytics_engine import generate_alerts
 from analytics_routes import analytics_summary
 from auth import create_access_token, get_current_user, require_roles
-from bom import PART_BOM
 from database import SessionLocal
 from platform_routes import log_audit
 from security import hash_password, needs_rehash, verify_password
@@ -208,37 +207,6 @@ def platform_status(db: Session = Depends(_get_db), current_user: dict = Depends
             "tick_count": sim_state.tick_count,
         }
     return result
-
-
-@router.get("/bom")
-def get_bom(
-    db: Session = Depends(_get_db),
-    current_user: dict = Depends(require_roles(["Admin"])),
-):
-    rows = []
-    for part_code, bom in PART_BOM.items():
-        raw_item = None
-        fg_item = None
-        if bom["raw"]:
-            raw_item = db.query(models.InventoryItem).filter(
-                models.InventoryItem.item_code == bom["raw"]
-            ).first()
-        if bom["fg"]:
-            fg_item = db.query(models.InventoryItem).filter(
-                models.InventoryItem.item_code == bom["fg"]
-            ).first()
-        rows.append({
-            "part_number": part_code,
-            "raw_material_code": bom["raw"] or "—",
-            "raw_material_name": raw_item.item_name if raw_item else "—",
-            "consume_per_unit": bom["consume_per_unit"],
-            "raw_unit": raw_item.unit if raw_item else "—",
-            "finished_goods_code": bom["fg"] or "—",
-            "finished_goods_name": fg_item.item_name if fg_item else "—",
-            "raw_current_stock": raw_item.current_stock if raw_item else None,
-            "raw_reorder_level": raw_item.reorder_level if raw_item else None,
-        })
-    return rows
 
 
 @router.get("/reports/daily-summary.txt")

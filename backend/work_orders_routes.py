@@ -1,7 +1,6 @@
 """Work-order routes — the production-order lifecycle.
 
-Work orders (list / create / update / delete). Two behaviours preserved exactly:
-  * create validates the part against the BOM (bom.PART_BOM);
+Work orders (list / create / update / delete). The behaviour that matters here:
   * completing a work order (status -> Completed) publishes a ProductionCompleted
     domain event (ADR-0001/0003) on the same DB session — the inventory BOM
     movement is a subscriber (subscribers.py), committing atomically here.
@@ -17,7 +16,6 @@ from sqlalchemy.orm import Session
 import models
 import schemas
 from auth import get_current_user, require_roles
-from bom import PART_BOM
 from database import SessionLocal
 from events import event_bus, ProductionCompleted
 from tenancy import request_tenant

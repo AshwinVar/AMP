@@ -46,6 +46,11 @@ CORE_TENANT_TABLES = [
     "iot_telemetry", "ai_recommendations", "cost_records",
     "operator_job_executions", "notifications", "report_requests",
     "industrial_devices", "industrial_signals", "plc_signal_mappings",
+    # ADR-0013. Created WITH tenant_code (they are new tables, not retrofitted),
+    # so ensure_tenant_columns finds the column already present and does
+    # nothing — they are listed to keep SCOPED_MODELS and this list in lockstep,
+    # which is what test_tenancy asserts.
+    "bills_of_materials", "bom_components",
 ]
 
 # Tables that gain tenant_code but must NOT be blind-backfilled to DEFAULT: the
@@ -160,6 +165,11 @@ SCOPED_MODELS = (
     # request writes auto-stamp, legacy NULL rows stay hidden until backfilled.
     models.AuditLog, models.Remnant, models.MaterialIssueSlip,
     models.GoodsReceiptNote, models.GRNItem, models.CycleCount, models.CycleCountItem,
+    # ADR-0013: each tenant's own recipe book. The routes and bom.resolve filter
+    # by tenant explicitly as well — a recipe decides how much of a customer's
+    # stock a completion consumes, so it is the last place to rely on an ambient
+    # binding — but the hook belongs on them like every other tenant-owned table.
+    models.BillOfMaterials, models.BomComponent,
 )
 
 

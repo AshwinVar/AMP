@@ -42,6 +42,9 @@ def _decide_agent_action(action_id, decision, db, current_user):
         models.AgentAction.id == action_id, models.AgentAction.tenant_code == tenant).first()
     if not action:
         raise HTTPException(status_code=404, detail="Agent action not found")
+    # The state, freshness and actor checks all live in approvals.authorise,
+    # which apply_decision calls below — so reaching past this route does not
+    # skip them. The status pre-check is kept only for its clearer message.
     if action.status != "Proposed":
         # status is Column(String, default="Proposed") WITHOUT nullable=False, so a
         # row written by raw SQL / a migration / a legacy path can carry a genuine
@@ -53,8 +56,13 @@ def _decide_agent_action(action_id, decision, db, current_user):
         # NULL-status hardening the stats endpoint above and the maintenance-overdue
         # query (factory_ops_routes) already apply.
         raise HTTPException(status_code=400, detail=f"Already {(action.status or 'decided').lower()}")
-    ai.agents.apply_decision(db, action, decision,
-                             decided_by=current_user.get("sub") or current_user.get("username"))
+    ai.agents.apply_decision(
+        db, action, decision,
+        decided_by=current_user.get("sub") or current_user.get("username"),
+        # The actor is re-verified against the DATABASE here: the JWT alone
+        # cannot say whether the approver still exists, is still active, is
+        # still in this tenant, or still holds an approving role.
+        actor={**current_user, "tenant": tenant})
     db.commit()
     db.refresh(action)
     return _agent_action_dict(action)

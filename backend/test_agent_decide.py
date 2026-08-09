@@ -30,7 +30,16 @@ from agent_routes import _decide_agent_action
 def _fresh_session():
     engine = create_engine("sqlite://", connect_args={"check_same_thread": False})
     Base.metadata.create_all(bind=engine)
-    return sessionmaker(bind=engine)()
+    db = sessionmaker(bind=engine)()
+    # alice is the authenticated caller in every case below, so she must exist
+    # as a real, active, approving user of DEFAULT — approvals.authorise
+    # re-verifies the approver against the DATABASE, not the token. Seeding her
+    # also makes the refusal cases stricter: a refusal can now only come from
+    # the state guard under test, never from an actor who happens not to exist.
+    db.add(models.User(username="alice", password="x", role="Admin",
+                       tenant_code="DEFAULT", is_active=True))
+    db.commit()
+    return db
 
 
 def _action(status, agent="maintenance", decided_by=None, tenant="DEFAULT"):

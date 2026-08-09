@@ -19,6 +19,7 @@ Guiding principles: incremental (strangler) evolution, never a rewrite; backward
 | [0011](0011-machine-identity-and-tenant-aware-ingest.md) | A machine is (tenant, site, name); telemetry is routed by topic | Accepted |
 | [0012](0012-tenant-scoped-document-numbers.md) | Document numbers are unique per tenant, issued from a sequence | Accepted |
 | [0013](0013-per-tenant-bill-of-materials.md) | A bill of materials belongs to a tenant, and lives in the database | Accepted |
+| [0014](0014-canonical-oee-contract.md) | One canonical OEE contract, and an honesty rule | Accepted |
 
 **Recommended order:** 0001 first (smaller, proves the pattern; events carry `tenant_code`), then 0002.
 

@@ -64,6 +64,7 @@ omit =
     mutate_mqtt_identity.py
     mutate_doc_numbers.py
     mutate_bom.py
+    mutate_oee_contract.py
     pg_scratch.py
     # Alembic migration scripts: exercised by running a migration, not by the
     # unit suites, and each version file is dead the moment it has been applied.

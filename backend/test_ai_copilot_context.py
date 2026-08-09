@@ -62,28 +62,65 @@ def test_context_oee_is_pooled_not_mean_of_ratios():
     print(f"PASS copilot context OEE is pooled (21%), not the mean of ratios ({mean_of_ratios}%)")
 
 
-def test_context_no_production_has_no_oee_line():
-    # No production records -> no OEE line at all (no fabricated 0%/NaN, no crash).
+def test_context_no_production_states_unmeasured_not_zero():
+    """No production records -> say so, and do NOT report a number.
+
+    This asserted "no OEE line at all". The property it protects is that the
+    model is never handed a fabricated 0% or a NaN, and silence achieved that.
+    Under ADR-0014 the line is present and says "no production recorded — not
+    zero, unmeasured", which protects the same property more strongly: silence
+    lets the model infer whatever it likes about a factory it was told nothing
+    about, whereas this states the distinction the whole contract is built on.
+
+    What must still hold, and is asserted below: no percentage appears.
+    """
     db = _fresh_session()
     db.add(models.Machine(id=1, name="Idle", status="Running", utilization=80))
     db.commit()
     context = ai_copilot._build_factory_context(db, "DEFAULT")
+    line = _oee_line(context)
+    assert line is not None, context
+    assert "not zero, unmeasured" in line, line
+    # The point: no fabricated figure of any kind.
+    assert "0%" not in line and "%" not in line.split("):")[-1], line
+    print("PASS copilot context reports OEE as unmeasured, never as a number")
+
+
+def test_context_with_no_factory_at_all_stays_silent():
+    """A workspace with no machines emits no OEE line.
+
+    CONTROL for the test above: the "unmeasured" line is gated on a factory
+    existing. Without that gate the empty-workspace placeholder
+    ("No factory data available yet.") becomes unreachable, because the context
+    always contains at least the OEE line.
+    """
+    db = _fresh_session()
+    context = ai_copilot._build_factory_context(db, "DEFAULT")
     assert _oee_line(context) is None, context
-    print("PASS copilot context omits OEE when there is no production")
+    print("PASS an empty workspace emits no OEE line at all")
 
 
 def test_context_zero_denominator_record_does_not_crash():
-    # A record with zero planned/runtime/total (all divisors zero) must pool to a
-    # real 0% OEE, not raise. Pooling guards every denominator.
+    """A record with every divisor zero must not raise — and must not report 0%.
+
+    This asserted `"0%" in line`. The property worth protecting is that a
+    zero-denominator record does not raise; the 0% was the fabrication ADR-0014
+    removes. Nothing was scheduled and nothing was made, so availability,
+    performance and quality are all UNDEFINED, and OEE is a product of three
+    undefined things. Reporting 0% tells a manager their plant ran badly when in
+    fact it did not run at all.
+    """
     db = _fresh_session()
     db.add(models.Machine(id=1, name="Cold", status="Running", utilization=0))
     db.add(models.ProductionRecord(machine_id=1, planned_minutes=0, runtime_minutes=0,
                                    ideal_cycle_time_seconds=0, total_count=0, good_count=0, rejected_count=0))
     db.commit()
-    context = ai_copilot._build_factory_context(db, "DEFAULT")
+    context = ai_copilot._build_factory_context(db, "DEFAULT")   # must not raise
     line = _oee_line(context)
-    assert line is not None and "0%" in line, line
-    print("PASS copilot context handles a zero-denominator record (pooled 0%)")
+    assert line is not None, context
+    assert "not zero, unmeasured" in line, line
+    assert "0%" not in line, line
+    print("PASS a zero-denominator record reads as unmeasured, not as 0%")
 
 
 def _low_stock_lines(context: str):
@@ -161,7 +198,8 @@ def test_context_gmats_null_stock_does_not_crash():
 
 if __name__ == "__main__":
     test_context_oee_is_pooled_not_mean_of_ratios()
-    test_context_no_production_has_no_oee_line()
+    test_context_no_production_states_unmeasured_not_zero()
+    test_context_with_no_factory_at_all_stays_silent()
     test_context_zero_denominator_record_does_not_crash()
     test_context_null_stock_does_not_crash_and_excludes_the_null_item()
     test_context_gmats_null_stock_does_not_crash()

@@ -75,10 +75,22 @@ def build_oee_summary(db, tenant: str) -> dict:
     # lowest raw component — Availability at 90% is already at target.
     drag = biggest_lever(plant) if plant["has_data"] else None
 
+    # How much of the plant this figure actually measured (ADR-0014). The two
+    # counts below already existed; what was missing was carrying them WITH the
+    # headline as a coverage statement. A machine whose gateway drops stops
+    # producing records and silently leaves the pooled denominator — measured,
+    # that made a plant look 27 points better (67% -> 94%) the moment its worst
+    # machine went offline. The number cannot be corrected (the data is gone),
+    # but it must not be presented as a whole-plant figure when it is not.
+    import oee_contract
+    coverage = oee_contract.coverage(db, tenant,
+                                     oee_contract.OeeWindow(WINDOW_DAYS))
+
     return {
         "days": WINDOW_DAYS,
         "world_class": WORLD_CLASS,
         "plant": plant,                       # {oee, availability, performance, quality, has_data}
+        "coverage": coverage,                 # {machines_expected, machines_reporting, coverage_pct, complete}
         "machine_count": len(names),
         "machines_with_data": len(machines),
         "biggest_drag": drag,                 # the component pulling plant OEE down

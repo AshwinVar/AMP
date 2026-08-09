@@ -87,16 +87,43 @@ def _build_factory_context(db: Session, tenant: str) -> str:
         for m in machines:
             lines.append(f"- {m.name}: {m.status}, utilization {m.utilization}%, downtime {m.downtime}")
 
-    recs = db.query(models.ProductionRecord).order_by(models.ProductionRecord.id.desc()).limit(10).all()
-    if recs:
-        # Pooled plant OEE over the window (ratio of sums) — the ONE definition
-        # every dashboard uses (ADR-0010 / analytics_engine.pooled_oee). Averaging
-        # per-record OEE (mean of ratios) over-weights tiny runs and would ground
-        # the model in a number that disagrees with the OEE cards; that's the same
-        # bug already fixed in the executive-OEE rollup. Pooling also tolerates
-        # NULL counts, so the context never crashes on a sparse record.
-        from analytics_engine import pooled_oee
-        lines.append(f"PLANT OEE (pooled, last {len(recs)} runs): {pooled_oee(recs)['oee']}%")
+    # Plant OEE from THE canonical contract (ADR-0014), over the same time window
+    # the dashboard uses.
+    #
+    # This used to read `.order_by(id.desc()).limit(10)` — a window counted in
+    # ROWS, not time — while the dashboard windowed by 7 days. The comment above
+    # it claimed to use "the ONE definition every dashboard uses", and the
+    # pooling function was indeed shared; the RECORD SET was not. Measured on one
+    # factory at one moment: the dashboard said 100% and this said 10%. A
+    # customer asking the assistant how the plant is doing got an answer ninety
+    # points from the screen in front of them.
+    import oee_contract
+    plant = oee_contract.plant_oee(db, tenant)
+    if plant["has_data"]:
+        pct = oee_contract.as_percentages(plant)
+        cov = plant["coverage"]
+        line = (f"PLANT OEE ({plant['window']}, pooled): {pct['oee']}% "
+                f"(availability {pct['availability']}%, performance "
+                f"{pct['performance']}%, quality {pct['quality']}%)")
+        # Coverage travels WITH the number, so the model cannot state a
+        # whole-plant figure that was measured from part of the plant. A machine
+        # whose gateway drops leaves the pool silently; measured, that made the
+        # plant look 27 points better.
+        if not cov["complete"]:
+            line += (f" — measured from {cov['machines_reporting']} of "
+                     f"{cov['machines_expected']} machines ({cov['coverage_pct']}% "
+                     f"coverage); the rest reported nothing in this window")
+        lines.append(line)
+    elif plant["coverage"]["machines_expected"] > 0:
+        # A factory exists but reported nothing in the window. Say so
+        # explicitly — silence lets the model infer whatever it likes, and a 0%
+        # would be a fabricated loss (ADR-0014).
+        #
+        # Gated on there BEING machines: a workspace with no factory at all must
+        # fall through to the "No factory data available yet." placeholder, and
+        # emitting a line here unconditionally made that message unreachable.
+        lines.append(f"PLANT OEE ({plant['window']}): no production recorded — "
+                     f"not zero, unmeasured")
 
     downs = db.query(models.DowntimeLog).order_by(models.DowntimeLog.id.desc()).limit(8).all()
     if downs:

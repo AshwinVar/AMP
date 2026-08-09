@@ -20,7 +20,7 @@ from core_routes import create_escalations_from_smart_alerts
 
 EXPECTED = {
     "/", "/me", "/register", "/login", "/auth/refresh", "/auth/change-password",
-    "/platform/status", "/bom", "/briefing/escalate",
+    "/platform/status", "/briefing/escalate",
     "/escalations/from-smart-alerts", "/reports/daily-summary.txt", "/ops-trends",
 }
 

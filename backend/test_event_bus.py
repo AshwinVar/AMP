@@ -20,9 +20,28 @@ import subscribers
 
 
 def _fresh_session():
+    """A session with DEFAULT's SHAFT-001 recipe already in it.
+
+    Every test below completes a SHAFT-001 work order and expects 2x
+    RM-STEEL-001 to be consumed and one FG-SHAFT-001 received. That recipe used
+    to come from bom.PART_BOM, a module-level dict shared by every customer, so
+    these fixtures never had to state it. It is a per-tenant DATABASE row now
+    (ADR-0013), and seeding it here keeps each test about what it was actually
+    testing - NULL columns, negative quantities, reorder thresholds - rather
+    than about where the recipe lives.
+    """
     engine = create_engine("sqlite://", connect_args={"check_same_thread": False})
     Base.metadata.create_all(bind=engine)
-    return sessionmaker(bind=engine)()
+    db = sessionmaker(bind=engine)()
+    recipe = models.BillOfMaterials(
+        tenant_code="DEFAULT", part_number="SHAFT-001", revision="A",
+        output_item_code="FG-SHAFT-001", active=True, created_by="test-fixture")
+    recipe.components.append(models.BomComponent(
+        tenant_code="DEFAULT", component_code="RM-STEEL-001",
+        quantity_per_unit=2, unit="kg"))
+    db.add(recipe)
+    db.commit()
+    return db
 
 
 def test_production_completed_moves_bom_and_logs_event():
@@ -32,8 +51,6 @@ def test_production_completed_moves_bom_and_logs_event():
                                 category="Raw", unit="kg", current_stock=100, reorder_level=10))
     db.add(models.InventoryItem(item_code="FG-SHAFT-001", item_name="Shaft",
                                 category="Finished", unit="pcs", current_stock=5, reorder_level=0))
-    db.commit()
-
     # Isolated bus with exactly the one subscriber under test
     bus = EventBus()
     subscribers.register(bus)

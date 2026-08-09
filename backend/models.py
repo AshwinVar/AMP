@@ -1,7 +1,7 @@
 import os
 from datetime import datetime
-from sqlalchemy import (Column, Integer, String, ForeignKey, DateTime, Date, Text, Float,
-                        UniqueConstraint)
+from sqlalchemy import (Boolean, Column, Integer, String, ForeignKey, DateTime, Date,
+                        Text, Float, UniqueConstraint)
 from sqlalchemy.orm import relationship
 
 from database import Base
@@ -488,6 +488,89 @@ class AgentPolicy(Base):
     tenant_code = Column(String, unique=True, index=True, nullable=False)
     auto_approve_agents = Column(String, default="")            # CSV of agent keys
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class BillOfMaterials(Base):
+    """One tenant's recipe for one finished product, at one revision.
+
+    REPLACES bom.PART_BOM, a module-level dict shared by every customer.
+    Measured before this table existed, with two customers who had never heard
+    of each other and both happening to make a part they call SHAFT-001:
+
+        FACTORY_B completes a work order for 10 of THEIR OWN SHAFT-001:
+           FACTORY_B  RM-STEEL-001   stock=80     (was 100)
+
+    FACTORY_B's stock moved at 2 per unit - GMATS's rate, a number nobody at
+    FACTORY_B entered and could not change. That is not a data leak (isolation
+    held; GMATS's own stock was untouched) but a correctness failure: if their
+    shaft really consumes 3.5kg, their inventory is quietly wrong forever.
+
+    The other half is worse. A product NOT in the dict moved nothing at all:
+
+        FACTORY_B completes 50 of VALVE-77 - a product THEY make:
+           B-ALLOY-9      stock=500    (unchanged)
+           inventory transactions written: 0
+
+    A customer's own products consumed no material and produced no finished
+    goods, silently. So the platform only worked for the one company whose
+    recipes were compiled into it.
+
+    HEADER PLUS LINES, not one flat table. A bill of materials has many
+    components, and the finished good produced is a property of the PRODUCT, not
+    of each component. Flattening it would let two lines of one BOM disagree
+    about what they build - a contradiction the schema should not be able to
+    represent.
+    """
+    __tablename__ = "bills_of_materials"
+    __table_args__ = (
+        UniqueConstraint("tenant_code", "part_number", "revision",
+                         name="uq_bom_tenant_part_revision"),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    tenant_code = Column(String, index=True, nullable=False, default="DEFAULT")
+    part_number = Column(String, nullable=False)      # what a work order names
+    revision = Column(String, nullable=False, default="A")
+    # The InventoryItem received when a work order for part_number completes.
+    # Nullable because not every part yields a stocked finished good - the old
+    # dict had `"fg": None` for two of its six parts, and that is a real case
+    # (a sub-operation that only consumes).
+    output_item_code = Column(String, nullable=True)
+    effective_from = Column(Date, nullable=True)
+    active = Column(Boolean, nullable=False, default=True)
+    notes = Column(Text, nullable=True)
+    created_by = Column(String, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_by = Column(String, nullable=True)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    components = relationship("BomComponent", back_populates="bom",
+                              cascade="all, delete-orphan")
+
+
+class BomComponent(Base):
+    """One component line: how much of one item goes into one finished product."""
+    __tablename__ = "bom_components"
+    __table_args__ = (
+        UniqueConstraint("bom_id", "component_code", name="uq_bom_component"),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    # tenant_code is carried on the line as well as the header. Redundant by
+    # construction, and deliberately so: every tenant-owned table in this schema
+    # carries it, the ADR-0002 scoping hook filters on it, and a line reachable
+    # only through its header would be invisible to that hook.
+    tenant_code = Column(String, index=True, nullable=False, default="DEFAULT")
+    bom_id = Column(Integer, ForeignKey("bills_of_materials.id"), nullable=False,
+                    index=True)
+    component_code = Column(String, nullable=False)   # an InventoryItem.item_code
+    # Float, not Integer. The old dict's consume_per_unit was an int, which
+    # cannot express "1.5 kg of bar per shaft" - the single most ordinary thing
+    # a bill of materials says.
+    quantity_per_unit = Column(Float, nullable=False, default=0.0)
+    unit = Column(String, nullable=False, default="")
+
+    bom = relationship("BillOfMaterials", back_populates="components")
 
 
 class DocumentSequence(Base):

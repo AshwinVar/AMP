@@ -222,7 +222,7 @@ def test_status_only_completion_with_zero_actual_publishes_zero_not_target():
 def test_zero_actual_completion_does_not_fabricate_bom_movement():
     # The end-to-end consequence through the real BOM subscriber: a completion
     # with actual 0 must move ZERO bill-of-materials, not the full target's worth.
-    # SHAFT-001 recipe: 2x RM-STEEL-001 -> FG-SHAFT-001 (bom.PART_BOM). Numbers
+    # SHAFT-001 recipe: 2x RM-STEEL-001 -> FG-SHAFT-001, seeded below. Numbers
     # derived independently: target 100 but actual 0 -> honest movement is 0, so
     # raw 100 stays 100 and finished 5 stays 5; the bug would have consumed
     # 100*2 = 200 raw (clamped to the 100 on hand) and received 100 finished.
@@ -237,6 +237,7 @@ def test_zero_actual_completion_does_not_fabricate_bom_movement():
         db.add(models.InventoryItem(item_code="FG-SHAFT-001", item_name="Shaft",
                                     category="Finished", unit="pcs", current_stock=5, reorder_level=0))
         db.commit()
+        _seed_shaft_recipe(db, "TA")
     finally:
         T.reset_current_tenant(tok)
     wo = _create_as(db, "TA", schemas.WorkOrderCreate(
@@ -469,6 +470,25 @@ def test_completion_reaching_target_publishes_actual_quantity():
     print("PASS completion via reaching target publishes the actual produced quantity")
 
 
+def _seed_shaft_recipe(db, tenant="TA"):
+    """TA's own SHAFT-001 recipe: 2x RM-STEEL-001 -> FG-SHAFT-001.
+
+    This used to come from bom.PART_BOM, a module-level dict shared by every
+    customer, so these fixtures never had to state it. It is a per-tenant
+    database row now (ADR-0013). Seeding it explicitly also makes the numbers
+    below checkable: 2 per unit is now something this file says, not something
+    it inherits.
+    """
+    recipe = models.BillOfMaterials(
+        tenant_code=tenant, part_number="SHAFT-001", revision="A",
+        output_item_code="FG-SHAFT-001", active=True, created_by="test-fixture")
+    recipe.components.append(models.BomComponent(
+        tenant_code=tenant, component_code="RM-STEEL-001",
+        quantity_per_unit=2, unit="kg"))
+    db.add(recipe)
+    db.commit()
+
+
 def _bom_session():
     """A tenant with the SHAFT-001 recipe stocked: 2x RM-STEEL-001 -> FG-SHAFT-001."""
     db = _iso_session()
@@ -480,6 +500,7 @@ def _bom_session():
         db.add(models.InventoryItem(item_code="FG-SHAFT-001", item_name="Shaft",
                                     category="Finished", unit="pcs", current_stock=0, reorder_level=0))
         db.commit()
+        _seed_shaft_recipe(db, "TA")
     finally:
         T.reset_current_tenant(tok)
     return db, machine

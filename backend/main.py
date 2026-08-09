@@ -63,6 +63,7 @@ import users_routes
 import reports_routes
 import analytics_routes
 import recommendations_routes
+import bom_routes
 import core_routes
 import industrial_adapters
 from events import event_bus, ProductionCompleted, DowntimeStarted, InventoryLow, QualityInspectionFailed
@@ -306,6 +307,7 @@ app.include_router(users_routes.router)
 app.include_router(reports_routes.router)
 app.include_router(analytics_routes.router)
 app.include_router(recommendations_routes.router)
+app.include_router(bom_routes.router)
 app.include_router(core_routes.router)
 
 # Register the AI Factory Copilot behind the platform (off until ANTHROPIC_API_KEY is set).

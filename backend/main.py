@@ -179,6 +179,39 @@ _ensure_column("work_orders", "material_state", "ALTER TABLE work_orders ADD COL
 _ensure_column("work_orders", "completed_at", "ALTER TABLE work_orders ADD COLUMN completed_at TIMESTAMP")
 _backfill_completed_at()
 _ensure_column("tenant_configs", "unit_value_gbp", "ALTER TABLE tenant_configs ADD COLUMN unit_value_gbp FLOAT")
+# THE APPROVAL GATE'S REVOCATION FLAG (alembic 0005) — and the reason the block
+# below exists at all.
+#
+# `models.User.is_active` shipped with a migration and NO entry here. Production
+# does not run Alembic on deploy (docs/MIGRATIONS.md: migrate.py is run by hand),
+# and create_all only creates missing TABLES, never alters an existing one. So
+# the column never landed, and because SQLAlchemy names every mapped column in
+# its SELECT list, EVERY User query became:
+#
+#     psycopg2.errors.UndefinedColumn: column users.is_active does not exist
+#
+# which is a 500 on /login. The whole product was unreachable — nobody could
+# sign in — while /health went on answering 200, because it does not go through
+# the ORM. Every test passed throughout: they build `users` fresh with
+# create_all, which is precisely the case that cannot reproduce this.
+#
+# NOT NULL DEFAULT TRUE matches the migration and the model: every existing
+# login stays active, and revocation stays an explicit act rather than a NULL
+# nobody can interpret. On PostgreSQL 11+ a defaulted NOT NULL add is metadata
+# only, so this does not rewrite the table.
+_ensure_column("users", "is_active",
+               "ALTER TABLE users ADD COLUMN is_active BOOLEAN NOT NULL DEFAULT TRUE")
+# Same migration, same omission — the approval gate's freshness window.
+_ensure_column("agent_actions", "expires_at",
+               "ALTER TABLE agent_actions ADD COLUMN expires_at TIMESTAMP")
+# Same class again, from alembic 0007: `machine_installations` was created by an
+# earlier deploy's create_all, so the service-clock columns added afterwards were
+# never applied. Nullable with no backfill, exactly as the migration argues —
+# NULL means "nobody has recorded a service", and any other value would invent one.
+_ensure_column("machine_installations", "last_service_hours",
+               "ALTER TABLE machine_installations ADD COLUMN last_service_hours FLOAT")
+_ensure_column("machine_installations", "last_service_at",
+               "ALTER TABLE machine_installations ADD COLUMN last_service_at TIMESTAMP")
 # The windowed read-models filter these by created_at in SQL — index them so the
 # window stays fast as the tables grow.
 _ensure_index("production_records", "created_at")

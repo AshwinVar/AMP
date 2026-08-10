@@ -19,7 +19,19 @@ export default defineConfig({
     // a component test and gating on component coverage are different
     // decisions, and 95 components with no tests would drag the floor to ~5%
     // and make the gate meaningless. See docs/TESTING.md.
-    include: ["lib/**/*.test.{ts,tsx}", "components/**/*.test.{ts,tsx}"],
+    //
+    // app/ joins them for the same reason components/ did: a ROUTING decision
+    // lives in a page, not in lib/. Which screen a manufacturer lands on after
+    // signing in (ADR-0017), and how the OEM portal reacts when the server says
+    // "not an OEM session", are both page-level and both worth pinning — the
+    // failure mode is a real user staring at the wrong product. coverage.include
+    // still does not follow: a 2,900-line dashboard with no unit tests would
+    // drag the floor to ~5% and make the gate meaningless.
+    include: [
+      "lib/**/*.test.{ts,tsx}",
+      "components/**/*.test.{ts,tsx}",
+      "app/**/*.test.{ts,tsx}",
+    ],
     globals: true,
 
     coverage: {

@@ -291,7 +291,12 @@ error; the warning is the ratchet that stops it being forgotten.
 
 ## Frontend
 
-`frontend/` runs Vitest (`npm test` → `vitest run`) over the test files in `lib/`.
+`frontend/` runs Vitest (`npm test` → `vitest run`) over the test files in
+`lib/`, plus the handful in `components/` and `app/` where the behaviour worth
+pinning genuinely lives in a component or a page — a component whose bug is
+"renders nothing", or a page-level routing decision such as which portal a
+manufacturer lands on after signing in (ADR-0017). `coverage.include` stays at
+`lib/`; see below for why widening it would make the number worse, not better.
 
 ```bash
 cd frontend

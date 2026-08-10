@@ -20,7 +20,8 @@
         {"key": "shifts", "label": "Shifts", "icon": "◴"},
         {"key": "analytics", "label": "Analytics", "icon": "▧"},
         {"key": "trends", "label": "Trends", "icon": "▨"},
-        {"key": "timeline", "label": "Timeline", "icon": "↔"}
+        {"key": "timeline", "label": "Timeline", "icon": "↔"},
+        {"key": "connected", "label": "Connected Equipment", "icon": "◈"}
       ]
     },
     {

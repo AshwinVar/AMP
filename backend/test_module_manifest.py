@@ -47,6 +47,12 @@ def test_manifest_reproduces_the_plan_gate_route_map():
 _EXPECTED_VIEWS = {
     "mission": "core", "overview": "core", "machines": "core", "downtime": "core",
     "shifts": "core", "analytics": "core", "trends": "core", "timeline": "core",
+    # CORE, deliberately (ADR-0017). This is where a customer sees and withdraws
+    # what a machine's manufacturer may read about their shop floor, and a
+    # consent control behind a paywall is not a consent control. Moving it into
+    # a gated pack would leave Starter tenants with equipment they cannot see
+    # the sharing position of — so the pin is the thing that would catch it.
+    "connected": "core",
     "workorders": "operations", "planning": "operations", "scheduling": "operations",
     "operator": "operations", "orders": "operations",
     "maintenance_ai": "factory", "cmms": "factory", "quality": "factory",

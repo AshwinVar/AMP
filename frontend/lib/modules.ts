@@ -39,6 +39,10 @@ export const NAV_ITEMS: NavItem[] = [
   { key: "analytics",      label: "Analytics",          icon: "▧", module: "core" },
   { key: "trends",         label: "Trends",             icon: "▨", module: "core" },
   { key: "timeline",       label: "Timeline",           icon: "↔", module: "core" },
+  // CORE, deliberately — not the Factory pack. This is where a customer sees
+  // and withdraws what a machine's manufacturer can read about their shop
+  // floor, and a consent control behind a paywall is not a consent control.
+  { key: "connected",      label: "Connected Equipment", icon: "◈", module: "core" },
   { key: "workorders",     label: "Work Orders",        icon: "▣", module: "operations" },
   { key: "planning",       label: "Production Plan",    icon: "▤", module: "operations" },
   { key: "scheduling",     label: "Scheduling",         icon: "◫", module: "operations" },

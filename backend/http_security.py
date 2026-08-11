@@ -116,6 +116,12 @@ def _env_int(name, default):
 # Login is the brute-force target; the AI routes are the cost target.
 RATE_LIMITS = {
     "/login": (_env_int("RATE_LIMIT_LOGIN", 10), 60),
+    # The manufacturer's front door is a brute-force target for the same reason
+    # the factory's is, and it reaches a DIFFERENT principal table -- so it needs
+    # its own entry rather than inheriting one by prefix. ("/oem" is not a prefix
+    # of "/login".)
+    "/oem/login": (_env_int("RATE_LIMIT_LOGIN", 10), 60),
+    "/oem/change-password": (_env_int("RATE_LIMIT_LOGIN", 10), 60),
     "/register": (_env_int("RATE_LIMIT_LOGIN", 10), 60),
     "/auth/change-password": (_env_int("RATE_LIMIT_LOGIN", 10), 60),
     "/ai/ask": (_env_int("RATE_LIMIT_AI", 20), 60),

@@ -94,6 +94,14 @@ ALLOWED_CROSS_TENANT = {
         "resolves the caller's OWN username from their JWT; usernames are globally unique",
     "platform_routes.py::all_tenant_configs":
         "platform-owner listing of every client — gated on the DEFAULT tenant + Admin",
+    "oem_auth.py::assert_username_available":
+        "the username namespace is GLOBAL — User.username is unique=True across "
+        "every tenant, and OemUser.username across every manufacturer — so an "
+        "availability check MUST look past the caller's tenant. A scoped check "
+        "would return 'available' for a name the INSERT then rejects on the "
+        "unique constraint, which is the same defect one layer later. It reads "
+        "one row by exact username and returns a boolean; it never returns a "
+        "row, a field, or a count to the caller.",
 }
 
 SKIP_FILES = {

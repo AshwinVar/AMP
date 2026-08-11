@@ -190,14 +190,106 @@ edit its own permissions has permissions in name only.
 
 ## Part 2 — Onboarding a manufacturer
 
-1. **Create the organisation.** `oem_code` is durable, appears in audit rows and
-   cannot be renamed casually. Uppercase, no colon (`OEM:` is the reserved
-   sentinel prefix — see the architecture doc §2).
-2. **Brand it.** `brand_name`, `brand_color`, `brand_logo_url`, `support_email`,
-   `support_phone`. These drive `/oem/me`, which drives the portal's appearance.
-   **One build, configuration per OEM — never a fork.** A fork means a security
-   fix has to land N times, and the Nth is the one that gets forgotten.
-3. **Create users** with the narrowest role that works:
+The whole sequence, and who performs each step:
+
+```
+FOUNDER   POST /saas/oems                 register the manufacturer
+FOUNDER   POST /saas/oems/{id}/admin      its FIRST admin -> temp password
+   ↓      (hand the credentials over, out of band, once)
+OEM       POST /oem/login                 sign in
+OEM       POST /oem/change-password       rotate the temporary password
+OEM       POST /oem/users                 add its own people
+```
+
+Step 5 is deliberately the manufacturer's own job. A platform operator who
+provisions every one of a supplier's engineers becomes a help desk, and holds
+passwords it has no reason to hold — so `/saas/oems/{id}/admin` **refuses once an
+administrator exists**.
+
+### Founder-side routes
+
+| Method | Path | Purpose |
+|---|---|---|
+| GET | `/saas/oems` | every manufacturer, with user and installation counts |
+| POST | `/saas/oems` | register one |
+| PATCH | `/saas/oems/{id}` | branding, contact details, **suspension** |
+| POST | `/saas/oems/{id}/admin` | provision the first administrator |
+
+All four demand the **founder workspace**, checked against the token's own tenant
+claim so the company switcher cannot be used to become the founder. A customer
+Admin and a manufacturer's own admin are both refused — the second is the point:
+an organisation that could create, rename or reactivate itself is not one the
+platform controls.
+
+`PATCH … {"is_active": false}` takes effect **immediately**, not at token expiry,
+because `oem_auth.resolve` re-reads the organisation on every request. A
+suspended manufacturer is refused at the door *and* on its existing sessions.
+
+`oem_code` is absent from the update model on purpose: it is the identity every
+installation, sharing policy and audit row already points at.
+
+### The code's shape is load-bearing
+
+`oem_code` must match `^[A-Z0-9][A-Z0-9_-]{1,31}$` — lower case is folded up,
+anything else is a **400**. It becomes the suffix of the sentinel tenant
+`OEM:<code>` that every one of this manufacturer's requests binds, and the whole
+isolation rests on that string being unmatchable by a factory. A code carrying a
+colon would produce a sentinel nobody reasoned about.
+
+### Passwords
+
+Both provisioning routes **generate** the password, return it **once**, and store
+only a bcrypt hash. Nobody types a password into AMP on somebody else's behalf.
+`/oem/login` and `/oem/change-password` are rate-limited like the factory's front
+door.
+
+### Signing in
+
+```jsonc
+POST /oem/login   { "username": "oem_alpha_admin", "password": "…" }
+→ { "access_token": "…", "role": "OEM_ADMIN", "oem": "OEM_ALPHA",
+    "branding": { "name": "Alpha Connect", "color": "#0f766e", "logo_url": null } }
+```
+
+The token carries `principal: "oem"` and `oem`, and **no `tenant` claim at all** —
+`tenancy.effective_tenant` binds the sentinel regardless, so a tenant claim would
+be inert, and an inert claim that looks authoritative is how somebody later
+"fixes" the branch to honour it.
+
+Refusals are deliberately uneven. Bad credentials give **one indistinguishable
+answer**, because telling an attacker which half was wrong hands them a username
+oracle. Everything *after* a correct password names the real reason — a suspended
+engineer told "invalid credentials" spends the afternoon resetting a password
+that was never the problem.
+
+### Manufacturer-side user management
+
+| Method | Path | Capability |
+|---|---|---|
+| GET | `/oem/users` | `manage_users` |
+| POST | `/oem/users` | `manage_users` |
+| PATCH | `/oem/users/{id}` | `manage_users` |
+| POST | `/oem/change-password` | any OEM role (own account only) |
+
+`oem_code` appears in **no** request body. There is no input through which an
+administrator at one manufacturer could create or edit an account inside another;
+a competitor's user id is a **404**, indistinguishable from one that does not
+exist, so probing ids cannot enumerate a rival's staff.
+
+A username already taken by **either** an OEM or a factory login is refused. The
+two tables are never queried together, so this is not an isolation hole — it is a
+human one: two people, two companies, one name in every audit line.
+
+**One lockout rule:** an organisation may never be left without an active
+administrator. A sole administrator therefore cannot demote or disable
+themselves; with a successor in place, a handover is allowed. (An earlier version
+had a separate "you cannot demote yourself" rule as well — writing the test
+showed the organisation-level rule could then never fire, so it was deleted
+rather than kept as decoration.)
+
+### Roles
+
+Give each account the narrowest role that works:
 
    | Role | Give it to |
    |---|---|
@@ -206,7 +298,9 @@ edit its own permissions has permissions in name only.
    | `OEM_SERVICE_ENGINEER` | field engineers — read plus commission |
    | `OEM_VIEWER` | sales, management, anybody who only looks |
 
-4. **Load the catalogue.** Per model: `model_code`, `family`, `name`,
+### The catalogue
+
+Per model: `model_code`, `family`, `name`,
    `service_interval_hours`, `warranty_months`, and a telemetry profile.
 
 ### The telemetry profile

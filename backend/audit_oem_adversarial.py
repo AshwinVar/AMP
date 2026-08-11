@@ -594,8 +594,106 @@ def main():
             check(f"a {n.tenant_code} notification names no other customer",
                   not others, str(others))
 
+    # ============================================================ J: ONBOARDING
+    async def attack_the_provisioning():
+        print("\n" + "=" * 74)
+        print("J. ONBOARDING AND THE MANUFACTURER'S FRONT DOOR")
+        print("=" * 74)
+        alpha = tokfor("alpha-admin", oem="OEM_ALPHA", role="OEM_ADMIN",
+                       principal="oem")
+        beta = tokfor("beta-admin", oem="OEM_BETA", role="OEM_ADMIN",
+                      principal="oem")
+        fac_a = tokfor("factory_a-admin", tenant="FACTORY_A", role="Admin")
+        founder = tokfor("founder", tenant="DEFAULT", role="Admin")
+
+        # The platform surface is the founder's alone. A CUSTOMER's Admin and a
+        # MANUFACTURER's admin are both ordinary users here.
+        for who, tok_ in (("a FACTORY_A admin", fac_a),
+                          ("an OEM_ALPHA admin", alpha),
+                          ("an anonymous caller", None)):
+            c, _, _ = await http("/saas/oems", tok_)
+            check(f"{who} cannot list the manufacturers on the platform",
+                  c in (401, 403), str(c))
+            c, _, _ = await http("/saas/oems", tok_, method="POST",
+                                 payload={"oem_code": "PLANTED", "name": "P"})
+            check(f"{who} cannot register a manufacturer", c in (401, 403), str(c))
+            c, _, _ = await http("/saas/oems/1/admin", tok_, method="POST",
+                                 payload={})
+            check(f"{who} cannot provision a manufacturer's login",
+                  c in (401, 403), str(c))
+
+        # CONTROL: the founder can, so the refusals above are about authority
+        # and not about the routes being broken.
+        c, body, _ = await http("/saas/oems", founder)
+        ok("CONTROL: the founder CAN list them", c == 200, str(c))
+
+        # A manufacturer's own user surface stops at its organisation.
+        c, body, raw = await http("/oem/users", alpha)
+        ok("an OEM admin can read its own roster", c == 200, str(c))
+        check("...and the roster names no other manufacturer's people",
+              "beta-admin" not in raw, "a competitor's staff are listed")
+        hit = [s for s in SECRETS if s in raw]
+        check("...and carries no factory secret", not hit, str(hit))
+
+        # A user created here must land HERE, whatever the body says.
+        before_beta = db.query(models.OemUser).filter(
+            models.OemUser.oem_code == "OEM_BETA").count()
+        c, body, _ = await http("/oem/users", alpha, method="POST",
+                                payload={"username": "audit_planted",
+                                         "role": "OEM_VIEWER",
+                                         "oem_code": "OEM_BETA",
+                                         "oem": "OEM_BETA"})
+        ok("CONTROL: the creation was ACCEPTED, so the body was read",
+           c == 200, f"{c} {body}")
+        db.expire_all()
+        planted = db.query(models.OemUser).filter(
+            models.OemUser.username == "audit_planted").first()
+        check("an oem_code in the body cannot place a user in another organisation",
+              planted is not None and planted.oem_code == "OEM_ALPHA",
+              str(planted and planted.oem_code))
+        check("...and the competitor's roster is unchanged",
+              db.query(models.OemUser).filter(
+                  models.OemUser.oem_code == "OEM_BETA").count() == before_beta,
+              "a user appeared in the competitor's organisation")
+
+        # A competitor's user id is a 404 on the edit route, indistinguishable
+        # from one that does not exist — otherwise probing ids enumerates a
+        # rival's staff.
+        rival = db.query(models.OemUser).filter(
+            models.OemUser.username == "beta-admin").first()
+        c_rival, _, _ = await http(f"/oem/users/{rival.id}", alpha,
+                                   method="PATCH", payload={"is_active": False})
+        c_ghost, _, _ = await http("/oem/users/999999", alpha,
+                                   method="PATCH", payload={"is_active": False})
+        check("a competitor's user cannot be edited", c_rival == 404, str(c_rival))
+        check("...indistinguishably from a nonexistent id", c_rival == c_ghost,
+              f"{c_rival} vs {c_ghost}")
+        db.expire_all()
+        still = db.query(models.OemUser).filter(
+            models.OemUser.username == "beta-admin").first()
+        check("...and the competitor's account is still active", still.is_active,
+              "a rival disabled a competitor's administrator")
+
+        # The front door itself must not become a factory-data or user oracle.
+        c, body, raw = await http("/oem/login", None, method="POST",
+                                  payload={"username": "beta-admin",
+                                           "password": "guess"})
+        hit = [s for s in SECRETS if s in raw]
+        check("a failed OEM login leaks no factory data", not hit, str(hit))
+        c2, body2, _ = await http("/oem/login", None, method="POST",
+                                  payload={"username": "no_such_person_at_all",
+                                           "password": "guess"})
+        check("a real username and an unknown one give the same refusal",
+              c == c2 and body.get("detail") == body2.get("detail"),
+              f"{c}/{body.get('detail')!r} vs {c2}/{body2.get('detail')!r}")
+
+        # And an OEM session still cannot become a factory one by any of this.
+        c, _, _ = await http("/machines", alpha)
+        check("an OEM token is still refused on factory routes", c == 403, str(c))
+
     asyncio.new_event_loop().run_until_complete(run())
     asyncio.new_event_loop().run_until_complete(attack_the_writes())
+    asyncio.new_event_loop().run_until_complete(attack_the_provisioning())
 
     db.close()
     engine.dispose()

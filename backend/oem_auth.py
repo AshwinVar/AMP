@@ -30,6 +30,8 @@ Factory operational tables then return nothing for an OEM by CONSTRUCTION —
 before any OEM route is written, and whether or not its author remembers to
 filter. Everything else in the OEM layer is defence in depth behind this.
 """
+import re
+
 from fastapi import Depends, HTTPException
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
@@ -59,6 +61,63 @@ ROLE_CAPABILITIES = {
 # A tenant code is a plain identifier (see mqtt_identity._identifier), so a colon
 # cannot occur in one — this string can never collide with a real tenant.
 SENTINEL_PREFIX = "OEM:"
+
+# An oem_code becomes the SUFFIX of that sentinel, so its shape is load-bearing
+# rather than cosmetic. Restricting it to a plain identifier keeps
+# `OEM:<code>` exactly as unmatchable as it was reasoned to be — a code carrying
+# a colon, a space or a wildcard would produce a tenant string nobody analysed.
+_OEM_CODE = re.compile(r"^[A-Z0-9][A-Z0-9_-]{1,31}$")
+
+
+def validate_oem_code(code):
+    """Raise ValueError unless `code` is a usable manufacturer code.
+
+    Raises rather than returning a bool, and raises ValueError rather than an
+    HTTP type, so this module stays free of the web layer — callers turn it into
+    a 400.
+    """
+    text = (code or "").strip()
+    if not _OEM_CODE.match(text):
+        raise ValueError(
+            "A manufacturer code must be 2-32 characters of A-Z, 0-9, "
+            "underscore or dash, starting with a letter or digit. It becomes "
+            "part of the sentinel tenant that keeps this manufacturer's session "
+            "from resolving to a factory's data (ADR-0017), so its shape is not "
+            "cosmetic.")
+    return text
+
+
+def assert_username_available(db, username):
+    """Refuse a username already taken by EITHER kind of principal.
+
+    OemUser.username is unique in its own table, and factory logins live in a
+    different table entirely — so nothing at the database level stops a
+    manufacturer's account being created with the same name as a factory
+    administrator's.
+
+    That is not an isolation hole (the two tables are never queried together;
+    `/login` reads User and `/oem/login` reads OemUser) but it is a
+    HUMAN-facing one: two different people, two different companies, one name in
+    every audit line, error message and support conversation. Refused at
+    creation, where it is cheap.
+    """
+    name = (username or "").strip()
+    if not name:
+        raise ValueError("A username is required")
+    # ONE message for both tables, deliberately. An earlier version said "...is
+    # already taken by a FACTORY login", which told a manufacturer's
+    # administrator which kind of account holds a name they cannot see. That
+    # serves no purpose for them — they need a different name either way — and
+    # it is the sort of detail that is free to leak and awkward to retract.
+    taken = ("The username '{name}' is already taken. Manufacturer and factory "
+             "accounts share one name space, so that an audit line naming a user "
+             "is never ambiguous — please choose another.").format(name=name)
+    if db.query(models.OemUser).filter(models.OemUser.username == name).first():
+        raise ValueError(taken)
+    if db.query(models.User).filter(models.User.username == name).first():
+        raise ValueError(taken)
+    return name
+
 
 _bearer = HTTPBearer(auto_error=False)
 

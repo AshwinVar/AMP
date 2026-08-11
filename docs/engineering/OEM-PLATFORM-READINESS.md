@@ -188,15 +188,19 @@ after any change to `oem_*`, `tenancy.py`, or `auth.py`.
 
 **Blockers — cannot pilot without these**
 
-1. **OEM login provisioning.** `OemUser` rows exist and authenticate, but there
-   is no route to create one, no password reset, and no invitation flow. Today
-   an OEM account can only be created by direct database insert.
+1. ~~**OEM login provisioning.**~~ **DONE** ([#519](https://github.com/AshwinVar/AMP/pull/519)).
+   `POST /oem/login`, `POST /oem/change-password`, and manufacturer-side
+   `GET/POST/PATCH /oem/users`. Until then an OEM could not authenticate at
+   all — `OemUser` rows were only ever *read*, and every test minted its own JWT.
 2. **Installation assignment.** Nothing can attach a machine to a customer.
    Deliberately unbuilt — an OEM-side assignment is a spoofing vector — so it
    needs a **factory-side** claim or a founder-mediated flow, designed and
-   audited.
-3. **OEM organisation onboarding.** No route creates an `OemOrganization` or
-   sets its branding.
+   audited. **This is now the only remaining pilot blocker.**
+3. ~~**OEM organisation onboarding.**~~ **DONE** ([#519](https://github.com/AshwinVar/AMP/pull/519)).
+   Founder-only `GET/POST /saas/oems`, `PATCH /saas/oems/{id}` (including
+   suspension), and `POST /saas/oems/{id}/admin`, which provisions the first
+   administrator with a one-time password and then refuses — further accounts
+   are the manufacturer's own job.
 
 **Blockers for unattended commercial operation**
 

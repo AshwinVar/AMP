@@ -30,6 +30,7 @@ import models
 import schemas
 import connected_equipment_routes
 import oem_routes
+import oem_admin_routes
 import tenancy
 import ws_auth
 import sim_state
@@ -428,6 +429,13 @@ app.include_router(oem_routes.router)
 # machines came from an OEM, and exactly what that OEM can see about them. A
 # consent control nobody can read is not consent.
 app.include_router(connected_equipment_routes.router)
+
+# Register founder-side OEM onboarding (ADR-0017): creating a manufacturer and
+# provisioning its FIRST administrator. Deliberately a separate module from
+# oem_routes — everything there is done BY a manufacturer, everything here is
+# done TO one, and an organisation that could create or reactivate itself is not
+# an organisation the platform controls.
+app.include_router(oem_admin_routes.router)
 
 # Register the AI Factory Copilot behind the platform (off until ANTHROPIC_API_KEY is set).
 ai.copilot.register(app)

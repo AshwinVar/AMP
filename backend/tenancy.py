@@ -35,6 +35,36 @@ DEFAULT_TENANT = "DEFAULT"
 # startup (reconcile) and at login (fallback when the user has no tenant_code).
 CLIENT_TENANTS = {"gmats": "GMATS"}
 
+
+# ── The reserved tenant namespace (ADR-0017) ──────────────────────────
+#
+# An OEM request binds a SENTINEL tenant, `OEM:<code>`, chosen so that no
+# factory can hold it — that is what makes factory data invisible to a
+# manufacturer by construction rather than by a filter somebody might forget.
+#
+# "No factory can hold it" was, until this function existed, true only by
+# CONVENTION: tenant codes are uppercase identifiers and nobody had ever used a
+# colon. Nothing checked. A tenant created as literally "OEM:OEM_ALPHA" would
+# have been visible to OEM_ALPHA's sessions — found by audit_oem_specialist.py,
+# which creates exactly that tenant and looks.
+#
+# The convention is now a rule. Cheap, total, and at the one place a tenant code
+# enters the system.
+def is_reserved_tenant_code(code):
+    """True when a proposed tenant code would collide with the OEM sentinel."""
+    text = str(code or "").strip().upper()
+    return text.startswith("OEM:") or ":" in text
+
+
+def assert_tenant_code_available(code):
+    """Raise ValueError if a tenant code may not be used. Callers turn it into
+    a 400 — this module deliberately raises no HTTP type."""
+    if is_reserved_tenant_code(code):
+        raise ValueError(
+            "That company code is reserved. Codes containing ':' collide with "
+            "the OEM sentinel namespace (ADR-0017), which is what keeps a "
+            "manufacturer's session from resolving to a factory's data.")
+
 # Core operational tables that gain a tenant_code column in this PR. The rest of
 # the core tables follow in later PRs; platform and GMATS tables are already
 # tenant-aware, and event_log is already tenant-stamped (ADR-0001).

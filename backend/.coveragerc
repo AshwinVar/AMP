@@ -105,6 +105,10 @@ omit =
     #                          tenant an event is filed under
     mutate_oem_lifecycle.py
     audit_oem_adversarial.py
+    #   audit_oem_specialist  attacks the ASSUMPTIONS the OEM boundary rests on
+    #                         (AST scans of the route handlers, a live sentinel
+    #                         collision, event-tenancy contracts). Run by hand.
+    audit_oem_specialist.py
     oem_perf.py
     # The deployment migration contract (ADR-0018). Same category once more: it
     # spawns a fresh interpreter per step against a disposable PostgreSQL

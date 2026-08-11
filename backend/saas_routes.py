@@ -93,6 +93,14 @@ def get_company_tenants(db: Session = Depends(_get_db), current_user: dict = Dep
 
 def create_company_tenant(tenant: schemas.CompanyTenantCreate, db: Session = Depends(_get_db), current_user: dict = Depends(require_roles(["Admin"]))):
     _require_founder(current_user)
+    # The reserved namespace (ADR-0017). A tenant code containing ':' could
+    # collide with an OEM's sentinel tenant, and a factory holding
+    # "OEM:OEM_ALPHA" would be visible to OEM_ALPHA's sessions. Refused here,
+    # at the one place a tenant code enters the system.
+    try:
+        tenancy.assert_tenant_code_available(tenant.company_code)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     existing = db.query(models.CompanyTenant).filter(models.CompanyTenant.company_code == tenant.company_code).first()
     if existing:
         raise HTTPException(status_code=400, detail="Company code already exists")

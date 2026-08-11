@@ -1,37 +1,37 @@
 {
   "10": {
-    "fleet_page_ms": 4.9,
+    "fleet_page_ms": 4.3,
     "fleet_page_queries": 9,
-    "service_queue_ms": 0.8,
+    "service_queue_ms": 0.5,
     "service_queue_queries": 1,
-    "customer_ms": 1.1,
+    "customer_ms": 1.0,
     "customer_queries": 2,
     "recommendations": 10
   },
   "100": {
-    "fleet_page_ms": 3.8,
+    "fleet_page_ms": 5.1,
     "fleet_page_queries": 9,
     "service_queue_ms": 1.2,
     "service_queue_queries": 1,
-    "customer_ms": 0.7,
+    "customer_ms": 1.1,
     "customer_queries": 2,
     "recommendations": 100
   },
   "1000": {
-    "fleet_page_ms": 11.4,
+    "fleet_page_ms": 8.6,
     "fleet_page_queries": 9,
-    "service_queue_ms": 10.9,
+    "service_queue_ms": 9.6,
     "service_queue_queries": 1,
-    "customer_ms": 2.8,
+    "customer_ms": 2.3,
     "customer_queries": 2,
     "recommendations": 1000
   },
   "10000": {
-    "fleet_page_ms": 136.4,
+    "fleet_page_ms": 125.3,
     "fleet_page_queries": 9,
-    "service_queue_ms": 94.5,
+    "service_queue_ms": 93.1,
     "service_queue_queries": 1,
-    "customer_ms": 8.8,
+    "customer_ms": 9.1,
     "customer_queries": 2,
     "recommendations": 10000
   }

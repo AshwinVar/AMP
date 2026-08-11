@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { API_URL } from "../../lib/api";
+import { isOemSession } from "../../lib/oem";
 
 export default function LoginPage() {
   const router = useRouter();
@@ -37,7 +38,12 @@ export default function LoginPage() {
       localStorage.setItem("role", data.role);
       localStorage.setItem("company", data.tenant || "DEFAULT");
 
-      router.push("/dashboard");
+      // A manufacturer and a factory user sign in at the same door and belong on
+      // different screens (ADR-0017). Sending an OEM to /dashboard would give
+      // them a shop floor they are refused at every endpoint of — the backend
+      // rejects an OEM token on factory routes — which reads as a broken
+      // product rather than as the wrong page.
+      router.push(isOemSession() ? "/oem" : "/dashboard");
     } catch (err: any) {
       setError(err.message || "Login failed");
     } finally {

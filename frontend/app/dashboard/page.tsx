@@ -32,6 +32,7 @@ import GmatsInventory from "../../components/GmatsInventory";
 import UsersSection from "../../components/UsersSection";
 import AICopilot from "../../components/AICopilot";
 import IndustrialConnectivity from "../../components/IndustrialConnectivity";
+import ConnectedEquipment from "../../components/ConnectedEquipment";
 import type { User } from "../../lib/types";
 import QualitySection from "../../components/QualitySection";
 import ExecutiveOeeSection from "../../components/ExecutiveOeeSection";
@@ -2741,6 +2742,10 @@ export default function DashboardPage() {
 
       {renderSection("connectivity", (
         <IndustrialConnectivity />
+      ))}
+
+      {renderSection("connected", (
+        <ConnectedEquipment />
       ))}
 
       {renderSection("quality", (

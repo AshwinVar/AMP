@@ -235,6 +235,31 @@ reads, not 10,000.
 
 ---
 
+## 10a. Events, and whose history they are
+
+Three lifecycle events reach the ADR-0001 bus: `MachineInstalled`,
+`MachineCommissioned`, `ServiceCompleted`. They arrived **with the write
+endpoints that cause them** and not before — until then commissioning and
+service were read-only reports, so publishing events would have been dead code
+pretending to be an integration point.
+
+**Stamped with the FACTORY's tenant.** `events.EventBus` files every event into
+`event_log` with `getattr(event, "tenant_code", "DEFAULT")`. For an OEM event
+that default is a trap: a machine still in the manufacturer's stock belongs to
+nobody's factory, and `DEFAULT` is the *founder's* workspace. So
+`oem_events.publish` refuses a tenant-less event outright.
+
+The choice of the factory's tenant over the OEM's is ADR-0002 applied
+consistently: the event records something that happened on the customer's shop
+floor to the customer's machine. The manufacturer's code rides along as a field.
+
+Each event raises a notification **in the customer's workspace only**. There is
+no notification to the OEM, because an OEM-scoped notification store does not
+exist and putting manufacturer rows on a customer's `notifications` table would
+be worse than the gap.
+
+---
+
 ## 11. Future: AMP Edge
 
 Not built. Documented so the identity model does not have to change later.

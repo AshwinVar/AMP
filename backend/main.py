@@ -72,6 +72,7 @@ import core_routes
 import industrial_adapters
 from events import event_bus, ProductionCompleted, DowntimeStarted, InventoryLow, QualityInspectionFailed
 import subscribers
+import oem_subscribers
 import ai
 import ai.subscribers
 import ai.agents
@@ -80,6 +81,9 @@ import ai.agents
 subscribers.register(event_bus)
 # The AI platform subscribes to the same event stream (ADR-0003).
 ai.subscribers.register(event_bus)
+# OEM equipment-lifecycle events tell the FACTORY what its supplier did to its
+# machine (ADR-0017). One direction only — see oem_subscribers.
+oem_subscribers.register(event_bus)
 # AI agents act on the stream - autonomy, not just advice (ADR-0004).
 ai.agents.register(event_bus)
 

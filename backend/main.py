@@ -38,6 +38,7 @@ import offboard_tenant
 import http_security
 import logging_config
 import plan_gate
+import schema_guard
 
 
 # Request tenant resolution lives in tenancy.py (so route modules can import it
@@ -90,13 +91,52 @@ ai.agents.register(event_bus)
 logging_config.configure_logging()
 log = logging_config.get_logger(__name__)
 
-Base.metadata.create_all(bind=engine)
+# ── WHO OWNS THE SCHEMA (ADR-0018) ───────────────────────────────────
+#
+# Exactly one mechanism may manage a given database, and which one is decided by
+# the database itself rather than by an environment variable somebody has to
+# remember to set (the SECRET_KEY lesson):
+#
+#   alembic_version PRESENT  ->  ALEMBIC OWNS IT. create_all() and every boot
+#                                patch below stand down. A new table or column
+#                                can then only arrive through a migration.
+#   alembic_version ABSENT   ->  create_all() + the boot patches, exactly as
+#                                before. This is every test database, every
+#                                scratch database, and a developer's laptop.
+#
+# The rule closes the #513 failure class at its root. create_all() is not an
+# innocent bystander in that incident: it creates missing TABLES, silently, which
+# is how `machine_installations` came to exist without the columns migration 0007
+# adds to it. On a managed database it no longer gets that opportunity.
+#
+# Deliberately NOT deleted. A staged retirement (ADR-0018) keeps the old path
+# working for the databases that still rely on it, and removing both mechanisms
+# in the same release as introducing the new one would leave no fallback if the
+# new one is wrong.
+def _alembic_manages_this_database():
+    from sqlalchemy import inspect
+    try:
+        return "alembic_version" in set(inspect(engine).get_table_names())
+    except Exception as e:
+        # Unreadable database: say NO and let the old path try, rather than
+        # skipping schema setup on a guess. The schema guard refuses traffic
+        # either way, so a wrong answer here cannot reach a user.
+        log.warning(f"[SCHEMA] could not determine migration ownership: {e}")
+        return False
+
+
+_MANAGED = _alembic_manages_this_database()
+
+if not _MANAGED:
+    Base.metadata.create_all(bind=engine)
 
 
 def _ensure_user_tenant_column():
     """Idempotent migration: add users.tenant_code to an existing table.
     create_all only creates missing tables, it never alters existing ones."""
     from sqlalchemy import inspect, text
+    if _MANAGED:
+        return
     try:
         insp = inspect(engine)
         cols = [c["name"] for c in insp.get_columns("users")]
@@ -110,8 +150,16 @@ def _ensure_user_tenant_column():
 
 def _ensure_column(table: str, column: str, ddl: str):
     """Idempotent migration: add a column to an existing table (create_all only
-    creates missing tables, never alters existing ones)."""
+    creates missing tables, never alters existing ones).
+
+    A NO-OP on an Alembic-managed database (ADR-0018). On such a database this
+    helper's job belongs to a migration, and running it anyway would silently
+    repair a schema the guard is meant to REFUSE — turning a loud, diagnosable
+    "migrations are pending" into the quiet drift that caused #513.
+    """
     from sqlalchemy import inspect, text
+    if _MANAGED:
+        return
     try:
         cols = [c["name"] for c in inspect(engine).get_columns(table)]
         if column not in cols:
@@ -142,8 +190,14 @@ def _backfill_completed_at():
     Idempotent, so it is safe on every boot: after this change the only way to be
     Completed with a NULL completed_at is to have been created that way, and
     stamping those matches the pre-existing no-publish behaviour too.
+
+    A NO-OP on an Alembic-managed database (ADR-0018) -- a data backfill on a
+    managed database is a migration, reviewable and recorded, not a boot
+    side effect that runs on every deploy forever.
     """
     from sqlalchemy import text
+    if _MANAGED:
+        return
     try:
         with engine.begin() as conn:
             result = conn.execute(text(
@@ -158,8 +212,14 @@ def _backfill_completed_at():
 def _ensure_index(table: str, column: str):
     """Idempotent migration: index a column on an existing table (create_all only
     creates missing tables, so existing prod tables need it added explicitly).
-    CREATE INDEX IF NOT EXISTS works on both PostgreSQL and SQLite."""
+    CREATE INDEX IF NOT EXISTS works on both PostgreSQL and SQLite.
+
+    A NO-OP on an Alembic-managed database (ADR-0018) -- indexes belong to
+    migrations there.
+    """
     from sqlalchemy import text
+    if _MANAGED:
+        return
     try:
         with engine.begin() as conn:
             conn.execute(text(f"CREATE INDEX IF NOT EXISTS ix_{table}_{column} ON {table} ({column})"))
@@ -456,6 +516,25 @@ async def startup_event():
     # Re-apply: uvicorn installs its own plain-text handlers after import, which
     # would otherwise emit a second, unstructured copy of every access line.
     logging_config.configure_logging()
+
+    # THE SCHEMA VERDICT, FIRST AND LOUDLY (ADR-0018).
+    #
+    # Evaluated before anything else touches the database, and reported as a
+    # single structured line naming the revision expected and the revision found.
+    # #513 was diagnosable only from a psycopg2 traceback buried in the access
+    # log; the answer to "why is this deployment refusing?" should be one line.
+    schema_state = schema_guard.evaluate(engine, force=True)
+    schema_guard.report(schema_state)
+    if not schema_state["ok"]:
+        # STOP HERE. The seeding below writes rows through the ORM, and against
+        # a schema this build was not written for those writes either fail or —
+        # worse — half-succeed. Nothing is served either (SchemaGuardMiddleware
+        # returns 503), so the instance sits in a diagnosable refusal until
+        # somebody migrates it, rather than doing damage on the way down.
+        log.error("[SCHEMA] startup halted before seeding; no traffic will be "
+                  "served until the database is migrated")
+        return
+
     start_mqtt_service()
     asyncio.create_task(_simulation_loop())
     try:
@@ -538,6 +617,16 @@ ALLOWED_ORIGINS = [
 # CORS headers or cross-origin browsers report an opaque network error
 # instead of a readable 403 — so it is added BEFORE CORSMiddleware.
 app.add_middleware(plan_gate.PlanGateMiddleware)
+
+# THE SCHEMA GATE (ADR-0018). Added here — inside CORS, for the same reason as
+# the plan gate — and it is the innermost of the response-returning middlewares
+# because a schema mismatch makes every question below it unanswerable: there is
+# no point rate-limiting or licence-checking a request the ORM cannot serve.
+#
+# On 2026-08-09 the reverse of this shipped: `users.is_active` existed in the
+# model and not in production, every login 500'd for a day, and /health kept
+# answering 200 the whole time. This returns 503 with the revisions instead.
+app.add_middleware(schema_guard.SchemaGuardMiddleware, engine=engine)
 
 # Rate limiting sits INSIDE CORS for the same reason the plan gate does: a
 # 429 that a cross-origin browser cannot read is indistinguishable from the

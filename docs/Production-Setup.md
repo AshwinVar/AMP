@@ -53,17 +53,67 @@ Pick one:
 - Token refresh / shorter JWT expiry.
 - Per-company invoice/branding settings (currently a constant for GMATS).
 
+## 6a. Database migrations — automatic, and they gate the deploy
+
+Since [ADR-0018](adr/0018-migrations-run-before-the-application-serves.md),
+schema migrations run as part of every deploy:
+
+```
+DEPLOY  →  MIGRATE  →  START  →  READINESS  →  TRAFFIC
+```
+
+`backend/railway.toml` sets `preDeployCommand = "python migrate.py"`. Railway
+runs it in the new build's image, with the service's environment, **before** the
+new deployment serves. A non-zero exit aborts the deploy and the **previous
+deployment keeps serving** — a failed migration costs you a release, not an
+outage.
+
+Nothing here is manual any more. If you find a document that says migrations are
+applied by hand, it is out of date — that sentence is what made
+[#513](https://github.com/AshwinVar/AMP/pull/513) possible.
+
+**Nothing to configure per environment**, but two things are worth knowing:
+
+- The healthcheck is `/readiness`, not `/health`. A build whose migrations have
+  not been applied fails it and never cuts over.
+- In production (`RAILWAY_ENVIRONMENT` is set by Railway automatically) a
+  database with no `alembic_version` table is **refused**. Alembic must own the
+  production schema.
+
+Full detail, including expand/migrate/contract rules and the recovery
+procedures: `docs/MIGRATIONS.md`.
+
 ## 7. Post-deploy smoke test — run after EVERY deploy
 
 Sync endpoints run in a threadpool; a bad middleware or a broken startup can pass
 unit tests yet deadlock or crash in production. After every deploy, confirm the
-server boots and a **POST** round-trips — not just a GET:
+migration ran, the server boots, and a **POST** round-trips — not just a GET:
 
     BASE=https://flowmes-production.up.railway.app
-    curl -s $BASE/health          # -> {"status":"ok",...}
+
+    # 1. READINESS FIRST. This is the one that would have caught #513: it is 200
+    #    only when the schema is at the revision this build requires, and it
+    #    prints both revisions either way.
+    curl -s $BASE/readiness       # -> {"ready":true,"schema":{"state":"ok",...}}
+
+    # 2. Liveness, and the running build's git sha.
+    curl -s $BASE/health          # -> {"status":"ok","schema":"ok","version":"..."}
+
+    # 3. A real write path.
     curl -s -X POST $BASE/login \  # -> 200 + access_token (NOT a hang)
       -H "Content-Type: application/json" \
       -d '{"username":"gmats","password":"gmats@2026"}'
+
+`/health` alone is **not** a sufficient check and never was: during #513 it
+answered `{"status":"ok"}` for a day while every login returned 500, because a
+schema mismatch is invisible to `SELECT 1`. It now reports `"status":"degraded"`
+and carries the schema state, but `/readiness` is the probe that answers "is this
+deployment actually usable".
+
+If `/readiness` returns 503 with `state: "behind"` or `"unmanaged"`, the
+pre-deploy migration step did not run. Run `python backend/migrate.py` against
+the database — the instance becomes ready on the next probe, without a restart —
+then find out why the step was skipped.
 
 If `/health` is 200 but `POST /login` hangs, a request-body/middleware problem
 shipped — revert immediately (`git revert HEAD && git push`), then fix forward.

@@ -16,12 +16,20 @@ SCRATCH_DB = "amp_scratch_verify"
 
 
 def scratch_url(port=None, db=SCRATCH_DB):
+    # backend/.env first, so a developer's local run keeps borrowing their dev
+    # credentials and never depends on an exported DATABASE_URL.
     base = dotenv_values(os.path.join(os.path.dirname(os.path.abspath(__file__)),
                                       ".env")).get("DATABASE_URL", "")
+    # Then the environment. CI has no .env file — the runner supplies a
+    # PostgreSQL service container and DATABASE_URL — and before this fallback
+    # every harness built on pg_scratch was local-only, which is exactly why the
+    # #513 upgrade path had never been exercised by an automated run.
+    if not base:
+        base = os.environ.get("DATABASE_URL", "")
     m = re.match(r"^(postgresql(?:\+\w+)?://[^/]+)/(.+)$", base)
     if not m:
-        raise SystemExit("backend/.env has no postgresql DATABASE_URL to borrow "
-                         "credentials from")
+        raise SystemExit("no postgresql DATABASE_URL to borrow credentials from "
+                         "(looked in backend/.env, then the environment)")
     authority, dev_db = m.group(1), m.group(2)
     if port:
         authority = re.sub(r":\d+$", f":{port}", authority)

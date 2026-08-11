@@ -103,6 +103,12 @@ omit =
     mutate_oem_service.py
     audit_oem_adversarial.py
     oem_perf.py
+    # The deployment migration contract (ADR-0018). Same category once more: it
+    # spawns a fresh interpreter per step against a disposable PostgreSQL
+    # database, so almost none of its lines execute in the measuring process
+    # even while it is doing its job. The behaviour it proves IS measured — via
+    # schema_guard.py, which is application code and stays in the total.
+    verify_pg_deploy.py
     # Alembic migration scripts: exercised by running a migration, not by the
     # unit suites, and each version file is dead the moment it has been applied.
     alembic/*

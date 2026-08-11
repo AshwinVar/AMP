@@ -198,7 +198,7 @@ def rows(model_cls, **filters):
 
 
 # =====================================================================
-def test_commissioning_is_a_write_only_its_maker_can_do():
+def case_commissioning_is_a_write_only_its_maker_can_do():
     print("=" * 74)
     print("1. COMMISSIONING: THE MANUFACTURER'S OWN MACHINE, AND ONLY THAT")
     print("=" * 74)
@@ -230,7 +230,7 @@ def test_commissioning_is_a_write_only_its_maker_can_do():
           code == 200, f"{code} {body}")
 
 
-def test_commissioning_with_checks_outstanding_is_recorded_as_such():
+def case_commissioning_with_checks_outstanding_is_recorded_as_such():
     print()
     print("=" * 74)
     print("1b. COMMISSIONING IS ADVICE, NOT A GATE — BUT IT IS RECORDED")
@@ -268,7 +268,7 @@ def test_commissioning_with_checks_outstanding_is_recorded_as_such():
           str(notes and notes[0].message))
 
 
-def test_capabilities_gate_the_writes():
+def case_capabilities_gate_the_writes():
     print()
     print("=" * 74)
     print("2. A VIEWER MAY LOOK, NOT ACT")
@@ -288,7 +288,7 @@ def test_capabilities_gate_the_writes():
     check("a viewer cannot move the lifecycle", code == 403, f"{code} {body}")
 
 
-def test_the_history_is_filed_in_the_customers_tenant():
+def case_the_history_is_filed_in_the_customers_tenant():
     print()
     print("=" * 74)
     print("3. WHOSE EVENT LOG DOES A COMMISSIONING LAND IN?")
@@ -322,7 +322,7 @@ def test_the_history_is_filed_in_the_customers_tenant():
           not (serials("FACTORY_A") & serials("FACTORY_B")))
 
 
-def test_an_unsold_machine_files_no_history_anywhere():
+def case_an_unsold_machine_files_no_history_anywhere():
     print()
     print("=" * 74)
     print("4. A MACHINE WITH NO CUSTOMER HAS NO TENANT TO FILE HISTORY UNDER")
@@ -359,7 +359,7 @@ def test_an_unsold_machine_files_no_history_anywhere():
           len(rows(models.EventLog)) > len(after) or len(installed) >= 0)
 
 
-def test_the_customer_is_told_what_their_supplier_did():
+def case_the_customer_is_told_what_their_supplier_did():
     print()
     print("=" * 74)
     print("5. THE FACTORY HEARS ABOUT ITS OWN MACHINE")
@@ -390,7 +390,7 @@ def test_the_customer_is_told_what_their_supplier_did():
         check(f"no notification leaks {leak!r}", leak not in blob)
 
 
-def test_recording_a_service_is_what_makes_overdue_mean_anything():
+def case_recording_a_service_is_what_makes_overdue_mean_anything():
     print()
     print("=" * 74)
     print("6. RECORDING A SERVICE (THE NUMBER MIGRATION 0007 ADDED)")
@@ -423,7 +423,7 @@ def test_recording_a_service_is_what_makes_overdue_mean_anything():
           str([r.tenant_code for r in serviced]))
 
 
-def test_the_lifecycle_still_refuses_what_it_always_refused():
+def case_the_lifecycle_still_refuses_what_it_always_refused():
     print()
     print("=" * 74)
     print("7. THE STATE MACHINE IS NOT BYPASSED BY BEING BEHIND HTTP")
@@ -436,7 +436,7 @@ def test_the_lifecycle_still_refuses_what_it_always_refused():
           "allowed" in str(body.get("detail", "")).lower(), str(body))
 
 
-def test_an_oem_write_cannot_touch_anything_the_factory_owns():
+def case_an_oem_write_cannot_touch_anything_the_factory_owns():
     print()
     print("=" * 74)
     print("8. THE WRITE SURFACE IS THE INSTALLATION ROW, AND NOTHING ELSE")
@@ -462,17 +462,28 @@ def test_an_oem_write_cannot_touch_anything_the_factory_owns():
           stock.factory_tenant_code is None, str(stock.factory_tenant_code))
 
 
+# The stages below are named case_* and NOT test_*, deliberately.
+#
+# They share seeded state (IDS) and run in order: `case_the_history_...` reads
+# the event log that `case_commissioning_...` produced. The standalone runner
+# (`python test_oem_lifecycle_writes.py`) drives them through run_all() in that
+# order. pytest, which the coverage job uses, collects every test_* function
+# INDEPENDENTLY -- so under pytest each stage ran with no seed and nine of them
+# failed on an empty IDS while the file passed perfectly on its own.
+#
+# One collected entry point, test_oem_lifecycle_writes(), calls run_all(). Same
+# convention as test_live_ws_auth.py, and for the same reason.
 def run_all():
     seed()
-    test_commissioning_is_a_write_only_its_maker_can_do()
-    test_commissioning_with_checks_outstanding_is_recorded_as_such()
-    test_capabilities_gate_the_writes()
-    test_the_history_is_filed_in_the_customers_tenant()
-    test_an_unsold_machine_files_no_history_anywhere()
-    test_the_customer_is_told_what_their_supplier_did()
-    test_recording_a_service_is_what_makes_overdue_mean_anything()
-    test_the_lifecycle_still_refuses_what_it_always_refused()
-    test_an_oem_write_cannot_touch_anything_the_factory_owns()
+    case_commissioning_is_a_write_only_its_maker_can_do()
+    case_commissioning_with_checks_outstanding_is_recorded_as_such()
+    case_capabilities_gate_the_writes()
+    case_the_history_is_filed_in_the_customers_tenant()
+    case_an_unsold_machine_files_no_history_anywhere()
+    case_the_customer_is_told_what_their_supplier_did()
+    case_recording_a_service_is_what_makes_overdue_mean_anything()
+    case_the_lifecycle_still_refuses_what_it_always_refused()
+    case_an_oem_write_cannot_touch_anything_the_factory_owns()
 
 
 def test_oem_lifecycle_writes():

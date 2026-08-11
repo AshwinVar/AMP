@@ -163,21 +163,25 @@ def main():
         c.update(extra)
         return pyjwt.encode(c, auth.SECRET_KEY, algorithm=ALGO)
 
-    async def http(path, tk=None, headers=None):
+    async def http(path, tk=None, headers=None, method="GET", payload=None):
         raw = [(b"host", b"testserver")]
         if tk:
             raw.append((b"authorization", f"Bearer {tk}".encode()))
         for k, v in (headers or {}).items():
             raw.append((k.encode(), v.encode()))
+        sent = b"" if payload is None else json.dumps(payload).encode()
+        if payload is not None:
+            raw.append((b"content-type", b"application/json"))
+            raw.append((b"content-length", str(len(sent)).encode()))
         p, _, q = path.partition("?")
         scope = {"type": "http", "asgi": {"version": "3.0"}, "http_version": "1.1",
-                 "method": "GET", "scheme": "http", "path": p, "raw_path": p.encode(),
+                 "method": method, "scheme": "http", "path": p, "raw_path": p.encode(),
                  "query_string": q.encode(), "root_path": "", "headers": raw,
                  "client": ("127.0.0.1", 5000), "server": ("testserver", 80)}
         body, status = [], {}
 
         async def receive():
-            return {"type": "http.request", "body": b"", "more_body": False}
+            return {"type": "http.request", "body": sent, "more_body": False}
 
         async def send(msg):
             if msg["type"] == "http.response.start":
@@ -465,7 +469,133 @@ def main():
             check(f"the {name} CSV export yields no factory data under an OEM scope",
                   not hit, str(hit))
 
+    # ================================================================== I: WRITES
+    async def attack_the_writes():
+        print("\n" + "=" * 74)
+        print("I. THE WRITE ENDPOINTS (added after the first 60 checks)")
+        print("=" * 74)
+        alpha = tokfor("alpha-admin", oem="OEM_ALPHA", role="OEM_ADMIN",
+                       principal="oem")
+        viewer = tokfor("alpha-view", oem="OEM_ALPHA", role="OEM_VIEWER",
+                        principal="oem")
+        fac_a = tokfor("factory_a-admin", tenant="FACTORY_A", role="Admin")
+        mine = installs["SN-ALPHA-0001"].id
+        theirs = installs["SN-BETA-0001"].id
+
+        # A write against a competitor's row must be indistinguishable from a
+        # write against a row that does not exist. Anything else is an oracle.
+        for verb, payload in (("transition", {"target": "Commissioning"}),
+                              ("commission", {}),
+                              ("service", {"service_hours": 10})):
+            c_rival, _, _ = await http(f"/oem/machines/{theirs}/{verb}", alpha,
+                                       method="POST", payload=payload)
+            c_ghost, _, _ = await http(f"/oem/machines/999999/{verb}", alpha,
+                                       method="POST", payload=payload)
+            check(f"POST {verb} on a COMPETITOR's machine is refused",
+                  c_rival == 404, str(c_rival))
+            check(f"...and {verb} is indistinguishable from a nonexistent id",
+                  c_rival == c_ghost, f"{c_rival} vs {c_ghost}")
+
+        # A viewer may look and must not act.
+        for verb, payload in (("transition", {"target": "Commissioning"}),
+                              ("commission", {}),
+                              ("service", {"service_hours": 10})):
+            c, _, _ = await http(f"/oem/machines/{mine}/{verb}", viewer,
+                                 method="POST", payload=payload)
+            check(f"a read-only OEM user cannot {verb}", c == 403, str(c))
+
+        # THE ASSIGNMENT VECTOR. An OEM that could set factory_tenant_code could
+        # plant equipment at a factory it never sold to.
+        # The transition must SUCCEED, or this proves nothing: a body that is
+        # ignored because the whole request was rejected is not evidence. The
+        # first version of this check fired against a machine whose state made
+        # the transition illegal, got a 400, and "passed".
+        row = db.query(models.MachineInstallation).filter(
+            models.MachineInstallation.id == mine).first()
+        row.status = "Installed"
+        db.commit()
+        before = row.factory_tenant_code
+        code_w, _, _ = await http(f"/oem/machines/{mine}/transition", alpha,
+                                  method="POST",
+                                  payload={"target": "Commissioning",
+                                           "factory_tenant_code": "FACTORY_C",
+                                           "oem_code": "OEM_BETA",
+                                           "machine_id": 99999,
+                                           "last_service_hours": 99999})
+        ok("CONTROL: the poisoned transition was ACCEPTED, so the body was read",
+           code_w == 200, str(code_w))
+        db.expire_all()
+        row = db.query(models.MachineInstallation).filter(
+            models.MachineInstallation.id == mine).first()
+        check("a write body cannot move a machine to another customer",
+              row.factory_tenant_code == before,
+              f"{before} -> {row.factory_tenant_code}")
+        check("...nor reassign it to another manufacturer",
+              row.oem_code == "OEM_ALPHA", str(row.oem_code))
+        check("...nor relink it to another factory's machine",
+              row.machine_id != 99999, str(row.machine_id))
+        check("...nor forge a service reading through an unrelated endpoint",
+              row.last_service_hours != 99999, str(row.last_service_hours))
+
+        # A factory token must not reach the OEM write surface at all.
+        for name, tok_ in (("FACTORY_A admin", fac_a),):
+            for verb in ("transition", "commission", "service"):
+                c, _, _ = await http(f"/oem/machines/{mine}/{verb}", tok_,
+                                     method="POST", payload={"target": "Sold"})
+                check(f"a {name} token cannot POST {verb}", c in (401, 403), str(c))
+
+        # A legitimate write must not touch anything the FACTORY owns.
+        machine_before = db.query(models.Machine).filter(
+            models.Machine.tenant_code == "FACTORY_A").first()
+        status_before = machine_before.status if machine_before else None
+        wo_before = db.query(models.WorkOrder).count()
+        c, _, _ = await http(f"/oem/machines/{mine}/service", alpha,
+                             method="POST", payload={"service_hours": 123})
+        ok("CONTROL: the machine's OWN maker can record a service", c == 200, str(c))
+        db.expire_all()
+        machine_after = db.query(models.Machine).filter(
+            models.Machine.tenant_code == "FACTORY_A").first()
+        check("an OEM write leaves the factory's machine status untouched",
+              (machine_after.status if machine_after else None) == status_before,
+              f"{status_before} -> {machine_after and machine_after.status}")
+        check("...and creates or alters no work order",
+              db.query(models.WorkOrder).count() == wo_before, "work orders changed")
+
+        # THE EVENT TENANCY. A write's history must land in the CUSTOMER's log,
+        # never the founder's and never another factory's.
+        logs = db.query(models.EventLog).filter(
+            models.EventLog.event_type.in_(
+                ["MachineInstalled", "MachineCommissioned", "ServiceCompleted"])).all()
+        check("no OEM event was filed under DEFAULT (the founder workspace)",
+              not [r for r in logs if r.tenant_code == "DEFAULT"],
+              str([r.tenant_code for r in logs]))
+        check("no OEM event was filed under an OEM code",
+              not [r for r in logs if r.tenant_code in ("OEM_ALPHA", "OEM_BETA")],
+              str([r.tenant_code for r in logs]))
+        for r in logs:
+            body = json.loads(r.payload)
+            check(f"[{body['serial_number']}] its event is in ITS customer's log",
+                  r.tenant_code == body["tenant_code"], f"{r.tenant_code}")
+        hit = [r for r in logs if any(s in (r.payload or "") for s in SECRETS)]
+        check("no OEM event payload carries a factory secret", not hit, str(len(hit)))
+
+        # And the notifications raised from them.
+        notes = db.query(models.Notification).filter(
+            models.Notification.notification_type.like("equipment_%")).all()
+        check("no equipment notification landed in DEFAULT",
+              not [n for n in notes if n.tenant_code == "DEFAULT"],
+              str([n.tenant_code for n in notes]))
+        blob = " ".join((n.message or "") + (n.title or "") for n in notes)
+        hit = [s for s in SECRETS if s in blob]
+        check("no equipment notification carries a factory secret", not hit, str(hit))
+        for n in notes:
+            others = [t for t in ("FACTORY_A", "FACTORY_B", "FACTORY_C")
+                      if t != n.tenant_code and t in (n.message or "")]
+            check(f"a {n.tenant_code} notification names no other customer",
+                  not others, str(others))
+
     asyncio.new_event_loop().run_until_complete(run())
+    asyncio.new_event_loop().run_until_complete(attack_the_writes())
 
     db.close()
     engine.dispose()

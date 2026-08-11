@@ -38,6 +38,85 @@ All require `read_fleet`. All are read-only in this release.
 | GET | `/oem/machines/{id}` | one machine, plus `not_shared` |
 | GET | `/oem/machines/{id}/service` | service, warranty, commissioning, signals |
 | GET | `/oem/models/{id}/telemetry` | one model's telemetry profile |
+| **POST** | `/oem/machines/{id}/transition` | move one machine along the lifecycle |
+| **POST** | `/oem/machines/{id}/commission` | commission it, and record whether the checks passed |
+| **POST** | `/oem/machines/{id}/service` | record a completed service |
+
+### The writes, and what they deliberately cannot do
+
+These three are the only OEM writes, and each is confined to the
+manufacturer's **own columns on the installation row**.
+
+| Endpoint | Capability | Refusals |
+|---|---|---|
+| `transition` | `manage_installations` | **400** with the state machine's own message (`"cannot go from Manufactured to Active; allowed: Sold, Decommissioned"`) |
+| `commission` | `commission` | **400** if the lifecycle forbids it |
+| `service` | `manage_service` | **400** on a negative reading |
+
+All three return **404** for another manufacturer's machine — never 403.
+
+**No write can assign a machine to a customer.** An OEM that could set
+`factory_tenant_code` could plant an installation at any factory in the system,
+which would put a row on that factory's Connected Equipment screen and invite
+them to grant sharing to a supplier they never bought from. Assignment is a
+separate, deliberately unbuilt operation rather than a parameter somebody forgets
+to guard — and a test posts `factory_tenant_code` in the body to prove it is
+ignored.
+
+**No write touches anything the factory owns.** No machine status, no
+utilisation, no production. Asserted, not assumed.
+
+### Recording a service
+
+```jsonc
+POST /oem/machines/4/service   { "service_hours": 2100 }
+```
+
+`service_hours` is optional and falls back to the hours the machine last
+reported. This is the number that makes `overdue` reachable at all — see §4.
+
+### Commissioning is advice, not a gate
+
+`POST /oem/machines/{id}/commission` runs the report, then commissions the
+machine **even if checks failed**. Somebody may have a good reason to put a
+machine into service with an item outstanding, and AMP is not in a position to
+overrule them. What it does instead is refuse to let the record imply it was
+clean:
+
+- the response carries the full report, naming which checks failed;
+- the `MachineCommissioned` event carries `checks_passed: false`;
+- the customer's notification is raised as a **Warning**, telling them to ask
+  their supplier which check failed.
+
+---
+
+## Part 2a — Events, and whose history they become
+
+Three lifecycle events reach the domain bus (ADR-0001): `MachineInstalled`,
+`MachineCommissioned`, `ServiceCompleted`.
+
+**They are stamped with the FACTORY's tenant, not the OEM's.** The event records
+something that happened on the customer's shop floor to the customer's machine;
+they own that history (ADR-0002), and it is theirs to read, export and retain.
+The manufacturer's code travels on the event as a *field*, not as its owner.
+
+**An installation with no customer publishes nothing.** `events.EventBus` stamps
+every event with `getattr(event, "tenant_code", "DEFAULT")`, and that default is
+a trap here: a machine still in the manufacturer's stock belongs to nobody's
+factory, and "DEFAULT" is the *founder's* workspace. `oem_events.publish` refuses
+rather than filing a manufacturer's private record where an unrelated party
+reads it. The write itself still succeeds — moving unsold stock through the
+lifecycle is a normal thing to do.
+
+Each event raises a notification **in the customer's workspace**. Nothing flows
+the other way: there is no OEM-side notification store, and putting manufacturer
+rows on the factory's `notifications` table would be worse than the gap. That is
+left undone deliberately rather than approximated.
+
+The notification describes the OEM's *action* — serial, model, site, what
+happened. It can never become a back-channel for data the sharing policy
+withholds, and a test greps every notification for work orders, part numbers,
+utilisation and OEE to keep it that way.
 
 **`GET /oem/fleet`** — `?customer=`, `?limit=` (max 200), `?offset=`.
 

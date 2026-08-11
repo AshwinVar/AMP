@@ -12,15 +12,20 @@ What each handler DOES owe:
     ids cannot confirm that a competitor's machine exists;
   * the sharing policy applied per field, read fresh (oem_sharing).
 """
+from datetime import datetime
+
 from fastapi import APIRouter, Depends, HTTPException, Query
+from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 import models
 import oem_auth
+import oem_events
 import oem_service
 import oem_sharing
 import oem_telemetry
 from database import SessionLocal
+from events import event_bus
 
 router = APIRouter(prefix="/oem", tags=["OEM"])
 
@@ -259,6 +264,167 @@ def model_telemetry(model_id: int, db: Session = Depends(_get_db),
     except oem_telemetry.ProfileError as e:
         return {"model_id": model.id, "model_code": model.model_code,
                 "signals": [], "error": str(e)}
+
+
+# ── Lifecycle WRITES ─────────────────────────────────────────────────
+#
+# Everything above this line is a read. These two are the first OEM writes, and
+# they are deliberately the only ones: commissioning a machine and recording a
+# service are the two things a manufacturer genuinely does to equipment it
+# supplied, and each is confined to the manufacturer's OWN columns on the
+# installation row.
+#
+# WHAT THEY CANNOT DO, ON PURPOSE:
+#   * assign a machine to a customer. An OEM that could set
+#     `factory_tenant_code` could plant an installation at any factory in the
+#     system — which would put a row on that factory's Connected Equipment
+#     screen and invite them to grant sharing to a supplier they never bought
+#     from. Assignment stays a separate, unbuilt operation rather than a
+#     parameter somebody forgets to guard.
+#   * touch anything the FACTORY owns. No machine status, no utilisation, no
+#     production. The installation row is the whole surface.
+
+
+class TransitionRequest(BaseModel):
+    target: str
+
+
+class ServiceRecord(BaseModel):
+    # The hours reading the service was carried out at. Optional: a service desk
+    # that does not know it should not be forced to invent one, and NULL keeps
+    # meaning "no service recorded" rather than "serviced at zero hours".
+    service_hours: float | None = None
+
+
+@router.post("/machines/{installation_id}/transition")
+def transition_machine(installation_id: int, payload: TransitionRequest,
+                       db: Session = Depends(_get_db),
+                       principal: dict = Depends(
+                           oem_auth.require_oem("manage_installations"))):
+    """Move one installation along the equipment lifecycle.
+
+    404 for another manufacturer's row, like every read here — a 403 would
+    confirm it exists and turn id probing into fleet enumeration.
+    """
+    inst = oem_sharing.get_installation(db, principal["oem"], installation_id)
+    if inst is None:
+        raise HTTPException(status_code=404, detail="Machine not found")
+
+    before = inst.status
+    try:
+        oem_service.transition(inst, payload.target)
+    except oem_service.LifecycleError as e:
+        # The state machine's own words. "cannot go from Manufactured to Active;
+        # allowed: Sold, Decommissioned" tells a service desk what to do next;
+        # "invalid transition" does not.
+        raise HTTPException(status_code=400, detail=str(e))
+
+    db.commit()
+    db.refresh(inst)
+
+    if inst.status == "Installed" and before != "Installed":
+        model = _models_by_id(db, principal["oem"]).get(inst.model_id)
+        oem_events.publish(event_bus, db, oem_events.MachineInstalled(
+            tenant_code=inst.factory_tenant_code or "",
+            oem_code=principal["oem"], installation_id=inst.id,
+            serial_number=inst.serial_number, site=inst.site or "",
+            model_code=getattr(model, "model_code", None)))
+        db.commit()
+
+    return {"installation_id": inst.id, "serial_number": inst.serial_number,
+            "from": before, "to": inst.status,
+            "allowed_next": list(oem_service.LIFECYCLE.get(inst.status, ()))}
+
+
+@router.post("/machines/{installation_id}/commission")
+def commission_machine(installation_id: int, db: Session = Depends(_get_db),
+                       principal: dict = Depends(
+                           oem_auth.require_oem("commission"))):
+    """Commission a machine, and record whether the checks actually passed.
+
+    The commissioning report is ADVICE, not a gate (oem_service). AMP does not
+    refuse to commission a machine somebody has a reason to put into service
+    with a check outstanding — it records which happened, raises the customer's
+    notification as a warning when checks failed, and puts `checks_passed` on
+    the event so the history cannot later imply it was clean.
+    """
+    inst = oem_sharing.get_installation(db, principal["oem"], installation_id)
+    if inst is None:
+        raise HTTPException(status_code=404, detail="Machine not found")
+
+    model = _models_by_id(db, principal["oem"]).get(inst.model_id)
+    try:
+        profile = oem_telemetry.parse(getattr(model, "telemetry_profile", None))
+    except oem_telemetry.ProfileError:
+        profile = []
+    report = oem_service.commissioning_report(inst, model, profile)
+
+    before = inst.status
+    try:
+        if inst.status != "Commissioning":
+            oem_service.transition(inst, "Commissioning")
+        oem_service.transition(inst, "Active")
+    except oem_service.LifecycleError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    db.commit()
+    db.refresh(inst)
+
+    oem_events.publish(event_bus, db, oem_events.MachineCommissioned(
+        tenant_code=inst.factory_tenant_code or "",
+        oem_code=principal["oem"], installation_id=inst.id,
+        serial_number=inst.serial_number, site=inst.site or "",
+        model_code=getattr(model, "model_code", None),
+        checks_passed=bool(report["ready"])))
+    db.commit()
+
+    return {"installation_id": inst.id, "serial_number": inst.serial_number,
+            "from": before, "to": inst.status, "commissioning": report}
+
+
+@router.post("/machines/{installation_id}/service")
+def record_service(installation_id: int, payload: ServiceRecord,
+                   db: Session = Depends(_get_db),
+                   principal: dict = Depends(
+                       oem_auth.require_oem("manage_service"))):
+    """Record a completed service, which is what makes `overdue` mean anything.
+
+    Before migration 0007 service position was `operating_hours % interval`,
+    which assumes every service happened on schedule and made `overdue`
+    unreachable. This endpoint writes the number that assumption was standing in
+    for.
+    """
+    inst = oem_sharing.get_installation(db, principal["oem"], installation_id)
+    if inst is None:
+        raise HTTPException(status_code=404, detail="Machine not found")
+
+    hours = payload.service_hours
+    if hours is None:
+        # Fall back to what the machine last reported. Still honest: it is the
+        # OEM's own hours counter, not an invented figure.
+        hours = inst.operating_hours
+    if hours is not None and hours < 0:
+        raise HTTPException(status_code=400,
+                            detail="service_hours cannot be negative")
+
+    inst.last_service_hours = hours
+    inst.last_service_at = datetime.utcnow()
+    db.commit()
+    db.refresh(inst)
+
+    oem_events.publish(event_bus, db, oem_events.ServiceCompleted(
+        tenant_code=inst.factory_tenant_code or "",
+        oem_code=principal["oem"], installation_id=inst.id,
+        serial_number=inst.serial_number, site=inst.site or "",
+        service_hours=hours))
+    db.commit()
+
+    model = _models_by_id(db, principal["oem"]).get(inst.model_id)
+    return {"installation_id": inst.id, "serial_number": inst.serial_number,
+            "last_service_hours": inst.last_service_hours,
+            "last_service_at": inst.last_service_at.isoformat()
+            if inst.last_service_at else None,
+            "service": oem_service.service_state(inst, model)}
 
 
 def register(app):

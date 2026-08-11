@@ -101,6 +101,9 @@ omit =
     mutate_oem_auth.py
     mutate_oem_sharing.py
     mutate_oem_service.py
+    #   mutate_oem_lifecycle   12 mutations of the OEM WRITE path and the
+    #                          tenant an event is filed under
+    mutate_oem_lifecycle.py
     audit_oem_adversarial.py
     oem_perf.py
     # The deployment migration contract (ADR-0018). Same category once more: it

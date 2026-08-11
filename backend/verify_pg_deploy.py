@@ -63,6 +63,15 @@ def run(code, url, extra_env=None):
     env = {**os.environ, "DATABASE_URL": url}
     env.pop("PRODUCTION", None)
     env.pop("RAILWAY_ENVIRONMENT", None)
+    # A real production deployment HAS a signing key -- auth.py refuses to
+    # import without one when PRODUCTION is set, by design (the fail-closed JWT
+    # secret). The scenarios below set PRODUCTION=1 to exercise the SCHEMA gate,
+    # so they must supply a key or they measure the wrong refusal.
+    #
+    # This surfaced only in CI: a developer's backend/.env carries SECRET_KEY,
+    # a GitHub runner has no .env at all, and the harness inherited the
+    # difference. A throwaway value, never a real one.
+    env.setdefault("SECRET_KEY", "verify-pg-deploy-throwaway-key")
     env.update(extra_env or {})
     return subprocess.run([sys.executable, "-c", code], cwd=HERE, env=env,
                           capture_output=True, text=True, errors="replace")

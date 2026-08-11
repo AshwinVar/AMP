@@ -21,6 +21,7 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 import models
+import schema_guard
 import schemas
 from auth import get_current_user, require_roles
 from database import SessionLocal, engine
@@ -132,23 +133,96 @@ def get_db():
 
 @router.get("/health")
 def health():
-    # Return the health in the HTTP STATUS, not just the body: an uptime
-    # monitor (and Railway's probe, if pointed here) checks the status code.
-    # 200 when the DB answers, 503 when it doesn't — so a dead database is
-    # actually detectable instead of hiding behind a 200 with "down" text.
+    """LIVENESS: is this process alive, and can it reach its database?
+
+    Return the health in the HTTP STATUS, not just the body: an uptime
+    monitor checks the status code. 200 when the DB answers, 503 when it
+    doesn't — so a dead database is actually detectable instead of hiding
+    behind a 200 with "down" text.
+
+    IT IS NOT READINESS, AND #513 IS WHY THAT DISTINCTION IS NOW WRITTEN DOWN.
+    Through a day-long total authentication outage this endpoint answered 200
+    with `"status": "ok"`, because a schema mismatch is invisible to `SELECT 1`.
+    It now carries the schema verdict and downgrades its own status to
+    "degraded" when the schema is wrong, so it can never again describe a
+    product nobody can log into as healthy.
+
+    The STATUS CODE deliberately stays about liveness. Railway's restart policy
+    and any uptime monitor key off it, and a 503 here would put the container in
+    a restart loop that cannot possibly fix a schema problem — while paging
+    somebody for an incident whose fix is a migration, not a reboot. The probe
+    that gates traffic is /readiness (ADR-0018).
+    """
     db_ok = True
     try:
         with engine.connect() as conn:
             conn.execute(text("SELECT 1"))
     except Exception:
         db_ok = False
+
+    schema = schema_guard.evaluate(engine) if db_ok else None
+    schema_ok = bool(schema and schema["ok"])
+
     body = {
-        "status": "ok" if db_ok else "degraded",
+        "status": "ok" if (db_ok and schema_ok) else "degraded",
         "database": "ok" if db_ok else "down",
+        "schema": (schema["state"] if schema else "unknown"),
         "time": datetime.utcnow().isoformat(),
         "version": BUILD_SHA,   # short git sha of the running build, or null
     }
     return JSONResponse(body, status_code=200 if db_ok else 503)
+
+
+@router.get("/readiness")
+def readiness():
+    """READINESS: should this instance be given traffic?
+
+    200 only when the database answers AND its schema is at the revision this
+    build was written against. 503 otherwise, with the two revisions in the body
+    so the answer to "why is the deploy not cutting over" is the response itself
+    rather than a log dig.
+
+    railway.toml points its healthcheck HERE, which is what makes the invariant
+    hold at the platform level: a build whose migrations have not been applied
+    never passes its healthcheck, so Railway never cuts traffic to it and the
+    previous deployment goes on serving. Failing to deploy is a good day; #513
+    was the alternative.
+
+    Public and unauthenticated, like /health — it exposes a migration revision
+    and a state word, which is operational metadata, not a secret. Deliberately
+    NOT the database URL, the driver error text, or anything else that would
+    describe how to reach the database.
+    """
+    db_ok = True
+    try:
+        with engine.connect() as conn:
+            conn.execute(text("SELECT 1"))
+    except Exception:
+        db_ok = False
+
+    if not db_ok:
+        return JSONResponse({
+            "ready": False, "database": "down",
+            "reason": "the database is not reachable",
+            "time": datetime.utcnow().isoformat(), "version": BUILD_SHA,
+        }, status_code=503)
+
+    # Re-evaluated while unhealthy (see schema_guard.evaluate): an operator who
+    # runs `python migrate.py` against a refusing instance sees it become ready
+    # on the next probe, without a restart and without a redeploy.
+    state = schema_guard.evaluate(engine)
+    return JSONResponse({
+        "ready": state["ok"],
+        "database": "ok",
+        "schema": {
+            "state": state["state"],
+            "expected_revision": state["expected"],
+            "current_revision": state["current"],
+            "reason": state["reason"],
+        },
+        "time": datetime.utcnow().isoformat(),
+        "version": BUILD_SHA,
+    }, status_code=200 if state["ok"] else 503)
 
 # ── Tenant config: licensing / feature flags / branding ───────
 

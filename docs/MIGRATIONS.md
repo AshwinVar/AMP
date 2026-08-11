@@ -69,21 +69,155 @@ alembic revision --autogenerate -m "short description"
 5. Add a test. Schema changes that carry data implications need a test that
    pins the data outcome, not just the column's existence.
 
-## Deploying a migration
+## How a migration reaches production
+
+**Automatically, as part of the deploy.** This changed in
+[ADR-0018](adr/0018-migrations-run-before-the-application-serves.md), after a
+migration that had been written, reviewed and merged was never run and caused a
+day-long total authentication outage ([#513](https://github.com/AshwinVar/AMP/pull/513)).
+
+```
+DEPLOY  →  MIGRATE  →  START  →  READINESS  →  TRAFFIC
+             ↓ fails
+        deploy aborts, previous deployment keeps serving
+```
+
+`backend/railway.toml`:
+
+```toml
+[deploy]
+preDeployCommand = "python migrate.py"
+startCommand = "python -m uvicorn main:app --host 0.0.0.0 --port $PORT"
+healthcheckPath = "/readiness"
+```
+
+Railway runs `preDeployCommand` to completion, in the new build's image, with
+the service's environment, **before** the new deployment serves. A non-zero exit
+aborts the deploy. There is exactly one replica, so nothing runs it concurrently.
+
+> **This section used to say migrations were applied by hand.** They are not,
+> and that sentence is the one that made #513 possible: it described a manual
+> step that nothing enforced and nobody performed.
+
+### The second line: the application refuses a schema it cannot use
+
+Even with the step above, `preDeployCommand` is configuration somebody can
+change. So the build also checks itself (`backend/schema_guard.py`):
+
+| Database state | Result |
+|---|---|
+| at this build's head | serves |
+| **behind** head (migrations pending) | **503 on every application route**, everywhere |
+| ahead (unknown revision) | serves, logs a warning — this is the rollback case |
+| unmanaged (no `alembic_version`) | serves in dev; **refused in production** |
+
+`/readiness` returns 503 with **both revisions in the body**, and it is what the
+deploy healthcheck probes — so a build whose migrations have not been applied
+never cuts over. `/health` stays a liveness probe (see below).
+
+### Running one by hand
+
+Still supported, and the recovery path when the deploy step has not run:
 
 ```bash
-python backend/migrate.py --status    # what would run
+python backend/migrate.py --status    # current vs head; changes nothing
 python backend/migrate.py --sql       # the exact SQL, reviewable
 python backend/migrate.py             # apply
 ```
 
-For production, run `--sql` first and read it. A migration you have not read
-the SQL for is a migration you are running blind.
+For anything you are unsure of, run `--sql` first and read it. A migration you
+have not read the SQL for is a migration you are running blind.
 
-Railway currently runs `migrate.py` **manually** — it is deliberately not in
-the start command yet, because an automatic migration on every boot combined
-with health-gated cutover means two instances can run migrations concurrently
-during a deploy overlap. Adding it to the release phase is tracked separately.
+A refusing instance **recovers without a restart**: `schema_guard` re-checks on
+every readiness probe while unhealthy, so running `migrate.py` against a
+503-ing deployment brings it into service on the next probe.
+
+## Backwards compatibility is mandatory: expand / migrate / contract
+
+A deploy can be rolled back, and a rolled-back application runs against the
+*newer* schema (the `ahead` state above is allowed precisely so that lever
+exists). **A migration must therefore leave the previous application version
+working.** Risky changes are split across releases:
+
+| Phase | Release | What happens |
+|---|---|---|
+| **Expand** | N | add the new column — nullable, or with a server default. Old code ignores it. |
+| **Migrate** | N | backfill; write both shapes; read the new one |
+| **Contract** | N+1 or later, once nothing reads the old shape | drop the old column |
+
+Rules that follow, and are enforced in review:
+
+- **Never rename** a column in one step. Add → backfill → switch reads → drop.
+- **Never add `NOT NULL`** without a server default to a populated table. Add
+  nullable, backfill, then alter — as `0002` and `0005` both do.
+- **Never drop** a column in the same release that stops using it.
+- **Index a large existing table with `CREATE INDEX CONCURRENTLY`**, inside an
+  `op.get_context().autocommit_block()` — it cannot run in a transaction. No
+  migration in the current set does this; the first one that needs to must.
+- **Data backfills belong in migrations**, not in boot code that re-runs forever.
+
+A per-migration risk review of everything currently in the tree is in
+[docs/engineering/MIGRATION-SAFETY-AUDIT.md](engineering/MIGRATION-SAFETY-AUDIT.md).
+
+## How migrations are tested
+
+Three layers, because the one that was missing is the one that mattered:
+
+| Layer | What it proves | Where |
+|---|---|---|
+| **Drift** | a model changed and the migration is missing — `alembic` autogenerate against a freshly-migrated PostgreSQL must produce an **empty** diff | CI `migrations` job |
+| **Upgrade path** | fresh → head; a production-shaped OLD database refuses, migrates, then serves and logs in; idempotent re-run; behind → refused; failed migration → non-zero exit and full rollback; unknown revision → fails closed | `backend/verify_pg_deploy.py` |
+| **Guard logic** | the states, the 503 middleware, and the liveness/readiness split | `backend/test_schema_guard.py` |
+
+All of it runs on **real PostgreSQL 18** in CI. That is not decoration: every
+one of the 186 backend suites builds its schema with `create_all()` on a fresh
+database, which is the single arrangement in which model/schema drift *cannot*
+occur — which is exactly why they were all green throughout #513.
+
+## What happens when a migration fails
+
+1. `migrate.py` exits non-zero.
+2. Railway aborts the deploy. **The previous deployment keeps serving.**
+3. PostgreSQL's transactional DDL rolls the failed migration back completely —
+   the database stays at the previous revision, not half-applied. (Asserted, in
+   `verify_pg_deploy.py` scenario 5.)
+4. Nothing to undo. Fix the migration and deploy again.
+
+If a deploy somehow starts with pending migrations, the application refuses
+traffic and `/readiness` names both revisions.
+
+## Inspecting the current revision
+
+```bash
+python backend/migrate.py --status
+```
+
+or, against a running deployment, with no database access at all:
+
+```bash
+curl -s https://flowmes-production.up.railway.app/readiness
+```
+
+```jsonc
+{
+  "ready": true,
+  "schema": {
+    "state": "ok",
+    "expected_revision": "0007_oem_service_clock",
+    "current_revision": "0007_oem_service_clock"
+  }
+}
+```
+
+## Emergency recovery
+
+| Situation | Do this |
+|---|---|
+| Migrations pending on a live deployment | `python backend/migrate.py` against it; readiness recovers on the next probe, no restart needed |
+| A migration is wrong but applied | write a **forward** migration that corrects it. Prefer rolling forward. |
+| The release is bad and the schema is fine | roll the application back. The `ahead` state is allowed for exactly this. |
+| Data was destroyed | restore from the nightly artifact — `docs/BACKUP-AND-RESTORE.md`. A downgrade undoes schema, never data. |
+| You need to see what would run | `python backend/migrate.py --sql` |
 
 ## Rolling back
 

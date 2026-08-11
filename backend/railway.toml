@@ -3,12 +3,41 @@ builder = "NIXPACKS"
 buildCommand = "pip install -r requirements.txt"
 
 [deploy]
+# MIGRATIONS RUN BEFORE THE APPLICATION DOES (ADR-0018).
+#
+# Railway runs preDeployCommand to completion in the new build's image, with the
+# service's environment, BEFORE the new deployment starts serving. A non-zero
+# exit aborts the deploy and the previous deployment keeps taking traffic. That
+# is exactly the contract this needs:
+#
+#     DEPLOY -> MIGRATE -> START -> READINESS -> TRAFFIC
+#
+# and a failed migration stops at step 2 with production still serving the old,
+# working build.
+#
+# Until this line existed, nothing in the deploy ran Alembic. docs/MIGRATIONS.md
+# said migrations were applied "manually", which meant a migration could be
+# written, reviewed and merged without ever running — and on 2026-08-09 one had
+# not: `users.is_active` was in the model and not in the database, and every
+# login returned 500 for a day (#513).
+#
+# migrate.py, not `alembic upgrade head`, because it also handles the adoption
+# case (an existing database with no alembic_version gets stamped at the baseline
+# first) and is idempotent when there is nothing to do.
+preDeployCommand = "python migrate.py"
+
 startCommand = "python -m uvicorn main:app --host 0.0.0.0 --port $PORT"
-# Probe the real health endpoint, not the Swagger UI: /health returns 200 only
-# when the database also answers (503 otherwise), so a deploy that can't reach
-# its DB won't cut over — the last good deploy keeps serving. /docs would 200
-# whenever the web process is up, hiding a dead database.
-healthcheckPath = "/health"
+
+# READINESS, not liveness. /readiness returns 200 only when the database answers
+# AND its schema is at the revision this build requires; /health answers 200
+# whenever the process and database are alive, which is what a restart policy
+# needs but NOT what should gate traffic.
+#
+# Pointing the deploy probe here is the second half of the invariant: even if the
+# pre-deploy step above is removed, mis-typed, or silently unsupported, a build
+# whose migrations have not been applied fails its healthcheck and never cuts
+# over. /health would have passed throughout #513 — it did, for a whole day.
+healthcheckPath = "/readiness"
 healthcheckTimeout = 100
 restartPolicyType = "ON_FAILURE"
 restartPolicyMaxRetries = 3

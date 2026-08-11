@@ -45,6 +45,197 @@ jobs:
         working-directory: backend
         run: python -c "import main; print(f'{len(main.app.routes)} routes registered')"
 
+  # THE MIGRATION GATE (ADR-0018). A separate job because it needs a real
+  # PostgreSQL server, and because its answer is a different question from "do
+  # the tests pass".
+  #
+  # WHY IT EXISTS. On 2026-08-09 every login on production returned 500 for a
+  # day: `models.User.is_active` existed in the code and `users.is_active` did
+  # not exist in the database (#513). All 186 suites were green throughout, and
+  # could not have been otherwise — every one of them builds its schema with
+  # `create_all()` on a FRESH database, which is the one arrangement in which
+  # model/schema drift cannot occur. The defect lived in the gap between a
+  # database that already exists and a model that has moved on, and nothing in
+  # CI went anywhere near that gap.
+  #
+  # So this job does two things no SQLite-and-create_all job can:
+  #
+  #   DRIFT   migrate a fresh PostgreSQL to head, then ask Alembic to autogenerate
+  #           against models.py. A non-empty diff means somebody changed a model
+  #           without writing the migration — #513, caught before merge.
+  #   UPGRADE run the full deployment matrix (verify_pg_deploy.py): a
+  #           production-shaped old database refuses traffic, the migration
+  #           repairs it, login works; a failing migration exits non-zero and
+  #           rolls back; a database behind head is refused.
+  migrations:
+    name: Migration gate (PostgreSQL)
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        # Pinned to the major version Railway runs, because the behaviours under
+        # test are engine behaviours: transactional DDL, metadata-only NOT NULL
+        # adds, and constraint-name reflection.
+        image: postgres:18
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      DATABASE_URL: "postgresql://postgres:postgres@localhost:5432/amp_ci"
+      PGPASSWORD: postgres
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install backend dependencies
+        run: pip install -r backend/requirements.txt
+      - name: Create the CI database
+        run: psql -h localhost -U postgres -c "CREATE DATABASE amp_ci"
+
+      # 1. THE DRIFT DETECTOR: a model changed and the migration is missing.
+      #
+      # The database is built from a FROZEN SNAPSHOT of the schema
+      # (alembic/baseline_schema.sql), NOT from models.py. That is the whole
+      # trick, and the first version of this gate got it wrong: building with
+      # `create_all()` and then diffing against the models compares the models
+      # to themselves and returns "no drift" no matter how far the migrations
+      # lag. See backend/snapshot_baseline.py.
+      #
+      # Snapshot -> stamp baseline -> run every migration -> compare to models.
+      # That is also, precisely, production's upgrade path.
+      - name: Build a database from the FROZEN baseline snapshot
+        working-directory: backend
+        run: |
+          set -euo pipefail
+          python snapshot_baseline.py --check
+          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -q -f alembic/baseline_schema.sql
+          python -m alembic stamp 0001_baseline
+
+      - name: Run every migration on top of it
+        working-directory: backend
+        run: python -m alembic upgrade head
+
+      - name: Models and migrations must agree (autogenerate diff is empty)
+        working-directory: backend
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import os
+          from alembic.autogenerate import compare_metadata
+          from alembic.migration import MigrationContext
+          from sqlalchemy import create_engine
+
+          import models  # noqa: F401  (registers every table)
+          from database import Base
+
+          # The same include_object rules env.py uses, so this agrees with
+          # `alembic revision --autogenerate` instead of arguing with it.
+          def include_object(obj, name, type_, reflected, compare_to):
+              if type_ == "table" and name == "alembic_version":
+                  return False
+              if type_ == "index" and reflected and compare_to is None:
+                  return False
+              return True
+
+          engine = create_engine(os.environ["DATABASE_URL"])
+          with engine.connect() as conn:
+              ctx = MigrationContext.configure(
+                  conn,
+                  opts={"include_object": include_object, "compare_type": True},
+              )
+              diff = compare_metadata(ctx, Base.metadata)
+
+          # Server defaults are deliberately NOT compared (compare_server_default
+          # stays off, as in env.py): SQLAlchemy renders `true` and PostgreSQL
+          # reports `true`, and the two disagree textually often enough that
+          # comparing them would make this gate cry wolf and get muted.
+          if diff:
+              print("::error::MIGRATION DRIFT - models.py and the migrations disagree.")
+              print("A model was changed without a migration. This is the #513 failure")
+              print("class: the code deploys and the database does not have the change.")
+              print("Write the migration:")
+              print("    cd backend && alembic revision --autogenerate -m '<what changed>'")
+              print("Do NOT regenerate baseline_schema.sql to silence this.")
+              print()
+              for d in diff:
+                  print("  ", d)
+              raise SystemExit(1)
+          print("no drift: every model change has a migration")
+          PY
+
+      # The gate must be able to FAIL, or it is decoration. Add a column to
+      # models.py that no migration adds, and require the diff to appear.
+      - name: Prove the drift detector detects drift
+        working-directory: backend
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import io
+          src = io.open("models.py", encoding="utf-8").read()
+          # The User class header, which is unique. The `is_active` line is NOT:
+          # three models declare it identically, so anchoring on it would have
+          # patched whichever class happened to come first.
+          anchor = 'class User(Base):\n    __tablename__ = "users"\n'
+          assert src.count(anchor) == 1, "anchor moved; update this check"
+          io.open("models.py", "w", encoding="utf-8", newline="\n").write(
+              src.replace(anchor, anchor + '    drift_probe = Column(String, nullable=True)\n', 1))
+          PY
+          set +e
+          python - <<'PY'
+          import os
+          from alembic.autogenerate import compare_metadata
+          from alembic.migration import MigrationContext
+          from sqlalchemy import create_engine
+          import models  # noqa: F401
+          from database import Base
+
+          def include_object(obj, name, type_, reflected, compare_to):
+              if type_ == "table" and name == "alembic_version":
+                  return False
+              if type_ == "index" and reflected and compare_to is None:
+                  return False
+              return True
+
+          engine = create_engine(os.environ["DATABASE_URL"])
+          with engine.connect() as conn:
+              ctx = MigrationContext.configure(
+                  conn, opts={"include_object": include_object, "compare_type": True})
+              diff = compare_metadata(ctx, Base.metadata)
+          found = any("drift_probe" in str(d) for d in diff)
+          print("detected:", found)
+          raise SystemExit(0 if found else 1)
+          PY
+          detected=$?
+          set -e
+          git checkout -- models.py
+          if [ "$detected" -ne 0 ]; then
+            echo "::error::The drift detector did NOT notice an un-migrated model column. The gate is not working."
+            exit 1
+          fi
+          echo "the drift detector fails on real drift"
+
+      # 2. THE UPGRADE PATH, including the #513 reproduction.
+      - name: Deployment migration contract
+        working-directory: backend
+        run: python verify_pg_deploy.py 5432
+
+      # 3. The suites that specifically guard this area, on PostgreSQL rather
+      #    than SQLite — SQLite hid a foreign-key failure in the OEM work and
+      #    would hide these too.
+      - name: Schema-guard and boot-migration suites on PostgreSQL
+        working-directory: backend
+        run: |
+          python test_schema_guard.py
+          python test_boot_migrations.py
+          python test_migrate.py
+
   # Branch-coverage floor. A SEPARATE job from `backend` on purpose.
   #
   # The `backend` job's answer is "do the tests pass", and that answer must not

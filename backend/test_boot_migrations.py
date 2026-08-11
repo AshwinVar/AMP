@@ -162,8 +162,28 @@ def test_the_boot_migration_repairs_an_older_database():
     # THE REPAIR: exactly what main.py runs at boot, called by name rather than
     # re-typed, so this test cannot drift from the code it is guarding.
     import main
-    main._ensure_column("users", "is_active",
-                        "ALTER TABLE users ADD COLUMN is_active BOOLEAN NOT NULL DEFAULT TRUE")
+
+    # ADR-0018 FIRST, because it changes what "boot patch" means. On an
+    # Alembic-MANAGED database the patches stand down — the schema belongs to
+    # migrations there, and repairing it behind Alembic's back would turn a
+    # loud, diagnosable "migrations are pending" into silent drift. Pinned here
+    # rather than assumed, and it is exactly what broke this suite when it first
+    # ran against a migrated PostgreSQL in CI.
+    was_managed = main._MANAGED
+    if was_managed:
+        main._ensure_column("users", "is_active",
+                            "ALTER TABLE users ADD COLUMN is_active BOOLEAN NOT NULL DEFAULT TRUE")
+        check("on a MANAGED database the boot patch is a NO-OP (ADR-0018)",
+              "is_active" not in columns("users"),
+              "the patch ran on a managed database — it must not")
+
+    # The mechanism itself is unmanaged-only, so exercise it as such.
+    main._MANAGED = False
+    try:
+        main._ensure_column("users", "is_active",
+                            "ALTER TABLE users ADD COLUMN is_active BOOLEAN NOT NULL DEFAULT TRUE")
+    finally:
+        main._MANAGED = was_managed
     check("the boot migration added the column back", "is_active" in columns("users"))
 
     db = SessionLocal()
@@ -197,8 +217,12 @@ def test_the_boot_migration_repairs_an_older_database():
         db.close()
 
     # Idempotent: boot runs it on every deploy.
-    main._ensure_column("users", "is_active",
-                        "ALTER TABLE users ADD COLUMN is_active BOOLEAN NOT NULL DEFAULT TRUE")
+    main._MANAGED = False
+    try:
+        main._ensure_column("users", "is_active",
+                            "ALTER TABLE users ADD COLUMN is_active BOOLEAN NOT NULL DEFAULT TRUE")
+    finally:
+        main._MANAGED = was_managed
     check("running it a second time is a no-op, not an error",
           "is_active" in columns("users"))
 

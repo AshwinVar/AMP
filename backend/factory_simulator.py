@@ -36,7 +36,24 @@ load_dotenv()
 from database import SessionLocal, engine, Base
 import models
 
-Base.metadata.create_all(bind=engine)
+# Schema creation, but ONLY on a database Alembic does not manage (ADR-0018).
+#
+# This module is imported by main, so this line ran on every production boot and
+# was a second, undeclared route by which a table could appear without a
+# migration — the mechanism behind #513. On a managed database the migrations own
+# the schema and this stands down; on a scratch or developer database (no
+# alembic_version) it behaves exactly as it always has, which is what lets this
+# module be imported standalone by the simulator scripts.
+def _unmanaged():
+    from sqlalchemy import inspect
+    try:
+        return "alembic_version" not in set(inspect(engine).get_table_names())
+    except Exception:
+        return True
+
+
+if _unmanaged():
+    Base.metadata.create_all(bind=engine)
 
 # ── Factory identity ─────────────────────────────────────────────
 

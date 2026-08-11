@@ -242,9 +242,17 @@ _ensure_column("tenant_configs", "unit_value_gbp", "ALTER TABLE tenant_configs A
 # THE APPROVAL GATE'S REVOCATION FLAG (alembic 0005) — and the reason the block
 # below exists at all.
 #
-# `models.User.is_active` shipped with a migration and NO entry here. Production
-# does not run Alembic on deploy (docs/MIGRATIONS.md: migrate.py is run by hand),
-# and create_all only creates missing TABLES, never alters an existing one. So
+# `models.User.is_active` shipped with a migration and NO entry here. At the
+# time, production did not run Alembic on deploy at all — docs/MIGRATIONS.md said
+# migrate.py was applied "manually", and nothing enforced that.
+#
+# IT RUNS ON EVERY DEPLOY NOW (railway.toml preDeployCommand, ADR-0018). This
+# paragraph describes the world that produced the outage, not the current one —
+# left in place because it is why the block below exists, and corrected here
+# because a stale "migrations are manual" sentence is the precise thing that
+# caused #513.
+#
+# create_all only creates missing TABLES, never alters an existing one. So
 # the column never landed, and because SQLAlchemy names every mapped column in
 # its SELECT list, EVERY User query became:
 #

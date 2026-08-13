@@ -198,6 +198,15 @@ further accounts are the manufacturer's own job, through `GET/POST/PATCH
 /oem/users`. `POST /oem/login` and `POST /oem/change-password` are the front
 door. The pilot journey does exactly this, in that order, over HTTP.
 
+**A second correction owed on 2026-08-13.** That paragraph was true of the API
+and false of the product. The sign-in page posted only to `/login`, then chose a
+destination with `isOemSession()` — which reads a token that endpoint can never
+issue, so the `/oem` branch was unreachable and **a manufacturer could not sign
+in to AMP through any interface**. The portal existed and could not be opened.
+The page now tries the factory door and then the manufacturer's; the namespace
+is global (`assert_username_available`), so no account could answer at both.
+Verdict 1 stands, but it stands on a door that only opened today.
+
 The tenant code is checked against the reserved namespace on the way in
 (`OEM:` cannot be claimed by a factory — #518), so onboarding cannot create the
 collision the specialist audit demonstrated.

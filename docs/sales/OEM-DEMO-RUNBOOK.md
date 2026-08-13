@@ -114,6 +114,27 @@ touch a real customer.
 It deliberately does **not** create SN-ACX-0001. Registering that machine is
 minute 2 of the demo — that is the point of the demo.
 
+**Resetting the demo on the live site instead.** If you are demoing from
+`app.marx8.com` rather than your laptop, you cannot run that command — there is
+no terminal on the server. Use the variable instead, in the Railway dashboard:
+
+1. Set `DEMO_PASSWORD` once, to whatever you want the four demo logins to use.
+   The demo will not build without it, and there is no default — a demo login on
+   the public internet with a guessable password is a real account.
+2. Set `RESEED_DEMO_OEM` to **a value you have not used before**. The date is the
+   obvious choice: `2026-08-14`.
+3. Redeploy. The demo rebuilds once during boot.
+
+**Why a new value each time.** Each distinct value is used exactly once and then
+recorded, so a variable left set after a meeting cannot quietly rebuild the demo
+on every future deploy. That exact mistake wiped the production factory about
+forty-one times in one day before the guard existed. If you set the same value
+twice, nothing happens — which is the safe direction.
+
+You do not need to reset before *every* live-site demo. Do it when the last
+demo was completed, or when `--status` (or the portal) shows SN-ACX-0001 already
+registered.
+
 Run the reset **after** every practice run and **before** every real meeting.
 A half-walked demo from yesterday is the most common reason a live one goes
 strange. Resetting also restarts the demo workspace's trial clock — see failure

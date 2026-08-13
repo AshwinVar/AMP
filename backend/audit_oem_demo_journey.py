@@ -107,9 +107,17 @@ def main():
     # ---------------------------------------------------- starting state ----
     db = SessionLocal()
     tok = tenancy.set_current_tenant(None)
-    demo_aeron.seed(db)
-    tenancy.reset_current_tenant(tok)
-    db.close()
+    try:
+        demo_aeron.seed(db)
+    except demo_aeron.DemoRefused as e:
+        # A refusal is a configuration answer, not a crash. Reported as one so
+        # somebody running this with a short DEMO_PASSWORD reads a sentence
+        # rather than a traceback.
+        print(f"CANNOT START: {e}")
+        return 2
+    finally:
+        tenancy.reset_current_tenant(tok)
+        db.close()
 
     print()
     print("=" * 74)

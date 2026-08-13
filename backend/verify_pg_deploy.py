@@ -339,6 +339,22 @@ def scenario_failed_migration(port):
     # A migration that does real work and THEN raises. Written to a temporary
     # file in the versions directory and removed afterwards.
     from sqlalchemy import create_engine, inspect, text
+
+    # ASKED FOR, NOT HARDCODED. This fixture used to name `0007_oem_service_clock`
+    # as its parent, which was head at the time. Adding 0008 gave the fixture a
+    # SIBLING rather than a successor, alembic saw two heads, and this whole
+    # section failed for a reason that had nothing to do with what it tests. The
+    # head is read here, BEFORE the file exists, so the fixture is always a child
+    # of whatever the branch's last real migration is.
+    from alembic.config import Config
+    from alembic.script import ScriptDirectory
+
+    cfg = Config(os.path.join(HERE, "alembic.ini"))
+    cfg.set_main_option("script_location", os.path.join(HERE, "alembic"))
+    head = ScriptDirectory.from_config(cfg).get_current_head()
+    check("CONTROL: the fixture found a single head to descend from",
+          bool(head), str(head))
+
     broken = os.path.join(HERE, "alembic", "versions", "9999_deliberately_broken.py")
     with open(broken, "w", encoding="utf-8", newline="\n") as fh:
         fh.write(
@@ -346,7 +362,7 @@ def scenario_failed_migration(port):
             "import sqlalchemy as sa\n"
             "from alembic import op\n\n"
             'revision = "9999_broken"\n'
-            'down_revision = "0007_oem_service_clock"\n'
+            f'down_revision = "{head}"\n'
             "branch_labels = None\ndepends_on = None\n\n\n"
             "def upgrade() -> None:\n"
             '    op.add_column("users", sa.Column("half_applied", sa.String(), nullable=True))\n'
@@ -369,11 +385,11 @@ def scenario_failed_migration(port):
               "half_applied" not in cols, str(sorted(cols)))
         with e.connect() as c:
             rev = c.execute(text("SELECT version_num FROM alembic_version")).scalar()
-        check("the recorded revision did NOT advance", rev == "0007_oem_service_clock", str(rev))
+        check("the recorded revision did NOT advance", rev == head, str(rev))
         e.dispose()
 
         # And with a broken head in the build, the app refuses: its head is
-        # 9999_broken, the database is at 0007.
+        # 9999_broken, the database is still at the last real migration.
         p = run(READINESS, url)
         v = verdict(p)
         check("the application refuses traffic while the migration is unapplied",

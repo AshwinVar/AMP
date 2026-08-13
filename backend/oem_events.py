@@ -48,6 +48,28 @@ class MachineInstalled:
 
 
 @dataclass(frozen=True)
+class MachineClaimed:
+    """A factory accepted a machine into its workspace (ADR-0019).
+
+    ONE new event, because one new fact occurs. Claim created / revoked /
+    expired are NOT here: there is no factory yet, so the fact belongs to
+    nobody's shop floor and EventBus would stamp it DEFAULT — the founder's
+    workspace. Those are audited instead, which is where they belong.
+    """
+    tenant_code: str                  # THE ACCEPTING FACTORY.
+    oem_code: str
+    installation_id: int
+    serial_number: str
+    model_code: Optional[str] = None
+    # What the factory chose AT THE MOMENT of acceptance, so the history records
+    # what was actually agreed rather than whatever the policy says today.
+    granted: str = ""
+    occurred_at: datetime = field(default_factory=datetime.utcnow)
+    event_type: str = "MachineClaimed"
+    event_version: int = 1
+
+
+@dataclass(frozen=True)
 class MachineCommissioned:
     """Commissioning completed: the machine is in service at the customer."""
     tenant_code: str

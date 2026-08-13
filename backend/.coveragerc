@@ -107,6 +107,12 @@ omit =
     #   mutate_oem_provisioning  16 mutations of the manufacturer's front door,
     #                            the founder gate, and the lockout guard
     mutate_oem_provisioning.py
+    #   mutate_oem_claim       23 mutations of the machine-claim credential, the
+    #                          factory's authority, and the two conditional
+    #                          UPDATEs that decide a race
+    #   verify_pg_claim        25 real two-thread races on PostgreSQL 18.3
+    mutate_oem_claim.py
+    verify_pg_claim.py
     audit_oem_adversarial.py
     #   audit_oem_specialist  attacks the ASSUMPTIONS the OEM boundary rests on
     #                         (AST scans of the route handlers, a live sentinel

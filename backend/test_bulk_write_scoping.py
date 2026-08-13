@@ -74,6 +74,15 @@ PARENT_GUARDED = {
         "the item is fetched + _guard_record'd before its aliases are deleted by item_id",
     "gmats_inventory_routes.py::gmats_void_min":
         "the MIN is fetched + _guard_record'd before its lines are deleted by min_id",
+    "oem_claims.py::revoke":
+        "the claim was fetched in the route filtered by `oem_code == principal['oem']` "
+        "(a competitor's claim 404s before reaching here), and this UPDATE addresses "
+        "it by PRIMARY KEY: `WHERE id = claim.id AND status = 'Pending'`. It is a "
+        "conditional compare-and-set rather than a sweep -- the `status` predicate is "
+        "what makes revoking safe against a simultaneous claim, and it is why this is "
+        "an UPDATE and not a read-modify-write. Its sibling `accept` is not listed "
+        "because its statements happen to mention tenant_code and so satisfy the "
+        "string check; the reasoning for both is identical.",
 }
 
 _BULK_METHODS = {"update", "delete"}

@@ -5,6 +5,7 @@ import React, { useCallback, useEffect, useState } from "react";
 import { apiGet, apiPut, getUserRole } from "../lib/api";
 import { LoadError, useLoadError } from "../lib/useLoadError";
 import { useInFlight } from "../lib/useInFlight";
+import AddConnectedEquipment from "./AddConnectedEquipment";
 
 /**
  * The FACTORY's side of the OEM edge (ADR-0017).
@@ -181,6 +182,12 @@ export default function ConnectedEquipment() {
       </div>
 
       <LoadError message={error} />
+
+      {/* THE WAY EQUIPMENT GETS HERE (ADR-0019). A manufacturer cannot attach a
+          machine to this workspace; it can only send a code. This is where that
+          code becomes an installation — Admin-only, because it establishes a
+          commercial relationship and a data-sharing agreement in one press. */}
+      {isAdmin && <AddConnectedEquipment onAdded={load} />}
 
       {!error && data && data.equipment.length === 0 && (
         <div className="rounded-2xl border border-slate-800 bg-slate-900/60 p-10 text-center">

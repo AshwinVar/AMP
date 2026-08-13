@@ -17,6 +17,7 @@ import { readFileSync, writeFileSync } from "node:fs";
 
 const SUITES =
   "lib/oem.test.ts components/ConnectedEquipment.test.tsx " +
+  "components/AddConnectedEquipment.test.tsx " +
   "app/oem/page.test.tsx app/login/page.test.tsx";
 
 const MUTATIONS = [
@@ -98,6 +99,43 @@ const MUTATIONS = [
     file: "app/oem/page.tsx",
     from: "      const denied = e instanceof OemRequestError && e.status === 401;",
     to: "      const denied = false;",
+  },
+
+  // --- claiming a machine (ADR-0019) --------------------------------------
+  {
+    label: "LOOKING UP a code claims the machine (a URL becomes consent)",
+    file: "components/AddConnectedEquipment.tsx",
+    from: "      const p = await apiGet<Preview>(\n" +
+      "        `/connected-equipment/claim/${encodeURIComponent(code.trim())}`,\n" +
+      "      );",
+    to: "      const p = await apiPost<Preview>(\n" +
+      "        `/connected-equipment/claim/${encodeURIComponent(code.trim())}`,\n" +
+      "        { grants: [] },\n" +
+      "      );",
+  },
+  {
+    label: "the confirmation sends grants nobody ticked",
+    file: "components/AddConnectedEquipment.tsx",
+    from: "        { grants: chosen },",
+    to: "        { grants: preview.available_grants.map((g) => g.key) },",
+  },
+  {
+    label: "an existing agreement is shown as unticked (reads as turning it off)",
+    file: "components/AddConnectedEquipment.tsx",
+    from: "      setChosen(p.already_granted || []);",
+    to: "      setChosen([]);",
+  },
+  {
+    label: "a refused lookup is swallowed into a generic message",
+    file: "components/AddConnectedEquipment.tsx",
+    from: "      setError(detailOf(err));\n    } finally {\n      setBusy(false);\n    }\n  }\n\n  async function confirm()",
+    to: "      setError('Something went wrong.');\n    } finally {\n      setBusy(false);\n    }\n  }\n\n  async function confirm()",
+  },
+  {
+    label: "a refused confirmation reports success anyway",
+    file: "components/AddConnectedEquipment.tsx",
+    from: "    } catch (err) {\n      setError(detailOf(err));\n    } finally {\n      setBusy(false);\n    }\n  }\n\n  return (",
+    to: "    } catch (err) {\n      onAdded();\n    } finally {\n      setBusy(false);\n    }\n  }\n\n  return (",
   },
 ];
 

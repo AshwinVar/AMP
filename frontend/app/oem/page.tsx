@@ -6,12 +6,14 @@ import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 
 import { getToken } from "../../lib/api";
+import OemMachineRegistry from "../../components/OemMachineRegistry";
 import {
   fetchCustomers,
   fetchFleet,
   fetchMachine,
   fetchMachineService,
   fetchOemIdentity,
+  fetchModels,
   fetchServiceQueue,
   fleetSummary,
   OemRequestError,
@@ -80,6 +82,9 @@ export default function OemPortalPage() {
   const [machines, setMachines] = useState<FleetMachine[]>([]);
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [queue, setQueue] = useState<ServiceRecommendation[]>([]);
+  const [models, setModels] = useState<
+    Array<{ id: number; model_code: string; name: string }>
+  >([]);
   const [customerFilter, setCustomerFilter] = useState("");
   const [selected, setSelected] = useState<FleetMachine | null>(null);
   const [detail, setDetail] = useState<MachineService | null>(null);
@@ -99,13 +104,15 @@ export default function OemPortalPage() {
         fetchFleet(customer || undefined),
         fetchCustomers(),
         fetchServiceQueue(),
+        fetchModels(),
       ])
-        .then(([me, fleet, custs, service]) => {
+        .then(([me, fleet, custs, service, catalogue]) => {
           setError("");
           setIdentity(me);
           setMachines(fleet.machines);
           setCustomers(custs.customers);
           setQueue(service.recommendations);
+          setModels(catalogue);
         })
         .catch((e: unknown) => {
           // WHETHER THIS IS AN OEM SESSION IS THE SERVER'S ANSWER, NOT THE
@@ -250,6 +257,8 @@ export default function OemPortalPage() {
               hint="customer has not shared health"
             />
           </section>
+
+          <OemMachineRegistry models={models} />
 
           <section className="mt-8">
             <h2 className="text-lg font-semibold text-white">Service queue</h2>

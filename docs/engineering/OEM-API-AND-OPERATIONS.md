@@ -42,6 +42,114 @@ All require `read_fleet`. All are read-only in this release.
 | **POST** | `/oem/machines/{id}/commission` | commission it, and record whether the checks passed |
 | **POST** | `/oem/machines/{id}/service` | record a completed service |
 
+### Registering and offering a machine (ADR-0019)
+
+| Method | Path | Capability | Purpose |
+|---|---|---|---|
+| POST | `/oem/machines` | `manage_installations` | register a manufactured machine |
+| POST | `/oem/machines/{id}/claim` | `manage_installations` | issue an installation invitation |
+| GET | `/oem/claims` | `read_fleet` | invitations and their status |
+| POST | `/oem/claims/{id}/revoke` | `manage_installations` | withdraw an unused one |
+| GET | `/oem/notifications` | `read_fleet` | what happened to this fleet |
+
+**Registering attaches the machine to nobody.** `factory_tenant_code` stays NULL
+and the lifecycle starts at `Manufactured`. There is no new entity — an
+unassigned `MachineInstallation` *is* a manufactured machine.
+
+Serials are unique **per OEM**, not globally: a global namespace would let one
+manufacturer discover another's serials by probing for collisions. Two
+manufacturers may both ship an `SN-001`, and they are different machines.
+
+```jsonc
+POST /oem/machines/4/claim   { "expires_in_days": 30 }
+→ { "claim_code": "AMP-7K2QM-4XPWD-9TBHF",
+    "claim_url": "https://app.marx8.com/claim/AMP-7K2QM-4XPWD-9TBHF",
+    "code_hint": "9TBHF"[-4:], "expires_at": "…", "status": "Pending" }
+```
+
+**The raw code is in that response and nowhere else, ever again.** AMP stores
+only its SHA-256 plus the last four characters — enough to match a row to a
+sticker on a support call, useless as a credential. `POST` it to a printer, not
+to a log.
+
+The code is 15 characters from a 32-symbol alphabet with `I`, `L`, `O`, `U`, `0`
+and `1` removed — about 75 bits, and unambiguous read off a sticker or dictated
+over a phone. Typing `amp 7k2qm 4xpwd 9tbhf` works: it is normalised before
+hashing.
+
+`intended_customer` is a **hint**. When set it is enforced; when absent the claim
+is equally valid. It never assigns anything by itself — acceptance still has to
+happen.
+
+### `/connected-equipment` — claiming, the factory's side
+
+| Method | Path | Role | Purpose |
+|---|---|---|---|
+| GET | `/connected-equipment/claim/{code}` | **Admin** | what is this machine? (a read) |
+| POST | `/connected-equipment/claim/{code}` | **Admin** | accept it, and choose sharing |
+| POST | `/connected-equipment/{id}/release` | **Admin** | let it go — the only transfer path |
+
+**This is the only place in AMP that sets `factory_tenant_code`.** An OEM can
+offer; it cannot attach. If it could, a row would appear on a customer's screen —
+presented by AMP as their equipment, from a supplier they have never dealt with,
+beside controls inviting them to grant it access.
+
+**Opening the link claims nothing.** The GET previews. A URL is not consent, and
+a link forwarded to the wrong person must not attach equipment to a workspace.
+Both routes are Admin-gated; an unauthenticated preview would be an oracle for
+testing codes at leisure.
+
+**Every failure returns the same 404 and the same sentence** — mistyped, expired,
+revoked, already used, meant for another factory, machine already installed.
+Distinguishing them would tell a prober which guesses were close.
+
+```jsonc
+POST /connected-equipment/claim/AMP-7K2QM-4XPWD-9TBHF
+{ "grants": ["SHARE_OPERATING_HOURS", "SHARE_SERVICE_STATUS"] }
+```
+
+**Accepting can only widen consent, never narrow it.** The policy is keyed
+`(oem, tenant)` — a *relationship*-level agreement, not per-machine — so the
+requested grants are **unioned** with what is already agreed. Adding a second
+machine with the boxes unticked changes nothing. (An earlier version overwrote,
+which silently revoked sharing on the machines already installed; a test caught
+it.) Withdrawal stays on the deliberate, audited control.
+
+**`grants: []` is a complete answer.** The machine is added and nothing is
+shared.
+
+### Concurrency: the database decides
+
+Two administrators pressing *Accept* in the same second is not a hypothetical.
+`oem_claims.accept` issues two conditional UPDATEs whose **row count is the
+security decision**:
+
+```sql
+UPDATE machine_claims        SET status='Claimed'         WHERE id=? AND status='Pending'
+UPDATE machine_installations SET factory_tenant_code=?    WHERE id=? AND factory_tenant_code IS NULL
+```
+
+Read-modify-write would let both succeed: both see `Pending`, both write, and one
+factory ends up with a confirmation for a machine it does not have. `verify_pg_claim.py`
+runs 25 real two-thread races on PostgreSQL 18.3 — exactly one winner, every time.
+
+### Transfer: a machine moves only by being let go
+
+```
+Factory A: POST /connected-equipment/{id}/release
+           → factory_tenant_code := NULL, machine link cleared, status := Sold
+OEM:       POST /oem/machines/{id}/claim        (a fresh code)
+Factory B: POST /connected-equipment/claim/{code}   (a fresh, explicit consent)
+```
+
+There is **no reassignment route**. The only path from A to B goes through A's own
+decision.
+
+**History survives.** The installation row carries *current* state; what happened
+is in `event_log` and `audit_log`, filed under whichever tenant it happened to.
+Factory A keeps its record of the commissioning and every service performed on
+site; Factory B's log starts at its own acceptance.
+
 ### The writes, and what they deliberately cannot do
 
 These three are the only OEM writes, and each is confined to the

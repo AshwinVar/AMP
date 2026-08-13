@@ -588,6 +588,41 @@ async def startup_event():
                 except Exception as e:
                     db.rollback()
                     log.info(f"[RESEED] factory reset failed: {e}")
+        # The AERON sales demo, rebuilt to its starting state. Same shape as
+        # RESEED_FACTORY above and for the same reason: each flag VALUE is
+        # consumed exactly once, so a variable left set after a meeting cannot
+        # rebuild the demo on every subsequent boot. To reset again before the
+        # next demo, set a new value (the date is the obvious choice).
+        #
+        # It cannot touch a customer: demo_aeron refuses unless its tenant is
+        # named DEMO_*, and every delete it issues is filtered to that tenant or
+        # to the AERON oem_code. A missing DEMO_PASSWORD raises DemoRefused —
+        # not SystemExit — so a misconfigured flag skips the rebuild instead of
+        # failing the deployment.
+        demo_flag = os.environ.get("RESEED_DEMO_OEM")
+        if demo_flag:
+            import json as _json
+            import demo_aeron
+            consumed = (db.query(models.EventLog)
+                        .filter(models.EventLog.event_type == "DemoOemReseeded",
+                                models.EventLog.payload.contains(f'"flag": "{demo_flag}"'))
+                        .first())
+            if consumed:
+                log.info(f"[DEMO] flag '{demo_flag}' already consumed — skipping")
+            else:
+                try:
+                    demo_aeron.seed(db)
+                    db.add(models.EventLog(tenant_code="DEFAULT",
+                                           event_type="DemoOemReseeded",
+                                           event_version=1,
+                                           payload=_json.dumps({"flag": demo_flag})))
+                    db.commit()
+                    log.info(f"[DEMO] AERON demo rebuilt in {demo_aeron.DEMO_TENANT} "
+                             f"(flag '{demo_flag}' consumed)")
+                except Exception as e:
+                    db.rollback()
+                    log.info(f"[DEMO] demo reseed skipped: {e}")
+
         gmats_inventory_routes.seed_gmats(db)
         # Core MES: ensure OEE + timeline have data (production records & machine events).
         from factory_simulator import _production_records, _machine_events

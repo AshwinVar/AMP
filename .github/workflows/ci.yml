@@ -45,6 +45,24 @@ jobs:
         working-directory: backend
         run: python -c "import main; print(f'{len(main.app.routes)} routes registered')"
 
+      # THE SALES DEMO, WALKED BY A MACHINE. A demo that breaks in front of a
+      # prospect is worse than no demo, and nothing else in CI would notice: it
+      # is a specific sequence across the OEM and factory APIs plus the MQTT
+      # handler, and every individual piece can stay green while the sequence
+      # stops working.
+      #
+      # Its own STEP rather than a `test_*.py` file, deliberately. The coverage
+      # job collects every test file into ONE pytest process, and this harness
+      # drops and recreates its schema — collected there it would take the
+      # shared database out from under the other suites, which is the hazard
+      # test_mqtt_tenant_identity.py documents at length. A separate process
+      # with its own DATABASE_URL cannot do that.
+      - name: The AERON sales demo still works end to end
+        working-directory: backend
+        env:
+          DEMO_PASSWORD: ci-demo-password
+        run: python audit_oem_demo_journey.py
+
   # THE MIGRATION GATE (ADR-0018). A separate job because it needs a real
   # PostgreSQL server, and because its answer is a different question from "do
   # the tests pass".

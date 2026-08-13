@@ -237,6 +237,36 @@ def main():
 
     print()
     print("=" * 74)
+    def installation():
+        d = Session()
+        t = tenancy.set_current_tenant(None)
+        row = d.query(models.MachineInstallation).filter(
+            models.MachineInstallation.id == inst_id).first()
+        d.refresh(row)
+        d.expunge(row)
+        tenancy.reset_current_tenant(t)
+        d.close()
+        return row
+
+    def report(hours):
+        """One telemetry message, delivered the way a gateway delivers one.
+
+        `HrsRun` is the OEM's own tag; the model's telemetry profile is what
+        maps it onto AMP's `operating_hours`. The site segment is "-" because a
+        machine created through POST /machines carries no site, and a topic
+        segment may not contain a space.
+        """
+        import mqtt_service
+        mqtt_service.SessionLocal = Session
+
+        class _M:
+            topic = f"{mqtt_service.TOPIC_PREFIX}/FACTORY_A/-/machines"
+            payload = json.dumps({
+                "machine": "COMP-PC40", "status": "Running", "utilization": 70,
+                "readings": {"Run": True, "HrsRun": hours}}).encode()
+
+        mqtt_service.on_message(None, None, _M())
+
     print("4. COMMISSIONING AND TELEMETRY")
     print("=" * 74)
     # The factory links it to a machine on its own floor, through its own API.
@@ -258,18 +288,16 @@ def main():
          POST(f"/connected-equipment/{inst_id}/link", oem_tok,
               {"machine_id": machine_id})[0] in (401, 403, 404))
 
-    db = Session()
-    tok = tenancy.set_current_tenant(None)
-    # TELEMETRY, and telemetry only. The hours a machine reports arrive over
-    # MQTT (ADR-0011); there is no HTTP route to post them and there should not
-    # be one, so this is the single seeded fact in the whole journey and it is
-    # named as such in the readiness doc.
-    db.query(models.MachineInstallation).filter(
-        models.MachineInstallation.id == inst_id).update(
-        {"last_seen_at": datetime.utcnow(), "operating_hours": 120.0})
-    db.commit()
-    tenancy.reset_current_tenant(tok)
-    db.close()
+    # TELEMETRY, THROUGH THE REAL PATH. This used to be a direct database
+    # write, described here as "the single seeded fact" on the grounds that
+    # hours arrive over MQTT and no HTTP route posts them. The first half was
+    # true and the second half hid a defect: ingest wrote Machine and never
+    # touched the installation, so nothing in the product set these columns at
+    # all. Now that it does, the journey has no seeded fact left -- this is
+    # mqtt_service.on_message, the same function the broker calls.
+    report(120.0)
+    step("the machine reports over MQTT, and AMP records it",
+         installation().last_seen_at is not None, "never seen")
 
     code, body = POST(f"/oem/machines/{inst_id}/transition", oem_tok,
                       {"target": "Installed"})
@@ -292,14 +320,7 @@ def main():
     print("=" * 74)
     print("5. SERVICE")
     print("=" * 74)
-    db = Session()
-    tok = tenancy.set_current_tenant(None)
-    db.query(models.MachineInstallation).filter(
-        models.MachineInstallation.id == inst_id).update(
-        {"operating_hours": 2100.0})     # past the 2,000 h interval
-    db.commit()
-    tenancy.reset_current_tenant(tok)
-    db.close()
+    report(2100.0)                       # past the 2,000 h interval, over MQTT
 
     code, body = GET("/oem/service", oem_tok)
     recs = [r for r in body.get("recommendations", []) if r["machine"] == "PC40-0001"]

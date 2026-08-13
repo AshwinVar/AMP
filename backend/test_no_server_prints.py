@@ -102,6 +102,18 @@ CLI_ONLY_FUNCTIONS = {
         # the reseed outcome itself at main.py:428/:433.
         "_module_or_class_level": "the `if __name__` block: founder's factory reset CLI",
     },
+    "demo_aeron.py": {
+        # Same shape as reset_factory above, and checked the same way. The web
+        # process reaches this module only on the RESEED_DEMO_OEM path, which
+        # calls seed() — and seed(), wipe(), publish() and the two guards
+        # contain no print between them. main.py logs the outcome itself.
+        # These three are the terminal-facing half of a dual-use file: a person
+        # running --reset before a sales meeting wants to read what was built,
+        # not parse JSON.
+        "status": "CLI: prints the demo's current state for a person about to present",
+        "main": "CLI entry point; prints the refusal reason",
+        "_run": "CLI dispatch; prints what was rebuilt or published",
+    },
 }
 
 # Whole files that the web process never imports. These are not in main.py's

@@ -14,6 +14,32 @@ export default function LoginPage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
+  /**
+   * One sign-in attempt against one endpoint.
+   *
+   * Never throws on a refusal — a 401 from the factory door is expected for
+   * every manufacturer and is not an error until BOTH doors have said no.
+   */
+  async function attempt(url: string) {
+    try {
+      const res = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ username, password }),
+      });
+      const body = await res.json().catch(() => ({}));
+      return {
+        ...body,
+        ok: res.ok,
+        detail: body.detail || body.error || "Login failed",
+      };
+    } catch {
+      // A network failure, not a refusal. Reported as one so a server that is
+      // down does not read as a wrong password.
+      return { ok: false, detail: "Could not reach AMP. Check your connection." };
+    }
+  }
+
   async function handleLogin(e: React.FormEvent) {
     e.preventDefault();
 
@@ -21,22 +47,35 @@ export default function LoginPage() {
     setError("");
 
     try {
-      const res = await fetch(`${API_URL}/login`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ username, password }),
-      });
-
-      const data = await res.json();
-
-      if (!res.ok) {
-        throw new Error(data.detail || data.error || "Login failed");
+      // ONE DOOR, TWO KINDS OF ACCOUNT.
+      //
+      // A factory user authenticates at /login and a manufacturer at /oem/login
+      // (ADR-0017) — two separate user tables, deliberately. This page only ever
+      // called /login, so `isOemSession()` below was reading a token that could
+      // not possibly be an OEM one and the /oem branch was unreachable: a
+      // manufacturer had NO way to sign in to AMP through any interface. The
+      // portal existed and could not be opened.
+      //
+      // Trying both is correct rather than a workaround, because a username can
+      // only belong to one of them: `oem_auth.assert_username_available` refuses
+      // a name already taken by either table, so the namespace is global and
+      // there is no account both endpoints could answer for. Nobody has to know
+      // which kind of account they hold, which is the right outcome — the person
+      // signing in should not have to understand AMP's table layout.
+      let data = await attempt(`${API_URL}/login`);
+      if (!data.ok) {
+        const asOem = await attempt(`${API_URL}/oem/login`);
+        // The FACTORY message is the one shown when both fail. It is the common
+        // case by far, and "Invalid username or password" beats a manufacturer
+        // portal's phrasing for somebody who mistyped a shop-floor password.
+        if (!asOem.ok) throw new Error(data.detail);
+        data = asOem;
       }
 
       localStorage.setItem("token", data.access_token);
       localStorage.setItem("username", username);
       localStorage.setItem("role", data.role);
-      localStorage.setItem("company", data.tenant || "DEFAULT");
+      localStorage.setItem("company", data.tenant || data.oem || "DEFAULT");
 
       // Somebody who scanned a QR on a machine was sent here mid-task, and the
       // code they scanned is in the URL they came from. Send them back to it.

@@ -114,3 +114,69 @@ describe("coming back to a scanned claim code", () => {
     }
   });
 });
+
+describe("the manufacturer's door", () => {
+  // Until this existed, a manufacturer could not sign in to AMP at all. The
+  // page called /login only, so `isOemSession()` was reading a token that could
+  // never carry principal:"oem" and the /oem branch was unreachable code.
+  function refuse(status = 401, detail = "Invalid username or password") {
+    return {
+      ok: false,
+      status,
+      json: async () => ({ detail }),
+    } as unknown as Response;
+  }
+
+  function accept(claims: Record<string, unknown>, extra: Record<string, unknown> = {}) {
+    return {
+      ok: true,
+      status: 200,
+      json: async () => ({ access_token: tokenWith(claims), role: "OEM_ADMIN", ...extra }),
+    } as unknown as Response;
+  }
+
+  it("signs a MANUFACTURER in through /oem/login when /login refuses", async () => {
+    fetchMock
+      .mockResolvedValueOnce(refuse())
+      .mockResolvedValueOnce(accept({ principal: "oem", oem: "AERON", sub: "aeron_admin" },
+                                     { oem: "AERON" }));
+    await signIn();
+    await waitFor(() => expect(push).toHaveBeenCalledWith("/oem"));
+    // The FACTORY door first, and the assertion has to say so precisely:
+    // "/oem/login" also ends in "/login", so a naive /\/login$/ matched either
+    // and a mutation that swapped the order survived the whole suite.
+    expect(String(fetchMock.mock.calls[0][0])).not.toContain("/oem/");
+    expect(String(fetchMock.mock.calls[1][0])).toMatch(/\/oem\/login$/);
+    expect(localStorage.getItem("token")).toBeTruthy();
+  });
+
+  it("does NOT knock on the manufacturer's door when the factory opens", async () => {
+    // A factory sign-in is the common case; a second request on every one of
+    // them would double the load and the rate-limit count for no reason.
+    loginResolves({ tenant: "FACTORY_A", role: "Admin", sub: "ops" });
+    await signIn();
+    await waitFor(() => expect(push).toHaveBeenCalledWith("/dashboard"));
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("shows the factory's message when BOTH doors refuse", async () => {
+    // Not the manufacturer portal's phrasing: somebody mistyping a shop-floor
+    // password is the overwhelmingly common case.
+    fetchMock
+      .mockResolvedValueOnce(refuse(401, "Invalid username or password"))
+      .mockResolvedValueOnce(refuse(401, "Not an OEM account"));
+    await signIn();
+    await waitFor(() =>
+      expect(screen.getByText("Invalid username or password")).toBeTruthy(),
+    );
+    expect(screen.queryByText("Not an OEM account")).toBeNull();
+    expect(push).not.toHaveBeenCalled();
+  });
+
+  it("says the server is unreachable rather than 'wrong password'", async () => {
+    fetchMock.mockRejectedValue(new TypeError("Failed to fetch"));
+    await signIn();
+    await waitFor(() => expect(screen.getByText(/Could not reach AMP/)).toBeTruthy());
+    expect(push).not.toHaveBeenCalled();
+  });
+});

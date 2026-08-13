@@ -239,9 +239,36 @@ function suitesPass() {
   }
 }
 
-const originals = new Map();
+// LINE ENDINGS ARE NOT COSMETIC HERE.
+//
+// Every multi-line pattern below is written with LF. Git materialises these
+// files with CRLF on Windows, so after a checkout the patterns match NOTHING
+// and six mutations reported "SKIP (pattern hits 0x)" -- which reads almost
+// exactly like a pass in a wall of output. The harness had silently stopped
+// testing the claim flow, and only because of how git last wrote the file.
+//
+// So: match against a normalised copy, and put the file back the way it was
+// found, CRLF and all, so this never shows up as a spurious diff either.
+const CRLF = /\r\n/g;
+const originals = new Map();   // file -> normalised (LF) source, for matching
+const wasCrlf = new Map();     // file -> did it arrive with CRLF
 for (const m of MUTATIONS) {
-  if (!originals.has(m.file)) originals.set(m.file, readFileSync(m.file, "utf8"));
+  if (originals.has(m.file)) continue;
+  const raw = readFileSync(m.file, "utf8");
+  // `.includes`, not `CRLF.test`: a /g regex carries lastIndex between calls,
+  // so `.test` would answer true, false, true, … down the file list.
+  wasCrlf.set(m.file, raw.includes("\r\n"));
+  originals.set(m.file, raw.replace(CRLF, "\n"));
+}
+
+/** Write `text` back in the file's own line-ending style. */
+function put(file, text) {
+  writeFileSync(file, wasCrlf.get(file) ? text.replace(/\n/g, "\r\n") : text);
+}
+
+/** Read a file back as normalised LF, for the restored-cleanly check. */
+function readNormalised(file) {
+  return readFileSync(file, "utf8").replace(CRLF, "\n");
 }
 
 if (!suitesPass()) {
@@ -257,22 +284,22 @@ for (const m of MUTATIONS) {
   const source = originals.get(m.file);
   const hits = source.split(m.from).length - 1;
   if (hits !== 1) {
-    console.log(m.label.padEnd(62) + `SKIP (pattern hits ${hits}x in ${m.file})`);
+    console.log(m.label.padEnd(62) + `SKIP - NOT TESTED (pattern hits ${hits}x in ${m.file})`);
     survived.push(`${m.label} (pattern did not apply)`);
     continue;
   }
-  writeFileSync(m.file, source.replace(m.from, m.to));
+  put(m.file, source.replace(m.from, m.to));
   let caught;
   try {
     caught = !suitesPass();
   } finally {
-    writeFileSync(m.file, source);
+    put(m.file, source);
   }
   console.log(m.label.padEnd(62) + (caught ? "caught" : "SURVIVED"));
   if (!caught) survived.push(m.label);
 }
 
-const dirty = [...originals].filter(([f, o]) => readFileSync(f, "utf8") !== o);
+const dirty = [...originals].filter(([f, o]) => readNormalised(f) !== o);
 console.log(`\nsource files restored: ${dirty.length === 0 ? "yes" : "NO - DIRTY"}`);
 if (dirty.length) process.exit(3);
 if (survived.length) {

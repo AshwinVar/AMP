@@ -18,7 +18,8 @@ loaded by a SELECT, which IS scoped, so a foreign row is never found.
 
 This test statically finds every bulk write in the backend and requires each to
 be either:
-  * explicitly tenant-guarded — `tenant_code` appears in the same statement, or
+  * explicitly tenant-guarded — an owning-tenant column is COMPARED in the same
+    statement (not merely spelled in it; see ``_TENANT_PREDICATE``), or
   * listed in ``PARENT_GUARDED`` with the reason it is safe.
 
 Adding a new bulk write therefore fails CI until it is proven safe, which is the
@@ -28,6 +29,7 @@ Run:  python backend/test_bulk_write_scoping.py     (exit 0 = pass)
 """
 import ast
 import os
+import re
 
 BACKEND = os.path.dirname(os.path.abspath(__file__))
 
@@ -41,6 +43,16 @@ SKIP_FILES = {
     "audit_isolation.py",
     "reseed_inventory.py",   # local dev reseed
     "reset_factory.py",      # founder's factory reset (RESEED_FACTORY=1)
+    # The AERON sales demo, rebuilt behind RESEED_DEMO_OEM. Exactly the
+    # reset_factory precedent: a one-shot operator rebuild reached only through
+    # an env flag, with no request and therefore no request tenant to scope to.
+    # Its deletes ARE scoped, just not all by `tenant_code`: the OEM-side rows
+    # are keyed by `oem_code == "AERON"` (they have no owning tenant at all) and
+    # the child rows by their parent's id. What keeps it off a customer is
+    # `_assert_demo_scope()`, which refuses to run unless the target tenant is
+    # named DEMO_* — a stronger guarantee than a filter, because it fails before
+    # any statement is issued rather than relying on each one being right.
+    "demo_aeron.py",
     "offboard_tenant.py",    # purge — filters cls.tenant_code == code itself
     # Operational retention job: prunes by AGE across every tenant, on purpose.
     # It runs from a CLI with no request context, so there is no tenant to scope
@@ -68,6 +80,11 @@ SKIP_FILES = {
     # (ADR-0011), there is no HTTP route to post them, and there should not be
     # one. It runs against a disposable scratch database and is never served.
     "audit_oem_pilot_journey.py",
+    # Preflight for the #245 backfill: it builds an adversarial fixture in a
+    # disposable database and its one unguarded UPDATE is the fixture itself --
+    # a row deliberately moved by "somebody else" so the rollback can be shown
+    # to leave that decision alone. Never mounted on the API.
+    "preflight_backfill_245.py",
 }
 
 # Bulk writes that carry NO tenant_code of their own but are safe because the
@@ -87,12 +104,38 @@ PARENT_GUARDED = {
         "it by PRIMARY KEY: `WHERE id = claim.id AND status = 'Pending'`. It is a "
         "conditional compare-and-set rather than a sweep -- the `status` predicate is "
         "what makes revoking safe against a simultaneous claim, and it is why this is "
-        "an UPDATE and not a read-modify-write. Its sibling `accept` is not listed "
-        "because its statements happen to mention tenant_code and so satisfy the "
-        "string check; the reasoning for both is identical.",
+        "an UPDATE and not a read-modify-write.",
+    "oem_claims.py::accept":
+        "The sibling of `revoke`, and it USED to be exempt by accident: its "
+        "statement writes `claimed_tenant_code`, whose substring satisfied the old "
+        "spelling check even though nothing was scoped by it. Now stated properly. "
+        "The claim was fetched by `find_by_code` (a hash lookup that can only "
+        "return the one row whose code was presented) and this UPDATE addresses it "
+        "by PRIMARY KEY with `status = 'Pending'`, which is the compare-and-set "
+        "that makes exactly one factory win a race. The second statement is scoped "
+        "by `factory_tenant_code IS NULL` and so can only ever match a machine no "
+        "factory owns -- it is incapable of touching a tenant's row. Both are "
+        "proven by verify_pg_claim.py: 25 two-thread races, exactly one winner.",
 }
 
 _BULK_METHODS = {"update", "delete"}
+
+# An OWNING-TENANT column used as a PREDICATE.
+#
+# Two columns name a row's owner. `tenant_code` is the usual one;
+# `factory_tenant_code` is MachineInstallation's, deliberately named differently
+# so the offboarding sweep cannot see it (ADR-0017) — filtering on it IS a real
+# tenant scope and must count as one.
+#
+# `claimed_tenant_code` is NOT in this set. It records which factory accepted a
+# claim; it does not own the claim row, and a predicate on it scopes nothing.
+# The lookbehind is what tells the two apart: `claimed_` before `tenant_code` is
+# a word character, so it cannot match, while the `.` before
+# `factory_tenant_code` can. The trailing comparison is what stops a VALUES dict
+# — `{"tenant_code": x}` sets a column, it does not restrict which rows.
+_TENANT_COLUMNS = ("tenant_code", "factory_tenant_code")
+_TENANT_PREDICATE = re.compile(
+    r"(?<![_\w])(?:" + "|".join(_TENANT_COLUMNS) + r")\s*(==|!=|\.is_\(|\.in_\(|\.isnot\()")
 
 
 def _is_query_chain(node) -> bool:
@@ -142,7 +185,14 @@ def test_every_bulk_write_is_tenant_guarded():
         path = os.path.join(BACKEND, name)
         for func, segment, lineno in _bulk_writes(path):
             checked += 1
-            if "tenant_code" in segment:
+            # THE GUARD IS A FILTER TEST, NOT A SPELLING TEST. This used to be
+            # `if "tenant_code" in segment`, which two things satisfied without
+            # being scoped at all: a write whose VALUES dict sets
+            # `{"tenant_code": ...}` with no predicate, and a write naming a
+            # different column that merely contains the substring — the machine
+            # claim's `claimed_tenant_code` passed this way for a whole release.
+            # Both are now flagged and must be justified in PARENT_GUARDED.
+            if _TENANT_PREDICATE.search(segment):
                 continue                                    # explicitly guarded
             if f"{name}::{func}" in PARENT_GUARDED:
                 continue                                    # documented parent guard

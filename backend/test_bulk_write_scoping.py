@@ -61,6 +61,13 @@ SKIP_FILES = {
     # Two-OEM / three-factory adversarial audit. Same category: it seeds and
     # attacks a disposable database and is never served.
     "audit_oem_adversarial.py",
+    # The end-to-end pilot journey (ADR-0019). Every business step in it goes
+    # through the real HTTP API on purpose — that is the point of the harness —
+    # and its ONE unguarded write is the exception it documents in its own
+    # docstring: the operating hours a machine reports arrive over MQTT
+    # (ADR-0011), there is no HTTP route to post them, and there should not be
+    # one. It runs against a disposable scratch database and is never served.
+    "audit_oem_pilot_journey.py",
 }
 
 # Bulk writes that carry NO tenant_code of their own but are safe because the
@@ -74,6 +81,15 @@ PARENT_GUARDED = {
         "the item is fetched + _guard_record'd before its aliases are deleted by item_id",
     "gmats_inventory_routes.py::gmats_void_min":
         "the MIN is fetched + _guard_record'd before its lines are deleted by min_id",
+    "oem_claims.py::revoke":
+        "the claim was fetched in the route filtered by `oem_code == principal['oem']` "
+        "(a competitor's claim 404s before reaching here), and this UPDATE addresses "
+        "it by PRIMARY KEY: `WHERE id = claim.id AND status = 'Pending'`. It is a "
+        "conditional compare-and-set rather than a sweep -- the `status` predicate is "
+        "what makes revoking safe against a simultaneous claim, and it is why this is "
+        "an UPDATE and not a read-modify-write. Its sibling `accept` is not listed "
+        "because its statements happen to mention tenant_code and so satisfy the "
+        "string check; the reasoning for both is identical.",
 }
 
 _BULK_METHODS = {"update", "delete"}

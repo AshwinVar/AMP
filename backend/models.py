@@ -1175,3 +1175,53 @@ class OemDataSharingPolicy(Base):
     updated_by = Column(String, nullable=True)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class MachineClaim(Base):
+    """An OEM's invitation for a factory to claim one of its machines (ADR-0019).
+
+    THE POINT OF THIS TABLE is that an OEM cannot attach a machine to a factory.
+    It can only offer. A row here is an offer; the factory's acceptance is what
+    sets `MachineInstallation.factory_tenant_code`, and nothing else in AMP does.
+
+    WHAT IS DELIBERATELY NOT STORED: the claim code. Only its SHA-256. A database
+    dump therefore yields no working claim, and lookup is by hash of what the
+    caller presented, so there is no scan and no per-code timing difference.
+    `code_hint` keeps the last four characters — enough to match a row to a
+    sticker during a support call, useless as a credential.
+    """
+
+    __tablename__ = "machine_claims"
+
+    id = Column(Integer, primary_key=True, index=True)
+    # The issuing manufacturer. Taken from the principal, never from a body.
+    oem_code = Column(String, index=True, nullable=False)
+    installation_id = Column(Integer, ForeignKey("machine_installations.id"),
+                             index=True, nullable=False)
+
+    # UNIQUE, and the only way a claim is ever found. The raw code is returned
+    # once at creation and is not recoverable from this row.
+    token_hash = Column(String, unique=True, index=True, nullable=False)
+    code_hint = Column(String, nullable=False, default="", server_default="")
+
+    # Pending | Claimed | Revoked | Expired. Every terminal state is reached by a
+    # conditional UPDATE from Pending, so a second attempt matches zero rows —
+    # which is what makes double-claiming impossible rather than unlikely.
+    status = Column(String, nullable=False, default="Pending")
+
+    # A HINT, never an authority (ADR-0019). If the OEM knows who it shipped to
+    # it may say so, and acceptance by anyone else is refused — but a claim with
+    # no hint is equally valid, and a hint alone never assigns anything.
+    intended_tenant_code = Column(String, nullable=True)
+
+    # Mandatory. An invitation that never expires is a permanent bearer
+    # credential printed on the side of a box.
+    expires_at = Column(DateTime, nullable=False)
+
+    created_at = Column(DateTime, default=datetime.utcnow)
+    created_by = Column(String, nullable=True)
+    claimed_at = Column(DateTime, nullable=True)
+    claimed_by = Column(String, nullable=True)
+    claimed_tenant_code = Column(String, index=True, nullable=True)
+    revoked_at = Column(DateTime, nullable=True)
+    revoked_by = Column(String, nullable=True)

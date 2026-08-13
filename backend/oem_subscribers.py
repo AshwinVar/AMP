@@ -5,13 +5,21 @@ that happened to THEIR asset. They should not have to hear about it from the
 manufacturer, and they should not have to go looking. So each lifecycle event
 raises a notification in the customer's own workspace.
 
-DIRECTION MATTERS, AND ONLY ONE DIRECTION IS SAFE HERE.
+DIRECTION MATTERS, AND BOTH DIRECTIONS ARE NOW SAFE.
 The factory is told about its own machine — data it already owns (ADR-0002), so
-no sharing grant is involved or needed. Nothing flows the other way: there is no
-notification to the OEM, because an OEM-scoped notification store does not exist
-and inventing one on the factory's `notifications` table would put manufacturer
-rows inside a customer's tenant. That is left undone deliberately rather than
-approximated.
+no sharing grant is involved or needed.
+
+AN EARLIER VERSION OF THIS FILE SAID THE OTHER DIRECTION WAS IMPOSSIBLE: "an
+OEM-scoped notification store does not exist and inventing one on the factory's
+notifications table would put manufacturer rows inside a customer's tenant".
+That was wrong, and ADR-0019 corrects it. `Notification` is in SCOPED_MODELS, so
+a row stamped with the OEM SENTINEL `OEM:<code>` is filtered to that
+manufacturer's sessions by the ordinary ADR-0002 hook and is invisible to every
+factory and to the founder. The existing table, the existing mechanism, no new
+concept — the sentinel made it work all along.
+
+What still does not cross: a factory notification never names another customer,
+and an OEM notification never carries anything the sharing policy withholds.
 
 WHAT IS IN THE MESSAGE.
 The serial, the model, the site, and what happened. Nothing about production,
@@ -20,8 +28,10 @@ the OEM's action, not the factory's business, so it cannot become a back-channel
 for data the sharing policy withholds.
 """
 import models
+import oem_auth
 from events import event_bus
-from oem_events import MachineCommissioned, MachineInstalled, ServiceCompleted
+from oem_events import (MachineClaimed, MachineCommissioned, MachineInstalled,
+                        ServiceCompleted)
 
 
 def _notify(db, tenant_code, kind, severity, title, message):
@@ -81,8 +91,40 @@ def notify_factory_of_service(event: ServiceCompleted, db) -> None:
     )
 
 
+def notify_both_parties_of_claim(event: MachineClaimed, db) -> None:
+    """A claim is the one moment BOTH sides are waiting on, so both are told.
+
+    The factory learns its equipment is registered; the manufacturer learns its
+    machine reached the customer and can be commissioned. Two rows, one per
+    party, in two different tenants — and neither can read the other's.
+    """
+    granted = [g for g in (event.granted or "").split(",") if g]
+    _notify(
+        db, event.tenant_code, "equipment_claimed", "Info",
+        f"{event.serial_number} added to your connected equipment",
+        f"You accepted machine {event.serial_number}"
+        + (f" ({event.model_code})" if event.model_code else "")
+        + f" from {event.oem_code}. "
+        + (f"You are sharing {len(granted)} of 7 data categories with them; "
+           "you can change that at any time under Connected Equipment."
+           if granted else
+           "You are sharing nothing with them; you can change that at any time "
+           "under Connected Equipment."),
+    )
+    # The manufacturer's copy, stamped with ITS sentinel tenant so the ADR-0002
+    # hook shows it to that OEM and to nobody else.
+    _notify(
+        db, oem_auth.sentinel_tenant(event.oem_code), "installation_accepted",
+        "Info",
+        f"{event.serial_number} accepted by {event.tenant_code}",
+        f"Machine {event.serial_number} was accepted by {event.tenant_code}. "
+        "Commissioning can begin.",
+    )
+
+
 def register(bus=event_bus) -> None:
     """Wire the OEM subscribers. Called once at startup, beside subscribers.register."""
     bus.subscribe(MachineInstalled, notify_factory_of_installation)
     bus.subscribe(MachineCommissioned, notify_factory_of_commissioning)
     bus.subscribe(ServiceCompleted, notify_factory_of_service)
+    bus.subscribe(MachineClaimed, notify_both_parties_of_claim)

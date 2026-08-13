@@ -23,7 +23,9 @@ Run: python backend/audit_oem_specialist.py [port]      (PostgreSQL)
 import ast
 import inspect
 import io
+import math
 import os
+import re
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -184,10 +186,25 @@ def attack_route_coverage():
         if touches_installation:
             via_helper = ("oem_sharing.get_installation" in body
                           or "oem_sharing.installations_for" in body)
-            check(f"{fn.name}() resolves installations through oem_sharing",
-                  via_helper,
-                  "queries MachineInstallation directly — a second copy of the "
-                  "ownership filter is a second chance to get it wrong")
+            # A DIRECT query is acceptable in exactly one shape: filtered by the
+            # principal's own oem_code, in the same expression. Two handlers
+            # legitimately need it and cannot use the helper — `register_machine`
+            # probes for a serial clash among rows the caller must not be shown
+            # (that IS the per-OEM uniqueness rule), and `list_claims` batch-loads
+            # installations for ids that came from the caller's own claims. The
+            # requirement worth enforcing is not "call the helper" but "never
+            # read an installation without an ownership filter"; demanding the
+            # helper here would have been satisfied by wrapping, not by safety.
+            direct_but_scoped = bool(re.search(
+                r"MachineInstallation\.oem_code == principal\[.oem.\]", body))
+            check(f"{fn.name}() resolves installations through oem_sharing, or "
+                  f"filters them by the principal itself",
+                  via_helper or direct_but_scoped,
+                  "queries MachineInstallation with NEITHER the ownership helper "
+                  "nor an oem_code filter")
+            if not via_helper and direct_but_scoped:
+                print(f"       NOTE: {fn.name}() takes the direct route, scoped "
+                      f"to principal['oem'].")
         if "MachineModel" in body:
             check(f"{fn.name}() filters the catalogue by the principal's oem_code",
                   uses_principal and "oem_code ==" in body,
@@ -414,6 +431,156 @@ def attack_the_factory_side():
     check("every change is audited", "log_audit(" in ce, "not audited")
 
 
+def attack_the_claim_assumptions():
+    """ADR-0019 rests on five claims. Each is checked against the code.
+
+        ONE WRITER      exactly one code path sets `factory_tenant_code`
+        HASH ONLY       the raw code is never stored, logged, or compared
+        ONE REFUSAL     every failure produces the identical sentence
+        AT USE          expiry is evaluated when presented, not by a sweeper
+        NO OEM PATH     nothing under /oem can set a factory or a machine link
+    """
+    print()
+    print("=" * 74)
+    print("9. THE MACHINE CLAIM: DO ITS FIVE ASSUMPTIONS HOLD? (ADR-0019)")
+    print("=" * 74)
+    import oem_claims
+
+    # --- ONE WRITER ------------------------------------------------------
+    # If a second place sets factory_tenant_code, the claim is no longer the
+    # gate; it is one of several doors and the others were never audited.
+    # The property is NOT "one file writes the column" — the first version of
+    # this check said that and reported offboard_tenant.py, which detaches a
+    # departing customer's installations. Detaching to NULL cannot put a machine
+    # at a factory; only writing a tenant code can. So the writers are split by
+    # what they write, and the narrow set is the one that matters.
+    def _writes(name):
+        try:
+            tree = ast.parse(io.open(os.path.join(HERE, name), encoding="utf-8").read())
+        except SyntaxError:
+            return set()
+        found = set()
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Assign):
+                for tgt in node.targets:
+                    if isinstance(tgt, ast.Attribute) and tgt.attr == "factory_tenant_code":
+                        found.add(isinstance(node.value, ast.Constant)
+                                  and node.value.value is None)
+            if isinstance(node, ast.Dict):
+                for key, val in zip(node.keys, node.values):
+                    if isinstance(key, ast.Constant) and key.value == "factory_tenant_code":
+                        found.add(isinstance(val, ast.Constant) and val.value is None)
+        return found
+
+    assigners, detachers = set(), set()
+    for name in sorted(os.listdir(HERE)):
+        if not name.endswith(".py") or name.startswith(("test_", "audit_", "mutate_")):
+            continue
+        for is_detach in _writes(name):
+            (detachers if is_detach else assigners).add(name)
+
+    check("ONE code path puts a machine at a factory", assigners == {"oem_claims.py"},
+          f"a factory tenant is assigned by {sorted(assigners)}")
+    # The release (the factory lets a machine go) and the offboard (the customer
+    # leaves AMP entirely). oem_claims is deliberately NOT here: acceptance only
+    # ever assigns, and nothing in the claim path can undo one.
+    ok("CONTROL: the two detach paths are the release and the offboard",
+       detachers == {"connected_equipment_routes.py", "offboard_tenant.py"},
+       f"detached by {sorted(detachers)} — a new one needs reading")
+
+    # --- NO OEM PATH -----------------------------------------------------
+    # The manufacturer's own router must contain no assignment that could
+    # attach a machine to a customer, by either column.
+    tree = ast.parse(io.open(os.path.join(HERE, "oem_routes.py"), encoding="utf-8").read())
+    forbidden = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Assign):
+            for tgt in node.targets:
+                if isinstance(tgt, ast.Attribute) and tgt.attr in (
+                        "factory_tenant_code", "machine_id", "tenant_code"):
+                    forbidden.add(tgt.attr)
+        if isinstance(node, ast.Dict):
+            for key in node.keys:
+                if isinstance(key, ast.Constant) and key.value in (
+                        "factory_tenant_code", "machine_id", "tenant_code"):
+                    forbidden.add(key.value)
+    check("no /oem handler assigns a factory or a machine link", not forbidden,
+          f"oem_routes.py writes {sorted(forbidden)}")
+
+    # --- HASH ONLY -------------------------------------------------------
+    src = inspect.getsource(oem_claims)
+    check("a claim is found by hash, never by the code itself",
+          "token_hash == hash_code(" in src.replace("\n", " ").replace("  ", " ")
+          or "token_hash ==" in src,
+          "find_by_code does not look up by hash")
+    check("the model stores no raw-code column",
+          not any(c in src for c in ("raw_code", "claim_code = Column",
+                                     "plain_code")),
+          "a raw code column exists")
+
+    # The raw code must not reach the audit trail. This is static: every
+    # log_audit call in the two routers is unparsed and searched for the name
+    # that holds the secret.
+    leaks = []
+    for name in ("oem_routes.py", "connected_equipment_routes.py"):
+        rt = ast.parse(io.open(os.path.join(HERE, name), encoding="utf-8").read())
+        for node in ast.walk(rt):
+            if (isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+                    and node.func.id == "log_audit"):
+                rendered = " ".join(ast.unparse(a) for a in node.args)
+                for token in ("claim_code", "raw_code"):
+                    if token in rendered:
+                        leaks.append(f"{name}: {token}")
+                # `code` alone, not `code_hint` / `oem_code` / `model_code`.
+                if re.search(r"(?<![_\w])code(?![_\w])", rendered):
+                    leaks.append(f"{name}: bare `code`")
+    check("no audit entry carries the raw claim code", not leaks, str(leaks))
+
+    # --- ONE REFUSAL -----------------------------------------------------
+    # Every rejection path must produce the SAME sentence. A second, more
+    # specific message anywhere is an oracle, however well meant.
+    ce = io.open(os.path.join(HERE, "connected_equipment_routes.py"),
+                 encoding="utf-8").read()
+    refusals = re.findall(r"oem_claims\.REFUSAL", ce)
+    check("the factory side refuses with the one shared sentence",
+          len(refusals) >= 2, f"only {len(refusals)} uses of the constant")
+    check("...and states no reason of its own beside it",
+          not re.search(r'detail=f?"That claim code[^"]*(expired|revoked|used)',
+                        ce),
+          "a path explains which reason applied")
+    check("usable() answers with a bool and nothing else",
+          "-> bool" in src or "return False" in src,
+          "usable leaks a reason")
+
+    # --- AT USE ----------------------------------------------------------
+    # An expiry enforced by a background sweep is an expiry that has not
+    # happened yet on the row you are looking at.
+    check("expiry is evaluated when the code is presented",
+          "is_expired(" in src and "def is_expired" in src,
+          "no at-use expiry check")
+    swept = [n for n in ("expire_claims", "sweep_claims", "purge_claims")
+             if n in src]
+    check("...and nothing depends on a sweeper having run", not swept, str(swept))
+
+    # --- THE CODE SPACE --------------------------------------------------
+    # State the entropy rather than assert "unguessable". 30^15 is ~73.6 bits;
+    # anything under 60 would make online guessing worth a rate limiter's time.
+    space = len(oem_claims._ALPHABET) ** (oem_claims._GROUPS * oem_claims._GROUP_LEN)
+    bits = math.log2(space)
+    check(f"the code space is {bits:.1f} bits ({len(oem_claims._ALPHABET)}^"
+          f"{oem_claims._GROUPS * oem_claims._GROUP_LEN})", bits >= 60,
+          f"only {bits:.1f} bits")
+    check("...drawn from an alphabet with no I, L, O, U, 0 or 1",
+          not (set("ILOU01") & set(oem_claims._ALPHABET)),
+          f"ambiguous characters in {oem_claims._ALPHABET}")
+
+    # --- THE INVARIANT IS THE DATABASE'S ---------------------------------
+    check("acceptance is a conditional UPDATE, not read-modify-write",
+          "MachineClaim.status == PENDING" in src
+          and "factory_tenant_code.is_(None)" in src,
+          "the race is decided in Python")
+
+
 def main():
     attack_the_sentinel()
     attack_route_coverage()
@@ -423,6 +590,7 @@ def main():
     attack_the_write_surface()
     attack_the_event_tenancy()
     attack_the_factory_side()
+    attack_the_claim_assumptions()
 
     print()
     print("=" * 74)

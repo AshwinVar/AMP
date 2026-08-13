@@ -139,6 +139,93 @@ export const fetchServiceQueue = () =>
 
 export const fetchMachine = (id: number) => get<FleetMachine>(`/oem/machines/${id}`);
 
+/** This manufacturer's catalogue — what a new machine can be registered as. */
+export const fetchModels = () =>
+  get<Array<{ id: number; model_code: string; name: string }>>("/oem/models");
+
+// ── Registering machines and offering them (ADR-0019) ────────────────
+
+export type OemClaim = {
+  id: number;
+  serial_number: string | null;
+  model_code: string | null;
+  status: "Pending" | "Claimed" | "Revoked" | "Expired";
+  code_hint: string;
+  intended_customer: string | null;
+  expires_at: string | null;
+  created_at: string | null;
+  created_by: string | null;
+  claimed_at: string | null;
+  /** Which customer accepted it — the OEM's own record, not a peek at anyone. */
+  claimed_by_customer: string | null;
+};
+
+/**
+ * The response to CREATING a claim, which is the only time the raw code exists.
+ *
+ * `claim_code` is deliberately absent from `OemClaim`: AMP stores a hash, so a
+ * listing can never show it again. A UI that expected to re-read it later would
+ * be designing against a guarantee the backend makes on purpose.
+ */
+export type OemClaimCreated = OemClaim & {
+  claim_code: string;
+  claim_url: string;
+  note: string;
+};
+
+async function post<T>(path: string, body: unknown): Promise<T> {
+  const response = await fetch(`${API_URL}${path}`, {
+    method: "POST",
+    headers: getAuthHeaders(),
+    body: JSON.stringify(body ?? {}),
+  });
+  if (!response.ok) {
+    let detail = `Request failed (${response.status})`;
+    try {
+      const parsed = await response.json();
+      if (parsed?.detail) detail = String(parsed.detail);
+    } catch {
+      /* a non-JSON error body is still an error; keep the status */
+    }
+    throw new OemRequestError(response.status, detail);
+  }
+  return response.json();
+}
+
+export const registerMachine = (body: {
+  serial_number: string;
+  model_id: number;
+  firmware_version?: string | null;
+  warranty_start?: string | null;
+  warranty_end?: string | null;
+}) =>
+  post<{ installation_id: number; serial_number: string; model_code: string }>(
+    "/oem/machines",
+    body,
+  );
+
+export const createClaim = (installationId: number, expiresInDays?: number) =>
+  post<OemClaimCreated>(`/oem/machines/${installationId}/claim`, {
+    expires_in_days: expiresInDays ?? null,
+  });
+
+export const revokeClaim = (claimId: number) =>
+  post<OemClaim>(`/oem/claims/${claimId}/revoke`, {});
+
+export const fetchClaims = () =>
+  get<{ total: number; claims: OemClaim[] }>("/oem/claims");
+
+export const fetchOemNotifications = () =>
+  get<{
+    notifications: Array<{
+      id: number;
+      type: string;
+      title: string;
+      message: string;
+      created_at: string | null;
+    }>;
+  }>("/oem/notifications");
+
 export const fetchMachineService = (id: number) =>
   get<{
     installation_id: number;

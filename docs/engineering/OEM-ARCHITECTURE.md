@@ -88,8 +88,17 @@ OemOrganization (oem_code)
     │             factory_tenant_code  customer  ← NOT named tenant_code, see §7
     │             machine_id           nullable link to the factory Machine
     │             lifecycle, warranty, operating_hours, last_service_hours
+    │                    └── MachineClaim   the OFFER (ADR-0019)
+    │                           token_hash            SHA-256, UNIQUE. Never the code
+    │                           code_hint             last 4 chars, for support
+    │                           status                Pending → Claimed / Revoked
+    │                           expires_at            NOT NULL, checked at use
+    │                           intended_tenant_code  a hint, never a substitute
     └── OemDataSharingPolicy (oem_code, tenant_code)  granted BY the factory
 ```
+
+`MachineClaim` is what an OEM *can* do: offer. Accepting one is the only thing in
+AMP that writes `factory_tenant_code`, and it happens on the factory's side.
 
 ### Durable identity
 
@@ -286,4 +295,7 @@ has already written.
 | Does the factory control consent? | `connected_equipment_routes.py`, `test_connected_equipment.py` |
 | Is the service maths honest? | `oem_service.py`, `test_oem_service.py` |
 | Does it scale? | `oem_perf.py` |
-| Would removing a guard be caught? | `mutate_oem_auth.py`, `mutate_oem_sharing.py` |
+| Would removing a guard be caught? | `mutate_oem_auth.py`, `mutate_oem_sharing.py`, `mutate_oem_claim.py` |
+| How does a machine reach a factory at all? | ADR-0019, `oem_claims.py`, `test_machine_claim.py` |
+| Can two factories claim one machine? | `verify_pg_claim.py` (PostgreSQL, two threads) |
+| Can the whole journey be done without a developer? | `audit_oem_pilot_journey.py` |

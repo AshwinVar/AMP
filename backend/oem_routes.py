@@ -12,8 +12,9 @@ What each handler DOES owe:
     ids cannot confirm that a competitor's machine exists;
   * the sharing policy applied per field, read fresh (oem_sharing).
 """
+import os
 import secrets
-from datetime import datetime
+from datetime import date, datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
@@ -21,6 +22,7 @@ from sqlalchemy.orm import Session
 
 import models
 import oem_auth
+import oem_claims
 import oem_events
 import oem_service
 import oem_sharing
@@ -34,6 +36,11 @@ from security import hash_password, verify_password
 router = APIRouter(prefix="/oem", tags=["OEM"])
 
 MAX_PAGE = 200
+
+# Where a scanned QR sends somebody. Configurable because the claim sticker is
+# printed in the physical world and has to point at the deployment the customer
+# actually uses — a hard-coded localhost on a label is unrecoverable.
+CLAIM_BASE_URL = os.environ.get("APP_BASE_URL", "https://app.marx8.com").rstrip("/")
 
 
 def _get_db():
@@ -429,6 +436,232 @@ def record_service(installation_id: int, payload: ServiceRecord,
             "last_service_at": inst.last_service_at.isoformat()
             if inst.last_service_at else None,
             "service": oem_service.service_state(inst, model)}
+
+
+# ── Registering a machine, and offering it to a customer ─────────────
+#
+# An OEM may register what it built and OFFER it. It may not attach it to
+# anybody (ADR-0019). The acceptance lives on the factory side, in
+# connected_equipment_routes, and is the only thing in AMP that sets
+# `MachineInstallation.factory_tenant_code`.
+
+
+class MachineRegistration(BaseModel):
+    serial_number: str
+    model_id: int
+    firmware_version: str | None = None
+    warranty_start: date | None = None
+    warranty_end: date | None = None
+    notes: str | None = None
+
+
+class ClaimRequest(BaseModel):
+    expires_in_days: int | None = None
+    # A HINT the OEM may set when it knows who it shipped to. Enforced when
+    # present, never a substitute for acceptance, and a claim without one is
+    # equally valid (ADR-0019).
+    intended_customer: str | None = None
+
+
+def _claim_dict(claim, installation=None, model=None):
+    return {
+        "id": claim.id,
+        "serial_number": getattr(installation, "serial_number", None),
+        "model_code": getattr(model, "model_code", None),
+        "status": oem_claims.public_state(claim),
+        "code_hint": claim.code_hint,
+        "intended_customer": claim.intended_tenant_code,
+        "expires_at": claim.expires_at.isoformat() if claim.expires_at else None,
+        "created_at": claim.created_at.isoformat() if claim.created_at else None,
+        "created_by": claim.created_by,
+        "claimed_at": claim.claimed_at.isoformat() if claim.claimed_at else None,
+        # WHO accepted it — the OEM's own customer, so this is its record, not a
+        # leak. It learns nothing about any factory it has not shipped to.
+        "claimed_by_customer": claim.claimed_tenant_code,
+    }
+
+
+@router.post("/machines")
+def register_machine(payload: MachineRegistration, db: Session = Depends(_get_db),
+                     principal: dict = Depends(
+                         oem_auth.require_oem("manage_installations"))):
+    """Register a machine this manufacturer has built.
+
+    No new entity: an unassigned `MachineInstallation` IS a manufactured machine
+    — `factory_tenant_code` is nullable and the lifecycle starts at
+    `Manufactured`. A second "stock" table would duplicate the serial namespace
+    and the lifecycle for nothing.
+
+    The serial is unique PER OEM, not globally: a global namespace would let one
+    manufacturer discover another's serials by probing for collisions.
+    """
+    serial = (payload.serial_number or "").strip()
+    if not serial:
+        raise HTTPException(status_code=400, detail="A serial number is required")
+
+    model = (db.query(models.MachineModel)
+               .filter(models.MachineModel.oem_code == principal["oem"],
+                       models.MachineModel.id == payload.model_id).first())
+    # 404 for a competitor's model id, for the same reason a competitor's
+    # machine id is: a 403 confirms it exists.
+    if model is None:
+        raise HTTPException(status_code=404, detail="Model not found")
+
+    clash = (db.query(models.MachineInstallation)
+               .filter(models.MachineInstallation.oem_code == principal["oem"],
+                       models.MachineInstallation.serial_number == serial).first())
+    if clash is not None:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Serial {serial} is already registered to this manufacturer")
+
+    inst = models.MachineInstallation(
+        oem_code=principal["oem"], serial_number=serial, model_id=model.id,
+        factory_tenant_code=None, site="", status="Manufactured",
+        firmware_version=payload.firmware_version,
+        warranty_start=payload.warranty_start, warranty_end=payload.warranty_end,
+        notes=payload.notes)
+    db.add(inst)
+    db.commit()
+    db.refresh(inst)
+    log_audit(db, principal["username"], "machine_registered", "machine_installation",
+              inst.id, f"oem={principal['oem']} serial={serial} "
+                       f"model={model.model_code}")
+    db.commit()
+    return {"installation_id": inst.id, "serial_number": inst.serial_number,
+            "model_code": model.model_code, "status": inst.status,
+            "factory": None}
+
+
+@router.post("/machines/{installation_id}/claim")
+def create_claim(installation_id: int, payload: ClaimRequest,
+                 db: Session = Depends(_get_db),
+                 principal: dict = Depends(
+                     oem_auth.require_oem("manage_installations"))):
+    """Prepare a machine for installation: issue a claim code.
+
+    THIS DOES NOT ATTACH THE MACHINE TO ANYONE. It creates an offer. The code
+    travels with the machine — printed, stuck on, or handed over — and a factory
+    Admin turns it into an installation by accepting it.
+
+    The raw code is in this response and nowhere else, ever again: only its
+    SHA-256 is stored.
+    """
+    inst = oem_sharing.get_installation(db, principal["oem"], installation_id)
+    if inst is None:
+        raise HTTPException(status_code=404, detail="Machine not found")
+
+    try:
+        claim, code = oem_claims.create(
+            db, principal["oem"], inst, principal["username"],
+            ttl_days=payload.expires_in_days,
+            intended_tenant_code=(payload.intended_customer or "").strip() or None)
+    except oem_claims.ClaimError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    db.commit()
+    db.refresh(claim)
+    # The audit records the HINT, never the code. Four characters are enough to
+    # match a row to a sticker on a support call and useless as a credential.
+    log_audit(db, principal["username"], "claim_created", "machine_claim", claim.id,
+              f"oem={principal['oem']} serial={inst.serial_number} "
+              f"hint={claim.code_hint} expires={claim.expires_at.isoformat()}")
+    db.commit()
+
+    model = _models_by_id(db, principal["oem"]).get(inst.model_id)
+    out = _claim_dict(claim, inst, model)
+    out["claim_code"] = code
+    # The QR carries the claim URL and the code, and nothing else — no tenant, no
+    # OEM code, no database id, no machine detail (ADR-0019).
+    out["claim_url"] = f"{CLAIM_BASE_URL}/claim/{code}"
+    out["note"] = ("Shown once. Print it with the machine or hand it to the "
+                   "customer; AMP stores only a hash and cannot show it again.")
+    return out
+
+
+@router.get("/claims")
+def list_claims(status: str = Query(None, description="Filter by claim status"),
+                limit: int = Query(100, ge=1, le=MAX_PAGE),
+                offset: int = Query(0, ge=0),
+                db: Session = Depends(_get_db),
+                principal: dict = Depends(oem_auth.require_oem("read_fleet"))):
+    """This manufacturer's invitations. Filtered by the principal's oem_code, so
+    a competitor's claims are not merely hidden — they are not selected."""
+    q = (db.query(models.MachineClaim)
+           .filter(models.MachineClaim.oem_code == principal["oem"])
+           .order_by(models.MachineClaim.id.desc()))
+    rows = q.all()
+    # `Pending` becomes `Expired` once the deadline passes, so the filter has to
+    # run on the DERIVED state or a stale row would be listed as live.
+    if status:
+        rows = [c for c in rows if oem_claims.public_state(c) == status]
+    total = len(rows)
+    page = rows[offset:offset + limit]
+
+    insts = {}
+    if page:
+        ids = {c.installation_id for c in page}
+        insts = {i.id: i for i in db.query(models.MachineInstallation)
+                 .filter(models.MachineInstallation.oem_code == principal["oem"],
+                         models.MachineInstallation.id.in_(ids)).all()}
+    catalogue = _models_by_id(db, principal["oem"])
+    return {"total": total, "limit": limit, "offset": offset,
+            "claims": [_claim_dict(c, insts.get(c.installation_id),
+                                   catalogue.get(getattr(insts.get(c.installation_id),
+                                                         "model_id", None)))
+                       for c in page]}
+
+
+@router.post("/claims/{claim_id}/revoke")
+def revoke_claim(claim_id: int, db: Session = Depends(_get_db),
+                 principal: dict = Depends(
+                     oem_auth.require_oem("manage_installations"))):
+    """Withdraw an unused invitation — a shipment changed, a sticker went astray.
+
+    Revoking is not deleting. The row stays so the record of what was issued
+    survives, and the machine can be offered again with a fresh code.
+    """
+    claim = (db.query(models.MachineClaim)
+               .filter(models.MachineClaim.oem_code == principal["oem"],
+                       models.MachineClaim.id == claim_id).first())
+    # 404 for a competitor's claim id, indistinguishable from one that does not
+    # exist.
+    if claim is None:
+        raise HTTPException(status_code=404, detail="Claim not found")
+
+    if not oem_claims.revoke(db, claim, principal["username"]):
+        raise HTTPException(
+            status_code=400,
+            detail=f"That invitation is already {oem_claims.public_state(claim).lower()} "
+                   "and cannot be withdrawn.")
+    db.commit()
+    db.refresh(claim)
+    log_audit(db, principal["username"], "claim_revoked", "machine_claim", claim.id,
+              f"oem={principal['oem']} hint={claim.code_hint} Pending -> Revoked")
+    db.commit()
+    return _claim_dict(claim)
+
+
+@router.get("/notifications")
+def oem_notifications(db: Session = Depends(_get_db),
+                      principal: dict = Depends(oem_auth.require_oem("read_fleet"))):
+    """What has happened to this manufacturer's fleet that it should know about.
+
+    The EXISTING notification table, scoped by the EXISTING mechanism: a row
+    stamped with the OEM sentinel `OEM:<code>` is visible to this manufacturer's
+    sessions and to no factory, because Notification is in SCOPED_MODELS and an
+    OEM request binds that sentinel.
+
+    This corrects a claim in oem_subscribers.py that an OEM-side notification
+    store did not exist. It did — the sentinel made it work all along.
+    """
+    rows = (db.query(models.Notification)
+              .order_by(models.Notification.id.desc()).limit(100).all())
+    return {"notifications": [{
+        "id": n.id, "type": n.notification_type, "severity": n.severity,
+        "title": n.title, "message": n.message, "status": n.status,
+        "created_at": n.created_at.isoformat() if n.created_at else None,
+    } for n in rows]}
 
 
 # ── Signing in, and who may sign in ──────────────────────────────────

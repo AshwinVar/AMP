@@ -2,6 +2,7 @@ import asyncio
 import json
 import os
 import threading
+from datetime import datetime
 
 from dotenv import load_dotenv
 import paho.mqtt.client as mqtt
@@ -13,6 +14,7 @@ from sqlalchemy.exc import IntegrityError
 from database import SessionLocal
 import models
 import mqtt_identity
+import oem_telemetry
 import tenancy
 from machine_status import clamp_utilization, normalize_machine_status
 
@@ -188,6 +190,75 @@ def on_connect(client, userdata, flags, rc):
         log.info("FastAPI MQTT connection failed")
 
 
+def _record_installation_report(db, tenant, machine, payload):
+    """Tell the OEM's installation record that its machine has reported.
+
+    WHY THIS EXISTS. `MachineInstallation.last_seen_at` and `operating_hours`
+    are read by the OEM fleet row (gated behind the factory's grants), by the
+    fleet's connected/offline/unknown split, by the service clock that decides a
+    machine is overdue, and by the `has_reported` commissioning check. Until
+    this function they were written by NOTHING in the product — declared in
+    ADR-0017, read in four places, and never set outside a performance harness.
+    An OEM would have watched "no data" forever, no machine would ever have come
+    due for service, and no machine could ever have been commissioned.
+
+    WHAT IT DOES NOT DO. It does not invent a reading. `last_seen_at` is a fact
+    the message itself establishes — this machine spoke, just now. Operating
+    hours are taken only when the model's own telemetry profile names a source
+    for them (ADR-0017: the vocabulary is the OEM's, never AMP's), so a model
+    that does not report hours keeps NULL, which the portal renders as "no
+    data" rather than as a zero.
+
+    SCOPE. The installation must belong to the tenant the topic resolved to AND
+    be linked to this exact machine. A machine reporting in one workspace can
+    therefore never advance another workspace's service clock, and an unlinked
+    installation is untouched — which is exactly why linking is a deliberate
+    factory action (ADR-0019).
+    """
+    inst = (db.query(models.MachineInstallation)
+              .filter(models.MachineInstallation.machine_id == machine.id,
+                      models.MachineInstallation.factory_tenant_code == tenant)
+              .first())
+    if inst is None:
+        return
+
+    inst.last_seen_at = datetime.utcnow()
+
+    model = (db.query(models.MachineModel)
+               .filter(models.MachineModel.id == inst.model_id).first())
+    try:
+        profile = oem_telemetry.parse(getattr(model, "telemetry_profile", None))
+    except oem_telemetry.ProfileError as e:
+        # A profile that cannot be trusted is not a reason to drop a reading
+        # that needs no profile. The timestamp still stands; the hours do not.
+        log.warning("telemetry profile unusable for %s: %s", inst.serial_number, e)
+        return
+
+    readings = payload.get("readings")
+    if not isinstance(readings, dict) or not profile:
+        return
+
+    named, unknown, out_of_range = oem_telemetry.interpret(profile, readings)
+    if unknown:
+        # A gateway sending a tag nobody configured is a commissioning defect,
+        # and silence hides it (oem_telemetry's own rule).
+        log.warning("%s reported unconfigured tags: %s", inst.serial_number, unknown)
+    if out_of_range:
+        log.warning("%s reported out-of-range: %s", inst.serial_number, out_of_range)
+
+    hours = named.get("operating_hours")
+    if hours and isinstance(hours.get("value"), (int, float)):
+        # Monotonic. An hour meter counts up; a lower figure is a replaced
+        # controller or a mis-mapped tag, and accepting it would silently reset
+        # the service clock and cancel a due service.
+        if inst.operating_hours is None or hours["value"] >= inst.operating_hours:
+            inst.operating_hours = float(hours["value"])
+        else:
+            log.warning("%s reported operating_hours going BACKWARDS (%s -> %s); "
+                        "keeping the higher figure", inst.serial_number,
+                        inst.operating_hours, hours["value"])
+
+
 def on_message(client, userdata, msg):
     db = SessionLocal()
     tenant_token = None
@@ -255,6 +326,8 @@ def on_message(client, userdata, msg):
         machine.status = status
         machine.utilization = utilization
         machine.downtime = downtime_value
+
+        _record_installation_report(db, route.tenant, machine, payload)
 
         db.commit()
         db.refresh(machine)

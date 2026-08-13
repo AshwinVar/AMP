@@ -37,7 +37,10 @@ dimension; the factory experience is unchanged except for one new screen.
 |---|---|---|
 | `audit_oem_adversarial.py` | 2 OEMs × 3 factories on **PostgreSQL 18.3** — HTTP, WebSocket, MQTT, CSV exports, read models, every write verb, and the claim | **140 checks, NO BREACH** |
 | `audit_oem_specialist.py` | attacks the *assumptions* the boundary rests on, not the API | **151 checks, NO FINDING** (after two real fixes — below) |
-| `audit_oem_pilot_journey.py` | the whole business journey on PostgreSQL 18.3, every step an HTTP request | **40 steps, no developer** |
+| `audit_oem_pilot_journey.py` | the whole business journey on PostgreSQL 18.3, every step an HTTP request, telemetry through the real MQTT handler | **41 steps, no developer, nothing seeded but the founder and the catalogue** |
+| `audit_oem_demo_journey.py` | the ten-minute AERON sales demo, walked end to end; runs in CI on every push | **54 steps** |
+| `test_mqtt_installation_reporting.py` | telemetry reaching the OEM's installation record, and the tenant it must not reach | 13 checks; 5 of 6 mutations caught, 1 shadowed and proven so |
+| `preflight_backfill_245.py` | the #245 backfill's safety properties, on an adversarial fixture | **24 checks** |
 | `mutate_oem_claim.py` | 29 mutations of the claim, the consent union and the link | 22 caught, **7 shadowed with recorded reasons** |
 | `mutate_oem_auth.py` | the principal and the sentinel | all caught |
 | `mutate_oem_sharing.py` | the consent model and the fleet API | all caught |
@@ -299,11 +302,20 @@ it with its evidence → the engineer records the service → the factory sees t
 new state → the factory withdraws one permission and the OEM loses that field
 immediately.
 
-**The exception, stated plainly:** the *telemetry itself* is seeded. The
-operating hours a machine reports arrive over MQTT (ADR-0011); there is no HTTP
-route to post them and there should not be one. One other thing is seeded — the
-founder account, which is how AMP is installed rather than something a user does.
-Everything else in the journey is the product.
+**Corrected on 2026-08-13, and the correction matters.** This section previously
+read "the *telemetry itself* is seeded… hours arrive over MQTT and there is no
+HTTP route to post them". The first half was true; the second half concealed a
+defect. MQTT ingest wrote `Machine` and **never touched the installation**, so
+`operating_hours` and `last_seen_at` — read by the gated fleet row, the
+connected/offline split, the service clock and the `has_reported` commissioning
+check — were written by nothing in the product. Every OEM would have seen "no
+data" forever and no machine would ever have come due for service.
+
+That is now fixed (`mqtt_service._record_installation_report`), and the journey
+seeds **no telemetry at all**: it publishes through `on_message`, the same
+function the broker calls. What remains seeded is the founder account (how AMP
+is installed, not something a user does) and the machine-model catalogue, which
+still has no write route. Both are named below as remaining work.
 
 ### 8. Is AMP ready for its first controlled machine-manufacturer pilot?
 
@@ -323,9 +335,18 @@ the input list below.
 **Nothing is blocking a controlled pilot.** These block *unattended commercial
 operation*:
 
-1. **Real telemetry from OEM equipment.** The profiles interpret readings; the
-   edge that produces them (device certificates, provisioning, store-and-forward,
-   OTA) does not exist. Fleet health is only as live as MQTT ingest already is.
+1. **Real telemetry from OEM equipment.** AMP now ingests it end to end — an
+   MQTT report from a linked machine updates the installation's `last_seen_at`,
+   and its operating hours where the model's profile names a source. What does
+   not exist is the **edge that produces the report**: device certificates,
+   provisioning, store-and-forward, OTA. A machine still has to be pointed at
+   the broker by somebody.
+1a. **A machine's site cannot be set through the API**, and an MQTT topic
+   segment may not contain a space (`^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$`). So a
+   machine imported with the site "Plant 1" is unaddressable by MQTT until that
+   is changed. Machines created at `POST /machines` have no site and are
+   addressed with the `-` token, which works — but this will be met on the
+   first real site that uses named plants.
 2. **No push notifications.** A manufacturer is told inside the portal when its
    fleet needs attention; nothing emails or pages it.
 3. **Commercial terms.** Nothing meters, bills, or rate-limits per OEM.

@@ -2,7 +2,7 @@
 
 import React, { useCallback, useEffect, useState } from "react";
 
-import { apiGet, apiPut, getUserRole } from "../lib/api";
+import { apiGet, apiPost, apiPut, getUserRole } from "../lib/api";
 import { LoadError, useLoadError } from "../lib/useLoadError";
 import { useInFlight } from "../lib/useInFlight";
 import AddConnectedEquipment from "./AddConnectedEquipment";
@@ -91,11 +91,16 @@ function label(state: string) {
   return state.replace(/_/g, " ");
 }
 
+/** Just enough of a shop-floor machine to offer it in the link list. */
+type FloorMachine = { id: number; name: string; site?: string | null };
+
 export default function ConnectedEquipment() {
   const [data, setData] = useState<ConnectedEquipmentResponse | null>(null);
+  const [roster, setRoster] = useState<FloorMachine[]>([]);
   const [draft, setDraft] = useState<Record<string, string[]>>({});
   const [saved, setSaved] = useState<Record<string, string>>({});
   const [failed, setFailed] = useState<Record<string, string>>({});
+  const [linkFailed, setLinkFailed] = useState<Record<number, string>>({});
 
   const isAdmin = getUserRole() === "Admin";
   const { error, track } = useLoadError();
@@ -103,9 +108,13 @@ export default function ConnectedEquipment() {
 
   const load = useCallback(() => {
     track(
-      apiGet<ConnectedEquipmentResponse>("/connected-equipment"),
-      (response) => {
+      Promise.all([
+        apiGet<ConnectedEquipmentResponse>("/connected-equipment"),
+        apiGet<FloorMachine[]>("/machines"),
+      ]),
+      ([response, machines]) => {
         setData(response);
+        setRoster(machines);
         // The draft is re-seeded from the server on every load, so a grant an
         // administrator on another screen withdrew cannot linger here as a
         // ticked box that quietly re-grants it on the next save.
@@ -164,6 +173,39 @@ export default function ConnectedEquipment() {
           /* a non-JSON error body is still an error; keep the text */
         }
         setFailed((prev) => ({ ...prev, [oemCode]: detail }));
+      }
+    });
+  }
+
+  /**
+   * Say which machine on this floor a supplied serial is (ADR-0019).
+   *
+   * The manufacturer cannot do this — it does not know, and letting it choose
+   * would let it point at a machine it never built. So the choice is here, on
+   * the factory's own screen, and it is the step that lets its manufacturer
+   * commission the machine.
+   */
+  async function link(installationId: number, machineId: number | null) {
+    await run(`link:${installationId}`, async () => {
+      setLinkFailed((prev) => ({ ...prev, [installationId]: "" }));
+      try {
+        await apiPost(`/connected-equipment/${installationId}/link`, {
+          machine_id: machineId,
+        });
+        load();
+      } catch (e) {
+        // "PRESS-1 is already linked to serial SN-002" is the whole point of
+        // the message — a generic failure would leave somebody re-picking the
+        // same machine forever.
+        const raw = e instanceof Error ? e.message : String(e);
+        let detail = raw;
+        try {
+          const parsed = JSON.parse(raw);
+          if (parsed?.detail) detail = String(parsed.detail);
+        } catch {
+          /* a non-JSON error body is still an error; keep the text */
+        }
+        setLinkFailed((prev) => ({ ...prev, [installationId]: detail }));
       }
     });
   }
@@ -314,6 +356,7 @@ export default function ConnectedEquipment() {
                 <th className="text-left pb-2">Manufacturer</th>
                 <th className="text-left pb-2">Model</th>
                 <th className="text-left pb-2">Site</th>
+                <th className="text-left pb-2">Machine on floor</th>
                 <th className="text-left pb-2">Lifecycle</th>
                 <th className="text-left pb-2">Warranty</th>
                 <th className="text-left pb-2">Service</th>
@@ -333,6 +376,40 @@ export default function ConnectedEquipment() {
                   </td>
                   <td className="py-2">{e.model_code ?? "—"}</td>
                   <td className="py-2">{e.site || "—"}</td>
+                  <td className="py-2">
+                    <select
+                      aria-label={`Machine linked to ${e.serial_number}`}
+                      value={e.machine_id ?? ""}
+                      disabled={!isAdmin || busy(`link:${e.installation_id}`)}
+                      onChange={(ev) =>
+                        link(
+                          e.installation_id,
+                          ev.target.value === "" ? null : Number(ev.target.value),
+                        )
+                      }
+                      className="rounded border border-slate-700 bg-slate-950 px-2 py-1 text-xs text-slate-200 disabled:opacity-50"
+                    >
+                      <option value="">Not linked</option>
+                      {roster.map((m) => (
+                        <option key={m.id} value={m.id}>
+                          {m.name}
+                        </option>
+                      ))}
+                    </select>
+                    {linkFailed[e.installation_id] && (
+                      <span
+                        role="alert"
+                        className="block text-[11px] text-red-400 mt-1 max-w-[16rem]"
+                      >
+                        {linkFailed[e.installation_id]}
+                      </span>
+                    )}
+                    {!e.machine_id && !linkFailed[e.installation_id] && (
+                      <span className="block text-[11px] text-slate-500 mt-1">
+                        needed before its maker can commission it
+                      </span>
+                    )}
+                  </td>
                   <td className="py-2">{e.lifecycle_status}</td>
                   <td className="py-2">
                     <span

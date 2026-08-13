@@ -69,6 +69,16 @@ def upgrade() -> None:
         sa.Column("revoked_at", sa.DateTime(), nullable=True),
         sa.Column("revoked_by", sa.String(), nullable=True),
     )
+    # Every model in AMP declares `id = Column(Integer, primary_key=True,
+    # index=True)`, and all 57 of the resulting `ix_*_id` indexes are in the
+    # frozen baseline. Omitting it here is not a harmless deviation: the
+    # migration gate rebuilds from that baseline, runs the migrations and
+    # demands the result match models.py, so a missing index IS drift, and it
+    # failed the gate on the first push of this branch. The index is redundant
+    # beside the primary key on PostgreSQL — but that argument applies to all 57
+    # equally and belongs in one deliberate sweep, not in one new table quietly
+    # disagreeing with the rest.
+    op.create_index("ix_machine_claims_id", "machine_claims", ["id"])
     op.create_index("ix_machine_claims_token_hash", "machine_claims",
                     ["token_hash"], unique=True)
     op.create_index("ix_machine_claims_oem_code", "machine_claims", ["oem_code"])
@@ -93,7 +103,8 @@ def downgrade() -> None:
     for name in ("ix_machine_claims_claimed_tenant_code",
                  "ix_machine_claims_installation_id",
                  "ix_machine_claims_oem_code",
-                 "ix_machine_claims_token_hash"):
+                 "ix_machine_claims_token_hash",
+                 "ix_machine_claims_id"):
         try:
             op.drop_index(name, table_name="machine_claims")
         except Exception:

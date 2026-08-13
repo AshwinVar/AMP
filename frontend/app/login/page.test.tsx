@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 /**
@@ -75,5 +75,42 @@ describe("post-login routing", () => {
     await signIn();
     await waitFor(() => expect(push).toHaveBeenCalledWith("/dashboard"));
     expect(push).not.toHaveBeenCalledWith("/oem");
+  });
+});
+
+describe("coming back to a scanned claim code", () => {
+  it("returns to the page the QR opened", async () => {
+    // Scan on the shop floor, no session, sign in, and the twenty characters
+    // off an oily label are still there.
+    localStorage.setItem("afterLogin", "/claim/AMP-7K2QM-4XPWD-9TBHF");
+    loginResolves({ tenant: "FACTORY_A", role: "Admin", sub: "ops" });
+    await signIn();
+    await waitFor(() =>
+      expect(push).toHaveBeenCalledWith("/claim/AMP-7K2QM-4XPWD-9TBHF"),
+    );
+    expect(push).not.toHaveBeenCalledWith("/dashboard");
+    // Consumed, so a later ordinary sign-in is not hijacked by a stale one.
+    expect(localStorage.getItem("afterLogin")).toBeNull();
+  });
+
+  it("refuses to bounce to another origin", async () => {
+    // An OPEN REDIRECT. Anything that can write localStorage could otherwise
+    // land somebody on a foreign page with the visual authority of having just
+    // signed in to AMP.
+    for (const hostile of [
+      "https://evil.example/harvest",
+      "//evil.example",
+      "javascript:alert(1)",
+    ]) {
+      // Testing Library unmounts between `it` blocks, not inside one, so
+      // without this the second pass finds two sign-in buttons.
+      cleanup();
+      push.mockReset();
+      localStorage.setItem("afterLogin", hostile);
+      loginResolves({ tenant: "FACTORY_A", role: "Admin", sub: "ops" });
+      await signIn();
+      await waitFor(() => expect(push).toHaveBeenCalledWith("/dashboard"));
+      expect(push).not.toHaveBeenCalledWith(hostile);
+    }
   });
 });

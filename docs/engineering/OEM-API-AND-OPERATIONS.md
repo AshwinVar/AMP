@@ -87,9 +87,38 @@ happen.
 |---|---|---|---|
 | GET | `/connected-equipment/claim/{code}` | **Admin** | what is this machine? (a read) |
 | POST | `/connected-equipment/claim/{code}` | **Admin** | accept it, and choose sharing |
+| POST | `/connected-equipment/{id}/link` | **Admin** | say which machine on the floor this serial is |
 | POST | `/connected-equipment/{id}/release` | **Admin** | let it go — the only transfer path |
 
-**This is the only place in AMP that sets `factory_tenant_code`.** An OEM can
+**The QR opens `APP_BASE_URL/claim/<code>`** — a page that fills the code in and
+nothing more. The lookup is still a press and the acceptance is still a separate
+press, so a scanned or forwarded link attaches nothing. If nobody is signed in,
+the code survives the sign-in (the return path is restricted to a same-origin
+path, so it cannot be turned into an open redirect); a manufacturer who scans
+their own sticker is told plainly that adding a machine is their customer's
+action. AMP supplies the target; the manufacturer's label printer encodes it.
+
+**Linking is the factory's decision too.** The OEM knows the serial it built;
+only the factory knows which asset on its floor carries it. Commissioning
+requires the link (`linked_to_machine`), and until this release nothing in the
+product could write it.
+
+```
+POST /connected-equipment/4/link   { "machine_id": 12 }
+→ 200 { "machine_id": 12, "machine_name": "COMP-PC40", "site": "Plant 1",
+        "message": "Linked. Its manufacturer can now commission it." }
+
+{ "machine_id": null }   detaches, so a mis-link is corrected without releasing
+                         the machine back to its maker
+```
+
+Both ends are filtered to the caller's own tenant *in the query*, so another
+factory's machine is indistinguishable from one that does not exist — 404, not
+403. One machine holds at most one installation (409 names the other serial,
+since both are the factory's own). Re-linking the same serial to the same machine
+is not a collision.
+
+**The claim endpoints are the only place in AMP that sets `factory_tenant_code`.** An OEM can
 offer; it cannot attach. If it could, a row would appear on a customer's screen —
 presented by AMP as their equipment, from a supplier they have never dealt with,
 beside controls inviting them to grant it access.

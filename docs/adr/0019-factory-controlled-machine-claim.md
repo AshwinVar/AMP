@@ -113,9 +113,25 @@ rows.
 ### What the QR carries
 
 The claim URL and the code, and nothing else — no tenant code, no OEM code, no
-database id, no machine detail. Scanning it opens the claim screen; it does not
-claim. Possession of the sticker is possession of the code, which is the intended
-security model: the machine and its code travel together.
+database id, no machine detail. Possession of the sticker is possession of the
+code, which is the intended security model: the machine and its code travel
+together.
+
+The URL is `APP_BASE_URL/claim/<code>`, and the page behind it (`app/claim/[code]`)
+**fills the box and nothing more**. The lookup is still a press, the acceptance is
+still a separate press, and both are refused for anyone who is not a factory
+Admin — so a sticker scanned by somebody walking past a crate, or a link
+forwarded to the wrong person, attaches no equipment to anybody.
+
+Three states the page must handle, because a shop floor produces all three: no
+session at all (a phone camera opens a browser with no AMP login — the code is
+remembered across the sign-in, and the return path is restricted to a same-origin
+path so it cannot become an open redirect), a manufacturer's session (told
+plainly that adding a machine is their customer's action), and a factory user's.
+
+AMP does not render the QR image. It supplies the target; the manufacturer's own
+label printer encodes it, because the sticker has to be produced where the
+machine is built.
 
 ## Authorization
 
@@ -156,9 +172,34 @@ unique **per OEM**, and it is what the invitation points at. Display names,
 factory-local machine names, IP addresses and MQTT topics remain unusable as
 identity — a claim never names any of them.
 
-Linking the installation to a factory `Machine` row stays a separate,
-already-existing step (`machine_id`), because a factory may claim a machine
-before it has been physically wired up.
+Linking the installation to a factory `Machine` row is a **separate step**
+(`machine_id`), because a factory may claim a machine before it has been
+physically wired up.
+
+That step had no route. `machine_id` was a column the commissioning check read
+and nothing in the product could write, so the last leg of the journey —
+`linked_to_machine` — was reachable only by a developer editing the database.
+The pilot-journey harness is what surfaced it, and `POST
+/connected-equipment/{id}/link` closes it.
+
+**The factory chooses, not the manufacturer.** The OEM knows the serial it built;
+only the factory knows which asset on its floor carries it. An OEM-side
+`machine_id` would be a manufacturer nominating a row in somebody else's
+workspace — an existence oracle at best, and at worst an installation grafted
+onto a machine that OEM never made, whose status and utilisation it would then
+read as its own telemetry.
+
+Both ends of the pointer are filtered to the requesting tenant *in the query*,
+so another factory's machine is indistinguishable from one that does not exist
+(404 either way, not 403). `models.Machine` is in `tenancy.SCOPED_MODELS`, so
+ADR-0002 already enforces this; the explicit filter is defence in depth and
+states the intent where the decision is made.
+
+One machine holds at most one installation. Two would let two manufacturers read
+the same shop-floor row as telemetry from their own equipment. Re-linking the
+same serial to the same machine is *not* a collision — saying the same thing
+twice is not a conflict — and passing `machine_id: null` detaches, so a mis-link
+is corrected without releasing the machine back to its maker.
 
 ## Transfer and reinstallation
 

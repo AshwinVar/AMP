@@ -38,6 +38,22 @@ export default function LoginPage() {
       localStorage.setItem("role", data.role);
       localStorage.setItem("company", data.tenant || "DEFAULT");
 
+      // Somebody who scanned a QR on a machine was sent here mid-task, and the
+      // code they scanned is in the URL they came from. Send them back to it.
+      //
+      // ONLY A PATH, and only one starting with a single "/". An absolute URL
+      // here would be an open redirect: anything that can write localStorage —
+      // including a link that walked somebody through a login — could bounce
+      // them to another origin with the visual authority of having just signed
+      // in to AMP. "//evil.example" is a protocol-relative URL, so it is
+      // rejected too.
+      const back = localStorage.getItem("afterLogin");
+      localStorage.removeItem("afterLogin");
+      if (back && back.startsWith("/") && !back.startsWith("//")) {
+        router.push(back);
+        return;
+      }
+
       // A manufacturer and a factory user sign in at the same door and belong on
       // different screens (ADR-0017). Sending an OEM to /dashboard would give
       // them a shop floor they are refused at every endpoint of — the backend

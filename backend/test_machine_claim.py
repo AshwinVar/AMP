@@ -124,7 +124,8 @@ def seed():
     tenancy.install_scoping()
     database.SessionLocal = SessionLocal
     main.SessionLocal = SessionLocal
-    for mod in ("oem_routes", "connected_equipment_routes", "oem_admin_routes"):
+    for mod in ("oem_routes", "connected_equipment_routes", "oem_admin_routes",
+                "machines_routes"):
         __import__(mod)
         sys.modules[mod].SessionLocal = SessionLocal
 
@@ -860,6 +861,103 @@ def case_no_raw_code_is_ever_logged():
     check("...as was a failed attempt", "claim_rejected" in blob, "not audited")
 
 
+def case_the_factory_says_which_machine_it_is():
+    print()
+    print("=" * 74)
+    print("12. LINKING THE SERIAL TO A MACHINE ON THE FLOOR")
+    print("=" * 74)
+    alpha = oem_token("alpha_admin", "OEM_ALPHA")
+    a = fac_token("factory_a_admin", "FACTORY_A")
+    c = fac_token("factory_c_admin", "FACTORY_C")
+
+    def make(tok, name):
+        # `site` is deliberately absent: schemas.MachineBase does not carry one,
+        # so POST /machines cannot set it in this release (CSV onboarding does).
+        # Passing it here would look like evidence that it works.
+        st, body = POST("/machines", tok, {"name": name, "status": "Running",
+                                           "utilization": 0, "downtime": "0m"})
+        return body.get("id")
+
+    mine = make(c, "PRESS-1")
+    theirs = make(a, "PRESS-A")
+    check("CONTROL: both factories created a machine of their own",
+          mine and theirs and mine != theirs, f"{mine} {theirs}")
+
+    db, tok = unscoped()
+    db.query(models.Machine).filter(models.Machine.id == mine).update(
+        {"site": "Plant 9"})   # fixture: the site a CSV onboarding would carry
+    db.commit()
+    tenancy.reset_current_tenant(tok)
+    db.close()
+
+    st, body = register(alpha, "OEM_ALPHA", "SN-LINK")
+    first = body.get("installation_id")
+    st, body = issue(alpha, first)
+    st, _ = POST(f"/connected-equipment/claim/{body['claim_code']}", c, {"grants": []})
+    check("CONTROL: FACTORY_C has accepted the machine", st == 200, str(st))
+
+    # A pointer at somebody else's row is refused, and refused in a way that does
+    # not confirm the row exists.
+    st_other, b_other = POST(f"/connected-equipment/{first}/link", c,
+                             {"machine_id": theirs})
+    st_ghost, b_ghost = POST(f"/connected-equipment/{first}/link", c,
+                             {"machine_id": 9_999_999})
+    check("a factory cannot point its equipment at another factory's machine",
+          st_other == 404, f"{st_other} {b_other}")
+    check("...and that refusal is INDISTINGUISHABLE from 'no such machine'",
+          (st_other, b_other) == (st_ghost, b_ghost), f"{b_other} vs {b_ghost}")
+
+    st, _ = POST(f"/connected-equipment/{first}/link", a, {"machine_id": theirs})
+    check("a factory cannot link equipment that is not its own", st == 404, str(st))
+    st, _ = POST(f"/connected-equipment/{first}/link", alpha, {"machine_id": mine})
+    check("THE MANUFACTURER CANNOT CHOOSE THE MACHINE", st in (401, 403, 404),
+          str(st))
+    st, _ = POST(f"/connected-equipment/{first}/link",
+                 fac_token("factory_c_op", "FACTORY_C", role="Operator"),
+                 {"machine_id": mine})
+    check("an Operator cannot link equipment", st == 403, str(st))
+
+    st, body = POST(f"/connected-equipment/{first}/link", c, {"machine_id": mine})
+    check("the OWNING factory's Admin can", st == 200 and body.get("machine_id") == mine,
+          f"{st} {body}")
+    check("...and the site comes from the machine, not a second typing",
+          body.get("site") == "Plant 9", str(body.get("site")))
+    # Saying the same thing twice is not a conflict. Without the `id != inst.id`
+    # term the uniqueness check finds the installation ITSELF and a second press
+    # of an unchanged form 409s at somebody who did nothing wrong.
+    st, body = POST(f"/connected-equipment/{first}/link", c, {"machine_id": mine})
+    check("...and repeating the same link is not a collision with itself",
+          st == 200 and body.get("machine_id") == mine, f"{st} {body}")
+
+    # One machine, one installation: two would make two manufacturers read the
+    # same shop-floor row as telemetry from their own equipment.
+    st, body = register(alpha, "OEM_ALPHA", "SN-LINK-2")
+    second = body.get("installation_id")
+    st, body = issue(alpha, second)
+    POST(f"/connected-equipment/claim/{body['claim_code']}", c, {"grants": []})
+    st, body = POST(f"/connected-equipment/{second}/link", c, {"machine_id": mine})
+    check("a machine already linked cannot be claimed by a second serial",
+          st == 409, f"{st} {body}")
+    check("...and is told which serial holds it, since both are its own",
+          "SN-LINK" in str(body.get("detail")), str(body.get("detail")))
+
+    st, body = POST(f"/connected-equipment/{first}/link", c, {"machine_id": None})
+    check("a mis-link can be undone without releasing the machine",
+          st == 200 and body.get("machine_id") is None, f"{st} {body}")
+    st, body = POST(f"/connected-equipment/{second}/link", c, {"machine_id": mine})
+    check("CONTROL: and the machine is then free for the right serial",
+          st == 200 and body.get("machine_id") == mine, f"{st} {body}")
+
+    db, tok = unscoped()
+    linked = [r for r in db.query(models.AuditLog).all()
+              if r.action == "installation_linked"]
+    tenancy.reset_current_tenant(tok)
+    db.close()
+    check("every link is audited with the serial and both machine ids",
+          len(linked) >= 3 and "SN-LINK" in (linked[-1].details or ""),
+          f"{len(linked)} {linked and linked[-1].details}")
+
+
 def run_all():
     seed()
     case_registration_is_per_manufacturer()
@@ -873,6 +971,7 @@ def run_all():
     case_a_machine_moves_only_by_release()
     case_the_history_lands_in_the_right_tenant()
     case_no_raw_code_is_ever_logged()
+    case_the_factory_says_which_machine_it_is()
 
 
 def test_machine_claim():

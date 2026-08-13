@@ -18,14 +18,25 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
  */
 
 const apiGet = vi.fn();
+const apiMachines = vi.fn();
 const apiPut = vi.fn();
+const apiPost = vi.fn();
 let role = "Admin";
 
+// The shop-floor roster is split off its own mock so that every existing test
+// can keep saying `apiGet.mockResolvedValue(payload(...))` and mean the panel,
+// not "every GET this component makes returns the panel".
 vi.mock("../lib/api", () => ({
-  apiGet: (p: string) => apiGet(p),
+  apiGet: (p: string) => (p === "/machines" ? apiMachines(p) : apiGet(p)),
   apiPut: (p: string, b: unknown) => apiPut(p, b),
+  apiPost: (p: string, b: unknown) => apiPost(p, b),
   getUserRole: () => role,
 }));
+
+const ROSTER = [
+  { id: 7, name: "COMP-01", site: "Plant 1" },
+  { id: 9, name: "PRESS-02", site: "Plant 1" },
+];
 
 import ConnectedEquipment, {
   type ConnectedEquipmentResponse,
@@ -66,7 +77,10 @@ function payload(granted: string[] = []): ConnectedEquipmentResponse {
 
 beforeEach(() => {
   apiGet.mockReset();
+  apiMachines.mockReset();
   apiPut.mockReset();
+  apiPost.mockReset();
+  apiMachines.mockResolvedValue(ROSTER);
   role = "Admin";
 });
 
@@ -186,6 +200,82 @@ describe("changing what a manufacturer sees", () => {
     // Still readable, though. A supervisor is entitled to know what is shared.
     expect((screen.getByRole("checkbox", { name: /Alarm codes/ }) as HTMLInputElement)
       .disabled).toBe(true);
+  });
+});
+
+describe("saying which machine on the floor a serial is", () => {
+  function unlinked() {
+    const data = payload([]);
+    data.equipment[0].machine_id = null;
+    return data;
+  }
+
+  it("sends the chosen machine, and only for THIS installation", async () => {
+    apiGet.mockResolvedValue(unlinked());
+    apiPost.mockResolvedValue({});
+    render(<ConnectedEquipment />);
+
+    const select = await screen.findByLabelText(/Machine linked to ALPHA-0001/);
+    fireEvent.change(select, { target: { value: "9" } });
+
+    await waitFor(() => expect(apiPost).toHaveBeenCalled());
+    expect(apiPost.mock.calls[0][0]).toBe("/connected-equipment/1/link");
+    expect(apiPost.mock.calls[0][1]).toEqual({ machine_id: 9 });
+  });
+
+  it("unlinks with null rather than a separate verb", async () => {
+    // The empty option must not send `machine_id: 0` or "" — the backend reads
+    // null as "detach", and a 0 would be a machine id that happens not to exist.
+    apiGet.mockResolvedValue(payload([]));   // machine_id 7, already linked
+    apiPost.mockResolvedValue({});
+    render(<ConnectedEquipment />);
+
+    const select = await screen.findByLabelText(/Machine linked to ALPHA-0001/);
+    fireEvent.change(select, { target: { value: "" } });
+
+    await waitFor(() => expect(apiPost).toHaveBeenCalled());
+    expect(apiPost.mock.calls[0][1]).toEqual({ machine_id: null });
+  });
+
+  it("shows the backend's own reason when the machine is already taken", async () => {
+    // A 409 here names the OTHER serial. Swallowing it leaves an administrator
+    // picking the same machine again and again with no idea why it will not go.
+    apiGet.mockResolvedValue(unlinked());
+    apiPost.mockRejectedValue(
+      new Error(JSON.stringify({
+        detail: "COMP-01 is already linked to serial ALPHA-0002. Unlink that one first.",
+      })),
+    );
+    render(<ConnectedEquipment />);
+
+    fireEvent.change(await screen.findByLabelText(/Machine linked to ALPHA-0001/), {
+      target: { value: "7" },
+    });
+    const shown = await screen.findByText(/already linked to serial ALPHA-0002/);
+    expect(shown.textContent).toBe(
+      "COMP-01 is already linked to serial ALPHA-0002. Unlink that one first.",
+    );
+  });
+
+  it("says why the link matters while it is missing", async () => {
+    apiGet.mockResolvedValue(unlinked());
+    render(<ConnectedEquipment />);
+    await waitFor(() =>
+      expect(screen.getByText(/needed before its maker can commission it/)).toBeTruthy(),
+    );
+  });
+
+  it("gives a non-Admin a readable but inert control", async () => {
+    role = "Supervisor";
+    apiGet.mockResolvedValue(unlinked());
+    render(<ConnectedEquipment />);
+    const select = (await screen.findByLabelText(
+      /Machine linked to ALPHA-0001/,
+    )) as HTMLSelectElement;
+    expect(select.disabled).toBe(true);
+    // CONTROL: the roster is still listed, so the assertion above is about the
+    // role and not about the options having failed to load.
+    expect(select.querySelectorAll("option").length).toBe(ROSTER.length + 1);
   });
 });
 

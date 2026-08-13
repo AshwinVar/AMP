@@ -40,11 +40,23 @@ type Preview = {
 
 export default function AddConnectedEquipment({
   onAdded,
+  initialCode = "",
 }: {
   onAdded: () => void;
+  /**
+   * A code that arrived in the URL, from the QR on the machine.
+   *
+   * It only fills the box and opens the panel. Everything after that is
+   * unchanged — the person still presses "look up" and still presses "confirm",
+   * because a scanned link must not be able to accept anything on its own.
+   */
+  initialCode?: string;
 }) {
-  const [open, setOpen] = useState(false);
-  const [code, setCode] = useState("");
+  // Seeded in the initialiser rather than by an effect: an effect would render
+  // the empty form first and then swap, and it would fight anything the person
+  // typed in that instant.
+  const [open, setOpen] = useState(Boolean(initialCode));
+  const [code, setCode] = useState(initialCode);
   const [preview, setPreview] = useState<Preview | null>(null);
   const [chosen, setChosen] = useState<string[]>([]);
   const [error, setError] = useState("");

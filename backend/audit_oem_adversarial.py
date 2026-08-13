@@ -38,9 +38,16 @@ CHECKS = [0]
 
 
 def check(label, refused, detail=""):
+    """`detail` is the evidence for a BREACH, so it is printed only on one.
+
+    Printing it on a REFUSED line put the sentence "a rival's serials are
+    listed" next to the word REFUSED — the reader has to work out that the text
+    describes the failure that did NOT happen. The same defect was found and
+    fixed in audit_oem_specialist.py; this is its twin.
+    """
     CHECKS[0] += 1
     print(f"  {'REFUSED ' if refused else 'BREACHED'}  {label}"
-          + (f"   [{detail}]" if detail else ""))
+          + (f"   [{detail}]" if detail and not refused else ""))
     if not refused:
         FAILURES.append(f"{label}: {detail}")
 
@@ -691,9 +698,164 @@ def main():
         c, _, _ = await http("/machines", alpha)
         check("an OEM token is still refused on factory routes", c == 403, str(c))
 
+    async def attack_the_claims():
+        print("\n" + "=" * 74)
+        print("K. THE MACHINE CLAIM (ADR-0019)")
+        print("=" * 74)
+        alpha = tokfor("alpha-admin", oem="OEM_ALPHA", role="OEM_ADMIN",
+                       principal="oem")
+        beta = tokfor("beta-admin", oem="OEM_BETA", role="OEM_ADMIN",
+                      principal="oem")
+        fac = {t: tokfor(f"{t.lower()}-admin", tenant=t, role="Admin")
+               for t in ("FACTORY_A", "FACTORY_B", "FACTORY_C")}
+        operator = tokfor("factory_a-op", tenant="FACTORY_A", role="Operator")
+
+        async def register(tok, oem, serial):
+            c, body, _ = await http("/oem/machines", tok, method="POST",
+                                    payload={"serial_number": serial,
+                                             "model_id": mods[oem].id})
+            return c, body.get("installation_id")
+
+        async def issue(tok, inst, **kw):
+            c, body, _ = await http(f"/oem/machines/{inst}/claim", tok,
+                                    method="POST", payload=kw)
+            return body.get("claim_code"), body.get("id")
+
+        async def accept(tok, code, grants=None):
+            return await http(f"/connected-equipment/claim/{code}", tok,
+                              method="POST", payload={"grants": grants or []})
+
+        # --- the matrix: 2 manufacturers offering into 3 factories ----------
+        offers = {}
+        for oem, tok, serial in (("OEM_ALPHA", alpha, "SN-CLAIM-A1"),
+                                 ("OEM_ALPHA", alpha, "SN-CLAIM-A2"),
+                                 ("OEM_BETA", beta, "SN-CLAIM-B1"),
+                                 ("OEM_BETA", beta, "SN-CLAIM-B2")):
+            c, inst = await register(tok, oem, serial)
+            ok(f"{oem} registers {serial}", c == 200 and inst, f"{c} {inst}")
+            offers[serial] = (tok, inst)
+
+        # Overlapping serials across manufacturers must be two distinct machines,
+        # not one row either could reach.
+        c, alpha_dup = await register(alpha, "OEM_ALPHA", "SN-SHARED")
+        c2, beta_dup = await register(beta, "OEM_BETA", "SN-SHARED")
+        ok("both manufacturers may use the SAME serial string",
+           c == 200 and c2 == 200, f"{c} {c2}")
+        ok("...and they are two different machines", alpha_dup != beta_dup,
+           f"{alpha_dup} == {beta_dup}")
+
+        # --- a code is the only thing that works ----------------------------
+        real, _ = await issue(alpha, offers["SN-CLAIM-A1"][1])
+        forged = "AMP-22222-33333-44444"
+        c_forged, b_forged, _ = await http(
+            f"/connected-equipment/claim/{forged}", fac["FACTORY_A"])
+        check("a guessed code claims nothing", c_forged == 404, str(c_forged))
+
+        # THE ORACLE TEST. A code that exists but is not for you must be
+        # indistinguishable from one that never existed.
+        beta_code, _ = await issue(beta, offers["SN-CLAIM-B1"][1],
+                                   intended_customer="FACTORY_C")
+        c_wrong, b_wrong, _ = await http(
+            f"/connected-equipment/claim/{beta_code}", fac["FACTORY_A"])
+        check("a REAL code meant for another customer is refused",
+              c_wrong == 404, str(c_wrong))
+        check("...with a refusal identical to the forged one, byte for byte",
+              (c_wrong, b_wrong) == (c_forged, b_forged),
+              f"{b_wrong} vs {b_forged}")
+
+        # And the POST tells no more than the GET did.
+        cp, bp, _ = await accept(fac["FACTORY_A"], beta_code)
+        cf, bf, _ = await accept(fac["FACTORY_A"], forged)
+        check("...and committing tells no more than looking did",
+              (cp, bp) == (cf, bf), f"{bp} vs {bf}")
+
+        # CONTROL: the intended customer CAN take it, so the refusals above are
+        # about who is asking and not about the code being dead.
+        c_ok, _, _ = await accept(fac["FACTORY_C"], beta_code, ["SHARE_ALARMS"])
+        ok("CONTROL: the intended customer accepts the same code", c_ok == 200,
+           str(c_ok))
+
+        # --- replay, reuse, and the spent code ------------------------------
+        c1, _, _ = await accept(fac["FACTORY_A"], real, ["SHARE_ALARMS"])
+        ok("CONTROL: FACTORY_A accepts a valid offer", c1 == 200, str(c1))
+        for who in ("FACTORY_A", "FACTORY_B"):
+            c, _, _ = await accept(fac[who], real)
+            check(f"a spent code cannot be replayed by {who}", c == 404, str(c))
+        c, _, _ = await http(f"/connected-equipment/claim/{real}",
+                             fac["FACTORY_B"])
+        check("...nor previewed after it is spent", c == 404, str(c))
+
+        # --- who may accept -------------------------------------------------
+        fresh, fresh_id = await issue(alpha, offers["SN-CLAIM-A2"][1])
+        for label, tok in (("an Operator", operator),
+                           ("a MANUFACTURER's own admin", alpha),
+                           ("a rival manufacturer", beta),
+                           ("an anonymous caller", None)):
+            c, _, _ = await accept(tok, fresh)
+            check(f"{label} cannot accept a machine into a factory",
+                  c in (401, 403, 404), str(c))
+        # CONTROL: an Admin still can — the refusals are about authority.
+        c, _, _ = await accept(fac["FACTORY_B"], fresh, ["SHARE_ALARMS"])
+        ok("CONTROL: a factory Admin can", c == 200, str(c))
+
+        # --- the OEM's own claim list is its own ----------------------------
+        c, body, raw = await http("/oem/claims", alpha)
+        ok("a manufacturer can list its own invitations", c == 200, str(c))
+        check("...and sees none of a competitor's", "SN-CLAIM-B" not in raw,
+              "a rival's serials are listed")
+        check("...and no raw code is handed back, ever",
+              real not in raw and beta_code not in raw, "a raw code was echoed")
+        hit = [s for s in SECRETS if s in raw]
+        check("...and no factory secret rides along", not hit, str(hit))
+
+        c, _, _ = await http(f"/oem/claims/{fresh_id}/revoke", beta,
+                             method="POST", payload={})
+        check("a manufacturer cannot withdraw a rival's invitation",
+              c in (403, 404), str(c))
+
+        # --- IDOR on installations, and the link nobody else may set --------
+        taken = offers["SN-CLAIM-A1"][1]
+        for label, tok in (("a rival manufacturer", beta),
+                           ("a factory that does not hold it", fac["FACTORY_B"]),
+                           ("an Operator at the owning factory", operator)):
+            c, _, _ = await http(f"/connected-equipment/{taken}/link", tok,
+                                 method="POST",
+                                 payload={"machine_id": machines[
+                                     ("FACTORY_A", "COMP-001")].id})
+            check(f"{label} cannot link that installation to a machine",
+                  c in (401, 403, 404), str(c))
+
+        c, _, _ = await http(f"/connected-equipment/{taken}/link",
+                             fac["FACTORY_A"], method="POST",
+                             payload={"machine_id": machines[
+                                 ("FACTORY_B", "COMP-001")].id})
+        check("the owning factory cannot link ACROSS to another factory's machine",
+              c == 404, str(c))
+
+        # --- the OEM cannot assign itself anywhere, by any verb -------------
+        c, beta_inst = await register(beta, "OEM_BETA", "SN-SELFASSIGN")
+        for path, payload_ in (
+                (f"/oem/machines/{beta_inst}/transition",
+                 {"target": "Installed", "factory_tenant_code": "FACTORY_A"}),
+                (f"/oem/machines/{beta_inst}/commission",
+                 {"factory_tenant_code": "FACTORY_A", "tenant": "FACTORY_A"})):
+            await http(path, beta, method="POST", payload=payload_)
+        row = db.query(models.MachineInstallation).filter(
+            models.MachineInstallation.id == beta_inst).first()
+        db.refresh(row)
+        check("NO OEM VERB ATTACHES A MACHINE TO A FACTORY",
+              row.factory_tenant_code is None, str(row.factory_tenant_code))
+
+        # And the claim it holds gives it nothing at the site it DID reach.
+        c, _, raw = await http("/oem/fleet", beta)
+        hit = [s for s in SECRETS if s in raw]
+        check("claiming a machine reveals no unrelated factory data", not hit,
+              str(hit))
+
     asyncio.new_event_loop().run_until_complete(run())
     asyncio.new_event_loop().run_until_complete(attack_the_writes())
     asyncio.new_event_loop().run_until_complete(attack_the_provisioning())
+    asyncio.new_event_loop().run_until_complete(attack_the_claims())
 
     db.close()
     engine.dispose()

@@ -347,6 +347,97 @@ def accept_claim(code: str, payload: ClaimAcceptance,
     }
 
 
+class MachineLink(BaseModel):
+    """Which machine on this floor the supplied equipment actually is.
+
+    Nullable so a mis-link can be corrected without releasing the machine back to
+    the manufacturer — both ends of the pointer belong to the same factory, so
+    undoing it crosses no boundary and costs the OEM nothing it was owed.
+    """
+
+    machine_id: int | None = None
+
+
+@router.post("/{installation_id}/link")
+def link_installation(installation_id: int, payload: MachineLink,
+                      db: Session = Depends(_get_db),
+                      current_user: dict = Depends(require_roles(["Admin"]))):
+    """Say which machine on the shop floor this piece of equipment is.
+
+    THE FACTORY DECIDES, NOT THE MANUFACTURER. The OEM knows the serial it built;
+    only the factory knows which asset on its floor carries it. If the OEM could
+    nominate a `machine_id`, it would be choosing a row in somebody else's
+    workspace — an existence oracle at best, and at worst an OEM grafting its
+    installation onto a machine it never made, inheriting that machine's status
+    and utilisation as if it were its own telemetry.
+
+    WHY THIS ROUTE HAD TO EXIST. Commissioning requires the serial to be linked
+    to a machine in the factory (ADR-0019); until this endpoint, nothing but a
+    direct database write could satisfy that check, so the last step of the
+    journey was reachable only by a developer. That is exactly the class of gap
+    this campaign exists to close.
+
+    BOTH ROWS MUST BE THIS TENANT'S, and both are filtered on `tenant` in the
+    query rather than fetched and then compared, so another factory's machine is
+    indistinguishable from one that does not exist. The reply is 404 either way.
+
+    ONE MACHINE, ONE INSTALLATION. Two installations pointing at the same machine
+    would make two manufacturers read the same shop-floor status as telemetry
+    from their own equipment, and the fleet count double.
+
+    The site is copied from the machine rather than typed again: the factory has
+    already recorded where that machine stands, and a second hand-entered copy is
+    a second thing to get wrong.
+    """
+    tenant = request_tenant(current_user)
+    actor = current_user.get("sub") or current_user.get("username") or "?"
+
+    inst = (db.query(models.MachineInstallation)
+              .filter(models.MachineInstallation.id == installation_id,
+                      models.MachineInstallation.factory_tenant_code == tenant)
+              .first())
+    if inst is None:
+        raise HTTPException(status_code=404, detail="Equipment not found")
+
+    machine = None
+    if payload.machine_id is not None:
+        machine = (db.query(models.Machine)
+                     .filter(models.Machine.id == payload.machine_id,
+                             models.Machine.tenant_code == tenant)
+                     .first())
+        if machine is None:
+            raise HTTPException(status_code=404, detail="Machine not found")
+
+        taken = (db.query(models.MachineInstallation)
+                   .filter(models.MachineInstallation.machine_id == machine.id,
+                           models.MachineInstallation.factory_tenant_code == tenant,
+                           models.MachineInstallation.id != inst.id)
+                   .first())
+        if taken is not None:
+            raise HTTPException(
+                status_code=409,
+                detail=(f"{machine.name} is already linked to serial "
+                        f"{taken.serial_number}. Unlink that one first."))
+
+    before = inst.machine_id
+    inst.machine_id = payload.machine_id
+    if machine is not None:
+        inst.site = machine.site or inst.site
+    inst.updated_at = datetime.utcnow()
+
+    log_audit(db, actor, "installation_linked", "machine_installation", inst.id,
+              f"oem={inst.oem_code} serial={inst.serial_number} "
+              f"machine {before} -> {payload.machine_id}")
+    db.commit()
+    return {"installation_id": inst.id, "serial_number": inst.serial_number,
+            "machine_id": inst.machine_id,
+            "machine_name": getattr(machine, "name", None),
+            "site": inst.site,
+            "message": ("Linked. Its manufacturer can now commission it."
+                        if machine is not None else
+                        "Unlinked from the shop-floor machine.")}
+
+
 @router.post("/{installation_id}/release")
 def release_installation(installation_id: int, db: Session = Depends(_get_db),
                          current_user: dict = Depends(require_roles(["Admin"]))):

@@ -233,6 +233,87 @@ def main():
             "WHERE serial_number='SN-0001' AND oem_code='OEM_ALPHA'")).scalar()
         check("CONTROL: a service reading can be recorded", float(wrote) == 1500.0, str(wrote))
 
+    # --- 5b. migration 0008, against a database that already holds a fleet ----
+    #
+    # The claim table is NEW, so `upgrade head` on an empty database proves
+    # nothing about the case production is actually in: an AMP with live OEM and
+    # factory rows. Step back over 0008 and forward again, and check that the
+    # fleet is untouched and the table is usable at the end.
+    print("\n5b. THE CLAIM TABLE (0008) LANDS ON A LIVE FLEET")
+    with engine.begin() as c:
+        fleet_before = c.execute(text("SELECT count(*) FROM machine_installations")).scalar()
+        machines_before = c.execute(text("SELECT count(*) FROM machines")).scalar()
+
+    r = subprocess.run([sys.executable, "-m", "alembic", "downgrade", "0007_oem_service_clock"],
+                       cwd=HERE, env=env, capture_output=True, text=True, errors="replace")
+    check("alembic downgrade 0007 (drops machine_claims)", r.returncode == 0,
+          r.stderr[-400:])
+    with engine.begin() as c:
+        gone = c.execute(text("SELECT count(*) FROM information_schema.tables "
+                              "WHERE table_name='machine_claims'")).scalar()
+        check("the claim table is gone", gone == 0, str(gone))
+        # The point of the downgrade note in 0008: the FLEET survives, because
+        # factory_tenant_code lives on machine_installations and was set by the
+        # acceptance rather than derived from the claim.
+        kept = c.execute(text("SELECT count(*) FROM machine_installations")).scalar()
+        check("...and every installation survived losing its provenance",
+              kept == fleet_before, f"{fleet_before} -> {kept}")
+
+    r = subprocess.run([sys.executable, "-m", "alembic", "upgrade", "head"],
+                       cwd=HERE, env=env, capture_output=True, text=True, errors="replace")
+    check("alembic upgrade head (0008 re-applied)", r.returncode == 0, r.stderr[-400:])
+    with engine.begin() as c:
+        cols = {r[0]: (r[1], r[2]) for r in c.execute(text(
+            "SELECT column_name, data_type, is_nullable FROM information_schema.columns "
+            "WHERE table_name='machine_claims'"))}
+        check("the claim table is back with its columns", len(cols) >= 14, str(len(cols)))
+        # NOT NULL is the design: an invitation that never expires is a permanent
+        # bearer credential printed on the side of a box.
+        check("expires_at is NOT NULL", cols.get("expires_at", ("", "YES"))[1] == "NO",
+              str(cols.get("expires_at")))
+        check("the fleet is still whole after the round trip",
+              c.execute(text("SELECT count(*) FROM machine_installations")).scalar()
+              == fleet_before, str(fleet_before))
+        check("...and so are the factory's own machines",
+              c.execute(text("SELECT count(*) FROM machines")).scalar() == machines_before,
+              str(machines_before))
+
+        idx = {r[0] for r in c.execute(text(
+            "SELECT indexname FROM pg_indexes WHERE tablename='machine_claims'"))}
+        check("token_hash carries a UNIQUE index",
+              "ix_machine_claims_token_hash" in idx, str(sorted(idx)))
+
+        inst = c.execute(text("SELECT id, oem_code FROM machine_installations "
+                              "LIMIT 1")).first()
+
+    # THE INVARIANT IS THE DATABASE'S, not Python's. Prove PostgreSQL itself
+    # refuses a second claim on one code.
+    #
+    # Two separate transactions, and the FIRST insert is asserted to succeed. A
+    # single loop that treats "an exception happened" as proof would pass just as
+    # happily if the first insert failed on the foreign key — a green line
+    # reporting a constraint that was never reached.
+    INSERT = text("INSERT INTO machine_claims (oem_code, installation_id, "
+                  "token_hash, code_hint, status, expires_at) VALUES "
+                  "(:o, :i, 'DUPLICATE-HASH', 'XXXX', 'Pending', now())")
+    first_error = None
+    try:
+        with engine.begin() as c:
+            c.execute(INSERT, {"o": inst[1], "i": inst[0]})
+    except Exception as e:            # noqa: BLE001 - reported, not swallowed
+        first_error = str(e)[:200]
+    check("CONTROL: one claim row inserts cleanly", first_error is None,
+          str(first_error))
+
+    collided = False
+    try:
+        with engine.begin() as c:
+            c.execute(INSERT, {"o": inst[1], "i": inst[0]})
+    except Exception:                 # noqa: BLE001 - the expected refusal
+        collided = True
+    check("PostgreSQL refuses a SECOND claim on the same code hash", collided,
+          "two rows share one token_hash")
+
     # --- 6. it reverses ------------------------------------------------------
     print("\n6. THE MIGRATION REVERSES")
     r = subprocess.run([sys.executable, "-m", "alembic", "downgrade", "0005_approval_gate"],

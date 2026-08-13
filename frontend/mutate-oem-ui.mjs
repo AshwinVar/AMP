@@ -18,7 +18,8 @@ import { readFileSync, writeFileSync } from "node:fs";
 const SUITES =
   "lib/oem.test.ts components/ConnectedEquipment.test.tsx " +
   "components/AddConnectedEquipment.test.tsx " +
-  "app/oem/page.test.tsx app/login/page.test.tsx";
+  "app/oem/page.test.tsx app/login/page.test.tsx " +
+  '"app/claim/[code]/page.test.tsx"';
 
 const MUTATIONS = [
   // --- a privacy setting must never render as an operational fact ----------
@@ -69,10 +70,21 @@ const MUTATIONS = [
     to: "                    disabled={false}",
   },
   {
+    // The `setFailed` tail disambiguates this from the byte-identical parse in
+    // the link handler. Without it the pattern matched twice and the harness
+    // SKIPped — a mutation that tests nothing while still reading as one.
     label: "a refused change is swallowed into a generic message",
     file: "components/ConnectedEquipment.tsx",
-    from: "          if (parsed?.detail) detail = String(parsed.detail);",
-    to: "          if (parsed?.detail) detail = raw;",
+    from: "          if (parsed?.detail) detail = String(parsed.detail);\n" +
+      "        } catch {\n" +
+      "          /* a non-JSON error body is still an error; keep the text */\n" +
+      "        }\n" +
+      "        setFailed",
+    to: "          if (parsed?.detail) detail = raw;\n" +
+      "        } catch {\n" +
+      "          /* a non-JSON error body is still an error; keep the text */\n" +
+      "        }\n" +
+      "        setFailed",
   },
   {
     label: "a failed load renders as an empty state",
@@ -131,6 +143,85 @@ const MUTATIONS = [
     from: "      setError(detailOf(err));\n    } finally {\n      setBusy(false);\n    }\n  }\n\n  async function confirm()",
     to: "      setError('Something went wrong.');\n    } finally {\n      setBusy(false);\n    }\n  }\n\n  async function confirm()",
   },
+  // --- saying which machine on the floor a serial is (ADR-0019) ------------
+  {
+    label: "unlinking sends 0 — a machine id nobody has — instead of null",
+    file: "components/ConnectedEquipment.tsx",
+    from: '                          ev.target.value === "" ? null : Number(ev.target.value),',
+    to: "                          Number(ev.target.value),",
+  },
+  {
+    label: "a refused link is swallowed into a generic message",
+    file: "components/ConnectedEquipment.tsx",
+    from: "        setLinkFailed((prev) => ({ ...prev, [installationId]: detail }));",
+    to: '        setLinkFailed((prev) => ({ ...prev, [installationId]: "That did not work." }));',
+  },
+  {
+    label: "the 409 is dumped as its raw JSON envelope",
+    file: "components/ConnectedEquipment.tsx",
+    from: "          if (parsed?.detail) detail = String(parsed.detail);\n" +
+      "        } catch {\n" +
+      "          /* a non-JSON error body is still an error; keep the text */\n" +
+      "        }\n" +
+      "        setLinkFailed",
+    to: "          if (parsed?.detail) detail = raw;\n" +
+      "        } catch {\n" +
+      "          /* a non-JSON error body is still an error; keep the text */\n" +
+      "        }\n" +
+      "        setLinkFailed",
+  },
+  {
+    label: "a non-Admin gets a working machine selector",
+    file: "components/ConnectedEquipment.tsx",
+    from: "                      disabled={!isAdmin || busy(`link:${e.installation_id}`)}",
+    to: "                      disabled={busy(`link:${e.installation_id}`)}",
+  },
+  {
+    label: "the missing-link prompt disappears, so nobody knows why it stalls",
+    file: "components/ConnectedEquipment.tsx",
+    from: "                        needed before its maker can commission it",
+    to: "                        &nbsp;",
+  },
+  // --- the QR deep link ----------------------------------------------------
+  {
+    label: "a scanned code is dropped, so the label is retyped by hand",
+    file: "components/AddConnectedEquipment.tsx",
+    from: "  const [code, setCode] = useState(initialCode);",
+    to: '  const [code, setCode] = useState("");',
+  },
+  {
+    label: "the panel stays shut, so a scan lands on a page with no form",
+    file: "components/AddConnectedEquipment.tsx",
+    from: "  const [open, setOpen] = useState(Boolean(initialCode));",
+    to: "  const [open, setOpen] = useState(false);",
+  },
+  {
+    label: "a percent-encoded code is passed through undecoded",
+    file: "app/claim/[code]/page.tsx",
+    from: "  const code = decodeURIComponent(\n" +
+      "    Array.isArray(params?.code) ? params.code[0] : params?.code || \"\",\n" +
+      "  );",
+    to: '  const code = Array.isArray(params?.code) ? params.code[0] : params?.code || "";',
+  },
+  {
+    label: "a MANUFACTURER is offered the factory's claim form",
+    file: "app/claim/[code]/page.tsx",
+    from: "  const oem = signedIn && isOemSession();",
+    to: "  const oem = false;",
+  },
+  {
+    label: "signing in forgets the code that was scanned",
+    file: "app/claim/[code]/page.tsx",
+    from: '      localStorage.setItem("afterLogin", `/claim/${encodeURIComponent(code)}`);',
+    to: "      void code;",
+  },
+  {
+    label: "the post-login return accepts ANY destination (an open redirect)",
+    file: "app/login/page.tsx",
+    from: '      if (back && back.startsWith("/") && !back.startsWith("//")) {',
+    to: "      if (back) {",
+  },
+
   {
     label: "a refused confirmation reports success anyway",
     file: "components/AddConnectedEquipment.tsx",

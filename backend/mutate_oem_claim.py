@@ -168,6 +168,10 @@ MUTATIONS = [
      "                    f'Claim is {claim.status}'))"),
 
     # --- transfer ------------------------------------------------------------
+    # The trailing `before = inst.status` is load-bearing in this pattern, not
+    # decoration: the link route added by ADR-0019 opens with a byte-identical
+    # lookup, so without a distinguishing tail this matched twice and silently
+    # became a SKIP — a mutation that tests nothing while still reading as one.
     ("a factory can release somebody ELSE's installation",
      "connected_equipment_routes.py",
      "    inst = (db.query(models.MachineInstallation)\n"
@@ -175,12 +179,16 @@ MUTATIONS = [
      "                      models.MachineInstallation.factory_tenant_code == tenant)\n"
      "              .first())\n"
      "    if inst is None:\n"
-     "        raise HTTPException(status_code=404, detail=\"Equipment not found\")",
+     "        raise HTTPException(status_code=404, detail=\"Equipment not found\")\n"
+     "\n"
+     "    before = inst.status",
      "    inst = (db.query(models.MachineInstallation)\n"
      "              .filter(models.MachineInstallation.id == installation_id)\n"
      "              .first())\n"
      "    if inst is None:\n"
-     "        raise HTTPException(status_code=404, detail=\"Equipment not found\")"),
+     "        raise HTTPException(status_code=404, detail=\"Equipment not found\")\n"
+     "\n"
+     "    before = inst.status"),
 
     # --- registration --------------------------------------------------------
     ("an OEM can register a machine against a COMPETITOR's model", "oem_routes.py",
@@ -211,6 +219,65 @@ MUTATIONS = [
      "                       models.MachineClaim.id == claim_id).first())",
      "    claim = (db.query(models.MachineClaim)\n"
      "               .filter(models.MachineClaim.id == claim_id).first())"),
+
+    # --- linking a serial to a machine on the floor --------------------------
+    ("a factory can point its equipment at ANOTHER factory's machine",
+     "connected_equipment_routes.py",
+     "        machine = (db.query(models.Machine)\n"
+     "                     .filter(models.Machine.id == payload.machine_id,\n"
+     "                             models.Machine.tenant_code == tenant)\n"
+     "                     .first())",
+     "        machine = (db.query(models.Machine)\n"
+     "                     .filter(models.Machine.id == payload.machine_id)\n"
+     "                     .first())"),
+    ("the refusal names WHY, turning 404 into an existence oracle",
+     "connected_equipment_routes.py",
+     "        machine = (db.query(models.Machine)\n"
+     "                     .filter(models.Machine.id == payload.machine_id,\n"
+     "                             models.Machine.tenant_code == tenant)\n"
+     "                     .first())\n"
+     "        if machine is None:\n"
+     "            raise HTTPException(status_code=404, detail=\"Machine not found\")",
+     "        machine = (db.query(models.Machine)\n"
+     "                     .filter(models.Machine.id == payload.machine_id)\n"
+     "                     .first())\n"
+     "        if machine is None:\n"
+     "            raise HTTPException(status_code=404, detail=\"Machine not found\")\n"
+     "        if machine.tenant_code != tenant:\n"
+     "            raise HTTPException(status_code=403,\n"
+     "                                detail=\"That machine is another workspace's\")"),
+    ("a factory can link equipment that is not its own",
+     "connected_equipment_routes.py",
+     "    inst = (db.query(models.MachineInstallation)\n"
+     "              .filter(models.MachineInstallation.id == installation_id,\n"
+     "                      models.MachineInstallation.factory_tenant_code == tenant)\n"
+     "              .first())\n"
+     "    if inst is None:\n"
+     "        raise HTTPException(status_code=404, detail=\"Equipment not found\")\n"
+     "\n"
+     "    machine = None",
+     "    inst = (db.query(models.MachineInstallation)\n"
+     "              .filter(models.MachineInstallation.id == installation_id)\n"
+     "              .first())\n"
+     "    if inst is None:\n"
+     "        raise HTTPException(status_code=404, detail=\"Equipment not found\")\n"
+     "\n"
+     "    machine = None"),
+    ("two serials can name the same machine (both OEMs read one row)",
+     "connected_equipment_routes.py",
+     "        if taken is not None:", "        if False:"),
+    ("re-linking the SAME serial collides with itself",
+     "connected_equipment_routes.py",
+     "                           models.MachineInstallation.id != inst.id)",
+     "                           models.MachineInstallation.id >= 0)"),
+    ("anyone signed in at the factory may link, not only an Admin",
+     "connected_equipment_routes.py",
+     "def link_installation(installation_id: int, payload: MachineLink,\n"
+     "                      db: Session = Depends(_get_db),\n"
+     "                      current_user: dict = Depends(require_roles([\"Admin\"]))):",
+     "def link_installation(installation_id: int, payload: MachineLink,\n"
+     "                      db: Session = Depends(_get_db),\n"
+     "                      current_user: dict = Depends(get_current_user)):"),
 
     # --- notifications -------------------------------------------------------
     ("the manufacturer's notification lands in the FACTORY's tenant",
@@ -263,6 +330,22 @@ EXPECTED_SURVIVORS = {
         "SECOND is the one that decides — deliberately, because it is also what "
         "makes a release safe against a concurrent transfer. The lookup filter is "
         "defence in depth, and a mutation of BOTH is caught by the same test.",
+    "a factory can point its equipment at ANOTHER factory's machine":
+        "SHADOWED BY ADR-0002 ITSELF. models.Machine is the first entry in "
+        "tenancy.SCOPED_MODELS, so the do_orm_execute hook has already added "
+        "`tenant_code = <bound tenant>` to this query before the route's own "
+        "filter is considered; removing the route filter therefore changes no "
+        "SQL that matters and the foreign machine stays invisible. The filter is "
+        "kept because it states the intent where the decision is made and would "
+        "be the only guard if this route were ever given an unscoped session — "
+        "and the protection itself IS asserted, by the passing case 'a factory "
+        "cannot point its equipment at another factory's machine'.",
+    "the refusal names WHY, turning 404 into an existence oracle":
+        "UNREACHABLE, for the same reason: the injected 403 branch can only fire "
+        "for a machine the query returned, and ADR-0002 never returns another "
+        "tenant's. That the oracle CANNOT be built here is the finding — the "
+        "test that would catch it ('...INDISTINGUISHABLE from no such machine') "
+        "passes because both paths 404, not because the branch was removed.",
 }
 
 

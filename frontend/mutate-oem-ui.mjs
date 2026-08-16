@@ -18,6 +18,7 @@ import { readFileSync, writeFileSync } from "node:fs";
 const SUITES =
   "lib/oem.test.ts components/ConnectedEquipment.test.tsx " +
   "components/AddConnectedEquipment.test.tsx " +
+  "components/OemMachineRegistry.test.tsx " +
   "app/oem/page.test.tsx app/login/page.test.tsx " +
   '"app/claim/[code]/page.test.tsx"';
 
@@ -34,6 +35,25 @@ const MUTATIONS = [
     file: "lib/oem.ts",
     from: '  if (value === null || value === undefined) return "no data";',
     to: '  if (value === null || value === undefined) return "not shared";',
+  },
+  {
+    label: "the warranty dates are dropped on the way to the endpoint",
+    file: "components/OemMachineRegistry.tsx",
+    from: "        warranty_start: warrantyStart || null,\n"
+      + "        warranty_end: warrantyEnd || null,\n",
+    to: "",
+  },
+  {
+    label: "a blank warranty is sent as \"\", which the endpoint rejects",
+    file: "components/OemMachineRegistry.tsx",
+    from: "        warranty_start: warrantyStart || null,",
+    to: "        warranty_start: warrantyStart,",
+  },
+  {
+    label: "the cover is cleared between machines off one delivery note",
+    file: "components/OemMachineRegistry.tsx",
+    from: '      setSerial("");',
+    to: '      setSerial("");\n      setWarrantyStart("");\n      setWarrantyEnd("");',
   },
   {
     label: "an unshared commissioning check renders as a FAILURE",

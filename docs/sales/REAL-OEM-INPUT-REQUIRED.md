@@ -382,3 +382,29 @@ believing data starts flowing, and the honest thing to say in a discovery call i
 and what the data would have to look like to be worth anything. Alarm codes in
 particular are model-specific and mean nothing without the manufacturer's own
 fault dictionary — which AMP does not have and cannot invent.
+
+## When does cover start? — `warranty_months` is declared and unused
+
+A model carries `warranty_months` (the ACX-75 demo model says 24). AMP stores it,
+returns it on `GET /oem/models`, and **applies it to nothing**. Warranty dates are
+recorded per machine, by hand, at registration — since 2026-08-16 there are two
+optional date fields on the registration form for exactly that; before then there
+was no way to record a warranty through any interface at all, which is why every
+machine read *"no warranty end date recorded"*.
+
+Deriving `warranty_end` from `warranty_months` would need a start date, and that
+is the question AMP cannot answer for a manufacturer:
+
+> Does your cover run from despatch, from delivery, from installation, or from
+> commissioning? And does it pause while a machine is out of service?
+
+`oem_service.warranty_state` deliberately refuses to guess a period, on the
+grounds that inventing one decides a commercial question on the customer's
+behalf. Wiring `warranty_months` without settling the above would do precisely
+that, one layer earlier.
+
+**What we need from a real OEM:** the rule, in their words. If several
+manufacturers give the same answer it is worth building; if they give four
+different answers, the two date fields are the right design and
+`warranty_months` should become a default the form offers rather than a value the
+platform applies.

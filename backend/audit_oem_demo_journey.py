@@ -23,6 +23,7 @@ import asyncio
 import json
 import os
 import sys
+from datetime import date, timedelta
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
@@ -180,11 +181,31 @@ def main():
                      if m["model_code"] == "ACX-75"), None)
     step("the ACX-75 is in it", model_id is not None, str(models_list))
 
+    # The cover Aeron gives, typed at registration exactly as the runbook has
+    # Ash type it. Relative to today rather than hard-coded, so the demo does
+    # not quietly start showing an EXPIRED warranty some months from now.
+    w_start = date.today()
+    w_end = w_start + timedelta(days=730)          # 24 months, the ACX-75's term
     c, reg = POST("/oem/machines", oem, {"serial_number": demo_aeron.DEMO_SERIAL,
-                                         "model_id": model_id})
+                                         "model_id": model_id,
+                                         "warranty_start": w_start.isoformat(),
+                                         "warranty_end": w_end.isoformat()})
     step(f"{demo_aeron.DEMO_SERIAL} is registered", c == 200, f"{c} {reg}")
     inst_id = reg.get("installation_id")
     step("...and belongs to NO customer yet", reg.get("factory") is None, str(reg))
+
+    # Until the form offered these two fields there was no way to record a
+    # warranty through any interface, so every machine read "no warranty end
+    # date recorded" and the service queue carried a permanent low-severity nag
+    # about it. The endpoint had accepted both dates all along.
+    c, ms = GET(f"/oem/machines/{inst_id}/service", oem)
+    step("...with the cover the manufacturer recorded",
+         ms.get("warranty", {}).get("state") == "active",
+         str(ms.get("warranty")))
+    step("...and no nag telling Aeron to record what it just recorded",
+         not any(r["kind"] == "warranty_unknown"
+                 for r in (ms.get("recommendations") or [])),
+         str(ms.get("recommendations")))
 
     print()
     print("=" * 74)

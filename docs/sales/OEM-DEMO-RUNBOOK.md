@@ -306,6 +306,24 @@ screw compressor**.
   The vocabulary is data supplied by the manufacturer. That is the stronger
   claim anyway, so make it.
 
+**CLICK:** In **Warranty start**, pick **today's date**. In **Warranty end**,
+pick the **same date two years out**.
+
+> Both are marked *(optional)* and they genuinely are — skip them and everything
+> still works, the machine simply reads "no warranty recorded" everywhere. Type
+> them: it is what a real manufacturer does, and it makes the customer's
+> acceptance screen show the cover they are getting.
+
+**SHOW:** The two dates in their boxes.
+
+**SAY:**
+> "Two years' cover from despatch. Aeron type it once, here, and every screen
+> after this one — theirs and their customer's — reads it off this record. Notice
+> AMP did not fill it in for them. The model says twenty-four months, and AMP
+> still will not turn that into a date, because it does not know whether your
+> cover runs from the day it leaves your yard or the day it is commissioned. That
+> is your commercial decision and it stays yours."
+
 **CLICK:** Press **Register and create code**.
 
 **SHOW:** A blue panel appears: **Installation code for SN-ACX-0001**.
@@ -403,15 +421,20 @@ opens this page with the code filled in. Dashes and capitals do not matter."*
 **CLICK:** Press **Look up machine**.
 
 **SHOW:** A panel: **You are about to add** — `SN-ACX-0001`. Manufacturer: Aeron
-Compressor Systems. Model: Aeron ACX-75 rotary screw compressor. Warranty: *no
-warranty end date recorded for this installation*. And the line *"If this is not
+Compressor Systems. Model: Aeron ACX-75 rotary screw compressor. Warranty:
+*expires* and the date you typed two minutes ago. And the line *"If this is not
 the machine in front of you, do not add it."*
 
 **SAY:**
 > "Still nothing has been added. That was a look, not a decision. They can see who
-> made it, which model, and what warranty the manufacturer recorded — which here
-> is none, and AMP says so rather than guessing at twelve months. If the serial on
-> the screen is not the serial on the crate, they stop here."
+> made it, which model, and the cover Aeron recorded — before they accept it, not
+> after. If the serial on the screen is not the serial on the crate, they stop
+> here."
+
+> If you skipped the warranty dates at registration, this line reads *"no warranty
+> end date recorded for this installation"* instead. That is not a fault and it is
+> worth saying out loud if it happens: AMP reports what it was told and does not
+> invent a period. But the demo is stronger with the dates in.
 
 **DO NOT SAY:**
 - *"It's already connected to their system"* — nothing is attached until the next
@@ -510,9 +533,10 @@ Lifecycle column reads **Assigned**; Warranty reads **unknown**; Service reads
 **DO NOT SAY:**
 - *"That link means the machine is now connected"* — nothing has been received.
   It is a piece of paperwork saying which asset is which.
-- *"The warranty and service will fill in shortly"* — they say "unknown" because
-  no warranty dates were entered and no hours have ever been reported. They stay
-  unknown until real facts arrive. Do not promise them.
+- *"The service position will fill in shortly"* — it says "unknown" because no
+  hours have ever been reported, and it stays unknown until a real reading
+  arrives. Do not promise it. (The warranty is already there — Aeron typed it at
+  registration — so only the service half is blank at this point.)
 
 **CLICK:** Switch to the **Incognito (AERON)** window and press **F5** to
 refresh. Click the row for `SN-ACX-0001` in the **Installed fleet** table.
@@ -620,8 +644,10 @@ customer's production data."* Below, two items:
 - amber **medium** · `SN-ACX-0001` · *This machine is within 5% of its service
   interval.* — evidence *"3960.0 h run, never serviced, 4000 h interval, 40.0 h to
   the next service"* — → *Schedule a service visit*
-- grey **low** · `SN-ACX-0001` · *No warranty period is recorded for this
-  installation.* — → *Record the warranty dates so cover can be reported*
+
+One item, not a wall of them. If you skipped the warranty dates at registration
+there is a second, grey **low** line — *No warranty period is recorded for this
+installation* — which is AMP asking Aeron for something only Aeron knows.
 
 **SAY:**
 > "This is the commercial bit. Forty hours to a service, on a machine three
@@ -634,9 +660,9 @@ customer's production data."* Below, two items:
 > product tells you it is a subtraction. It is not predicting a failure and there
 > is no model behind it.
 >
-> The second line is the same honesty pointing at us: nobody entered a warranty
-> when this machine was registered, so AMP says it does not know. It does not
-> assume twelve months and it does not show it as expired."
+> And notice what is not here. One machine, one line. AMP is not padding this
+> screen with a row per compressor to look busy — the healthy ones are silent,
+> which is the only way a queue like this survives contact with a real fleet."
 
 **DO NOT SAY:**
 - *"This is predictive maintenance"* — **it is not.** No model was trained,

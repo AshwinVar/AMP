@@ -45,6 +45,8 @@ export default function OemMachineRegistry({ models }: { models: Model[] }) {
 
   const [serial, setSerial] = useState("");
   const [modelId, setModelId] = useState<number | "">("");
+  const [warrantyStart, setWarrantyStart] = useState("");
+  const [warrantyEnd, setWarrantyEnd] = useState("");
   const [issued, setIssued] = useState<{ code: string; url: string; serial: string } | null>(null);
 
   const load = useCallback(() => {
@@ -72,6 +74,11 @@ export default function OemMachineRegistry({ models }: { models: Model[] }) {
       const machine = await registerMachine({
         serial_number: serial.trim(),
         model_id: Number(modelId),
+        // NULL, not "". An empty string is not a date and the endpoint rejects
+        // it; null is how "no warranty recorded" is spelled, and it is what
+        // keeps warranty_state's honest "unknown" reachable.
+        warranty_start: warrantyStart || null,
+        warranty_end: warrantyEnd || null,
       });
       const claim = await createClaim(machine.installation_id);
       setIssued({
@@ -80,6 +87,9 @@ export default function OemMachineRegistry({ models }: { models: Model[] }) {
         serial: machine.serial_number,
       });
       setSerial("");
+      // The dates are NOT cleared. A manufacturer registering a batch off one
+      // delivery note carries the same cover across every machine in it, and
+      // retyping it per unit is how a warranty ends up wrong on the fifth one.
       load();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not register the machine");
@@ -153,6 +163,41 @@ export default function OemMachineRegistry({ models }: { models: Model[] }) {
                 </option>
               ))}
             </select>
+          </div>
+          {/* OPTIONAL, AND OPTIONAL ON PURPOSE.
+              `POST /oem/machines` has accepted these two dates since the
+              endpoint was written; this form simply never offered them, so
+              there was no way to record a warranty through any interface and
+              every machine read "no warranty end date recorded".
+
+              They stay optional because AMP must not decide a commercial
+              question on the manufacturer's behalf (oem_service.warranty_state
+              refuses to guess a period for exactly this reason). Left blank,
+              the answer is still an honest "unknown" — not an assumed twelve
+              months, and not "expired". */}
+          <div>
+            <label className="block text-xs text-slate-500" htmlFor="oem-warranty-start">
+              Warranty start <span className="text-slate-600">(optional)</span>
+            </label>
+            <input
+              id="oem-warranty-start"
+              type="date"
+              value={warrantyStart}
+              onChange={(e) => setWarrantyStart(e.target.value)}
+              className="mt-1 rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-white"
+            />
+          </div>
+          <div>
+            <label className="block text-xs text-slate-500" htmlFor="oem-warranty-end">
+              Warranty end <span className="text-slate-600">(optional)</span>
+            </label>
+            <input
+              id="oem-warranty-end"
+              type="date"
+              value={warrantyEnd}
+              onChange={(e) => setWarrantyEnd(e.target.value)}
+              className="mt-1 rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-white"
+            />
           </div>
           <button
             type="submit"

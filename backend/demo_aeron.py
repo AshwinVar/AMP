@@ -26,6 +26,15 @@ WHY IT IS SAFE TO RUN TWICE. Reset is the only mode: it clears the demo scope
 and rebuilds it, so the starting state is the same every time and a half-walked
 demo from the last meeting cannot leak into the next one.
 
+This sentence was here before it was true. `wipe` deletes the demo's machines,
+and both `IndustrialDevice.linked_machine_id` and `IndustrialSignal.machine_id`
+hold foreign keys to that table — so the second reset died on a constraint, and
+the second reset is the only one anybody runs. Nothing caught it because every
+test seeded a fresh database, and SQLite does not enforce those keys anyway.
+`test_demo_reset_repeatable.py` now runs four resets with a demo's worth of rows
+planted between each, and asserts on the rows rather than on the exception so it
+means the same thing on both engines.
+
 WHAT IT DELIBERATELY DOES NOT CREATE. The machine at the centre of the demo,
 SN-ACX-0001, is NOT seeded — registering it is minute 2 of the script, and a
 demo that begins with the interesting row already present proves nothing. The
@@ -48,6 +57,8 @@ import json
 import os
 import sys
 from datetime import date, datetime, timedelta
+
+from sqlalchemy import or_
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
@@ -196,6 +207,42 @@ def wipe(db):
         (db.query(models.ProductionRecord)
            .filter(models.ProductionRecord.machine_id.in_(machine_ids))
            .delete(synchronize_session=False))
+        # AN INDUSTRIAL DEVICE HOLDS A FOREIGN KEY TO `machines`, so a device
+        # pointing at a demo machine blocks the delete below and the whole reset
+        # fails — which is what a second `--reset` did, every time, once a demo
+        # had actually been run. TWO DIFFERENT ROWS, AND THEY ARE NOT TREATED
+        # THE SAME:
+        #
+        #   a device belonging to the DEMO tenant   -> deleted, it is demo scope
+        #   a device belonging to ANOTHER tenant    -> merely UNLINKED
+        #
+        # The second case is real: the row that first blocked this reset was a
+        # DEFAULT-tenant device whose `linked_machine_id` pointed at a demo
+        # machine. Deleting it would break this function's one promise — that it
+        # removes the demo scope and nothing else — so it keeps its row and
+        # loses only the reference to a machine that is about to stop existing.
+        demo_device_ids = [d.id for d in db.query(models.IndustrialDevice)
+                           .filter(models.IndustrialDevice.tenant_code
+                                   == DEMO_TENANT).all()]
+        # Signals first — they reference a device AND a machine, so they block
+        # both deletes below.
+        (db.query(models.IndustrialSignal)
+           .filter(or_(models.IndustrialSignal.tenant_code == DEMO_TENANT,
+                       models.IndustrialSignal.device_id.in_(
+                           demo_device_ids or [-1])))
+           .delete(synchronize_session=False))
+        (db.query(models.IndustrialSignal)
+           .filter(models.IndustrialSignal.machine_id.in_(machine_ids),
+                   models.IndustrialSignal.tenant_code != DEMO_TENANT)
+           .update({"machine_id": None}, synchronize_session=False))
+        if demo_device_ids:
+            (db.query(models.IndustrialDevice)
+               .filter(models.IndustrialDevice.id.in_(demo_device_ids))
+               .delete(synchronize_session=False))
+        (db.query(models.IndustrialDevice)
+           .filter(models.IndustrialDevice.linked_machine_id.in_(machine_ids),
+                   models.IndustrialDevice.tenant_code != DEMO_TENANT)
+           .update({"linked_machine_id": None}, synchronize_session=False))
     for M in (models.Notification, models.Alert, models.Machine,
               models.EventLog, models.TenantConfig):
         (db.query(M).filter(M.tenant_code == DEMO_TENANT)

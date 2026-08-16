@@ -112,6 +112,28 @@ Changing a policy is audited. Revocation takes effect on the **next request** â€
 the policy is read at query time, not baked into a cached projection â€” so there is
 no window where a revoked OEM keeps reading.
 
+**A grant governs a FACT, not a field** (added 2026-08-16). The first
+implementation applied the policy in `fleet_row` and nowhere else, so the fleet
+table withheld `operating_hours` while the service views printed the same meter
+inside a free-text evidence string, and a manufacturer could recover it exactly
+by supplying the figure the service verdict was computed against. Three rules
+came out of that, and they bind every future read model:
+
+1. **Every OEM-visible surface applies the policy**, not just the one it was
+   first written for. `oem_sharing` owns the decision; a route that assembles a
+   payload without going through it is the defect, however sound its reasoning.
+2. **Prose counts.** A number embedded in an explanation is disclosed as surely
+   as a number in a field, and is harder to see. Assertions about consent are
+   written against the whole serialised response.
+3. **A caller must not choose the operand of a comparison it may not see.** If
+   an OEM supplies X and learns which side of a threshold `hidden - X` falls,
+   the threshold is a bisection oracle regardless of how carefully the figures
+   themselves are withheld.
+
+What a grant *inherently* concedes is stated to the factory rather than
+engineered away: `SHARE_SERVICE_STATUS` releases a verdict, and a verdict is a
+coarse function of the meter by construction.
+
 ### 5. OEM principals are a separate table, not a flag on `User`
 
 `OemUser` is its own table with its own login path. A factory administrator's

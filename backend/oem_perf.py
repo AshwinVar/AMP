@@ -135,7 +135,8 @@ def main():
         # 2. The service queue across the WHOLE fleet.
         with Counted() as c:
             insts = oem_sharing.installations_for(db, "OEM_PERF")
-            recs = oem_service.fleet_recommendations(db, "OEM_PERF", insts, catalogue)
+            recs = oem_sharing.fleet_recommendations(db, "OEM_PERF", insts,
+                                                     catalogue)
         queue_ms, queue_q, n_recs = c.ms, c.queries, len(recs)
 
         # 3. One customer's machines.

@@ -13,7 +13,8 @@ import subprocess
 import sys
 
 SUITES = ["test_oem_sharing.py", "test_oem_routes.py", "test_oem_authorization.py",
-          "test_oem_foundation.py"]
+          "test_oem_foundation.py", "test_oem_service_consent.py",
+          "test_oem_lifecycle_writes.py"]
 
 MUTATIONS = [
     # --- default deny --------------------------------------------------------
@@ -47,9 +48,14 @@ MUTATIONS = [
      "    q = db.query(models.MachineInstallation)"),
 
     # --- fields leak without their grant ------------------------------------
+    # Anchored on the line BELOW as well: `if SHARE_OPERATING_HOURS in grants:`
+    # now appears in both fleet_row and service_view, and an ambiguous pattern
+    # makes this harness print SKIP — which reads like a pass at a glance.
     ("operating hours are returned without their grant", "oem_sharing.py",
-     "    if SHARE_OPERATING_HOURS in grants:",
-     "    if True:"),
+     "    if SHARE_OPERATING_HOURS in grants:\n"
+     '        row["operating_hours"] = installation.operating_hours',
+     "    if True:\n"
+     '        row["operating_hours"] = installation.operating_hours'),
     ("machine health is returned without its grant", "oem_sharing.py",
      "    if SHARE_MACHINE_HEALTH not in grants:\n        return None",
      "    if False:\n        return None"),
@@ -63,15 +69,97 @@ MUTATIONS = [
     ("the fleet route takes the OEM from a query parameter", "oem_routes.py",
      '    rows = oem_sharing.installations_for(db, principal["oem"], tenant_code=customer)',
      "    rows = oem_sharing.installations_for(db, customer or principal[\"oem\"])"),
+    # Anchored on the line BELOW. Six handlers raise this identical 404, so the
+    # bare pattern was ambiguous and this mutation printed SKIP on every run
+    # since it was written — never once executed, while reading like a pass in a
+    # column of "caught". `machine_detail` is the one that matters: it is the
+    # read a competitor would probe ids against.
     ("a competitor's machine is a 403 (an existence oracle)", "oem_routes.py",
-     '        raise HTTPException(status_code=404, detail="Machine not found")',
-     '        raise HTTPException(status_code=403, detail="Not your machine")'),
+     '        raise HTTPException(status_code=404, detail="Machine not found")\n'
+     '    catalogue = _models_by_id(db, principal["oem"])',
+     '        raise HTTPException(status_code=403, detail="Not your machine")\n'
+     '    catalogue = _models_by_id(db, principal["oem"])'),
     ("the model catalogue is not filtered by manufacturer", "oem_routes.py",
      "    rows = (db.query(models.MachineModel)\n"
      "              .filter(models.MachineModel.oem_code == principal[\"oem\"])\n"
      "              .order_by(models.MachineModel.model_code.asc()).all())",
      "    rows = (db.query(models.MachineModel)\n"
      "              .order_by(models.MachineModel.model_code.asc()).all())"),
+
+    # --- service intelligence leaks past the policy -------------------------
+    #
+    # The class of defect this whole block exists for: `/oem/fleet` withheld the
+    # hour meter while `/oem/service` printed it in prose, for a manufacturer
+    # whose customer had switched that grant off.
+    ("the service verdict is disclosed without SHARE_SERVICE_STATUS",
+     "oem_sharing.py",
+     "    if SHARE_SERVICE_STATUS not in grants:", "    if False:"),
+    ("the hour FIGURES ride along with the service verdict", "oem_sharing.py",
+     "    if SHARE_OPERATING_HOURS in grants:\n"
+     '        out["hours_remaining"] = state.get("hours_remaining")',
+     "    if True:\n"
+     '        out["hours_remaining"] = state.get("hours_remaining")'),
+    # An OMITTED key is a disclosure too: service_state drops `interval_hours`
+    # on the branch where the machine has never reported hours, so copying it
+    # through carried one bit of the withheld meter.
+    ("the service interval is copied from the arithmetic, not the model",
+     "oem_sharing.py",
+     '    interval = getattr(model, "service_interval_hours", None)',
+     '    interval = state.get("interval_hours")'),
+    ("the service reason keeps the numbers in its PROSE", "oem_sharing.py",
+     '    out["reason"] = _service_reason_without_hours(state.get("state"), interval)',
+     '    out["reason"] = state.get("reason")'),
+    ("a service recommendation keeps its hour arithmetic", "oem_sharing.py",
+     '        if (rec.get("kind") in ("service_due", "service_projection")\n'
+     "                and SHARE_OPERATING_HOURS not in grants):",
+     "        if False:"),
+    ("a recommendation is shown without the grant it needs", "oem_sharing.py",
+     "        if needed and needed not in grants:\n            continue",
+     "        if False:\n            continue"),
+    ("the not_reporting item escapes the connectivity grant", "oem_sharing.py",
+     '    "not_reporting": SHARE_MACHINE_HEALTH,\n', ""),
+    ("the commissioning report is returned ungated", "oem_sharing.py",
+     "    if SHARE_MACHINE_HEALTH in grants:\n        return report",
+     "    if True:\n        return report"),
+    ("an unshared commissioning check reads as FAILED", "oem_sharing.py",
+     '            c = {**c, "passed": None,', '            c = {**c, "passed": False,'),
+    ("readiness stays a confident yes when a check is unshared",
+     "oem_sharing.py",
+     '    return {"ready": None, "checks": checks}',
+     '    return {"ready": report.get("ready"), "checks": checks}'),
+    # The bug a single-customer fixture cannot see: the FIRST customer's consent
+    # applied to every customer in the loop.
+    ("one customer's grants are reused for the whole fleet", "oem_sharing.py",
+     "        tenant = inst.factory_tenant_code\n"
+     "        if tenant not in cache:\n"
+     "            cache[tenant] = grants_for(db, oem_code, tenant)",
+     '        tenant = "every customer"\n'
+     "        if tenant not in cache:\n"
+     "            cache[tenant] = grants_for(db, oem_code,\n"
+     "                                      installations[0].factory_tenant_code)"),
+
+    # --- the routes stop asking ---------------------------------------------
+    ("the queue is assembled without consulting consent", "oem_routes.py",
+     '    recs = oem_sharing.fleet_recommendations(db, principal["oem"], rows, catalogue)',
+     "    recs = oem_service.by_severity(\n"
+     "        [r for i in rows\n"
+     "         for r in oem_service.recommendations(i, catalogue.get(i.model_id))])"),
+    ("the per-machine service view is returned ungated", "oem_routes.py",
+     '        "service": oem_sharing.service_view(\n'
+     "            oem_service.service_state(inst, model), grants, model),",
+     '        "service": oem_service.service_state(inst, model),'),
+    # The bisection. Withholding the FIGURES does nothing about it, because the
+    # leak is the comparator: the caller supplies the number the verdict is
+    # computed against, and reads back which side of the threshold it landed on.
+    ("the caller may choose the figure the verdict is measured against",
+     "oem_routes.py",
+     "    if supplied and oem_sharing.SHARE_OPERATING_HOURS not in grants:",
+     "    if False:"),
+    ("the empty-body service WRITE hands back the hour meter", "oem_routes.py",
+     "    disclosable = (inst.last_service_hours\n"
+     "                   if supplied or oem_sharing.SHARE_OPERATING_HOURS in grants\n"
+     "                   else None)",
+     "    disclosable = inst.last_service_hours"),
 
     # --- the factory-route rejection ----------------------------------------
     ("an OEM token is accepted on factory routes", "auth.py",

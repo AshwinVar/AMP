@@ -469,17 +469,33 @@ export default function OemPortalPage() {
                   <p className="text-slate-400">{detail.warranty.reason}</p>
                 </div>
                 <div>
+                  {/* THREE outcomes, not two. `passed: null` means the customer
+                      has not shared what the check reads — and rendering that as
+                      the same ✗ a genuine failure gets would tell a manufacturer
+                      its commissioning did not complete when it may well have. */}
                   <h3 className="text-white font-medium">
                     Commissioning{" "}
                     <span className="text-slate-500 text-xs">
-                      {detail.commissioning.ready ? "· complete" : "· incomplete"}
+                      {detail.commissioning.ready === null
+                        ? "· not fully shared"
+                        : detail.commissioning.ready
+                          ? "· complete"
+                          : "· incomplete"}
                     </span>
                   </h3>
                   <ul className="mt-1 space-y-1">
                     {detail.commissioning.checks.map((c) => (
                       <li key={c.key} className="text-slate-400 text-xs">
-                        <span className={c.passed ? "text-green-400" : "text-amber-300"}>
-                          {c.passed ? "✓" : "✗"}
+                        <span
+                          className={
+                            c.passed === null
+                              ? "text-slate-500"
+                              : c.passed
+                                ? "text-green-400"
+                                : "text-amber-300"
+                          }
+                        >
+                          {c.passed === null ? "–" : c.passed ? "✓" : "✗"}
                         </span>{" "}
                         {c.description} — <span className="text-slate-500">{c.detail}</span>
                       </li>

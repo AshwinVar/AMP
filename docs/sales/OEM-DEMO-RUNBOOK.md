@@ -696,6 +696,14 @@ panel says *"This customer has not shared: alarms, downtime, maintenance history
 operating hours, telemetry. Those fields are blank because permission was not
 given, not because the machine is faulty."*
 
+**SHOW — and this is the half worth pointing at:** scroll up to the **Service
+queue** on the same page. The machine is **still listed as overdue**, because
+that permission is still on. But its evidence line no longer reads *"4120.0 h
+run…"* — it now reads *"past its service interval (every 4000 h); the
+operating-hour figures are not shared by this customer"*. The **4000** is
+Aeron's own number, off Aeron's own model. The **4120** was Northgate's, and it
+is gone from every line on the screen.
+
 **SAY:**
 > "Gone. On the very next request Aeron made — not tonight, not on the next sync,
 > the next request. Permission is checked every single time the question is asked,
@@ -707,6 +715,12 @@ given, not because the machine is faulty."*
 > against a number that nobody ever gave them. The machine is still there, the
 > status is still there, because that permission is still on. One field went, and
 > only that field.
+>
+> And notice the service queue did not empty out. Aeron are still told this
+> machine is past due — Northgate agreed to that, and it is the thing Aeron
+> actually needs in order to send somebody. What Aeron lost is the reading. They
+> know to come; they no longer know the number. That is a permission doing real
+> work, not an on-off switch.
 >
 > That is the whole pitch. Your customer stays in control, in a way they can see
 > and undo in two clicks — and because they can, they will actually say yes."

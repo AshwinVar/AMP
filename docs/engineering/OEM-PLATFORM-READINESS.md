@@ -296,6 +296,36 @@ chose. Neither is a key to anything else.
 - 140 adversarial checks across HTTP, WebSocket, MQTT, CSV export and every write
   verb found no factory secret in any `/oem` response.
 
+**This verdict needed a correction on 2026-08-16, and it is worth reading before
+the rest.** Everything above was true of the fleet read model and false of the
+service one. Walking the demo in a browser showed `/oem/fleet` withholding the
+hour meter while, on the same screen, the service queue printed it in prose —
+*"4120.0 h run, never serviced, 4000 h interval"* — for a manufacturer whose
+customer had switched that grant off, and still printed it after **Withdraw
+everything**. The bullet above about withdrawal was checked against the fleet
+row only, which is exactly why the suites were green.
+
+The 140 checks did not catch it because the leak was inside a free-text
+`evidence` string, and every assertion named a field. Three more paths turned up
+once the surface was audited properly rather than field by field:
+
+| path | what escaped |
+|---|---|
+| `GET /oem/machines/{id}/service` | the hour meter, and the last-report timestamp inside the commissioning report |
+| `POST /oem/machines/{id}/service` | an empty body echoed the meter back through `last_service_hours` |
+| `POST /oem/machines/{id}/service` | **a bisection**: the caller supplies the figure the verdict is computed against, so 24 requests recovered a meter of 6421.7 to 6421.70 |
+
+All four are fixed and pinned by `backend/test_oem_service_consent.py` (46
+checks, which scan the whole serialised body rather than named fields), and by
+15 new mutations in `mutate_oem_sharing.py`. **The honest form of this verdict is
+therefore: NO, and the reason it can be asserted is a set of tests that did not
+exist before — not the 140 checks, which passed throughout.**
+
+What a manufacturer holding `SHARE_SERVICE_STATUS` alone still learns, by
+design, is the band: *"due"* places the machine between 95% and 100% of an
+interval it already knows. That is what the checkbox says, and it is stated to
+the factory in `docs/sales/OEM-PILOT-INTAKE.md`.
+
 ### 7. Can the full OEM → factory → commission → telemetry → service journey be completed without database editing, manual JWTs or source changes?
 
 # YES, WITH ONE NAMED EXCEPTION

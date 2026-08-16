@@ -395,8 +395,13 @@ def test_the_service_queue_leads_with_the_worst():
                     last_seen=datetime.utcnow() - timedelta(days=7)),
         FakeInstall(serial="SN-D", hours=500.0),                     # -> nothing
     ]
-    recs = oem_service.fleet_recommendations(None, "OEM_ALPHA", installs,
-                                             {1: model})
+    # Ordering only. Assembling a fleet now means reading each customer's
+    # consent, so the fleet-wide entry point moved to
+    # `oem_sharing.fleet_recommendations` and this suite — which has no database
+    # and is about arithmetic — drives the sort directly. What each customer has
+    # agreed to show is proved in test_oem_service_consent.py, over HTTP.
+    recs = oem_service.by_severity(
+        [r for i in installs for r in oem_service.recommendations(i, model)])
     order = [(r["machine"], r["severity"]) for r in recs]
     check("the queue is ordered by SEVERITY, not by input or by name",
           order == [("SN-A", "high"), ("SN-C", "medium"), ("SN-B", "low")],

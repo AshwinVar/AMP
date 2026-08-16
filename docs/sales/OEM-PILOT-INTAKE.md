@@ -425,18 +425,37 @@ the factory decides.
 > * `SHARE_MACHINE_HEALTH` releases `last_seen_at`, and — through the one gated
 >   read of a factory table, `visible_machine` — the machine's `status` and its
 >   `utilization`;
-> * `SHARE_SERVICE_STATUS`, `SHARE_ALARMS`, `SHARE_TELEMETRY`,
->   `SHARE_MAINTENANCE_HISTORY` and `SHARE_DOWNTIME` are **valid, storable,
->   auditable consent with no data class behind them yet.** Granting them today
->   changes nothing an OEM can see. They are in the vocabulary so that consent is
->   recorded before the capability ships, not after.
+> * `SHARE_SERVICE_STATUS` releases the service **verdict** — whether the machine
+>   is ok, approaching, at or past its interval — in the service queue
+>   (`GET /oem/service`) and the per-machine service view. It also decides
+>   whether a manufacturer may record a service against an hours reading it
+>   supplies itself;
+> * `SHARE_ALARMS`, `SHARE_TELEMETRY`, `SHARE_MAINTENANCE_HISTORY` and
+>   `SHARE_DOWNTIME` are **valid, storable, auditable consent with no data class
+>   behind them yet.** Granting them today changes nothing an OEM can see. They
+>   are in the vocabulary so that consent is recorded before the capability
+>   ships, not after — and a factory should read a tick against them as a
+>   decision taken in advance, not as data flowing now.
 >
-> Note in particular that `SHARE_SERVICE_STATUS` is not what makes service position
-> visible. The service queue (`GET /oem/service`) and the per-machine service view
-> are built from the OEM's **own** records — its serial, the hours the machine
-> reported against its own model's interval — and therefore need no grant. They
-> never quote factory data. Granting `SHARE_SERVICE_STATUS` adds nothing on top of
-> that today.
+> **What the verdict necessarily tells a manufacturer.** A verdict is a coarse
+> function of the hour meter: "due" means the machine sits between 95% and 100%
+> of an interval the manufacturer already knows, because the interval is on its
+> own model. A factory granting `SHARE_SERVICE_STATUS` is agreeing to that band,
+> and a verdict that did not depend on the meter would not be a verdict. What it
+> is *not* agreeing to is arithmetic that narrows the band further — the hours
+> run, the hours since service and the hours remaining are all withheld unless
+> `SHARE_OPERATING_HOURS` is also granted, including inside the free-text
+> evidence a recommendation carries.
+>
+> **This changed on 2026-08-16, and the previous version of this page was wrong.**
+> It said the service views "need no grant" and that granting
+> `SHARE_SERVICE_STATUS` "adds nothing". That described the code accurately at the
+> time, and the code was the thing that was wrong: the service queue printed the
+> hour meter in prose for a manufacturer whose customer had switched
+> `SHARE_OPERATING_HOURS` off, and kept printing it after "Withdraw everything".
+> Both are now gated, with the tests in
+> `backend/test_oem_service_consent.py` pinning it. If an earlier copy of this
+> pack was handed to you, this paragraph is the correction.
 
 ## O. Pilot success criteria — the OEM's own
 

@@ -211,14 +211,21 @@ def service_queue(db: Session = Depends(_get_db),
     lives in ONE place rather than being re-implemented here — a second copy of a
     security filter is a second chance to get it subtly wrong.
 
-    Service position comes from the OEM's OWN records (serial, hours it reported,
-    the interval on its own model), so it needs no grant from the factory. What a
-    grant controls is the FACTORY's data — status, utilisation — which is why a
-    recommendation never quotes them.
+    THE SHARING POLICY APPLIES HERE TOO, and for a long time it did not. This
+    docstring used to argue that service position comes from the OEM's own
+    records and so needs no grant. `oem_sharing.fleet_row` had already decided
+    the opposite about the identical column, and the factory's screen — a
+    checkbox reading "Operating and loaded hours", under "Nothing is shared until
+    you share it" — settles which of the two was right. See the block above
+    `oem_sharing.service_view` for what each grant buys.
+
+    Grants are read once per CUSTOMER, as in `fleet`: a fleet at four sites is
+    four policy reads however many machines it holds.
     """
     rows = oem_sharing.installations_for(db, principal["oem"])
     catalogue = _models_by_id(db, principal["oem"])
-    recs = oem_service.fleet_recommendations(db, principal["oem"], rows, catalogue)
+    recs = oem_sharing.fleet_recommendations(db, principal["oem"], rows, catalogue)
+
     by_severity = {}
     for r in recs:
         by_severity[r["severity"]] = by_severity.get(r["severity"], 0) + 1
@@ -229,11 +236,19 @@ def service_queue(db: Session = Depends(_get_db),
 @router.get("/machines/{installation_id}/service")
 def machine_service(installation_id: int, db: Session = Depends(_get_db),
                     principal: dict = Depends(oem_auth.require_oem("read_fleet"))):
-    """Service, warranty and commissioning position for one machine."""
+    """Service, warranty and commissioning position for one machine.
+
+    Every operational field passes through `oem_sharing` before it is returned.
+    The manufacturer's own records — serial, model, lifecycle, warranty, the
+    telemetry profile it wrote and the service interval it set — do not, and
+    must not: a customer's checkbox may withhold what the customer's plant
+    produced, never a supplier's own paperwork.
+    """
     inst = oem_sharing.get_installation(db, principal["oem"], installation_id)
     if inst is None:
         raise HTTPException(status_code=404, detail="Machine not found")
     model = _models_by_id(db, principal["oem"]).get(inst.model_id)
+    grants = oem_sharing.grants_for(db, principal["oem"], inst.factory_tenant_code)
     try:
         profile = oem_telemetry.parse(getattr(model, "telemetry_profile", None))
         profile_error = None
@@ -246,12 +261,16 @@ def machine_service(installation_id: int, db: Session = Depends(_get_db),
         "installation_id": inst.id,
         "serial_number": inst.serial_number,
         "lifecycle_status": inst.status,
-        "service": oem_service.service_state(inst, model),
+        "service": oem_sharing.service_view(
+            oem_service.service_state(inst, model), grants, model),
         "warranty": oem_service.warranty_state(inst),
-        "commissioning": oem_service.commissioning_report(inst, model, profile),
+        "commissioning": oem_sharing.commissioning_view(
+            oem_service.commissioning_report(inst, model, profile), grants),
         "telemetry_signals": [s["name"] for s in profile],
         "telemetry_profile_error": profile_error,
-        "recommendations": oem_service.recommendations(inst, model),
+        "recommendations": oem_sharing.visible_recommendations(
+            oem_service.recommendations(inst, model), grants),
+        "not_shared": sorted(set(oem_sharing.ALL_GRANTS) - set(grants)),
     }
 
 
@@ -389,8 +408,17 @@ def commission_machine(installation_id: int, db: Session = Depends(_get_db),
         checks_passed=bool(report["ready"])))
     db.commit()
 
+    # The event above carries the UNGATED `report["ready"]`, deliberately: it is
+    # AMP's own history of whether the checks passed, and it is stamped with the
+    # FACTORY's tenant — the customer's record of its own machine, not the
+    # manufacturer's. What goes back to the CALLER passes through the policy,
+    # because `has_reported` is connectivity and connectivity is the factory's
+    # to give.
     return {"installation_id": inst.id, "serial_number": inst.serial_number,
-            "from": before, "to": inst.status, "commissioning": report}
+            "from": before, "to": inst.status,
+            "commissioning": oem_sharing.commissioning_view(
+                report, oem_sharing.grants_for(db, principal["oem"],
+                                               inst.factory_tenant_code))}
 
 
 @router.post("/machines/{installation_id}/service")
@@ -404,15 +432,57 @@ def record_service(installation_id: int, payload: ServiceRecord,
     which assumes every service happened on schedule and made `overdue`
     unreachable. This endpoint writes the number that assumption was standing in
     for.
+
+    A WRITE THAT READ. The fallback below stores the machine's last reported
+    hours when the caller does not supply a figure — correct, and the response
+    used to hand that figure straight back. An OEM whose customer shares nothing
+    could therefore POST an empty body and read the hour meter out of
+    `last_service_hours`, which no amount of gating on the READ routes would have
+    stopped. The value is still STORED, because service position has to stay
+    right for the factory and for a manufacturer that is later granted hours;
+    it is simply not disclosed to a caller who may not see it.
+
+    A WRITE THAT SEARCHED — the refusal below, and the sharper half. The service
+    verdict is `operating_hours - last_service_hours` against the interval, and
+    `last_service_hours` is not the factory's column: the CALLER supplies it,
+    here. So an OEM holding only SHARE_SERVICE_STATUS could POST a probe value,
+    read which side of the threshold the verdict landed on, and bisect. Measured:
+    24 requests recovered a meter of 6421.7 to 6421.70. Withholding the figures
+    from the response does nothing about it, because the leak is the COMPARATOR,
+    not the number.
+
+    So a caller who may not see the hour meter may not choose the figure it is
+    compared against. AMP stamps the reading the machine itself last reported —
+    which is what the fallback always did, and is the honest record anyway. The
+    refusal is not conditional on the value supplied, so it is not itself an
+    oracle.
+
+    WHAT REMAINS DISCLOSED, DELIBERATELY. The verdict is a coarse function of the
+    meter: `due` means the machine is between 95% and 100% of an interval the OEM
+    already knows. A factory that ticks "Service due / overdue status" is
+    agreeing to exactly that, and a verdict that did not depend on the meter
+    would not be a verdict. What the factory has not agreed to is arithmetic that
+    narrows the band further, which is why `hours_remaining` is gated and why the
+    caller no longer controls the comparison.
     """
     inst = oem_sharing.get_installation(db, principal["oem"], installation_id)
     if inst is None:
         raise HTTPException(status_code=404, detail="Machine not found")
+    grants = oem_sharing.grants_for(db, principal["oem"], inst.factory_tenant_code)
+
+    supplied = payload.service_hours is not None
+    if supplied and oem_sharing.SHARE_OPERATING_HOURS not in grants:
+        raise HTTPException(
+            status_code=403,
+            detail="This customer has not shared operating hours, so a service "
+                   "cannot be recorded against an hours reading. Send this "
+                   "request without `service_hours` and AMP will record it at "
+                   "the reading the machine last reported.")
 
     hours = payload.service_hours
     if hours is None:
-        # Fall back to what the machine last reported. Still honest: it is the
-        # OEM's own hours counter, not an invented figure.
+        # Fall back to what the machine last reported, rather than inventing a
+        # figure. See the docstring for why this does not reach the response.
         hours = inst.operating_hours
     if hours is not None and hours < 0:
         raise HTTPException(status_code=400,
@@ -431,11 +501,17 @@ def record_service(installation_id: int, payload: ServiceRecord,
     db.commit()
 
     model = _models_by_id(db, principal["oem"]).get(inst.model_id)
+    # Echoed only when the CALLER supplied it — its own number, coming back — or
+    # when the customer shares hours anyway.
+    disclosable = (inst.last_service_hours
+                   if supplied or oem_sharing.SHARE_OPERATING_HOURS in grants
+                   else None)
     return {"installation_id": inst.id, "serial_number": inst.serial_number,
-            "last_service_hours": inst.last_service_hours,
+            "last_service_hours": disclosable,
             "last_service_at": inst.last_service_at.isoformat()
             if inst.last_service_at else None,
-            "service": oem_service.service_state(inst, model)}
+            "service": oem_sharing.service_view(
+                oem_service.service_state(inst, model), grants, model)}
 
 
 # ── Registering a machine, and offering it to a customer ─────────────

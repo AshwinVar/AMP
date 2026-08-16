@@ -347,3 +347,38 @@ dashboards, no additional AI, and no edge programme without real hardware
 requirements from Part 2.
 
 The right next event for this code is a real manufacturer using it.
+
+---
+
+## Correction, 2026-08-16 — four checkboxes that control nothing
+
+Part 1 of this document lists what AMP already supports. One line in it needs
+sharpening, because a prospective OEM will be shown the factory's consent screen
+and will reasonably assume every switch on it does something.
+
+Of the seven sharing permissions a factory can grant, **three are enforced and
+four are not yet connected to any data**:
+
+| permission | today |
+|---|---|
+| `SHARE_MACHINE_HEALTH` | **enforced** — releases the machine's status, utilisation and last-report time |
+| `SHARE_OPERATING_HOURS` | **enforced** — releases the hour meter and every figure derived from it |
+| `SHARE_SERVICE_STATUS` | **enforced** — releases the service verdict, and permits recording a service at a supplied hours reading |
+| `SHARE_ALARMS` | no read path exists — nothing to release |
+| `SHARE_TELEMETRY` | no read path exists |
+| `SHARE_MAINTENANCE_HISTORY` | no read path exists |
+| `SHARE_DOWNTIME` | no read path exists |
+
+The four with no read path are **not a hole** — nothing escapes through them,
+because there is nothing behind them. They are consent recorded ahead of a
+capability, which is the right order. But they are a checkbox a customer can tick
+believing data starts flowing, and the honest thing to say in a discovery call is:
+
+> "Four of those seven are the vocabulary for capabilities we have not built. If
+> alarms or downtime matter to your service business, that is a build, and it is
+> exactly the kind of thing this pilot is for scoping."
+
+**What we need from a real OEM:** which of the four actually matters commercially,
+and what the data would have to look like to be worth anything. Alarm codes in
+particular are model-specific and mean nothing without the manufacturer's own
+fault dictionary — which AMP does not have and cannot invent.

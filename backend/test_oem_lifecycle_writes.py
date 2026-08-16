@@ -149,6 +149,17 @@ def seed():
     db.add(machine)
     db.flush()
 
+    # FACTORY_A shares the two things this suite reads back. Without them the
+    # lifecycle responses correctly withhold the service verdict and the
+    # commissioning connectivity check (oem_sharing.service_view /
+    # commissioning_view), and every assertion below would be testing the
+    # sharing policy instead of the lifecycle it is named for. What those
+    # responses look like WITHOUT consent is proved in
+    # test_oem_service_consent.py, which is where that belongs.
+    db.add(models.OemDataSharingPolicy(
+        oem_code="OEM_ALPHA", tenant_code="FACTORY_A",
+        grants="SHARE_SERVICE_STATUS,SHARE_MACHINE_HEALTH,SHARE_OPERATING_HOURS"))
+
     # 1. A fully-prepared machine at a customer, ready to commission.
     ready = models.MachineInstallation(
         oem_code="OEM_ALPHA", serial_number="SN-READY", model_id=model.id,

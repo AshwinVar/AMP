@@ -325,16 +325,18 @@ def project_service_date(installation, model, history, today=None):
     }
 
 
-def fleet_recommendations(db, oem_code, installations, models_by_id, today=None):
-    """Every recommendation across a fleet, most severe first.
+def by_severity(recs):
+    """A queue ordered most severe first, then by serial.
 
-    Takes the installations it is GIVEN — it never queries for them — so the
-    oem_code filter and the sharing policy stay in one place (oem_sharing) rather
-    than being re-implemented, slightly differently, here.
+    Ordering, not policy — which is why it lives here and takes a plain list. The
+    fleet-wide entry point is `oem_sharing.fleet_recommendations`, because
+    assembling a fleet means deciding what each customer has agreed to show, and
+    that decision belongs to exactly one module.
+
+    THIS FUNCTION USED TO BE THAT ENTRY POINT, and it took no grants. Its
+    docstring claimed the sharing policy "stays in one place (oem_sharing)"; in
+    fact nothing applied it, and `/oem/service` disclosed every customer's hour
+    meter regardless of consent. Sorting is all that was ever really here.
     """
     rank = {"high": 0, "medium": 1, "low": 2}
-    out = []
-    for inst in installations:
-        out.extend(recommendations(inst, models_by_id.get(inst.model_id), today))
-    out.sort(key=lambda r: (rank.get(r["severity"], 9), r["machine"]))
-    return out
+    return sorted(recs, key=lambda r: (rank.get(r["severity"], 9), r["machine"]))

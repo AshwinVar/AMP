@@ -208,5 +208,196 @@ def fleet_row(db, installation, grants, model=None):
     return row
 
 
+# ── Service intelligence, as the manufacturer may see it ─────────────
+#
+# `oem_service` is ARITHMETIC and knows nothing about consent — deliberately, and
+# it stays that way. These functions are where its output meets the policy, so
+# there is still exactly one module that decides what a factory has agreed to.
+#
+# WHY THIS EXISTS AT ALL. `/oem/fleet` withheld `operating_hours` correctly while
+# `/oem/service` printed the same number in prose on the same screen, for a
+# manufacturer whose customer had switched that grant off — and kept printing it
+# with every grant withdrawn. Two deliberate decisions had been made about one
+# column: the service routes argued the hour meter is the OEM's own record and
+# needs no grant, `fleet_row` gated it. Only one could stand, and the factory's
+# screen decides which: it shows a checkbox labelled "Operating and loaded hours"
+# under the promise "Nothing is shared until you share it".
+#
+# WHAT EACH GRANT BUYS, and why the split is where it is:
+#
+#   SHARE_SERVICE_STATUS   the VERDICT — ok / due_soon / due / overdue, and the
+#                          recommendation to act on it. Exactly its label,
+#                          "Service due / overdue status".
+#   SHARE_OPERATING_HOURS  the FIGURES — hours run, hours since service, hours
+#                          remaining. `remaining` is gated even though the
+#                          interval is the OEM's own, because interval minus
+#                          remaining IS the hours since service.
+#   SHARE_MACHINE_HEALTH   whether and when the machine last reported. Its label
+#                          says "connectivity state" and `fleet_row` already
+#                          treats `last_seen_at` as the gated datum.
+#   (no grant)             the serial, the model, the service INTERVAL and the
+#                          warranty dates. Those are the OEM's own records
+#                          (ALWAYS_VISIBLE) and a customer's checkbox must never
+#                          hide a manufacturer's own paperwork from it.
+#
+# ALLOWLIST, NOT REDACTION. Each function builds a NEW dict and copies fields in
+# once a grant permits them, exactly as `fleet_row` does. Filtering the arithmetic
+# module's output instead would fail OPEN: the day somebody adds a field to
+# `service_state`, a filter does not know to remove it and a copier does not know
+# to add it. The second mistake is a missing feature; the first is a disclosure.
+
+
+def service_view(state, grants, model):
+    """`oem_service.service_state()` as this manufacturer may see it.
+
+    The interval is re-derived from the MODEL, never copied out of `state`.
+    Copying it looked harmless — it is the OEM's own number either way — but
+    `service_state` omits the key entirely on the branch where the machine has
+    never reported hours, and includes it on every other. So the field's
+    PRESENCE, rather than its value, carried one bit of the withheld meter:
+    whether the customer's machine has ever reported an hours reading at all.
+    `fleet_row` is byte-identical whether the meter holds 4600.0 or NULL, and
+    this route has to be too. It is the allowlist discipline in the block above,
+    applied to the one field that was quietly exempt from it.
+
+    WHY `state: "unknown"` MAY STILL STAND, when the interval's presence may
+    not. Both carry the same fact — that no usable hours reading exists — so the
+    difference is not what they reveal but what they claim to be.
+    `interval_hours` is documented as the manufacturer's own paperwork, a number
+    that cannot legitimately move with the customer's data; a bit riding in it is
+    a covert channel, and a reader has no reason to look for one. `state` IS the
+    granted datum, and "unknown" is one of its honest values: the factory asked
+    AMP to report service position, and "I cannot compute it" is the true answer.
+    Replacing it with a confident "ok" to save the bit would be the fabrication
+    ADR-0014 exists to forbid. Do not "fix" this by collapsing it.
+    """
+    interval = getattr(model, "service_interval_hours", None)
+    if SHARE_SERVICE_STATUS not in grants:
+        # NOT "unknown". `unknown` already means "this machine has never
+        # reported hours", and a service desk that cannot tell that apart from
+        # "the customer declined to say" will chase a gateway that is fine.
+        return {"state": "not_shared", "hours_remaining": None,
+                "interval_hours": interval, "hours_since_service": None,
+                "reason": "this customer has not shared service status"}
+    out = {"state": state.get("state"), "hours_remaining": None,
+           "interval_hours": interval, "hours_since_service": None,
+           "reason": state.get("reason")}
+    if SHARE_OPERATING_HOURS in grants:
+        out["hours_remaining"] = state.get("hours_remaining")
+        out["hours_since_service"] = state.get("hours_since_service")
+        return out
+    # The verdict stands; the arithmetic behind it does not. The reason has to be
+    # rewritten rather than filtered, because the figures are inside its prose —
+    # which is where the whole leak lived.
+    out["reason"] = _service_reason_without_hours(state.get("state"), interval)
+    return out
+
+
+def _service_reason_without_hours(state, interval):
+    every = f"every {interval} h" if interval else "on its service interval"
+    return {
+        "overdue": f"past its service interval ({every}); the operating-hour "
+                   f"figures are not shared by this customer",
+        "due": f"at its service interval ({every}); the operating-hour figures "
+               f"are not shared by this customer",
+        "due_soon": f"approaching its service interval ({every}); the "
+                    f"operating-hour figures are not shared by this customer",
+        "ok": f"not due for service ({every}); the operating-hour figures are "
+              f"not shared by this customer",
+    }.get(state, "this customer has not shared the operating-hour figures")
+
+
+def commissioning_view(report, grants):
+    """`oem_service.commissioning_report()` as this manufacturer may see it.
+
+    Only the `has_reported` check moves: whether a machine has ever reported is
+    connectivity, and connectivity is SHARE_MACHINE_HEALTH's to give.
+
+    It becomes `passed: None`, never `False`. Reporting an ungranted check as
+    failed would tell a manufacturer its commissioning did not complete when it
+    may well have — and this module's whole point is that "not shared" and "not
+    true" are different answers. `ready` goes to None with it, because a
+    confident `ready: true` would disclose the very boolean that was withheld.
+
+    `machine_id` in the `linked_to_machine` detail stays. It is a column on the
+    OEM's OWN installation row, it is an opaque integer, and no grant in
+    GRANT_LABELS names it. Reading the machine BEHIND that id still needs
+    SHARE_MACHINE_HEALTH (`visible_machine`), which is where the operational
+    facts actually are.
+    """
+    if SHARE_MACHINE_HEALTH in grants:
+        return report
+    checks = []
+    for c in report.get("checks", []):
+        if c.get("key") == "has_reported":
+            c = {**c, "passed": None,
+                 "detail": "this customer has not shared connectivity state"}
+        checks.append(c)
+    return {"ready": None, "checks": checks}
+
+
+# What each recommendation needs before a manufacturer may be shown it. A kind
+# that is NOT listed needs no grant — the warranty items are the OEM's own
+# records. Listing the requirement rather than hard-coding a chain of ifs is what
+# lets `visible_recommendations` stay four lines and be obviously right.
+RECOMMENDATION_GRANTS = {
+    "service_due": SHARE_SERVICE_STATUS,
+    "service_projection": SHARE_SERVICE_STATUS,
+    "not_reporting": SHARE_MACHINE_HEALTH,
+}
+
+
+def visible_recommendations(recs, grants):
+    """The recommendations this manufacturer may be shown, with their figures.
+
+    A `service_due` item survives on SHARE_SERVICE_STATUS alone, because that is
+    what the factory agreed to — but its `evidence` is the hour arithmetic, so
+    without SHARE_OPERATING_HOURS the item keeps its verdict and loses its
+    numbers. Dropping the item entirely would have been easier and would have
+    withheld something the customer explicitly granted.
+    """
+    out = []
+    for rec in recs:
+        needed = RECOMMENDATION_GRANTS.get(rec.get("kind"))
+        if needed and needed not in grants:
+            continue
+        if (rec.get("kind") in ("service_due", "service_projection")
+                and SHARE_OPERATING_HOURS not in grants):
+            rec = {**rec, "evidence": "the operating-hour figures are not "
+                                      "shared by this customer"}
+            # A projection IS the hours trend — "1.4 h/day over 30 days" is the
+            # meter twice. Without the figures there is no honest way to state
+            # it, so the action goes too rather than standing unexplained.
+            if rec["kind"] == "service_projection":
+                continue
+        out.append(rec)
+    return out
+
+
+def fleet_recommendations(db, oem_code, installations, models_by_id, today=None):
+    """Every recommendation across a fleet, as this manufacturer may see it.
+
+    THE ONLY fleet-wide entry point, and it cannot be called without consulting
+    consent — `db` and `oem_code` are required positionally for exactly that
+    reason. The previous version of this function lived in `oem_service`, took no
+    grants at all, and was what `/oem/service` called.
+
+    Grants are read once per CUSTOMER: a thousand machines at four sites is four
+    policy reads, as on the fleet screen.
+    """
+    import oem_service
+
+    cache, out = {}, []
+    for inst in installations:
+        tenant = inst.factory_tenant_code
+        if tenant not in cache:
+            cache[tenant] = grants_for(db, oem_code, tenant)
+        out.extend(visible_recommendations(
+            oem_service.recommendations(inst, models_by_id.get(inst.model_id),
+                                        today),
+            cache[tenant]))
+    return oem_service.by_severity(out)
+
+
 def _iso(value):
     return value.isoformat() if value else None

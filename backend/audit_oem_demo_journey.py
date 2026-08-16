@@ -380,6 +380,23 @@ def main():
     step("...and is told it is not shared, rather than shown a zero",
          "SHARE_OPERATING_HOURS" in (one.get("not_shared") or []),
          str(one.get("not_shared")))
+
+    # THE SCREEN THE PROSPECT IS ACTUALLY LOOKING AT. The fleet row losing its
+    # hours was already checked above, and used to be all this asserted — while
+    # the service queue two inches higher on the same page went on printing
+    # "4120.0 h run" in its evidence line. Anything that survives here is a
+    # number the customer switched off, being read out loud during the demo
+    # whose entire point is that it cannot be.
+    c, svc_after = GET("/oem/service", oem)
+    hours_text = str(int(OVER))
+    step("THE SERVICE QUEUE LOSES THE HOURS TOO, prose included",
+         hours_text not in json.dumps(svc_after), json.dumps(svc_after)[:300])
+    c, ms_after = GET(f"/oem/machines/{inst_id}/service", oem)
+    step("...and so does the machine's own service panel",
+         hours_text not in json.dumps(ms_after), json.dumps(ms_after)[:300])
+    step("...while the service VERDICT, which the customer did grant, stands",
+         ms_after.get("service", {}).get("state") not in (None, "not_shared"),
+         str(ms_after.get("service")))
     step("...while the machine itself is still visible",
          after["machines"][0].get("serial_number") == demo_aeron.DEMO_SERIAL,
          str(after["machines"][0]))

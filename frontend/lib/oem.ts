@@ -231,15 +231,34 @@ export const fetchMachineService = (id: number) =>
     installation_id: number;
     serial_number: string;
     lifecycle_status: string;
-    service: { state: string; reason: string; hours_remaining: number | null };
+    /**
+     * `state` is "not_shared" when the customer has withheld
+     * SHARE_SERVICE_STATUS, and the figures are null without
+     * SHARE_OPERATING_HOURS. `interval_hours` is on the OEM's OWN model, so it
+     * survives with no grants at all.
+     */
+    service: {
+      state: string;
+      reason: string;
+      hours_remaining: number | null;
+      interval_hours: number | null;
+      hours_since_service: number | null;
+    };
     warranty: { state: string; reason: string; days_remaining: number | null };
     commissioning: {
-      ready: boolean;
-      checks: Array<{ key: string; description: string; passed: boolean; detail: string }>;
+      /** null = a check the customer has not shared. NOT the same as false. */
+      ready: boolean | null;
+      checks: Array<{
+        key: string;
+        description: string;
+        passed: boolean | null;
+        detail: string;
+      }>;
     };
     telemetry_signals: string[];
     telemetry_profile_error: string | null;
     recommendations: ServiceRecommendation[];
+    not_shared: string[];
   }>(`/oem/machines/${id}/service`);
 
 /**

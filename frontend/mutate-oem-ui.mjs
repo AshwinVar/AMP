@@ -36,6 +36,22 @@ const MUTATIONS = [
     to: '  if (value === null || value === undefined) return "not shared";',
   },
   {
+    label: "an unshared commissioning check renders as a FAILURE",
+    file: "app/oem/page.tsx",
+    from: '                          {c.passed === null ? "–" : c.passed ? "✓" : "✗"}',
+    to: '                          {c.passed ? "✓" : "✗"}',
+  },
+  {
+    label: "commissioning reads 'incomplete' when a check is merely unshared",
+    file: "app/oem/page.tsx",
+    from: "                      {detail.commissioning.ready === null\n"
+      + '                        ? "· not fully shared"\n'
+      + "                        : detail.commissioning.ready\n"
+      + '                          ? "· complete"\n'
+      + '                          : "· incomplete"}',
+    to: '                      {detail.commissioning.ready ? "· complete" : "· incomplete"}',
+  },
+  {
     label: "an unshared machine is counted as OFFLINE",
     file: "lib/oem.ts",
     from: "    if (stale === null) unknown += 1;",

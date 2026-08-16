@@ -697,12 +697,17 @@ operating hours, telemetry. Those fields are blank because permission was not
 given, not because the machine is faulty."*
 
 **SHOW — and this is the half worth pointing at:** scroll up to the **Service
-queue** on the same page. The machine is **still listed as overdue**, because
-that permission is still on. But its evidence line no longer reads *"4120.0 h
-run…"* — it now reads *"past its service interval (every 4000 h); the
-operating-hour figures are not shared by this customer"*. The **4000** is
-Aeron's own number, off Aeron's own model. The **4120** was Northgate's, and it
-is gone from every line on the screen.
+queue** on the same page. The machine is **still listed as overdue** — the top
+line still reads *"This machine has passed its service interval."*, because that
+permission is still on. But the grey line under it no longer reads *"4120.0 h
+run, never serviced, 4000 h interval…"*; it now reads *"the operating-hour
+figures are not shared by this customer"*.
+
+Open the machine row again if you want the fuller sentence: the **Service** line
+in the panel reads *"past its service interval (every 4000 h); the operating-hour
+figures are not shared by this customer"*. The **4000** is Aeron's own number,
+off Aeron's own model, so it stays. The **4120** was Northgate's, and it is gone
+from every line on the screen.
 
 **SAY:**
 > "Gone. On the very next request Aeron made — not tonight, not on the next sync,

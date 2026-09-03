@@ -4,7 +4,7 @@
 > Keep it short. Update it at the end of every completed task.
 
 **Updated:** 2026-09-01
-**Master SHA examined:** `3dd0ce0` (587 commits)
+**Master SHA examined:** `ffc21f0` (588 commits)
 **Production SHA:** `0eb94ca` — `/health` `{"status":"ok","database":"ok","schema":"ok"}`
 
 ---
@@ -50,7 +50,17 @@
 
 ## AI ROADMAP PHASE
 
-**Phase 1 — provider abstraction: PARTIALLY PRESENT.**
+**Phase 1 — provider abstraction: DONE (2026-09-01).**
+`ai_copilot.PROVIDERS` is now a registry of `AIProvider` objects
+(`AnthropicProvider`, `GeminiProvider`); `_provider`, `_current_model`,
+`_ai_enabled` and `_ask_llm` all consult it instead of each branching on the same
+two strings. A third provider is one class + one tuple entry, pinned by
+`test_ai_provider_registry.py` with a stub provider. **One deliberate behaviour
+change:** an `AI_PROVIDER` naming no registered provider now selects nothing and
+logs why — it used to fall through to auto-detect, so a typo while moving OFF the
+paid tier kept silently billing Anthropic.
+
+Previously recorded state (now superseded):
 `ai_copilot.py` already branches on `AI_PROVIDER` (`anthropic` | `gemini`) with per-provider model defaults and a `urllib` call — no SDK. It is if/else branching rather than an `AIProvider` interface, but it is **not** hard-coupled to one vendor. A clean interface is worthwhile; it is not urgent.
 
 Phases 2–6 not started. Note before starting Phase 2: the LLM is already read-only and is handed a pre-built text context (`_build_factory_context`), which is the correct shape — do not rebuild it.

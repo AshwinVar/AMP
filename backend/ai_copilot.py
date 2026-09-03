@@ -45,36 +45,111 @@ log = logging_config.get_logger(__name__)
 AI_MODEL = os.environ.get("AI_MODEL", "claude-haiku-4-5")
 
 
-def _provider():
-    """Active LLM provider name, or None when no key is configured.
-    Explicit AI_PROVIDER wins; otherwise auto-detect, Anthropic first."""
+# ── The provider registry (AI roadmap, phase 1) ──────────────────────
+#
+# ONE TABLE, NOT FOUR IF/ELSE CHAINS. Provider choice, model name, "is it
+# configured" and "make the call" used to branch on the same two strings in four
+# separate places, so adding a third provider meant finding all four and getting
+# each right. A local or AMP-native model is on the roadmap, and this is the seam
+# it plugs into: one class, one registry entry.
+#
+# DELIBERATELY NOT AN ABC AND NOT A PLUGIN SYSTEM. Two providers do not justify
+# machinery; what they justify is putting the per-provider facts in one place.
+# Behaviour is unchanged — test_ai_copilot_fallback.test_provider_selection
+# pinned the old precedence and passes untouched.
+
+
+class AIProvider:
+    """One way of asking a language model a question.
+
+    `env_key`  the environment variable whose presence means "configured"
+    `model()`  the model string to report and call
+    `ask()`    system + user prompt in, text out; raises on failure
+    """
+
+    name = ""
+    env_key = ""
+
+    def is_configured(self) -> bool:
+        return bool(os.environ.get(self.env_key))
+
+    def model(self):
+        raise NotImplementedError
+
+    def ask(self, system: str, user: str) -> str:
+        raise NotImplementedError
+
+
+class AnthropicProvider(AIProvider):
+    name = "anthropic"
+    env_key = "ANTHROPIC_API_KEY"
+
+    def model(self):
+        return AI_MODEL
+
+    def ask(self, system, user):
+        return _ask_claude(system, user)
+
+
+class GeminiProvider(AIProvider):
+    name = "gemini"
+    env_key = "GEMINI_API_KEY"
+
+    def model(self):
+        return _GEMINI_DISCOVERED or os.environ.get("GEMINI_MODEL", "gemini-2.5-flash")
+
+    def ask(self, system, user):
+        return _ask_gemini(system, user)
+
+
+# Order is the AUTO-DETECT PRECEDENCE when AI_PROVIDER is unset: Anthropic first
+# because it is the paid tier with commercial data terms, Gemini second because
+# it is the free one. An explicit AI_PROVIDER always wins over this order.
+PROVIDERS = (AnthropicProvider(), GeminiProvider())
+
+
+def _resolve_provider():
+    """The active provider OBJECT, or None when nothing is configured.
+
+    ONE DELIBERATE BEHAVIOUR CHANGE, and the only one in the registry refactor:
+    an AI_PROVIDER that names no registered provider now selects NOTHING. The
+    old code tested `explicit in ("anthropic", "gemini")` and, on a typo, fell
+    silently through to auto-detection — so `AI_PROVIDER=gemni`, set by someone
+    deliberately moving OFF the paid tier, would quietly keep calling Anthropic
+    and billing for it. An operator who names a provider has expressed an
+    intention; the honest answers are "that one" or "none", never "a different
+    one". Pinned in test_ai_provider_registry.
+    """
     explicit = os.environ.get("AI_PROVIDER", "").strip().lower()
-    if explicit in ("anthropic", "gemini"):
-        return explicit
-    if os.environ.get("ANTHROPIC_API_KEY"):
-        return "anthropic"
-    if os.environ.get("GEMINI_API_KEY"):
-        return "gemini"
+    if explicit:
+        for p in PROVIDERS:
+            if p.name == explicit:
+                return p
+        log.info("[AI COPILOT] AI_PROVIDER=%r matches no provider; copilot off "
+                 "(known: %s)", explicit, ", ".join(p.name for p in PROVIDERS))
+        return None
+    for p in PROVIDERS:
+        if p.is_configured():
+            return p
     return None
+
+
+def _provider():
+    """Active LLM provider NAME, or None when no key is configured.
+    Explicit AI_PROVIDER wins; otherwise auto-detect, Anthropic first."""
+    p = _resolve_provider()
+    return p.name if p else None
 
 
 def _current_model():
-    p = _provider()
-    if p == "anthropic":
-        return AI_MODEL
-    if p == "gemini":
-        return _GEMINI_DISCOVERED or os.environ.get("GEMINI_MODEL", "gemini-2.5-flash")
-    return None
+    p = _resolve_provider()
+    return p.model() if p else None
 
 
 def _ai_enabled() -> bool:
     """The copilot is on only when the active provider's key is present."""
-    p = _provider()
-    if p == "anthropic":
-        return bool(os.environ.get("ANTHROPIC_API_KEY"))
-    if p == "gemini":
-        return bool(os.environ.get("GEMINI_API_KEY"))
-    return False
+    p = _resolve_provider()
+    return bool(p and p.is_configured())
 
 
 def _build_factory_context(db: Session, tenant: str) -> str:
@@ -367,10 +442,11 @@ def _ask_llm(system: str, user: str) -> str:
     """Route one question to the active provider; remember the last failure."""
     global _LAST_LLM_ERROR
     try:
-        if _provider() == "gemini":
-            result = _ask_gemini(system, user)
-        else:
-            result = _ask_claude(system, user)
+        provider = _resolve_provider()
+        # No provider configured still calls Anthropic, exactly as before: the
+        # caller has already checked _ai_enabled(), and the resulting auth error
+        # is the honest failure rather than a silent None.
+        result = (provider or PROVIDERS[0]).ask(system, user)
     except Exception as e:
         from datetime import datetime
         _LAST_LLM_ERROR = {"at": datetime.utcnow().isoformat(), "provider": _provider(),

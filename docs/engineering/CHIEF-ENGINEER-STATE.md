@@ -4,8 +4,9 @@
 > Keep it short. Update it at the end of every completed task.
 
 **Updated:** 2026-09-01
-**Master SHA examined:** `ffc21f0` (588 commits)
-**Production SHA:** `0eb94ca` — `/health` `{"status":"ok","database":"ok","schema":"ok"}`
+**Master SHA examined:** `9ca37c2` (589 commits)
+**Production SHA:** `9ca37c2` (verified after merge)  
+**Previous:** `0eb94ca` — `/health` `{"status":"ok","database":"ok","schema":"ok"}`
 
 ---
 
@@ -15,6 +16,9 @@
 |---|---|---|
 | MQTT→WebSocket bridge: `asyncio.run` on a sync callee raised `ValueError` every message; delivery ran on a throwaway event loop | P1 | fixed, tested |
 | MQTT ingest published no domain events — machine-reported breakdowns never reached the bus, so the Escalation agent was blind to them | P1 | fixed, tested |
+| AI Phase 1 — `AIProvider` registry replacing four if/elif chains | P6 | merged #526 |
+| AI Phase 5 — evaluation harness scoring routing / grounding / tenant isolation on deterministic ground truth; **24/24, and proven non-vacuous** | P6 | done |
+| Route reconciliation: 143 frontend calls vs 256 registered routes — **0 unmatched**, nothing broken end-to-end | P2 | verified clean |
 | Founder handbook verified against master by 10 subsystem specialists: 385 claims confirmed, 20 misleading | P8 | verification done, affected sections synced |
 | `/machine-health` N+1: 3 queries per machine on a 3s poll (607 statements at 200 machines) — **measured first**, then batched to a flat 10 | P4 | fixed, tested, measured |
 
@@ -87,7 +91,7 @@ Phases 2–6 not started. Note before starting Phase 2: the LLM is already read-
 
 1. **`release_installation` lifecycle** — verify, then either route through `transition()` or document why not.
 2. **AI Phase 1** — extract an `AIProvider` interface behind the existing `AI_PROVIDER` branching, no behaviour change, with tests.
-3. **AI Phase 5 before 3** — build the evaluation harness (deterministic questions with known answers) *before* adding tools, so tool work can be measured.
+3. **AI Phase 3 (tools)** — now measurable: `test_ai_evaluation.py` gives routing/grounding/isolation scores to compare a tool-using copilot against. Start READ-ONLY tools.
 4. **Run `loadtest.py` once** — it has never been executed; it needs a scratch PostgreSQL and gives the first HTTP-level numbers.
 5. **Sync remaining training-doc drift** (18 of 20 misleading items still unsynced; MQTT/events/twin sections are done).
 

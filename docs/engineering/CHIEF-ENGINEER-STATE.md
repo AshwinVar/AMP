@@ -3,10 +3,9 @@
 > Handover file. A new session should be able to read only this and continue.
 > Keep it short. Update it at the end of every completed task.
 
-**Updated:** 2026-09-03
-**Master SHA examined:** `ce71a6c` (590 commits)
-**Production SHA:** `ce71a6c` (verified after merge — status ok / database ok / schema ok)  
-**Previous:** `0eb94ca` — `/health` `{"status":"ok","database":"ok","schema":"ok"}`
+**Updated:** 2026-09-03 (performance line closed; see WHAT IS ACTUALLY OPEN)
+**Master SHA:** `040d30a` (#539)
+**Production SHA:** `040d30a` — verified `{"status":"ok","database":"ok","schema":"ok"}` at 22:49 UTC. Railway auto-deploys master, so this tracks HEAD; re-check `/health` rather than trusting this line's age.
 
 ---
 
@@ -122,24 +121,43 @@ Phases 2, 4–6 not started. Note before starting Phase 2: the LLM is already re
 
 ---
 
-## NEXT 5 ENGINEERING TASKS
+## WHAT IS ACTUALLY OPEN
 
-1. **`release_installation` lifecycle** — verify, then either route through `transition()` or document why not.
-2. **AI Phase 1** — extract an `AIProvider` interface behind the existing `AI_PROVIDER` branching, no behaviour change, with tests.
-3. **AI Phase 3 (tools)** — now measurable: `test_ai_evaluation.py` gives routing/grounding/isolation scores to compare a tool-using copilot against. Start READ-ONLY tools.
-4. **Row caps on the fleet endpoints** — measured, and the smallest fix available. Every list endpoint has a hard cap except `/machines` (`machines_routes.py:45`, plain `.all()`), and the cap predicts the growth in exact order: none→8.6×, 500→7.1×, 300→2.7×, 200→1.5×, 100→1.3×. **P4, and smaller than it first looked:** the 575 ms figure for `/analytics/executive-oee` is queueing under 8 concurrent clients; one user waits **67.6 ms** at 1000 machines and **24 ms** at 250.
-6. **CLOSED — there is no framework tax.** I first measured handler time against loadtest's **p50** and concluded every endpoint carried ~19 ms of framework overhead. Wrong quantity: p50 is queue-inflated (see the row above). Against **service time**, which is throughput-derived and so has queueing cancelled out, the gap at 10 machines is **0.3 ms mean** and negative for two endpoints. Serialisation is not a cost either (`jsonable_encoder` + `json.dumps` = 0.0–2.6 ms on a 47 KB payload). The seven middleware, JWT auth (no DB access — `auth.py:118`) and session setup are collectively ~1 ms. **The handler IS the request.** Do not go looking for overhead here; there is none to find.
-5a. **GUARDED.** `test_growing_table_reads.py` walks the AST of every route module and fails on a new unbounded read of an append-only table. Allowlist of 9, each with a reason, and the allowlist itself is checked for staleness (the `test_date_basis_guard` convention). Proven by reverting #531 and by planting the same defect on a different table — both red.
-5a2. **A DATE WINDOW IS NOT A BOUND.** `/machine-health` (1633 ms) and `/analytics/predictive-maintenance` (1297 ms) both go through `ai.prediction.assess_from_db`, which read three tables `.filter(created_at >= cutoff)` over 30 days. At 200 machines that window held 63,036 downtime rows and 43,198 machine events — **~106,000 ORM objects per 3-second poll**, of which only 76 ms was SQL. Reduced to per-machine counters in SQL: **1297→21.8 ms** and **1633→261.8 ms**. The #532 guard treats a `created_at` filter as bounded, which it is only when divided by the row rate.
-5a3. **CLOSED — and my #532 guard had TWO holes, not one.** `ai/twin.py::_downtime_by_machine` (mine, from #525) read every downtime row to keep 3 per machine. Now a `row_number()` window function: **`/machine-health` 1633 → 261.8 → 74.0 ms** across #537 and this. The guard missed it twice over: it exempted column projections ("the row never becomes an ORM object" — true, and not the point), AND its file list never included `ai/`, so `ai/twin.py` was never scanned at all. Both fixed; scope 26 → 72 modules. Found by mutation-testing the guard rather than trusting it.
-5a4. **A correction to a comment I wrote in the same PR.** I added an explicit tenant predicate to the subquery expecting the ADR-0002 hook not to reach inside one. It does — verified directly, removing the filter leaks nothing. Kept as defence in depth, and the code now says which it is. A mutation deleting it survives for that reason.
-5a5. **VERIFIED CLOSED.** Whole poll cycle re-measured against an AGED factory — 200 machines, **455,000 rows** across all eight time-growing tables: **0 endpoints over 100 ms**, slowest 70.8 ms, whole 49-endpoint refresh 346 ms of handler time. Before this run the same factory gave 1633 / 1297 / 926 / 860 / 822 ms on individual endpoints. Do not re-open this line of work without a NEW measurement showing something.
-5b. **The harness blind spot this exposed.** Every perf harness seeds rows PER MACHINE, so no table that grows with TIME is covered. `downtime_logs` held a 50× defect that all of them missed. `machine_events`, `audit_logs`, `agent_actions`, `production_records`, `inventory_transactions`, `quality_inspections` grow the same way and are UNMEASURED at age. `test_downtime_scan_bounded.py` shows the technique — seed rows independently of machine count and assert SQL shape, not wall time.
-5c. **DONE — `/analytics/management` no longer scans.** `build_management_summary` gained `downtime_agg`, mirroring the `production_sums`/`shift_sums` entry points it already had. 818.5 ms → 16.2 ms at 75,000 rows, byte-identical output. **No route hydrates a time-growing table unbounded any more**, and the guard fails the build if one appears.
-7. **`analytics_routes.analytics_summary` does the work of three endpoints.** It calls `generate_alerts()` and `oee_summary()` internally, so the machines table is read 3× per request, and the dashboard polls `/alerts` and `/oee/summary` separately as well. Also `logs = db.query(models.DowntimeLog).all()` (`analytics_routes.py:53`) scans the whole table on a 3-second poll — the rule-4 antipattern retired on its siblings, which survived here because `DowntimeLog.duration` is a *string* (`"15 min"`) and cannot be `SUM`ed in SQL.
-5. **Sync remaining training-doc drift** (18 of 20 misleading items still unsynced; MQTT/events/twin sections are done).
+Everything below was checked against the code before being written here, on
+2026-09-03. Four entries that used to sit in this list are gone because they
+were done — and one of them had been describing a defect that no longer existed
+in terms that were wrong even when it did. A handover nobody can trust without
+re-deriving it is worse than none.
 
----
+1. **Row cap on `/machines`** — P4, measured. `machines_routes.py:45` is
+   `db.query(models.Machine).order_by(...).all()`: the only list endpoint with
+   no cap, and the worst grower of the five (8.6× from 10 to 1000 machines,
+   against `.limit(500)`'s 7.1× and `.limit(100)`'s 1.3×). **Verified still
+   uncapped.** Not urgent: at 1000 machines one user waits 23.9 ms, and AMP has
+   no factory near that. Any fix must not silently truncate the fleet view —
+   pagination or a lighter projection, not a bare `.limit()`.
+
+2. **AI Phase 3 — a model-chosen route.** BLOCKED for measurement, not for
+   building: there is no AI key in this environment, so routing quality cannot
+   be scored here. The case for it is measured and recorded
+   (`test_ai_evaluation.py` §1c): keyword routing answers ~42% of unseen
+   phrasings as a person would. **Write fresh held-out questions and score them
+   BEFORE touching the router** — §1c is burned, being in the repo.
+   The safety shape is fixed and non-negotiable: the model picks a NAME from a
+   fixed allowlist, AMP executes it with the caller's tenant, and the model
+   never sees or supplies a tenant.
+
+3. **Training-doc drift** — P8, explicitly the lowest. 18 of 20 misleading items
+   unsynced (MQTT / events / twin are done).
+
+### Removed from this list, with why
+
+| was | why it is gone |
+|---|---|
+| `release_installation` lifecycle | **Done (#533).** Verified: the release now preserves `Decommissioned` via a SQL `CASE`, and `oem_claims` refuses a terminal installation in the WHERE clause. |
+| AI Phase 1 — `AIProvider` interface | **Done (#526).** Verified: `ai_copilot.PROVIDERS` is a registry. |
+| "six tables UNMEASURED at age" | **Measured.** All eight, 455,000 rows: 0 endpoints over 100 ms. |
+| `analytics_summary` "scans the whole table on a 3-second poll" | **Wrong twice, and stale.** It is not polled — the frontend never calls it; it backs `/reports/daily-summary.txt`. And the scan was removed in #531. Verified both. |
 
 ## CONVENTIONS THAT BIND FUTURE SESSIONS
 

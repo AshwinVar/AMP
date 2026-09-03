@@ -275,6 +275,45 @@ two entry points return a byte-identical dict.
 carried this endpoint as PENDING, and its own staleness check flagged that entry
 the moment the fix landed — which is what that check is for.
 
+### Verified against an AGED factory, not just a wide one
+
+Every figure above this section came from a factory seeded **per machine**. The
+four defects it hid — and the two more found afterwards in
+`assess_from_db` and `ai/twin.py` — all needed a factory that had been
+*running*, not merely a big one. So the whole poll cycle was re-measured against
+one:
+
+| table | rows |
+|---|---:|
+| `downtime_logs` | 75,000 |
+| `machine_events` | 60,000 |
+| `agent_actions` | 60,000 |
+| `audit_logs` | 60,000 |
+| `quality_inspections` | 50,000 |
+| `inventory_transactions` | 50,000 |
+| `cost_records` | 50,000 |
+| `notifications` | 50,000 |
+
+200 machines, **455,000 rows**, PostgreSQL 18.3, handler time only.
+
+| | |
+|---|---:|
+| slowest endpoint (`/machine-health`) | **70.8 ms** |
+| endpoints over 100 ms | **0** |
+| whole 49-endpoint refresh | **346 ms** |
+
+Before this work the same factory produced 1,633 ms for `/machine-health`,
+1,297 ms for `/analytics/predictive-maintenance`, and 822–926 ms for the three
+downtime rollups — each of them individually longer than the entire refresh
+now takes.
+
+**What is still not established:** production hardware (this is a laptop with
+client and server on one machine), more than one tenant at this size, write
+load, and anything beyond 200 machines *with* this much history. The row counts
+above assume roughly 7 machine events and 10 downtime events per machine per
+day; a busier plant reaches them sooner and a quieter one later, but nothing in
+the code now grows with either.
+
 ### The live layer is not a constraint at any measured size
 
 | at 1000 machines | |

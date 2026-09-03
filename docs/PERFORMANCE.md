@@ -1,6 +1,40 @@
 # Performance
 
-## Status: nothing in this document has been measured
+## Status: one measurement now exists (2026-09-01); the rest is still unmeasured
+
+**The dashboard poll cycle has been measured** with `backend/dashboard_perf.py`,
+which counts SQL statements per endpoint at 10 / 50 / 200 machines. It found a
+real N+1 in `/machine-health` and the fix is measured below. Everything *else*
+in this document is still as unmeasured as the heading used to say.
+
+### `/machine-health` — measured, fixed, re-measured
+
+`frontend/app/dashboard/page.tsx` polls the whole dashboard every 3 seconds
+(46 requests per round, per open tab). `ai.twin.build_twins` issued three
+queries **per machine** — recent downtime, open maintenance tasks, pending agent
+actions.
+
+| machines | queries before | queries after |
+|---:|---:|---:|
+| 10 | 37 | **10** |
+| 50 | 157 | **10** |
+| 200 | 607 | **10** |
+
+At 200 machines that is 607 statements → 10, and ~520 ms → ~13 ms on this
+laptop, repeating every three seconds. The count is now **flat**, which is the
+durable property; the milliseconds are laptop-specific and are not a production
+figure. `backend/test_machine_health_query_count.py` fails the build if
+per-machine growth returns.
+
+**Method and its limits:** route functions are called directly against a seeded
+database and statements are counted via a SQLAlchemy `before_cursor_execute`
+hook — the same technique `oem_perf.py` uses. It measures SQL shape, **not**
+HTTP latency, serialisation, network or the browser. For those, `loadtest.py`
+drives a real uvicorn, and it has still never been run.
+
+---
+
+## Everything below here: still nothing in this section has been measured
 
 Every performance number AMP has ever quoted — "265ms to 13ms" on
 `/analytics/executive-oee`, "714ms to 28ms" on the flow read-model, "376ms to

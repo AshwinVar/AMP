@@ -41,6 +41,11 @@ SKIP_FILES = {
     # only — the very property this file is the control for. Its writes are
     # confined to the three disposable FACTORY_* audit tenants.
     "audit_isolation.py",
+    # Performance harness, never mounted on the API and never run against a real
+    # database — it builds and tears down its own PERF_FACTORY tenant on a
+    # disposable engine to count SQL statements. Its deletes are the teardown
+    # between scales, not a product write path.
+    "dashboard_perf.py",
     "reseed_inventory.py",   # local dev reseed
     "reset_factory.py",      # founder's factory reset (RESEED_FACTORY=1)
     # The AERON sales demo, rebuilt behind RESEED_DEMO_OEM. Exactly the

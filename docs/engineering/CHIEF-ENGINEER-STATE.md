@@ -4,7 +4,7 @@
 > Keep it short. Update it at the end of every completed task.
 
 **Updated:** 2026-09-01
-**Master SHA examined:** `0eb94ca` (585 commits)
+**Master SHA examined:** `3dd0ce0` (587 commits)
 **Production SHA:** `0eb94ca` — `/health` `{"status":"ok","database":"ok","schema":"ok"}`
 
 ---
@@ -15,7 +15,8 @@
 |---|---|---|
 | MQTT→WebSocket bridge: `asyncio.run` on a sync callee raised `ValueError` every message; delivery ran on a throwaway event loop | P1 | fixed, tested |
 | MQTT ingest published no domain events — machine-reported breakdowns never reached the bus, so the Escalation agent was blind to them | P1 | fixed, tested |
-| Founder handbook verified against master by 10 subsystem specialists: 385 claims confirmed, 20 misleading | P8 | verification done, doc sync pending |
+| Founder handbook verified against master by 10 subsystem specialists: 385 claims confirmed, 20 misleading | P8 | verification done, affected sections synced |
+| `/machine-health` N+1: 3 queries per machine on a 3s poll (607 statements at 200 machines) — **measured first**, then batched to a flat 10 | P4 | fixed, tested, measured |
 
 ---
 
@@ -33,7 +34,7 @@
 | 2 | MQTT publishes no `DowntimeStarted` | YES | BUG | **FIXED** |
 | 3 | 4 of 7 `SHARE_*` grants have no enforcement point | YES | INTENTIONAL — no read path exists, so nothing leaks. Consent recorded ahead of the feature | not a defect |
 | 4 | `oem_claims.accept` sets `status="Assigned"` by bulk UPDATE, bypassing `oem_service.transition` | YES | INTENTIONAL — the conditional UPDATE's row count *is* the security decision; routing it through the state machine would break claim atomicity | document, don't change |
-| 5 | Dashboard polls `fetchAll` every 3s; 87 api call sites; 3 mandatory + ~43 optional | YES (shape) | PERFORMANCE — **not yet measured** | P4, measure first |
+| 5 | Dashboard polls `fetchAll` every 3s; 46 requests/round | **MEASURED** via `dashboard_perf.py` | PERFORMANCE — the N+1 in `/machine-health` was the real cost (607→10 queries). The remaining 45 endpoints are flat at 1-5 queries each | **largest win taken**; further work needs HTTP-level measurement (`loadtest.py`, never run) |
 | 6 | Copilot provider coupling | YES | Already has `AI_PROVIDER` anthropic/gemini branching — if/else, not a clean interface | P6 |
 
 ---
@@ -74,11 +75,11 @@ Phases 2–6 not started. Note before starting Phase 2: the LLM is already read-
 
 ## NEXT 5 ENGINEERING TASKS
 
-1. **Sync the six training docs** to the 20 verified misleading items (secondary — timebox it).
-2. **Measure the dashboard** before touching it: request count, payload bytes, server time per poll cycle. Only then decide.
-3. **`release_installation` lifecycle** — verify, then either route through `transition()` or document why not.
-4. **AI Phase 1** — extract an `AIProvider` interface behind the existing `AI_PROVIDER` branching, no behaviour change, with tests.
-5. **AI Phase 5 before 3** — build the evaluation harness (deterministic questions with known answers) *before* adding tools, so tool work can be measured.
+1. **`release_installation` lifecycle** — verify, then either route through `transition()` or document why not.
+2. **AI Phase 1** — extract an `AIProvider` interface behind the existing `AI_PROVIDER` branching, no behaviour change, with tests.
+3. **AI Phase 5 before 3** — build the evaluation harness (deterministic questions with known answers) *before* adding tools, so tool work can be measured.
+4. **Run `loadtest.py` once** — it has never been executed; it needs a scratch PostgreSQL and gives the first HTTP-level numbers.
+5. **Sync remaining training-doc drift** (18 of 20 misleading items still unsynced; MQTT/events/twin sections are done).
 
 ---
 

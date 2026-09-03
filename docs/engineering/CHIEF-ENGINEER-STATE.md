@@ -21,6 +21,7 @@
 | Route reconciliation: 143 frontend calls vs 256 registered routes — **0 unmatched**, nothing broken end-to-end | P2 | verified clean |
 | Founder handbook verified against master by 10 subsystem specialists: 385 claims confirmed, 20 misleading | P8 | verification done, affected sections synced |
 | `/machine-health` N+1: 3 queries per machine on a 3s poll (607 statements at 200 machines) — **measured first**, then batched to a flat 10 | P4 | fixed, tested, measured |
+| **Two 3-second-poll endpoints read the whole `downtime_logs` table** (`/analytics/executive-oee`, `/analytics/factory-command-center`). 822 ms and 860 ms of handler time at 75,000 rows — one year of a 200-machine plant. Fixed by GROUP BY on the string duration: **46.8× / 50.6×**, arithmetically identical | P2 | fixed, 18 checks, 7/7 mutations red |
 | `loadtest.py`: reported raw ms while its docstring promised floor-normalised figures, and **overwrote a 4-scale results file with a 2-scale one**, destroying the 250/1000 evidence. Now reports `xfloor`, merges scales, and states a verdict | P4 | fixed, 22 checks, 6/6 mutations red |
 | First clean four-scale HTTP measurement (2026-09-03 18:18 UTC): 10/50/250/1000 machines, **zero errors in 32 endpoint/scale combinations, no regression vs #508 at any scale** | P4 | measured, documented |
 | **Corrected my own reading of it**: those p50s are measured under 8 concurrent clients and are pinned to 8/RPS by Little's Law (ratio 1.01–1.09 on the saturated four). Service time is up to 8.5× smaller — 575 ms → **67.6 ms**. Harness now prints both and names the saturated endpoints | P4 | corrected, 29 checks, 4/4 mutations red |
@@ -29,7 +30,7 @@
 
 ## KNOWN P0 / P1
 
-**None open.** Both P1 defects above are fixed on this branch.
+**None open.** The downtime-scan defect below was P2 and is fixed.
 
 ---
 
@@ -98,6 +99,8 @@ Phases 2–6 not started. Note before starting Phase 2: the LLM is already read-
 3. **AI Phase 3 (tools)** — now measurable: `test_ai_evaluation.py` gives routing/grounding/isolation scores to compare a tool-using copilot against. Start READ-ONLY tools.
 4. **Row caps on the fleet endpoints** — measured, and the smallest fix available. Every list endpoint has a hard cap except `/machines` (`machines_routes.py:45`, plain `.all()`), and the cap predicts the growth in exact order: none→8.6×, 500→7.1×, 300→2.7×, 200→1.5×, 100→1.3×. **P4, and smaller than it first looked:** the 575 ms figure for `/analytics/executive-oee` is queueing under 8 concurrent clients; one user waits **67.6 ms** at 1000 machines and **24 ms** at 250.
 6. **CLOSED — there is no framework tax.** I first measured handler time against loadtest's **p50** and concluded every endpoint carried ~19 ms of framework overhead. Wrong quantity: p50 is queue-inflated (see the row above). Against **service time**, which is throughput-derived and so has queueing cancelled out, the gap at 10 machines is **0.3 ms mean** and negative for two endpoints. Serialisation is not a cost either (`jsonable_encoder` + `json.dumps` = 0.0–2.6 ms on a 47 KB payload). The seven middleware, JWT auth (no DB access — `auth.py:118`) and session setup are collectively ~1 ms. **The handler IS the request.** Do not go looking for overhead here; there is none to find.
+5b. **The harness blind spot this exposed.** Every perf harness seeds rows PER MACHINE, so no table that grows with TIME is covered. `downtime_logs` held a 50× defect that all of them missed. `machine_events`, `audit_logs`, `agent_actions`, `production_records`, `inventory_transactions`, `quality_inspections` grow the same way and are UNMEASURED at age. `test_downtime_scan_bounded.py` shows the technique — seed rows independently of machine count and assert SQL shape, not wall time.
+5c. **`/analytics/management` still scans** (`analytics_routes.py:318`) — same defect, but it passes the row list to `build_management_summary`, so it needs a wider change than the helper swap.
 7. **`analytics_routes.analytics_summary` does the work of three endpoints.** It calls `generate_alerts()` and `oee_summary()` internally, so the machines table is read 3× per request, and the dashboard polls `/alerts` and `/oee/summary` separately as well. Also `logs = db.query(models.DowntimeLog).all()` (`analytics_routes.py:53`) scans the whole table on a 3-second poll — the rule-4 antipattern retired on its siblings, which survived here because `DowntimeLog.duration` is a *string* (`"15 min"`) and cannot be `SUM`ed in SQL.
 5. **Sync remaining training-doc drift** (18 of 20 misleading items still unsynced; MQTT/events/twin sections are done).
 

@@ -263,9 +263,17 @@ only find costs that scale with machine count. `test_downtime_scan_bounded.py`
 seeds rows independently of the machine count for exactly this reason, and
 asserts the *shape of the SQL* rather than a wall time.
 
-Still unfixed, same pattern: `/analytics/management` (`analytics_routes.py:318`)
-passes the row list on to `build_management_summary`, so it needs a wider change
-than a helper swap.
+`/analytics/management` was the last one, and needed a wider change because it
+passes the row list on to `build_management_summary` rather than consuming it
+locally. That function already accepted pre-aggregated `production_sums` and
+`shift_sums`, so it gained `downtime_agg` on the same pattern: **818.5 ms →
+16.2 ms** at 75,000 rows, with `test_management_dashboard_sql.py` asserting the
+two entry points return a byte-identical dict.
+
+**No route now hydrates a time-growing table without a bound**, and
+`test_growing_table_reads.py` fails the build if one appears. Its allowlist
+carried this endpoint as PENDING, and its own staleness check flagged that entry
+the moment the fix landed — which is what that check is for.
 
 ### The live layer is not a constraint at any measured size
 

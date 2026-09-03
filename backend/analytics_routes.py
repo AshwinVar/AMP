@@ -316,7 +316,11 @@ def get_shift_kpis(db: Session = Depends(_get_db), current_user: dict = Depends(
 @router.get("/analytics/management")
 def get_management_dashboard(db: Session = Depends(_get_db), current_user: dict = Depends(require_roles(["Admin", "Supervisor"]))):
     machines = db.query(models.Machine).all()
-    downtime_logs = db.query(models.DowntimeLog).all()
+    # Aggregated in SQL rather than hydrated: downtime_logs grows with how long
+    # the factory has run, not with its size (see analytics_engine.
+    # downtime_aggregates). build_management_summary takes the tally directly,
+    # the same way it already takes production_sums and shift_sums.
+    downtime = downtime_aggregates(db)
 
     # Pool plant OEE and shift attainment straight out of SQL rather than hydrating
     # the whole (growing) production_records and shift_data tables into Python just to
@@ -346,7 +350,7 @@ def get_management_dashboard(db: Session = Depends(_get_db), current_user: dict 
 
     rate = tenant_unit_value(db, request_tenant(current_user))
     return build_management_summary(
-        machines, downtime_logs, [], [], unit_value_gbp=rate,
+        machines, [], [], [], unit_value_gbp=rate, downtime_agg=downtime,
         production_sums=tuple(int(v) for v in production_sums),
         shift_sums=tuple(int(v) for v in shift_sums),
     )

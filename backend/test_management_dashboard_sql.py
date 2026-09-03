@@ -20,7 +20,7 @@ from sqlalchemy.orm import sessionmaker
 
 import analytics_routes
 import models
-from analytics_engine import build_management_summary
+from analytics_engine import build_management_summary, downtime_aggregates
 from database import Base
 
 
@@ -143,6 +143,39 @@ def test_management_dashboard_sums_path_parity_is_exact_unit():
     print("PASS build_management_summary: sums entry-point == rows entry-point (incl. configured £ rate)")
 
 
+def test_management_dashboard_downtime_aggregate_parity():
+    """The downtime rows are the LAST growing table this endpoint hydrates.
+
+    `/analytics/management` scans downtime_logs whole, on a table that grows with
+    TIME rather than with the size of the factory — the same defect #531 fixed on
+    the two polled endpoints, left behind there only because this caller hands
+    the row LIST to build_management_summary rather than consuming it locally.
+
+    The fix is the pattern this file already establishes for production and
+    shifts: a pre-aggregated entry point that must produce a byte-identical
+    dict. `downtime_aggregates` does the tally in SQL with a GROUP BY, which is
+    exact rather than approximate — so this is an equivalence, not a tolerance.
+    """
+    db = _fresh_session()
+    _seed(db)
+    machines = db.query(models.Machine).all()
+    downtime = db.query(models.DowntimeLog).all()
+    shifts = db.query(models.ShiftData).all()
+    records = db.query(models.ProductionRecord).all()
+
+    via_rows = build_management_summary(machines, downtime, shifts, records,
+                                        unit_value_gbp=2.5)
+    via_agg = build_management_summary(machines, [], shifts, records,
+                                       unit_value_gbp=2.5,
+                                       downtime_agg=downtime_aggregates(db))
+    assert via_rows == via_agg, (via_rows, via_agg)
+    # Non-vacuous: the fixture must actually carry downtime, or an empty list
+    # would equal an empty aggregate and this would prove nothing.
+    assert via_rows["total_downtime_minutes"] > 0, via_rows
+    assert via_rows["top_loss_reason"] != "No data", via_rows
+    print("PASS build_management_summary: downtime aggregate == downtime rows")
+
+
 def test_management_dashboard_empty_tables_are_zero_not_a_crash():
     # No production, no shifts, no downtime: the SQL COALESCE(SUM,0)/COUNT drives the
     # empty path (has_data False), so every headline is a clean 0 and nothing divides
@@ -178,6 +211,7 @@ def test_management_dashboard_zero_target_shift_is_zero_not_a_crash():
 if __name__ == "__main__":
     test_management_dashboard_matches_list_summary_and_pools_in_sql()
     test_management_dashboard_sums_path_parity_is_exact_unit()
+    test_management_dashboard_downtime_aggregate_parity()
     test_management_dashboard_empty_tables_are_zero_not_a_crash()
     test_management_dashboard_zero_target_shift_is_zero_not_a_crash()
     print("\nAll management-dashboard SQL-aggregate tests passed.")

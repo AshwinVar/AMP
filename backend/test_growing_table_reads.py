@@ -91,13 +91,11 @@ ALLOWED = {
     "quality_routes.py::generate_defect_escalations":
         "POST /generate-defect-escalations — an on-demand sweep",
 
-    # ---- KNOWN, PENDING. Same defect as #531, not the same fix: this one hands
-    # the row LIST to build_management_summary, so removing the scan means
-    # changing that function's contract too. /analytics/management is NOT in the
-    # dashboard's poll cycle, which is why it is a backlog item and not a P2.
-    "analytics_routes.py::get_management_dashboard":
-        "PENDING — passes the rows to build_management_summary; needs a wider "
-        "change than a helper swap. Not polled. See docs/PERFORMANCE.md.",
+    # /analytics/management was here as KNOWN, PENDING. It is fixed: the scan is
+    # gone, build_management_summary now takes `downtime_agg` the same way it
+    # already took production_sums and shift_sums, and section 2 below flagged
+    # this entry as stale the moment the fix landed — which is what the honesty
+    # check is for.
 }
 
 failures = []

@@ -301,19 +301,38 @@ def build_oee_trends(records):
 
 
 def build_management_summary(machines, downtime_logs, shifts, production_records,
-                             unit_value_gbp=None, production_sums=None, shift_sums=None):
-    reason_minutes = defaultdict(int)
-    machine_minutes = defaultdict(int)
+                             unit_value_gbp=None, production_sums=None, shift_sums=None,
+                             downtime_agg=None):
+    # `downtime_agg` is the same idea as `production_sums` and `shift_sums` above:
+    # let the caller do the tally in SQL and hand in the result, instead of
+    # hydrating a growing table just to add it up in Python. It is the entry
+    # point /analytics/management uses so it stops scanning downtime_logs, which
+    # grows with how long the factory has run rather than with its size — the
+    # defect #531 fixed on the two polled endpoints and could not fix here,
+    # because this caller passes the row LIST rather than consuming it locally.
+    #
+    # An EQUIVALENCE, not an approximation: downtime_aggregates groups by
+    # (machine, reason, duration) and parses each distinct duration once, so the
+    # totals are identical to the loop below. test_management_dashboard_sql.py
+    # asserts the two entry points produce the same dict.
+    if downtime_agg is not None:
+        reason_minutes = defaultdict(int, downtime_agg["minutes_by_reason"])
+        machine_minutes = defaultdict(int, downtime_agg["minutes_by_machine"])
+        total_downtime = downtime_agg["total_minutes"]
+    else:
+        reason_minutes = defaultdict(int)
+        machine_minutes = defaultdict(int)
 
-    for log in downtime_logs:
-        minutes = parse_duration_to_minutes(log.duration)
-        # Coalesce a NULL/empty reason to "Unknown" (see normalize_downtime_reason)
-        # so top_loss_reason is never a literal `null` label — the same convention
-        # the canonical downtime read-model applies.
-        reason_minutes[normalize_downtime_reason(log.reason)] += minutes
-        machine_minutes[log.machine_id] += minutes
+        for log in downtime_logs:
+            minutes = parse_duration_to_minutes(log.duration)
+            # Coalesce a NULL/empty reason to "Unknown" (see
+            # normalize_downtime_reason) so top_loss_reason is never a literal
+            # `null` label — the same convention the canonical downtime
+            # read-model applies.
+            reason_minutes[normalize_downtime_reason(log.reason)] += minutes
+            machine_minutes[log.machine_id] += minutes
 
-    total_downtime = sum(machine_minutes.values())
+        total_downtime = sum(machine_minutes.values())
 
     top_loss_reason = max(reason_minutes.items(), key=lambda x: x[1])[0] if reason_minutes else "No data"
 

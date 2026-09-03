@@ -4,8 +4,8 @@
 > Keep it short. Update it at the end of every completed task.
 
 **Updated:** 2026-09-01
-**Master SHA examined:** `9ca37c2` (589 commits)
-**Production SHA:** `9ca37c2` (verified after merge)  
+**Master SHA examined:** `ce71a6c` (590 commits)
+**Production SHA:** `ce71a6c` (verified after merge — status ok / database ok / schema ok)  
 **Previous:** `0eb94ca` — `/health` `{"status":"ok","database":"ok","schema":"ok"}`
 
 ---

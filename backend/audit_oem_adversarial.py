@@ -552,6 +552,26 @@ def main():
                 check(f"a {name} token cannot POST {verb}", c in (401, 403), str(c))
 
         # A legitimate write must not touch anything the FACTORY owns.
+        #
+        # STATE THE PRECONDITION. Section G above revokes FACTORY_A's grants to
+        # prove revocation takes effect immediately, and never restores them —
+        # so this control ran with consent switched off. That was invisible
+        # until #522 made a caller-supplied `service_hours` a 403 without
+        # SHARE_OPERATING_HOURS (the supplied operand was a bisection oracle on
+        # the hour meter), after which this control reported a permanent BREACH
+        # that was really the product behaving correctly.
+        #
+        # Restored explicitly rather than by moving the section: a control that
+        # depends on the order of everything above it is a control that will
+        # break again the next time a section is inserted.
+        tok3 = tenancy.set_current_tenant(None)
+        (db.query(models.OemDataSharingPolicy)
+           .filter(models.OemDataSharingPolicy.oem_code == "OEM_ALPHA",
+                   models.OemDataSharingPolicy.tenant_code == "FACTORY_A")
+           .update({"grants": "SHARE_OPERATING_HOURS"}, synchronize_session=False))
+        db.commit()
+        tenancy.reset_current_tenant(tok3)
+
         machine_before = db.query(models.Machine).filter(
             models.Machine.tenant_code == "FACTORY_A").first()
         status_before = machine_before.status if machine_before else None
@@ -559,6 +579,28 @@ def main():
         c, _, _ = await http(f"/oem/machines/{mine}/service", alpha,
                              method="POST", payload={"service_hours": 123})
         ok("CONTROL: the machine's OWN maker can record a service", c == 200, str(c))
+
+        # And the other half of #522, which nothing here asserted: WITHOUT the
+        # grant the same call is refused. Without this, restoring the grant
+        # above would hide the very rule that made the control fail.
+        tok3 = tenancy.set_current_tenant(None)
+        (db.query(models.OemDataSharingPolicy)
+           .filter(models.OemDataSharingPolicy.oem_code == "OEM_ALPHA",
+                   models.OemDataSharingPolicy.tenant_code == "FACTORY_A")
+           .update({"grants": ""}, synchronize_session=False))
+        db.commit()
+        tenancy.reset_current_tenant(tok3)
+        c_no, _, _ = await http(f"/oem/machines/{mine}/service", alpha,
+                                method="POST", payload={"service_hours": 456})
+        check("a service READING is refused once the customer withdraws hours",
+              c_no == 403, str(c_no))
+        tok3 = tenancy.set_current_tenant(None)
+        (db.query(models.OemDataSharingPolicy)
+           .filter(models.OemDataSharingPolicy.oem_code == "OEM_ALPHA",
+                   models.OemDataSharingPolicy.tenant_code == "FACTORY_A")
+           .update({"grants": "SHARE_OPERATING_HOURS"}, synchronize_session=False))
+        db.commit()
+        tenancy.reset_current_tenant(tok3)
         db.expire_all()
         machine_after = db.query(models.Machine).filter(
             models.Machine.tenant_code == "FACTORY_A").first()

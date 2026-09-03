@@ -16,7 +16,10 @@ unwindowed.
 """
 from datetime import datetime, timedelta
 
+from sqlalchemy import func
+
 import models
+from duration import parse_duration_to_minutes
 from predictive_engine import ACTIVE_WORK_ORDER_STATUSES, calculate_predictive_risk
 
 name = "prediction"
@@ -24,11 +27,65 @@ name = "prediction"
 RISK_WINDOW_DAYS = 30
 
 
-def assess_risk(machines, downtime_logs, production_records, machine_events, work_orders):
+def assess_risk(machines, downtime_logs, production_records, machine_events,
+                work_orders, aggregates=None):
     """Score failure risk for the given machines. Delegates to the rule engine."""
     return calculate_predictive_risk(
-        machines, downtime_logs, production_records, machine_events, work_orders
+        machines, downtime_logs, production_records, machine_events, work_orders,
+        aggregates=aggregates,
     )
+
+
+def _history_aggregates(db, cutoff):
+    """The three windowed histories, reduced to per-machine counters in SQL.
+
+    Every figure here is what calculate_predictive_risk's loops produced from
+    the rows, computed the same way:
+
+      * duration is a STRING ("15 min"), so it cannot be SUMmed -- but it CAN be
+        grouped. Each DISTINCT (machine, reason, duration) is parsed once and
+        multiplied by its count, which is arithmetically identical to parsing
+        every row. Same technique as analytics_engine.downtime_aggregates.
+      * a breakdown is counted from BOTH sources, exactly as before: a downtime
+        row whose RAW reason lowercases to "breakdown", and a machine event
+        whose new_status is exactly "Breakdown".
+      * SUM over no rows is NULL, so the counts are coalesced to 0 -- the same
+        reading _int() gives a missing count.
+    """
+    downtime_minutes, downtime_events, breakdown_events = {}, {}, {}
+    for machine_id, reason, duration, count in (
+            db.query(models.DowntimeLog.machine_id, models.DowntimeLog.reason,
+                     models.DowntimeLog.duration, func.count())
+              .filter(models.DowntimeLog.created_at >= cutoff)
+              .group_by(models.DowntimeLog.machine_id, models.DowntimeLog.reason,
+                        models.DowntimeLog.duration).all()):
+        downtime_minutes[machine_id] = (downtime_minutes.get(machine_id, 0)
+                                        + parse_duration_to_minutes(duration) * count)
+        downtime_events[machine_id] = downtime_events.get(machine_id, 0) + count
+        if str(reason).lower() == "breakdown":
+            breakdown_events[machine_id] = breakdown_events.get(machine_id, 0) + count
+
+    for machine_id, count in (
+            db.query(models.MachineEvent.machine_id, func.count())
+              .filter(models.MachineEvent.created_at >= cutoff,
+                      models.MachineEvent.new_status == "Breakdown")
+              .group_by(models.MachineEvent.machine_id).all()):
+        breakdown_events[machine_id] = breakdown_events.get(machine_id, 0) + count
+
+    rejects, totals = {}, {}
+    for machine_id, rejected, total in (
+            db.query(models.ProductionRecord.machine_id,
+                     func.coalesce(func.sum(models.ProductionRecord.rejected_count), 0),
+                     func.coalesce(func.sum(models.ProductionRecord.total_count), 0))
+              .filter(models.ProductionRecord.created_at >= cutoff)
+              .group_by(models.ProductionRecord.machine_id).all()):
+        rejects[machine_id] = int(rejected or 0)
+        totals[machine_id] = int(total or 0)
+
+    return {"downtime_minutes": downtime_minutes,
+            "downtime_events": downtime_events,
+            "breakdown_events": breakdown_events,
+            "rejects": rejects, "totals": totals}
 
 
 def assess_from_db(db):
@@ -41,9 +98,13 @@ def assess_from_db(db):
     cutoff = datetime.utcnow() - timedelta(days=RISK_WINDOW_DAYS)
     return assess_risk(
         db.query(models.Machine).all(),
-        db.query(models.DowntimeLog).filter(models.DowntimeLog.created_at >= cutoff).all(),
-        db.query(models.ProductionRecord).filter(models.ProductionRecord.created_at >= cutoff).all(),
-        db.query(models.MachineEvent).filter(models.MachineEvent.created_at >= cutoff).all(),
+        # The three windowed histories are REDUCED IN SQL rather than hydrated.
+        # A 30-day window is not a bound on a table that gains thousands of rows
+        # a day: measured at 200 machines it held 63,036 downtime rows and
+        # 43,198 machine events, ~106,000 ORM objects built on every three-second
+        # poll. /machine-health took 1633 ms, of which 76 ms was SQL. See
+        # _history_aggregates and test_predictive_risk_aggregates.py.
+        (), (), (),
         # Work-order load is point-in-time (unwindowed by date), but only ACTIVE
         # orders carry outstanding demand — the engine sums pressure over exactly
         # ACTIVE_WORK_ORDER_STATUSES. Bound that in SQL rather than hydrating the
@@ -56,6 +117,7 @@ def assess_from_db(db):
         db.query(models.WorkOrder)
         .filter(models.WorkOrder.status.in_(ACTIVE_WORK_ORDER_STATUSES))
         .all(),
+        aggregates=_history_aggregates(db, cutoff),
     )
 
 

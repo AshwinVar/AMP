@@ -1,0 +1,91 @@
+# AMP — Chief Engineer State
+
+> Handover file. A new session should be able to read only this and continue.
+> Keep it short. Update it at the end of every completed task.
+
+**Updated:** 2026-09-01
+**Master SHA examined:** `0eb94ca` (585 commits)
+**Production SHA:** `0eb94ca` — `/health` `{"status":"ok","database":"ok","schema":"ok"}`
+
+---
+
+## LAST COMPLETED TASKS
+
+| Task | Priority | Status |
+|---|---|---|
+| MQTT→WebSocket bridge: `asyncio.run` on a sync callee raised `ValueError` every message; delivery ran on a throwaway event loop | P1 | fixed, tested |
+| MQTT ingest published no domain events — machine-reported breakdowns never reached the bus, so the Escalation agent was blind to them | P1 | fixed, tested |
+| Founder handbook verified against master by 10 subsystem specialists: 385 claims confirmed, 20 misleading | P8 | verification done, doc sync pending |
+
+---
+
+## KNOWN P0 / P1
+
+**None open.** Both P1 defects above are fixed on this branch.
+
+---
+
+## VERIFIED DEFECT BACKLOG
+
+| # | Finding | Verified? | Class | Priority |
+|---|---|---|---|---|
+| 1 | MQTT→WS `asyncio.run(None)` | YES | BUG | **FIXED** |
+| 2 | MQTT publishes no `DowntimeStarted` | YES | BUG | **FIXED** |
+| 3 | 4 of 7 `SHARE_*` grants have no enforcement point | YES | INTENTIONAL — no read path exists, so nothing leaks. Consent recorded ahead of the feature | not a defect |
+| 4 | `oem_claims.accept` sets `status="Assigned"` by bulk UPDATE, bypassing `oem_service.transition` | YES | INTENTIONAL — the conditional UPDATE's row count *is* the security decision; routing it through the state machine would break claim atomicity | document, don't change |
+| 5 | Dashboard polls `fetchAll` every 3s; 87 api call sites; 3 mandatory + ~43 optional | YES (shape) | PERFORMANCE — **not yet measured** | P4, measure first |
+| 6 | Copilot provider coupling | YES | Already has `AI_PROVIDER` anthropic/gemini branching — if/else, not a clean interface | P6 |
+
+---
+
+## PRODUCT COMPLETION BACKLOG
+
+- **`release_installation`** sets `status="Sold"` from any state including `Active` — verify whether the state machine should govern it. UNVERIFIED, needs a look.
+- **`manage_models` / `manage_branding`** capabilities are declared but no route requires them; there is no API to create a machine model (catalogue is seeded). Gap, not a bug.
+- **Load testing has never been run.** `docs/PERFORMANCE.md` and `load/thresholds.js` both say so in their own opening lines. Nothing in CI runs it.
+- **Only 3 of 193 backend suites use a real HTTP client**; the rest call route functions directly. Fast and legitimate, but it is not end-to-end API testing and should not be described as such.
+
+---
+
+## AI ROADMAP PHASE
+
+**Phase 1 — provider abstraction: PARTIALLY PRESENT.**
+`ai_copilot.py` already branches on `AI_PROVIDER` (`anthropic` | `gemini`) with per-provider model defaults and a `urllib` call — no SDK. It is if/else branching rather than an `AIProvider` interface, but it is **not** hard-coupled to one vendor. A clean interface is worthwhile; it is not urgent.
+
+Phases 2–6 not started. Note before starting Phase 2: the LLM is already read-only and is handed a pre-built text context (`_build_factory_context`), which is the correct shape — do not rebuild it.
+
+---
+
+## REAL OEM INPUT REQUIRED
+
+- Which of `SHARE_ALARMS` / `SHARE_TELEMETRY` / `SHARE_MAINTENANCE_HISTORY` / `SHARE_DOWNTIME` matters commercially, and what the data must look like. Alarm codes are meaningless without the manufacturer's fault dictionary.
+- Whether warranty runs from despatch, delivery, installation or commissioning (`warranty_months` is declared and unused for exactly this reason).
+- Any real PLC/controller before touching industrial protocol drivers.
+
+---
+
+## MANUAL ACTION REQUIRED
+
+- **Production has no MQTT broker.** `FastAPI MQTT connection error: ConnectionRefusedError(111)` on every boot; `MQTT_BROKER` is unset. The live-telemetry path therefore does not run in production today. The bridge fix above is correct but latent until a broker exists.
+- `RESEED_FACTORY` is consumed at `274946` and can be deleted from Railway.
+- `docs/training/` is **untracked** — 159 KB of handbook that is not in git and would be lost with the working tree.
+
+---
+
+## NEXT 5 ENGINEERING TASKS
+
+1. **Sync the six training docs** to the 20 verified misleading items (secondary — timebox it).
+2. **Measure the dashboard** before touching it: request count, payload bytes, server time per poll cycle. Only then decide.
+3. **`release_installation` lifecycle** — verify, then either route through `transition()` or document why not.
+4. **AI Phase 1** — extract an `AIProvider` interface behind the existing `AI_PROVIDER` branching, no behaviour change, with tests.
+5. **AI Phase 5 before 3** — build the evaluation harness (deterministic questions with known answers) *before* adding tools, so tool work can be measured.
+
+---
+
+## CONVENTIONS THAT BIND FUTURE SESSIONS
+
+- Failing test first; confirm it fails for the expected reason.
+- Mutation-test every security guard; investigate every surviving mutation.
+- eslint baseline is **exactly 134**.
+- Schema change ⇒ model + Alembic migration + fresh-schema test + upgrade test + PostgreSQL verification.
+- Never weaken a test to make a change pass.

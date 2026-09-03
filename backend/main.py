@@ -23,6 +23,7 @@ from sqlalchemy.exc import IntegrityError
 
 from database import engine, SessionLocal, Base
 from security import hash_password
+import live_ws
 from live_ws import manager
 from mqtt_service import start_mqtt_service
 
@@ -536,6 +537,16 @@ async def startup_event():
     # Re-apply: uvicorn installs its own plain-text handlers after import, which
     # would otherwise emit a second, unstructured copy of every access line.
     logging_config.configure_logging()
+
+    # HAND THE LIVE LAYER THE SERVER'S EVENT LOOP.
+    #
+    # Telemetry is ingested on the MQTT client's worker THREAD, but the WebSocket
+    # objects belong to this loop. A worker thread cannot discover it on its own,
+    # so it is captured here — the one place that is guaranteed to be running on
+    # it — and live_ws.broadcast_live_event schedules onto it with
+    # run_coroutine_threadsafe. Without this the bridge falls back to creating a
+    # throwaway loop and writing to sockets owned by another one.
+    live_ws.bind_loop(asyncio.get_running_loop())
 
     # THE SCHEMA VERDICT, FIRST AND LOUDLY (ADR-0018).
     #

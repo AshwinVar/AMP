@@ -467,11 +467,15 @@ def test_a_broadcast_failure_does_not_lose_the_ingest():
       * a generic error       -> the outer except Exception;
       * a RuntimeError        -> the loop-retry branch, which fails again;
       * a SYNCHRONOUS callee  -> what production actually has. live_ws's
-        broadcast_live_event is a plain def, so safe_broadcast's
-        asyncio.run(broadcast_live_event(event)) hands asyncio.run None and
-        raises ValueError. The event has still been dispatched (the sync call
-        completes first) and the error is swallowed — pinned here so the sync/
-        async mismatch cannot silently become a lost ingest.
+        broadcast_live_event is a plain def, and safe_broadcast now calls it
+        plainly. It used to wrap the call in asyncio.run(...), which was handed
+        the function's None and raised ValueError on EVERY message — swallowed,
+        so the symptom was a permanent error line rather than a visible failure.
+        The delivery that did happen ran on a throwaway event loop instead of
+        the server's. Fixed in live_ws.broadcast_live_event (the thread-to-loop
+        bridge); the shapes are pinned in test_live_broadcast_bridge.py. What
+        this case still guards is the invariant that outlives the fix: whatever
+        the callee does, a broadcast problem must never cost the committed row.
     """
     Session = _setup()
     mqtt_service.safe_broadcast = _REAL_SAFE_BROADCAST      # exercise the real guard
@@ -510,16 +514,24 @@ def test_a_working_broadcast_actually_delivers_the_event():
 
     Without this, 'the DB survived a broadcast failure' would also hold for a
     safe_broadcast that never calls anything at all — the live feed could be
-    permanently dead and every failure test would stay green. An async callee is
-    used because that is the shape asyncio.run expects (and the shape of the
-    fallback mqtt_service defines when live_ws cannot be imported).
+    permanently dead and every failure test would stay green.
+
+    THE CALLEE IS SYNCHRONOUS, which is what production actually has.
+    It used to be `async def` here, justified by the shape `asyncio.run` expects
+    — but `asyncio.run` was itself the bug: `live_ws.broadcast_live_event` is a
+    plain function, so wrapping it handed `asyncio.run` a None and raised
+    ValueError on every message. Both the real function and mqtt_service's
+    import fallback are plain defs now, and this stub matches them. A stub of a
+    shape production does not have is a test that passes for the wrong reason.
+    The thread-to-loop hand-off it replaced is covered by
+    test_live_broadcast_bridge.py.
     """
     Session = _setup()
     mqtt_service.safe_broadcast = _REAL_SAFE_BROADCAST
     original = mqtt_service.broadcast_live_event
     delivered = []
 
-    async def _record(event):
+    def _record(event):
         delivered.append(event)
 
     try:

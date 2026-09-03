@@ -14,6 +14,7 @@ from sqlalchemy.exc import IntegrityError
 from database import SessionLocal
 import models
 import mqtt_identity
+from events import event_bus, DowntimeStarted
 import oem_telemetry
 import tenancy
 from machine_status import clamp_utilization, normalize_machine_status
@@ -25,7 +26,10 @@ log = logging_config.get_logger(__name__)
 try:
     from live_ws import broadcast_live_event
 except Exception:
-    async def broadcast_live_event(event):
+    # A PLAIN def, matching live_ws's real shape. It was `async def` here, which
+    # is what made `asyncio.run(broadcast_live_event(...))` look correct at the
+    # call site while being wrong for the import that actually resolves.
+    def broadcast_live_event(event):
         log.info("Live WebSocket broadcast skipped: %s", event)
 
 
@@ -165,16 +169,23 @@ def get_or_create_machine(db, route, name: str):
 
 
 def safe_broadcast(event: dict):
+    """Push one telemetry update to the live dashboards. Never raises.
+
+    THIS USED TO WRAP THE CALL IN `asyncio.run(...)`. `broadcast_live_event` is
+    a plain function, so the argument was evaluated first — doing the real work —
+    and `asyncio.run` was then handed its None, raising
+    `ValueError: a coroutine was expected, got None` on EVERY message. The error
+    was swallowed and logged as "WebSocket broadcast error", so the symptom was a
+    permanent error line rather than a visible failure; and the delivery that had
+    already happened ran on a throwaway event loop rather than the server's.
+
+    The bridge now owns the thread-to-loop hand-off (live_ws.broadcast_live_event,
+    which is documented not to raise). This wrapper stays as the belt-and-braces
+    guarantee the ingest depends on: a WebSocket problem must cost the live view,
+    never the committed row.
+    """
     try:
-        asyncio.run(broadcast_live_event(event))
-    except RuntimeError:
-        try:
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-            loop.run_until_complete(broadcast_live_event(event))
-            loop.close()
-        except Exception as ws_error:
-            log.info("WebSocket broadcast error: %s", repr(ws_error))
+        broadcast_live_event(event)
     except Exception as ws_error:
         log.info("WebSocket broadcast error: %s", repr(ws_error))
 
@@ -401,6 +412,37 @@ def on_message(client, userdata, msg):
             )
 
             db.add(downtime)
+
+            # AND ANNOUNCE IT (ADR-0001/0003).
+            #
+            # This module used to publish nothing at all, so the platform reacted
+            # to downtime a HUMAN typed at POST /downtime-logs and was blind to
+            # downtime a MACHINE reported. The Escalation agent watches
+            # DowntimeStarted for repeated stoppages; on any factory whose
+            # machines report over MQTT it therefore never fired — silently, with
+            # nothing in the logs, because there was simply never an event.
+            #
+            # Gated on the SAME transition as the DowntimeLog above, deliberately.
+            # A gateway republishes while a machine stays down, and an event per
+            # packet would have the agent escalating a machine that broke once.
+            #
+            # WRAPPED, unlike the HTTP path's identical publish. event_bus
+            # dispatches handlers inside this transaction and does not catch their
+            # exceptions: on the HTTP path that correctly fails the request and the
+            # human retries, but here there is no human and no retry, so a broken
+            # subscriber would roll away a committed stoppage and lose the
+            # telemetry for good. The event row is written and dispatched before
+            # the commit — so a working subscriber still commits atomically with
+            # the log — and only a FAILING one is degraded to a log line.
+            try:
+                event_bus.publish(DowntimeStarted(
+                    tenant_code=machine.tenant_code,
+                    machine_id=machine.id,
+                    reason="Breakdown",
+                    duration=downtime_value,
+                ), db)
+            except Exception as e:                   # noqa: BLE001 - see above
+                log.info("DowntimeStarted subscriber failed (ingest continues): %r", e)
 
         db.commit()
 

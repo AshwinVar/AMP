@@ -10,6 +10,8 @@ rest (ADR-0002).
 from collections import Counter
 from datetime import datetime, timedelta
 
+from sqlalchemy import func
+
 import models
 # Pooled OEE (ratio of sums) is the single source of truth in analytics_engine,
 # shared with build_management_summary / analytics_summary so every surface agrees.
@@ -52,28 +54,64 @@ def _oee_by_machine(db, days: int = 7) -> dict:
 _EMPTY_OEE = {"oee": 0, "availability": 0, "performance": 0, "quality": 0, "has_data": False}
 
 
-def _machine_twin(db, machine, risk, tenant, oee=None) -> dict:
+def _downtime_by_machine(db, limit_each=3):
+    """The `limit_each` most recent downtime rows for EVERY machine, in one query.
+
+    Replaces a per-machine `.limit(3)`, which is where two thirds of this
+    endpoint's N+1 came from. Grouping happens in Python rather than with a
+    window function so the behaviour is identical on SQLite (tests) and
+    PostgreSQL (production) — the ordering is done by the database, and the
+    per-machine cut is a counter.
+
+    Only the four columns actually rendered are selected, so this does not
+    hydrate whole ORM objects for history nobody reads.
+    """
+    rows = (db.query(models.DowntimeLog.machine_id,
+                     models.DowntimeLog.reason,
+                     models.DowntimeLog.duration)
+              .order_by(models.DowntimeLog.id.desc()).all())
+    out = {}
+    for machine_id, reason, duration in rows:
+        bucket = out.setdefault(machine_id, [])
+        if len(bucket) < limit_each:
+            bucket.append({"reason": reason, "duration": duration})
+    return out
+
+
+def _open_task_counts(db):
+    """Open/proposed maintenance tasks per machine, in one grouped query."""
+    rows = (db.query(models.MaintenanceTask.machine_id, func.count())
+              .filter(models.MaintenanceTask.status.in_(("Proposed", "Open")))
+              .group_by(models.MaintenanceTask.machine_id).all())
+    return {machine_id: n for machine_id, n in rows}
+
+
+def _pending_action_counts(db, tenant):
+    """Proposed agent actions per machine, in one grouped query.
+
+    AgentAction is NOT auto-scoped (it is outside SCOPED_MODELS, with a recorded
+    reason in test_unscoped_model_reads.py), so the tenant filter here is
+    explicit and must stay explicit.
+    """
+    rows = (db.query(models.AgentAction.related_machine_id, func.count())
+              .filter(models.AgentAction.tenant_code == tenant,
+                      models.AgentAction.status == "Proposed")
+              .group_by(models.AgentAction.related_machine_id).all())
+    return {machine_id: n for machine_id, n in rows}
+
+
+def _machine_twin(machine, risk, oee=None, recent_downtime=None,
+                  open_tasks=0, pending_actions=0) -> dict:
+    """One machine's twin, from data ALREADY FETCHED.
+
+    Takes no `db` on purpose. It used to, and issued three queries of its own per
+    machine — so a 200-machine plant cost ~600 statements every three seconds,
+    because the dashboard polls this endpoint on a 3s timer. Everything it needs
+    is now gathered once by the caller and handed in.
+    """
     score = int(risk["risk_score"]) if risk else 0
     health = max(0, 100 - score)
-    recent_downtime = (
-        db.query(models.DowntimeLog)
-        .filter(models.DowntimeLog.machine_id == machine.id)
-        .order_by(models.DowntimeLog.id.desc())
-        .limit(3).all()
-    )
-    open_tasks = (
-        db.query(models.MaintenanceTask)
-        .filter(models.MaintenanceTask.machine_id == machine.id,
-                models.MaintenanceTask.status.in_(("Proposed", "Open")))
-        .count()
-    )
-    pending_actions = (
-        db.query(models.AgentAction)
-        .filter(models.AgentAction.tenant_code == tenant,
-                models.AgentAction.related_machine_id == machine.id,
-                models.AgentAction.status == "Proposed")
-        .count()
-    )
+    recent_downtime = recent_downtime or []
     return {
         "machine_id": machine.id,
         "name": machine.name,
@@ -88,7 +126,7 @@ def _machine_twin(db, machine, risk, tenant, oee=None) -> dict:
         "top_reason": (risk["reasons"][0] if risk and risk.get("reasons") else "no major risk indicators"),
         "open_maintenance_tasks": open_tasks,
         "pending_agent_actions": pending_actions,
-        "recent_downtime": [{"reason": d.reason, "duration": d.duration} for d in recent_downtime],
+        "recent_downtime": recent_downtime,
         "oee": oee or _EMPTY_OEE,
     }
 
@@ -98,7 +136,14 @@ def build_twins(db, tenant: str):
     machines = db.query(models.Machine).order_by(models.Machine.id).all()
     risks = {r["machine_id"]: r for r in prediction.assess_from_db(db)}
     oee = _oee_by_machine(db)
-    twins = [_machine_twin(db, m, risks.get(m.id), tenant, oee.get(m.id)) for m in machines]
+    # Gathered ONCE for the whole fleet rather than three queries per machine.
+    downtime = _downtime_by_machine(db)
+    tasks = _open_task_counts(db)
+    actions = _pending_action_counts(db, tenant)
+    twins = [_machine_twin(m, risks.get(m.id), oee.get(m.id),
+                           downtime.get(m.id), tasks.get(m.id, 0),
+                           actions.get(m.id, 0))
+             for m in machines]
     twins.sort(key=lambda t: t["health_score"])
     return twins
 
@@ -252,7 +297,14 @@ def build_machine_detail(db, tenant: str, machine_id: int):
     if not machine:
         return None
     risk = prediction.risk_for_machine(db, machine_id)
-    detail = _machine_twin(db, machine, risk, tenant, _oee_from_records(_recent_production(db, machine_id)))
+    # ONE machine, so the batched gatherers are called for this id only — the
+    # drill-down keeps the same shape as the fleet view without paying for it.
+    detail = _machine_twin(
+        machine, risk,
+        _oee_from_records(_recent_production(db, machine_id)),
+        _downtime_by_machine(db).get(machine_id),
+        _open_task_counts(db).get(machine_id, 0),
+        _pending_action_counts(db, tenant).get(machine_id, 0))
     detail["risk_factors"] = list(risk["reasons"]) if risk and risk.get("reasons") else []
     detail["downtime_7d"] = _downtime_trend(db, machine_id)
     detail["production_7d"] = _machine_production(db, machine_id)

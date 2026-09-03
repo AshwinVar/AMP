@@ -2,10 +2,13 @@
  * Shared configuration for the k6 load scripts.
  *
  * WHY THIS FILE EXISTS
- * AMP has never had a load harness. The "265ms to 13ms" numbers in the commit
- * history came from ad-hoc timings that nobody can reproduce, and the one thing
- * that actually generates load in production — an open dashboard tab issuing 46
- * requests every three seconds — has never been measured at all. Scripts that
+ * The "265ms to 13ms" numbers in the commit history came from ad-hoc timings
+ * that nobody can reproduce. The thing that actually generates load in
+ * production — an open dashboard tab issuing 46 requests every three seconds —
+ * HAS since been measured, but by `backend/loadtest.py`, a Python driver whose
+ * own overhead is 7-12 ms per request. k6 is a real load generator and would
+ * measure the server rather than the client; that is what these scripts are
+ * for, and they have still never been run. See docs/PERFORMANCE.md. Scripts that
  * each roll their own base URL, their own login and their own header assembly
  * drift apart within a week, and then the numbers stop being comparable. So
  * every decision that must be identical across runs lives here: where the load

@@ -26,6 +26,30 @@ durable property; the milliseconds are laptop-specific and are not a production
 figure. `backend/test_machine_health_query_count.py` fails the build if
 per-machine growth returns.
 
+### The whole poll cycle — measured, and now flat
+
+The harness was then extended from 8 endpoints to all **49** the dashboard
+actually fetches (3 mandatory + 43 optional + 3 read-model sections), resolving
+handlers **by path** off `main.app.routes` rather than by hand-written function
+names — the first version reported `ERR` for three endpoints whose handlers were
+named differently than guessed.
+
+| | 10 machines | 200 machines |
+|---|---:|---:|
+| whole refresh | **135 queries** | **135 queries** |
+
+**No endpoint grows with the size of the factory.** After the `/machine-health`
+fix the poll cycle is flat: the heaviest remaining endpoints are
+`/analytics/final-executive-summary` (12), `/machine-health` (10) and
+`/analytics/factory-command-center` (8), and none of them scale.
+
+That is the good news. The number that is still worth a decision is the
+**rate**: 135 queries every 3 seconds, per open tab, is ~45 queries/second/tab
+regardless of factory size. That is a product question (poll interval, batching,
+or pushing more over the existing WebSocket), not a defect, and it should be
+decided against an HTTP-level measurement — `loadtest.py`, which has still never
+been run.
+
 **Method and its limits:** route functions are called directly against a seeded
 database and statements are counted via a SQLAlchemy `before_cursor_execute`
 hook — the same technique `oem_perf.py` uses. It measures SQL shape, **not**

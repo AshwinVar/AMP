@@ -119,26 +119,77 @@ def _chain(node):
     return out
 
 
-def _whole_model_query(call):
-    """If `call` is `db.query(models.X)` on a whole growing model, return X."""
+def _growing_model_query(call):
+    """If `call` is a `db.query(...)` reading a growing table, return the model.
+
+    Matches BOTH the whole model and a column projection of it. The projection
+    used to be exempt, on the grounds that "the row never becomes an ORM
+    object" -- true, and not the point. ai/twin.py selected three columns of
+    every downtime row to render three per machine: 75,000 rows to show 600, and
+    200 ms of /machine-health's 261 ms. Projected rows still cross the wire and
+    are still iterated; only the ORM construction is saved.
+
+    An aggregate is still not a finding: `func.count()` and friends return one
+    row per group, which is the fix, not the defect.
+    """
     f = call.func
     if not (isinstance(f, ast.Attribute) and f.attr == "query"):
         return None
+    # An AGGREGATE select is the fix, not the defect: `func.count()`,
+    # `func.sum()`, `func.row_number()` all return one row per group (or per
+    # partition rank), however many rows the table holds. Selecting columns
+    # ALONGSIDE an aggregate is the GROUP BY shape, so the whole query is exempt.
     for arg in call.args:
-        # `models.DowntimeLog` — an Attribute on the name `models`. A column
-        # (`models.DowntimeLog.machine_id`) is an Attribute whose .value is
-        # itself an Attribute, so it does not match, and neither does func.count().
-        if (isinstance(arg, ast.Attribute)
-                and isinstance(arg.value, ast.Name) and arg.value.id == "models"
-                and arg.attr in GROWING):
-            return arg.attr
+        if (isinstance(arg, ast.Call) and isinstance(arg.func, ast.Attribute)
+                and isinstance(arg.func.value, ast.Name)
+                and arg.func.value.id == "func"):
+            return None
+        if (isinstance(arg, ast.Call) and isinstance(arg.func, ast.Attribute)
+                and arg.func.attr in ("label", "over")):
+            return None
+    for arg in call.args:
+        # models.DowntimeLog            -> Attribute(value=Name("models"))
+        # models.DowntimeLog.machine_id -> Attribute(value=Attribute(...))
+        if isinstance(arg, ast.Attribute):
+            if (isinstance(arg.value, ast.Name) and arg.value.id == "models"
+                    and arg.attr in GROWING):
+                return arg.attr
+            inner = arg.value
+            if (isinstance(inner, ast.Attribute)
+                    and isinstance(inner.value, ast.Name)
+                    and inner.value.id == "models" and inner.attr in GROWING):
+                return inner.attr
     return None
 
 
-def _mentions_created_at(call):
-    return any(isinstance(n, ast.Attribute) and n.attr == "created_at"
-               for a in list(call.args) + [k.value for k in call.keywords]
-               for n in ast.walk(a))
+def _bounding_filter(call):
+    """Does this filter actually limit how many rows come back?
+
+    A `created_at` window does (subject to the row rate -- see
+    test_predictive_risk_aggregates.py, which is the suite for THAT). So does
+    pinning a column to a value or a small set: `machine_id == 4` returns one
+    machine's rows, `status.in_(("Open",))` returns the open ones. A filter that
+    only names the tenant does not -- every row in a single-tenant table matches
+    it -- but tenant scoping is applied by the ORM hook (ADR-0002) rather than
+    written here, so in practice such a predicate does not appear alone.
+    """
+    args = list(call.args) + [k.value for k in call.keywords]
+    for a in args:
+        for n in ast.walk(a):
+            if isinstance(n, ast.Attribute) and n.attr == "created_at":
+                return True
+            if isinstance(n, ast.Compare) and any(
+                    isinstance(op, (ast.Eq, ast.In)) for op in n.ops):
+                return True
+            # `.in_((...))` pins to a small set. `.is_(None)` does NOT bound
+            # anything -- it was in this list briefly and made
+            # factory_ops_routes' overdue sweep look bounded because of an
+            # `or_(status.is_(None), status != "Completed")`, which selects
+            # every unfinished task ever planned.
+            if (isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute)
+                    and n.func.attr == "in_"):
+                return True
+    return bool(call.keywords)          # .filter_by(machine_id=4)
 
 
 def scan(path):
@@ -164,11 +215,11 @@ def scan(path):
             f = c.func
             if not isinstance(f, ast.Attribute):
                 continue
-            if f.attr == "limit":
+            if f.attr in ("limit", "group_by"):
                 bounded = True
-            if f.attr in ("filter", "filter_by", "where") and _mentions_created_at(c):
+            if f.attr in ("filter", "filter_by", "where") and _bounding_filter(c):
                 bounded = True
-            m = _whole_model_query(c)
+            m = _growing_model_query(c)
             if m:
                 model = m
         if model and not bounded:
@@ -184,7 +235,15 @@ def route_files():
     a dozen suites for doing exactly what they are meant to do.
     """
     return sorted(p for p in glob.glob(os.path.join(HERE, "*_routes.py"))
-                  + [os.path.join(HERE, "analytics_engine.py")]
+                  + [os.path.join(HERE, "analytics_engine.py"),
+                     os.path.join(HERE, "predictive_engine.py")]
+                  # ai/ IS application code on the request path: ai/twin.py backs
+                  # /machine-health, ai/prediction.py backs
+                  # /analytics/predictive-maintenance. Leaving the package out is
+                  # why this guard did not see the projection scan in
+                  # ai/twin.py::_downtime_by_machine -- the very defect the
+                  # projection exemption was also hiding. Two holes, same miss.
+                  + glob.glob(os.path.join(HERE, "ai", "*.py"))
                   if not os.path.basename(p).startswith("test_"))
 
 

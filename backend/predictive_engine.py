@@ -51,13 +51,39 @@ def recommendation(score: int):
         return "Monitor condition and review recent downtime history."
     return "Machine condition appears stable."
 
-def calculate_predictive_risk(machines, downtime_logs, production_records, machine_events, work_orders):
-    downtime_by_machine = defaultdict(int)
-    downtime_events_by_machine = defaultdict(int)
-    breakdown_events_by_machine = defaultdict(int)
-    reject_by_machine = defaultdict(int)
-    total_by_machine = defaultdict(int)
+def calculate_predictive_risk(machines, downtime_logs, production_records,
+                              machine_events, work_orders, aggregates=None):
+    """Score failure risk per machine.
+
+    `aggregates` is the pre-reduced form of the three history lists, the same
+    idea as build_management_summary's `production_sums` / `downtime_agg`. None
+    of the three lists is ever read row by row below -- each is folded into
+    per-machine counters, and every one of those counters is a GROUP BY. So a
+    caller that can do the reduction in SQL should, and `ai.prediction
+    .assess_from_db` does: at 200 machines with a month of history those lists
+    were ~106,000 ORM objects on a three-second poll (1633 ms for
+    /machine-health, of which only 76 ms was SQL).
+
+    The rows entry point is unchanged and still used by callers that already
+    hold the lists. test_predictive_risk_aggregates.py asserts the two paths
+    score identically, including the awkward rows: a duration that does not
+    parse, a blank reason, and "breakdown" in either case.
+    """
     work_order_pressure = defaultdict(int)
+
+    if aggregates is not None:
+        downtime_by_machine = defaultdict(int, aggregates["downtime_minutes"])
+        downtime_events_by_machine = defaultdict(int, aggregates["downtime_events"])
+        breakdown_events_by_machine = defaultdict(int, aggregates["breakdown_events"])
+        reject_by_machine = defaultdict(int, aggregates["rejects"])
+        total_by_machine = defaultdict(int, aggregates["totals"])
+        downtime_logs = production_records = machine_events = ()
+    else:
+        downtime_by_machine = defaultdict(int)
+        downtime_events_by_machine = defaultdict(int)
+        breakdown_events_by_machine = defaultdict(int)
+        reject_by_machine = defaultdict(int)
+        total_by_machine = defaultdict(int)
 
     for log in downtime_logs:
         downtime_by_machine[log.machine_id] += parse_duration_to_minutes(log.duration)

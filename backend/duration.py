@@ -15,10 +15,27 @@ into every downtime rollup, the cost-of-losses £ and the risk score. Operators
 type this field free-hand, so decimals are real input.
 """
 import re
+from functools import lru_cache
 
 _NUM = r"(\d+(?:\.\d+)?)"
 
 
+# Memoised because the aggregate paths call this once per DISTINCT duration
+# GROUP rather than once per row, and a factory types the same handful of
+# durations over and over -- ~11,000 groups over ~55 distinct strings at 200
+# machines with a month of history.
+#
+# Worth being precise about the size of this. I predicted it would remove most
+# of /machine-health's Python time; it did not. Measured, it took that endpoint
+# from 282.8 ms to 261.8 ms -- about 8%. The real cost was elsewhere (a
+# projection scan in ai/twin.py). Kept because it is free and correct, not
+# because it was the fix.
+#
+# Safe to cache: a pure function of its argument -- no clock, no database, no
+# globals -- so the same string always yields the same number. Bounded at 4096
+# because `value` is FREE TEXT an operator types, and an unbounded cache keyed
+# on user input grows without limit.
+@lru_cache(maxsize=4096)
 def parse_duration_to_minutes(value: str) -> int:
     if not value:
         return 0

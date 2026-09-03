@@ -314,6 +314,33 @@ above assume roughly 7 machine events and 10 downtime events per machine per
 day; a busier plant reaches them sooner and a quieter one later, but nothing in
 the code now grows with either.
 
+### Reads while telemetry is arriving
+
+Every other figure in this document was measured with the database idle. AMP's
+actual claim is live telemetry *while* dashboards are open, so reads were
+re-timed against a writer running the ingest pattern — update the machine's
+status/utilisation, append a `MachineEvent` — on the 455,000-row factory.
+
+| write load | `/machine-health` | `/analytics/executive-oee` | `/machines` |
+|---|---:|---:|---:|
+| none | 71.6 ms | 32.5 ms | 1.6 ms |
+| **122 writes/s** — one message per machine per second | 70.4 ms | 35.0 ms | 1.6 ms |
+| 1,000 writes/s | 100.3 ms | 46.7 ms | 1.6 ms |
+| 1,434 writes/s (4 writers) | 78.6 ms | 36.7 ms | 3.2 ms |
+
+**At the rate a 200-machine factory actually produces, there is no measurable
+interference** — the reads are within noise of idle.
+
+**The high-rate rows are noisy and are not a curve.** One writer at 1,000/s
+degraded `/machine-health` by 40%; four writers at a *higher* 1,434/s degraded it
+by 10%. Those cannot both be the trend. All that is established above the
+realistic rate is "something starts to show around 5× it", and characterising it
+needs more than three endpoints at five samples each.
+
+What this does *not* cover: one tenant, one machine, and the writer in the same
+process as the reader. It says the ingest path and the dashboard do not obviously
+fight each other. It does not say they never will.
+
 ### The live layer is not a constraint at any measured size
 
 | at 1000 machines | |
@@ -335,7 +362,8 @@ anywhere near a limit, and neither needs work.
   client the wrong tool above that. The k6 scripts under `load/` exist for this
   and have genuinely never been run.
 * Anything above 1000 machines, and any tenant count above one.
-* Write load. Every endpoint measured here is a read.
+* ~~Write load~~ — **measured; no interference at realistic rates.** See
+  "Reads while telemetry is arriving" below.
 * **Tables that grow with TIME rather than with machine count.** Only
   `downtime_logs` has been examined this way, and it held a 50× defect that
   every per-machine harness missed. `machine_events`, `audit_logs`,

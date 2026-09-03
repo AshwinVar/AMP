@@ -13,6 +13,7 @@ from datetime import datetime, timedelta
 from sqlalchemy import func
 
 import models
+import tenancy
 # Pooled OEE (ratio of sums) is the single source of truth in analytics_engine,
 # shared with build_management_summary / analytics_summary so every surface agrees.
 # Re-exported under the name the pillar modules (oee, losses, scorecard) import.
@@ -58,23 +59,54 @@ def _downtime_by_machine(db, limit_each=3):
     """The `limit_each` most recent downtime rows for EVERY machine, in one query.
 
     Replaces a per-machine `.limit(3)`, which is where two thirds of this
-    endpoint's N+1 came from. Grouping happens in Python rather than with a
-    window function so the behaviour is identical on SQLite (tests) and
-    PostgreSQL (production) — the ordering is done by the database, and the
-    per-machine cut is a counter.
+    endpoint's N+1 came from. The per-machine cut is done by the DATABASE, with
+    a window function.
 
-    Only the four columns actually rendered are selected, so this does not
-    hydrate whole ORM objects for history nobody reads.
+    It used to be done in Python, on the stated grounds that a window function
+    would not behave identically on SQLite (tests) and PostgreSQL (production).
+    That was true while SQLite predated 3.25; the interpreter here bundles 3.38
+    and CI runs the same Python, so `row_number()` works on both.
+
+    The Python version selected three columns of EVERY row and threw away all
+    but three per machine: 75,000 rows to render 600 at 200 machines with a
+    month of history, and 200 ms of this endpoint's 261 ms. Selecting only the
+    rendered columns did avoid hydrating ORM objects — real, but never the cost.
+    The rows still crossed the wire and were still iterated.
     """
-    rows = (db.query(models.DowntimeLog.machine_id,
-                     models.DowntimeLog.reason,
-                     models.DowntimeLog.duration)
-              .order_by(models.DowntimeLog.id.desc()).all())
+    # Belt and braces on the tenant, and it is worth being exact about which.
+    #
+    # I added this predicate expecting the ADR-0002 hook not to reach inside a
+    # subquery — the hook scopes a select whose entity is a MODEL, and the
+    # statement below selects from a SUBQUERY. Checked directly: it DOES reach,
+    # and removing this filter leaks nothing. So this is defence in depth, not
+    # the thing preventing a leak, and a mutation that deletes it survives both
+    # this module's suites for that reason.
+    #
+    # Kept anyway. The hook's coverage here is a property of how SQLAlchemy
+    # composes the statement, and tenant isolation is the wrong place to depend
+    # on that. current_tenant() is the same value the hook uses; None (an
+    # unscoped context such as a migration or an admin task) keeps the previous
+    # unfiltered behaviour rather than silently returning nothing.
+    # test_twin_downtime_bounded.py section 2 pins the outcome either way.
+    ranked = db.query(
+        models.DowntimeLog.machine_id.label("machine_id"),
+        models.DowntimeLog.reason.label("reason"),
+        models.DowntimeLog.duration.label("duration"),
+        func.row_number().over(
+            partition_by=models.DowntimeLog.machine_id,
+            order_by=models.DowntimeLog.id.desc()).label("rank"))
+    tenant = tenancy.current_tenant()
+    if tenant is not None:
+        ranked = ranked.filter(models.DowntimeLog.tenant_code == tenant)
+    ranked = ranked.subquery()
+
     out = {}
-    for machine_id, reason, duration in rows:
-        bucket = out.setdefault(machine_id, [])
-        if len(bucket) < limit_each:
-            bucket.append({"reason": reason, "duration": duration})
+    for machine_id, reason, duration in (
+            db.query(ranked.c.machine_id, ranked.c.reason, ranked.c.duration)
+              .filter(ranked.c.rank <= limit_each)
+              .order_by(ranked.c.machine_id, ranked.c.rank).all()):
+        out.setdefault(machine_id, []).append(
+            {"reason": reason, "duration": duration})
     return out
 
 

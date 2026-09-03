@@ -211,6 +211,62 @@ the column to read and raw milliseconds are only meaningful within one run.
 than printing two columns and leaving the reader to draw the wrong conclusion —
 which is what happened here, to me, before the normalisation existed.
 
+### The defect none of the harnesses could see: tables that grow with TIME
+
+Every performance harness in this repo — `dashboard_perf.py`, `loadtest.py`,
+`oem_perf.py` — seeds rows **per machine**. So `downtime_logs` never held more
+rows than the factory had machines, and two endpoints on the 3-second poll were
+reading **all of it, unfiltered and unlimited**, on every request.
+
+`downtime_logs` does not grow with the size of the factory. It grows with how
+long the factory has been running. Measured on PostgreSQL 18.3, 200 machines,
+handler time only — no HTTP, no queueing:
+
+| downtime rows | `/analytics/executive-oee` | `/analytics/factory-command-center` |
+|---:|---:|---:|
+| ~200 (what the harnesses seeded) | 6.9 ms | 16.8 ms |
+| 5,000 | — | — |
+| **75,000** (one year, 200 machines) | **822.0 ms** | **859.6 ms** |
+
+`/analytics/summary`, which backs the `/reports/daily-summary.txt` download,
+went 3.7 ms → 925.6 ms on the same curve — linear in row count, forever.
+
+**The fix, and why an earlier pass correctly gave up on it.** A comment at
+`analytics_routes.py:950` said this scan "genuinely can't move into SQL", and
+its reasoning was right: `DowntimeLog.duration` is a **string** (`"15 min"`), so
+no portable SQL can `SUM` it. But SQL can still `GROUP BY` it:
+
+```sql
+SELECT machine_id, reason, duration, COUNT(*) ... GROUP BY 1, 2, 3
+```
+
+Python then parses each **distinct** duration once and multiplies by its count.
+Parsing is a pure function of the string, so the result is *arithmetically
+identical* — not an approximation, not a sample. At 75,000 rows the table
+collapses to 2,200 groups:
+
+| endpoint | before | after | |
+|---|---:|---:|---:|
+| `/analytics/executive-oee` | 822.0 ms | **17.6 ms** | 46.8× |
+| `/analytics/factory-command-center` | 859.6 ms | **17.0 ms** | 50.6× |
+| `/analytics/summary` | 925.6 ms | **18.5 ms** | 50.2× |
+
+A `.limit()` was never an option — it would silently drop downtime and corrupt
+availability. Nor was a date window: these endpoints report lifetime totals and
+their production figures are lifetime too, so narrowing one side would make the
+pair inconsistent. A numeric `duration_minutes` column is the textbook fix and
+would need a migration, a backfill and a dual-write; it is not needed to remove
+the scan.
+
+**The lesson is about the harnesses, not the endpoints.** A per-machine seed can
+only find costs that scale with machine count. `test_downtime_scan_bounded.py`
+seeds rows independently of the machine count for exactly this reason, and
+asserts the *shape of the SQL* rather than a wall time.
+
+Still unfixed, same pattern: `/analytics/management` (`analytics_routes.py:318`)
+passes the row list on to `build_management_summary`, so it needs a wider change
+than a helper swap.
+
 ### The live layer is not a constraint at any measured size
 
 | at 1000 machines | |
@@ -233,6 +289,11 @@ anywhere near a limit, and neither needs work.
   and have genuinely never been run.
 * Anything above 1000 machines, and any tenant count above one.
 * Write load. Every endpoint measured here is a read.
+* **Tables that grow with TIME rather than with machine count.** Only
+  `downtime_logs` has been examined this way, and it held a 50× defect that
+  every per-machine harness missed. `machine_events`, `audit_logs`,
+  `agent_actions`, `production_records`, `inventory_transactions` and
+  `quality_inspections` grow the same way and have NOT been measured at age.
 
 ---
 

@@ -87,7 +87,7 @@ Phases 2–6 not started. Note before starting Phase 2: the LLM is already read-
 
 ## HARNESS DEBT
 
-- **`audit_oem_adversarial.py` reports a false BREACH** and has since #522. Its CONTROL posts `{"service_hours": 123}` to `/oem/machines/{id}/service`, and #522 correctly made that a 403 when the factory has not granted `SHARE_OPERATING_HOURS` — a caller-supplied operand was a bisection oracle on the hour meter. The product is right; the harness fixture was not updated. Verified pre-existing by running the audit on master. Fix: grant the permission in its fixture, or split into "record a service" (no hours, expect 200) and "record hours without consent" (expect 403). **A harness that cries wolf gets ignored, so this is worth an hour.**
+- ~~`audit_oem_adversarial.py` reports a false BREACH~~ — **FIXED.** My first diagnosis of it was wrong and is corrected here: I recorded that the fixture "was not updated" to grant `SHARE_OPERATING_HOURS`. It does grant it. The real cause is **ordering** — section G ("revocation takes effect on the next request") sets `pol.grants = ""` to prove revocation works and never restores it, so a control 200 lines later ran with consent switched off. Invisible until #522 made a caller-supplied `service_hours` a 403 without that grant. The control now states its own precondition instead of depending on everything above it, and the other half of #522's rule — the same call **refused** without consent — is asserted too, which nothing did before. 138 → 141 checks, no breaches; verified non-vacuous by removing #522's guard.
 
 ---
 

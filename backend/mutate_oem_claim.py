@@ -52,7 +52,8 @@ MUTATIONS = [
     ("the machine can be taken even if it already has a factory",
      "oem_claims.py",
      "              .filter(models.MachineInstallation.id == installation.id,\n"
-     "                      models.MachineInstallation.factory_tenant_code.is_(None))",
+     "                      models.MachineInstallation.factory_tenant_code.is_(None),\n"
+     "                      not_terminal_clause())",
      "              .filter(models.MachineInstallation.id == installation.id)"),
     ("a lost race is reported as a win", "oem_claims.py",
      "    if won != 1:\n        return False", "    if False:\n        return False"),
@@ -67,7 +68,8 @@ MUTATIONS = [
        "                     models.MachineClaim.status == PENDING)",
        "             .filter(models.MachineClaim.id == claim.id)"),
       ("              .filter(models.MachineInstallation.id == installation.id,\n"
-       "                      models.MachineInstallation.factory_tenant_code.is_(None))",
+       "                      models.MachineInstallation.factory_tenant_code.is_(None),\n"
+       "                      not_terminal_clause())",
        "              .filter(models.MachineInstallation.id == installation.id)")],
      None),
 

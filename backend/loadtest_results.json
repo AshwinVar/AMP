@@ -13,7 +13,8 @@
         "xfloor": 3.1,
         "codes": {
           "200": 1807
-        }
+        },
+        "service_ms": 3.3
       },
       {
         "path": "/oee/summary",
@@ -26,7 +27,8 @@
         "xfloor": 3.6,
         "codes": {
           "200": 1516
-        }
+        },
+        "service_ms": 4.0
       },
       {
         "path": "/analytics/summary",
@@ -39,7 +41,8 @@
         "xfloor": 11.2,
         "codes": {
           "200": 498
-        }
+        },
+        "service_ms": 12.0
       },
       {
         "path": "/analytics/executive-oee",
@@ -52,7 +55,8 @@
         "xfloor": 10.6,
         "codes": {
           "200": 536
-        }
+        },
+        "service_ms": 11.2
       },
       {
         "path": "/work-orders",
@@ -65,7 +69,8 @@
         "xfloor": 3.7,
         "codes": {
           "200": 1449
-        }
+        },
+        "service_ms": 4.1
       },
       {
         "path": "/inventory/items",
@@ -78,7 +83,8 @@
         "xfloor": 3.3,
         "codes": {
           "200": 1690
-        }
+        },
+        "service_ms": 3.5
       },
       {
         "path": "/downtime-logs",
@@ -91,7 +97,8 @@
         "xfloor": 3.3,
         "codes": {
           "200": 1700
-        }
+        },
+        "service_ms": 3.5
       },
       {
         "path": "/agent-actions",
@@ -104,7 +111,8 @@
         "xfloor": 3.1,
         "codes": {
           "200": 1719
-        }
+        },
+        "service_ms": 3.5
       }
     ],
     "db_ms": {
@@ -123,7 +131,8 @@
       "seconds": 4.0,
       "msgs_per_sec": 41888
     },
-    "measured": "2026-09-03 18:18 UTC"
+    "measured": "2026-09-03 18:18 UTC",
+    "concurrency": 8
   },
   "50": {
     "floor_ms": 9.1,
@@ -139,7 +148,8 @@
         "xfloor": 2.7,
         "codes": {
           "200": 1493
-        }
+        },
+        "service_ms": 4.0
       },
       {
         "path": "/oee/summary",
@@ -152,7 +162,8 @@
         "xfloor": 3.5,
         "codes": {
           "200": 1117
-        }
+        },
+        "service_ms": 5.4
       },
       {
         "path": "/analytics/summary",
@@ -165,7 +176,8 @@
         "xfloor": 11.8,
         "codes": {
           "200": 381
-        }
+        },
+        "service_ms": 15.7
       },
       {
         "path": "/analytics/executive-oee",
@@ -178,7 +190,8 @@
         "xfloor": 9.6,
         "codes": {
           "200": 452
-        }
+        },
+        "service_ms": 13.3
       },
       {
         "path": "/work-orders",
@@ -191,7 +204,8 @@
         "xfloor": 2.9,
         "codes": {
           "200": 1381
-        }
+        },
+        "service_ms": 4.3
       },
       {
         "path": "/inventory/items",
@@ -204,7 +218,8 @@
         "xfloor": 2.9,
         "codes": {
           "200": 1430
-        }
+        },
+        "service_ms": 4.2
       },
       {
         "path": "/downtime-logs",
@@ -217,7 +232,8 @@
         "xfloor": 2.8,
         "codes": {
           "200": 1520
-        }
+        },
+        "service_ms": 3.9
       },
       {
         "path": "/agent-actions",
@@ -230,7 +246,8 @@
         "xfloor": 2.5,
         "codes": {
           "200": 1665
-        }
+        },
+        "service_ms": 3.6
       }
     ],
     "db_ms": {
@@ -249,7 +266,8 @@
       "seconds": 4.0,
       "msgs_per_sec": 41814
     },
-    "measured": "2026-09-03 18:18 UTC"
+    "measured": "2026-09-03 18:18 UTC",
+    "concurrency": 8
   },
   "250": {
     "floor_ms": 6.6,
@@ -265,7 +283,8 @@
         "xfloor": 5.7,
         "codes": {
           "200": 769
-        }
+        },
+        "service_ms": 7.8
       },
       {
         "path": "/oee/summary",
@@ -278,7 +297,8 @@
         "xfloor": 6.3,
         "codes": {
           "200": 859
-        }
+        },
+        "service_ms": 7.0
       },
       {
         "path": "/analytics/summary",
@@ -291,7 +311,8 @@
         "xfloor": 28.9,
         "codes": {
           "200": 269
-        }
+        },
+        "service_ms": 22.3
       },
       {
         "path": "/analytics/executive-oee",
@@ -304,7 +325,8 @@
         "xfloor": 29.5,
         "codes": {
           "200": 247
-        }
+        },
+        "service_ms": 24.3
       },
       {
         "path": "/work-orders",
@@ -317,7 +339,8 @@
         "xfloor": 6.3,
         "codes": {
           "200": 800
-        }
+        },
+        "service_ms": 7.5
       },
       {
         "path": "/inventory/items",
@@ -330,7 +353,8 @@
         "xfloor": 7.0,
         "codes": {
           "200": 655
-        }
+        },
+        "service_ms": 9.2
       },
       {
         "path": "/downtime-logs",
@@ -343,7 +367,8 @@
         "xfloor": 4.3,
         "codes": {
           "200": 1220
-        }
+        },
+        "service_ms": 4.9
       },
       {
         "path": "/agent-actions",
@@ -356,7 +381,8 @@
         "xfloor": 4.5,
         "codes": {
           "200": 1285
-        }
+        },
+        "service_ms": 4.7
       }
     ],
     "db_ms": {
@@ -375,7 +401,8 @@
       "seconds": 4.0,
       "msgs_per_sec": 41382
     },
-    "measured": "2026-09-03 18:18 UTC"
+    "measured": "2026-09-03 18:18 UTC",
+    "concurrency": 8
   },
   "1000": {
     "floor_ms": 7.3,
@@ -391,7 +418,8 @@
         "xfloor": 25.1,
         "codes": {
           "200": 251
-        }
+        },
+        "service_ms": 23.9
       },
       {
         "path": "/oee/summary",
@@ -404,7 +432,8 @@
         "xfloor": 5.4,
         "codes": {
           "200": 851
-        }
+        },
+        "service_ms": 7.1
       },
       {
         "path": "/analytics/summary",
@@ -417,7 +446,8 @@
         "xfloor": 63.6,
         "codes": {
           "200": 112
-        }
+        },
+        "service_ms": 53.5
       },
       {
         "path": "/analytics/executive-oee",
@@ -430,7 +460,8 @@
         "xfloor": 78.4,
         "codes": {
           "200": 89
-        }
+        },
+        "service_ms": 67.6
       },
       {
         "path": "/work-orders",
@@ -443,7 +474,8 @@
         "xfloor": 5.4,
         "codes": {
           "200": 809
-        }
+        },
+        "service_ms": 7.4
       },
       {
         "path": "/inventory/items",
@@ -456,7 +488,8 @@
         "xfloor": 22.2,
         "codes": {
           "200": 382
-        }
+        },
+        "service_ms": 15.7
       },
       {
         "path": "/downtime-logs",
@@ -469,7 +502,8 @@
         "xfloor": 4.0,
         "codes": {
           "200": 1174
-        }
+        },
+        "service_ms": 5.1
       },
       {
         "path": "/agent-actions",
@@ -482,7 +516,8 @@
         "xfloor": 8.1,
         "codes": {
           "200": 657
-        }
+        },
+        "service_ms": 9.1
       }
     ],
     "db_ms": {
@@ -501,6 +536,7 @@
       "seconds": 4.0,
       "msgs_per_sec": 41193
     },
-    "measured": "2026-09-03 18:18 UTC"
+    "measured": "2026-09-03 18:18 UTC",
+    "concurrency": 8
   }
 }

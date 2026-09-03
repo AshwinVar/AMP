@@ -88,18 +88,20 @@ section after next shows why, with three runs of identical code.
 
 ### The scaling curve
 
-p50 ms, and the same figure as a multiple of the client floor.
+p50 ms. **Read the correction two sections down before quoting any of these as
+user latency** — they are measured under 8 concurrent clients and are mostly
+queueing.
 
-| endpoint | 10 | 50 | 250 | **1000** | growth | **xfloor @1000** |
+| endpoint | 10 | 50 | 250 | **1000** | growth | **1 user waits @1000** |
 |---|---:|---:|---:|---:|---:|---:|
-| `/machines` | 21.5 | 24.7 | 38.0 | **184.2** | 8.6× | **25×** |
-| `/analytics/executive-oee` | 73.5 | 86.8 | 195.7 | **574.5** | 7.8× | **78×** |
-| `/inventory/items` | 22.9 | 25.9 | 46.4 | **162.7** | 7.1× | **22×** |
-| `/analytics/summary` | 77.7 | 107.2 | 191.8 | **466.2** | 6.0× | **64×** |
-| `/agent-actions` | 21.6 | 22.6 | 29.7 | **59.4** | 2.7× | 8× |
-| `/oee/summary` | 25.1 | 31.9 | 41.9 | **39.8** | 1.6× | 5× |
-| `/work-orders` | 26.0 | 26.7 | 41.6 | **39.4** | 1.5× | 5× |
-| `/downtime-logs` | 22.6 | 25.0 | 28.6 | **29.5** | 1.3× | 4× |
+| `/machines` | 21.5 | 24.7 | 38.0 | **184.2** | 8.6× | **23.9 ms** |
+| `/analytics/executive-oee` | 73.5 | 86.8 | 195.7 | **574.5** | 7.8× | **67.6 ms** |
+| `/inventory/items` | 22.9 | 25.9 | 46.4 | **162.7** | 7.1× | **15.7 ms** |
+| `/analytics/summary` | 77.7 | 107.2 | 191.8 | **466.2** | 6.0× | **53.5 ms** |
+| `/agent-actions` | 21.6 | 22.6 | 29.7 | **59.4** | 2.7× | 9.1 ms |
+| `/oee/summary` | 25.1 | 31.9 | 41.9 | **39.8** | 1.6× | 7.1 ms |
+| `/work-orders` | 26.0 | 26.7 | 41.6 | **39.4** | 1.5× | 7.4 ms |
+| `/downtime-logs` | 22.6 | 25.0 | 28.6 | **29.5** | 1.3× | 5.1 ms |
 
 **Four endpoints are flat and four are not, and the reason is one line of code
 in each.** Every list endpoint has a hard row cap except one:
@@ -141,14 +143,47 @@ of statements. It is not an N+1, so the batching fix that took `/machine-health`
 from 607 queries to 10 in #525 does not apply here; the fix would be to stop
 building a full-fleet object per poll.
 
-`/analytics/executive-oee` at 1000 machines costs **575 ms** and sustains
-**14.8 RPS**, on an endpoint the dashboard polls every 3 seconds. That is the
-worst measured number in AMP.
+### CORRECTION: those p50s are queueing, not what a user waits
 
-**It is not yet a customer problem.** At 250 machines — larger than any factory
-AMP serves today — the worst endpoint is 196 ms and the poll cycle is
-comfortable. This is recorded as a measured P4, not an emergency, and the
-measurement is here so the decision can be made from numbers when it matters.
+The first version of this section called 575 ms "the worst measured number in
+AMP". That reading is wrong, and the error is worth keeping written down because
+every load-test table invites it.
+
+The driver keeps **8 requests in flight at all times**. Little's Law — for a
+system with L requests in flight and throughput λ, latency W = L/λ — is an
+identity, not an approximation. So against a saturated server the measured p50
+is *pinned* to 8/RPS, and it describes what the **last of eight simultaneous
+callers** waits. Checked against the data:
+
+| endpoint @1000 | p50 | 8/RPS predicts | ratio |
+|---|---:|---:|---:|
+| `/analytics/executive-oee` | 574.5 ms | 540.5 ms | 1.06 |
+| `/analytics/summary` | 466.2 ms | 427.8 ms | 1.09 |
+| `/machines` | 184.2 ms | 191.4 ms | 0.96 |
+
+The four slow endpoints land at 1.01–1.09 — fully saturated, so their p50 is
+almost entirely queue. The eight faster ones sit at 0.61–0.81, below the
+identity because p50 is a median and the latency distribution is right-skewed.
+
+**The service time — 1000/RPS, what one user waits with nobody ahead of them —
+is the other number, and it is up to 8.5× smaller:**
+
+| endpoint @1000 machines | p50 under 8 clients | **one user waits** |
+|---|---:|---:|
+| `/analytics/executive-oee` | 574.5 ms | **67.6 ms** |
+| `/analytics/summary` | 466.2 ms | **53.5 ms** |
+| `/machines` | 184.2 ms | **23.9 ms** |
+
+Both are real; they answer different questions. Quote the **p50 for capacity**
+(what happens when eight callers arrive together) and the **service time for
+latency** (what one user experiences). `loadtest.py` now prints both and names
+which endpoints are saturated, so the table cannot be misread the way I misread
+it.
+
+Neither number makes this urgent. At 250 machines — larger than any factory AMP
+serves today — the worst service time is **24 ms** and the worst saturated p50
+is 196 ms. Recorded as a measured **P4**, so the decision can be made from
+numbers when it matters.
 
 ### Why `xfloor` and not milliseconds: three runs of identical code
 

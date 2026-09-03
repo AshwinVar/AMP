@@ -337,6 +337,12 @@ NOISE = 0.25
 # thing being measured -- the docstring's warning, made checkable.
 FLOOR_SUSPECT = 1.5
 
+# How close a p50 must come to C/RPS before it is called queueing rather than
+# service time. Measured: across 32 endpoint/scale pairs the ratio was 1.01-1.09
+# for the four saturated endpoints and 0.61-0.81 for the eight that were not, so
+# the two populations are cleanly separated and 0.10 sits in the gap.
+QUEUE_TOL = 0.10
+
 
 def load_baseline():
     """The previous run's numbers, read BEFORE this run overwrites them."""
@@ -396,6 +402,36 @@ def verdict(baseline, results):
     else:
         print(f"  every endpoint came in above {FLOOR_SUSPECT}x the client floor, "
               f"so each figure is measuring the server.")
+
+    # --- is p50 measuring the server, or the queue in front of it? ---------
+    # Little's Law: with C clients kept busy against a saturated server,
+    # latency = C / throughput. When a measured p50 matches C/RPS, that p50 is
+    # very nearly ALL queueing -- it is what the LAST of C simultaneous callers
+    # waits, not what one user waits. The service time 1000/RPS is the latter,
+    # and the two differ by most exactly where the numbers look worst.
+    print()
+    queued = []
+    for n, r in sorted(results.items(), key=lambda kv: int(kv[0])):
+        c = r.get("concurrency") or CONCURRENCY
+        for e in r.get("http", []):
+            if not e.get("rps"):
+                continue
+            predicted = 1000.0 * c / e["rps"]
+            if predicted and e["p50"] / predicted >= 1 - QUEUE_TOL:
+                queued.append((n, e["path"], e["p50"], 1000.0 / e["rps"], c))
+    if queued:
+        print(f"  SATURATED -- these p50s are queueing, not service time. The "
+              f"driver keeps {queued[0][4]} requests in flight at all times, so "
+              f"p50 ~ {queued[0][4]}/RPS by Little's Law:")
+        print(f"    {'':>5}          {'endpoint':<30}{'p50':>10}{'1 user waits':>14}")
+        for n, path, p50, svc, c in sorted(queued, key=lambda q: -q[2])[:8]:
+            print(f"    {n:>5} machines {path:<30}{p50:>9.1f}ms{svc:>13.1f}ms")
+        print(f"  Quote the p50 for CAPACITY (what {queued[0][4]} concurrent "
+              f"callers see) and the service time for LATENCY (what one user "
+              f"sees). They are not interchangeable.")
+    else:
+        print(f"  no endpoint was saturated: every p50 is comfortably below "
+              f"C/RPS, so these latencies are service time, not queueing.")
 
     # --- does the factory's SIZE cost anything? ----------------------------
     scales = sorted(results, key=int)
@@ -503,14 +539,22 @@ def main():
             # floor". The xfloor column is that promise kept: p50 as a multiple
             # of this run's own client overhead, which is the only figure that
             # survives being compared across machines or across days.
-            print(f"  {'endpoint':<28}{'reqs':>7}{'rps':>8}{'p50':>9}"
+            # `svc` is 1000/RPS: the server's SERVICE time, what one user waits
+            # with nobody ahead of them. `p50` is measured under CONCURRENCY
+            # threads all hammering at once, so it also contains queueing. The
+            # two differ by up to 8x here and confusing them turns a 68 ms
+            # endpoint into a 575 ms panic. See the verdict's saturation check.
+            print(f"  {'endpoint':<28}{'reqs':>7}{'rps':>8}{'svc':>8}{'p50':>9}"
                   f"{'p95':>9}{'p99':>9}{'err':>6}{'xfloor':>8}")
             for path, count, rps, p50, p95, p99, errs, codes in rows:
-                print(f"  {path:<28}{count:>7}{rps:>8.1f}{p50:>9.1f}"
+                print(f"  {path:<28}{count:>7}{rps:>8.1f}"
+                      f"{(1000.0 / rps if rps else 0):>8.1f}{p50:>9.1f}"
                       f"{p95:>9.1f}{p99:>9.1f}{errs:>6}"
                       f"{(p50 / floor if floor else 0):>7.1f}x")
             results[n] = {"floor_ms": round(floor, 1),
+                          "concurrency": CONCURRENCY,
                           "http": [{"path": p, "reqs": c, "rps": round(r, 1),
+                                    "service_ms": round(1000.0 / r, 1) if r else None,
                                     "p50": round(a, 1), "p95": round(b, 1),
                                     "p99": round(d, 1), "errors": e,
                                     "xfloor": round(a / floor, 1) if floor else None,

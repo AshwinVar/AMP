@@ -140,6 +140,104 @@ def main():
 
     print()
     print("=" * 74)
+    print("1b. ROUTING — the same questions as a plant manager would type them")
+    print("=" * 74)
+    # WHY THIS SET EXISTS
+    # Every question in section 1 contains a word the router matches on
+    # literally ("downtime", "OEE", "stock"). Scoring 9/9 there mostly proves a
+    # dictionary lookup works. These are paraphrases of the SAME intents, in the
+    # words an operator actually uses, and the router scored 10/18 on them when
+    # they were written — the gap between the two sets is the finding.
+    #
+    # Each expected pillar is one a person would agree on without argument.
+    # Genuinely ambiguous phrasings are deliberately excluded: "how are we
+    # doing?" could be briefing or OEE, and a test whose answer is arguable
+    # measures the test author, not the router.
+    PARAPHRASES = [
+        ("how much did we lose to stoppages yesterday?", "downtime"),
+        ("which asset broke down most this week?", "downtime"),
+        ("are we going to miss any customer commitments?", "delivery"),
+        ("what is our scrap rate looking like?", "quality"),
+        ("anything need servicing soon?", "maintenance"),
+        ("how efficient were we overall?", "oee"),
+        ("do we have enough raw material?", "inventory"),
+        ("what is hurting us financially?", "cost"),
+        ("give me the state of the plant", "briefing"),
+        ("how many units came off the line?", "production"),
+        ("are we hitting the plan on nights?", "shift"),
+        ("what should I look at first?", "briefing"),
+        ("are things improving?", "trend"),
+        ("show me anything overdue", "maintenance"),
+        ("is anything sat waiting between operations?", "flow"),
+        ("what paperwork is out of date?", "compliance"),
+        ("what can you do?", "help"),
+    ]
+    for question, expected in PARAPHRASES:
+        got = ask(Session, A, question).get("matched")
+        score("routing", f'"{question[:44]}" -> {expected}', got == expected,
+              f"got {got!r}")
+
+    print()
+    print("=" * 74)
+    print("1c. ROUTING — questions the vocabulary was NOT tuned against")
+    print("=" * 74)
+    # READ THIS BEFORE CHANGING THE ROUTER.
+    #
+    # Section 1b was written first, the router's vocabulary was then extended
+    # until 1b scored 26/26 — and on THESE questions, written afterwards and
+    # never tuned against, the same router scores about a third. The tuned score
+    # was overfitting, and only a held-out set could show it.
+    #
+    # It showed something else too. The first attempt at a fix replaced
+    # first-match-wins with "the longest matched key wins", which sounded
+    # obviously better and made the held-out score WORSE — 38% to 23%. Table
+    # order encodes human judgement about which pillar should win a collision
+    # ("did the late crew hit target?" is a shift question, but delivery's
+    # " late" is a longer key than "crew"), and that judgement was thrown away.
+    # The change was reverted; only the vocabulary was kept.
+    #
+    # THIS SET IS NOW BURNED. It is in the repository, so it is no longer
+    # genuinely unseen, and it works from here on as a REGRESSION FLOOR rather
+    # than as a measurement. To measure a real improvement — an LLM router is
+    # the obvious candidate, and this is the evidence that would justify one —
+    # write fresh questions and score them BEFORE touching the router.
+    UNSEEN = [
+        ("how long were the presses idle?", "downtime"),
+        ("did we ship everything we promised?", "delivery"),
+        ("how many parts failed inspection?", "quality"),
+        ("which pumps are due a check-up?", "maintenance"),
+        ("what is our overall equipment effectiveness?", "oee"),
+        ("are we short of anything on the shelves?", "inventory"),
+        ("where is the money going?", "cost"),
+        ("how much did we build today?", "production"),
+        ("did the late crew hit target?", "shift"),
+        ("is the trend up or down since last month?", "trend"),
+        ("how much is stuck on the shop floor?", "flow"),
+        ("are our certificates current?", "compliance"),
+    ]
+    # Individual misses are PRINTED but do not fail the build: this set records
+    # what the router cannot do, and a suite that fails on a known limitation
+    # just gets disabled. The floor is what fails.
+    hits = 0
+    for question, expected in UNSEEN:
+        got = ask(Session, A, question).get("matched")
+        hit = got == expected
+        hits += hit
+        print(f"  {'hit ' if hit else 'MISS'}  {question[:46]:<48} "
+              f"{expected:<12} -> {got}")
+    pct = 100.0 * hits / len(UNSEEN)
+    print()
+    print(f"  UNSEEN ROUTING: {hits}/{len(UNSEEN)}  ({pct:.0f}%)")
+    FLOOR = 5
+    score("routing", f"unseen routing holds its floor of {FLOOR}/{len(UNSEEN)}",
+          hits >= FLOOR,
+          f"{hits}/{len(UNSEEN)} — BELOW the recorded floor; the router got worse")
+    print("  Keyword routing answers roughly a third of unseen phrasings as a")
+    print("  person would. That number, not a preference for LLMs, is the case")
+    print("  for a model-chosen route (AI roadmap phase 3).")
+
+    print()
+    print("=" * 74)
     print("2. GROUNDING — the sentence carries the number the database holds")
     print("=" * 74)
     # Ground truth computed HERE, from the rows, not from the code under test.

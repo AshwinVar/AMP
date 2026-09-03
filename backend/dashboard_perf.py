@@ -77,29 +77,74 @@ def main(url):
     Base.metadata.create_all(bind=engine)
     tenancy.install_scoping()
 
-    # The endpoints one refresh actually hits. Names are the handler functions;
-    # a handler that cannot be resolved is reported rather than skipped silently,
-    # because a quietly-missing endpoint would understate the whole cycle.
-    import analytics_routes
-    import machines_routes
-    import read_model_routes
-    import work_orders_routes
+    # THE REAL POLL CYCLE, resolved from the app rather than hand-listed.
+    #
+    # frontend/app/dashboard/page.tsx fetchAll(): 3 mandatory + 43 optional.
+    # Handlers are looked up BY PATH on main.app.routes — the same technique
+    # test_api_smoke.py uses — because hand-writing 46 function names is how the
+    # first version of this file reported "ERR" for three endpoints whose
+    # handlers had different names than I guessed.
+    import main
+
+    PATHS = [
+        # mandatory
+        "/machines", "/downtime-logs", "/shifts",
+        # optional (Promise.allSettled)
+        "/analytics/machine-timeline", "/analytics/machine-state-summary",
+        "/work-orders", "/analytics/work-orders",
+        "/analytics/predictive-maintenance",
+        "/production-plans", "/analytics/production-plans",
+        "/escalations", "/analytics/escalations",
+        "/inventory/items", "/inventory/transactions", "/analytics/inventory",
+        "/quality/inspections", "/analytics/quality",
+        "/analytics/executive-oee",
+        "/factory-layout/nodes", "/analytics/factory-command-center",
+        "/customer-orders", "/analytics/customer-orders",
+        "/suppliers", "/purchase-orders", "/analytics/purchasing",
+        "/documents", "/analytics/documents",
+        "/maintenance/tasks", "/analytics/maintenance",
+        "/production-schedules", "/analytics/production-schedules",
+        "/iot/telemetry", "/analytics/iot-command",
+        "/ai/recommendations", "/analytics/ai-insights",
+        "/saas/tenants", "/analytics/saas",
+        "/cost-records", "/analytics/costing",
+        "/operator/executions", "/analytics/operator-terminal",
+        "/audit-logs", "/notifications", "/reports",
+        "/analytics/system-health", "/analytics/final-executive-summary",
+        # read-models the dashboard's own sections fetch on top of fetchAll
+        "/machine-health", "/oee-summary", "/losses-summary",
+    ]
+
+    by_path = {}
+    for r in main.app.routes:
+        path = getattr(r, "path", None)
+        methods = getattr(r, "methods", set()) or set()
+        if path and "GET" in methods:
+            by_path.setdefault(path, getattr(r, "endpoint", None))
 
     user = {"sub": "perf", "role": "Admin", "tenant": TENANT}
 
-    CYCLE = [
-        ("/machines", lambda db: machines_routes.get_machines(db=db, current_user=user)),
-        ("/downtime-logs", lambda db: machines_routes.get_downtime_logs(db=db, current_user=user)),
-        ("/shifts", lambda db: machines_routes.get_shifts(db=db, current_user=user)),
-        ("/work-orders", lambda db: work_orders_routes.get_work_orders(db=db, current_user=user)),
-        ("/oee-summary", lambda db: read_model_routes.get_oee_summary(db=db, current_user=user)),
-        ("/machine-health", lambda db: read_model_routes.get_machine_health(db=db, current_user=user)),
-        ("/losses-summary", lambda db: read_model_routes.get_losses_summary(db=db, current_user=user)),
-        ("/analytics/machine-timeline",
-         lambda db: analytics_routes.get_machine_timeline(db=db, current_user=user)),
-    ]
+    def _call(fn):
+        """Invoke a handler with only the kwargs it declares."""
+        import inspect
+        kwargs = {}
+        params = inspect.signature(fn).parameters
+        if "db" in params:
+            kwargs["db"] = None                      # replaced per call below
+        return params
 
-    print(f"Measuring {len(CYCLE)} of the ~46 endpoints one refresh issues.")
+    CYCLE = []
+    unresolved = []
+    for path in PATHS:
+        fn = by_path.get(path)
+        if fn is None:
+            unresolved.append(path)
+            continue
+        CYCLE.append((path, fn))
+
+    per_scale = {}
+    print(f"Measuring {len(CYCLE)} endpoints of the poll cycle."
+          + (f"  UNRESOLVED: {unresolved}" if unresolved else ""))
     print("Query COUNT is the durable number; ms is this machine only.\n")
 
     for scale in SCALES:
@@ -131,28 +176,55 @@ def main(url):
         print(f"{'endpoint':<34}{'queries':>9}{'ms':>9}  {'':<10}")
         total_q = 0
         total_ms = 0.0
-        for name, call in CYCLE:
+        rows = []
+        import inspect
+        for name, fn in CYCLE:
             db = Session()
             tok = tenancy.set_current_tenant(TENANT)
             try:
+                params = inspect.signature(fn).parameters
+                kwargs = {}
+                if "db" in params:
+                    kwargs["db"] = db
+                if "current_user" in params:
+                    kwargs["current_user"] = user
                 with Counted() as c:
-                    call(db)
+                    fn(**kwargs)
                 flag = ""
                 total_q += c.queries
                 total_ms += c.ms
+                rows.append((name, c.queries))
                 print(f"{name:<34}{c.queries:>9}{c.ms:>9.1f}  {flag}")
             except Exception as e:                       # noqa: BLE001
                 print(f"{name:<34}{'ERR':>9}{'':>9}  {type(e).__name__}: {e}"[:100])
             finally:
                 tenancy.reset_current_tenant(tok)
                 db.close()
-        print(f"{'TOTAL (measured subset)':<34}{total_q:>9}{total_ms:>9.1f}")
-        print(f"{'extrapolated to 46 endpoints':<34}"
-              f"{int(total_q * 46 / max(len(CYCLE), 1)):>9}"
-              f"{total_ms * 46 / max(len(CYCLE), 1):>9.1f}   per refresh\n")
+        print(f"{'TOTAL for one refresh':<34}{total_q:>9}{total_ms:>9.1f}")
+        print()
+        per_scale[scale] = dict(rows)
 
-    print("READ THIS AS: a query count that RISES with machine count is an N+1")
-    print("and is the finding worth acting on. A flat count is fine at any size.")
+    # THE ACTUAL ANSWER. A table of numbers is not a finding; "this endpoint
+    # costs more when the customer has more machines" is.
+    lo, hi = min(per_scale), max(per_scale)
+    print("=" * 62)
+    print(f"VERDICT - does anything scale with the factory? ({lo} -> {hi} machines)")
+    print("=" * 62)
+    growing = [(n, per_scale[lo][n], q) for n, q in sorted(per_scale[hi].items())
+               if n in per_scale[lo] and q > per_scale[lo][n]]
+    if growing:
+        print(f"  {len(growing)} endpoint(s) GREW - these are N+1s:")
+        for n, a, b in growing:
+            print(f"    {n:<38} {a:>4} -> {b:<5} (+{(b-a)/float(hi-lo):.2f}/machine)")
+    else:
+        print("  NONE. Every endpoint issues the same number of queries at")
+        print(f"  {hi} machines as at {lo}. The poll cycle is flat.")
+    print()
+    print(f"  whole refresh: {sum(per_scale[lo].values())} queries at {lo} "
+          f"machines, {sum(per_scale[hi].values())} at {hi}")
+    print()
+    print("  ms figures are this laptop only, not a production number.")
+    print("  The query counts are the durable result.")
     return 0
 
 

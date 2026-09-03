@@ -38,6 +38,7 @@
 | 2 | MQTT publishes no `DowntimeStarted` | YES | BUG | **FIXED** |
 | 3 | 4 of 7 `SHARE_*` grants have no enforcement point | YES | INTENTIONAL — no read path exists, so nothing leaks. Consent recorded ahead of the feature | not a defect |
 | 4 | `oem_claims.accept` sets `status="Assigned"` by bulk UPDATE, bypassing `oem_service.transition` | YES | INTENTIONAL — the conditional UPDATE's row count *is* the security decision; routing it through the state machine would break claim atomicity | document, don't change |
+| 5b | **Whole poll cycle now measured (all 49 endpoints): 135 queries at 10 machines, 135 at 200 — FLAT.** No N+1s remain. Open question is the RATE (~45 q/s/tab), a product decision needing HTTP-level numbers | MEASURED | P4 — needs `loadtest.py` |
 | 5 | Dashboard polls `fetchAll` every 3s; 46 requests/round | **MEASURED** via `dashboard_perf.py` | PERFORMANCE — the N+1 in `/machine-health` was the real cost (607→10 queries). The remaining 45 endpoints are flat at 1-5 queries each | **largest win taken**; further work needs HTTP-level measurement (`loadtest.py`, never run) |
 | 6 | Copilot provider coupling | YES | Already has `AI_PROVIDER` anthropic/gemini branching — if/else, not a clean interface | P6 |
 

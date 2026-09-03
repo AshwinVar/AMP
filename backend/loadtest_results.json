@@ -1,470 +1,506 @@
 {
   "10": {
-    "floor_ms": 7.3,
+    "floor_ms": 6.9,
     "http": [
       {
         "path": "/machines",
-        "reqs": 1550,
-        "rps": 258.3,
-        "p50": 24.2,
-        "p95": 89.5,
-        "p99": 124.4,
+        "reqs": 1807,
+        "rps": 301.2,
+        "p50": 21.5,
+        "p95": 76.6,
+        "p99": 107.0,
         "errors": 0,
+        "xfloor": 3.1,
         "codes": {
-          "200": 1550
+          "200": 1807
         }
       },
       {
         "path": "/oee/summary",
-        "reqs": 1327,
-        "rps": 221.2,
-        "p50": 28.5,
-        "p95": 100.9,
-        "p99": 170.5,
+        "reqs": 1516,
+        "rps": 252.7,
+        "p50": 25.1,
+        "p95": 88.0,
+        "p99": 126.2,
         "errors": 0,
+        "xfloor": 3.6,
         "codes": {
-          "200": 1327
+          "200": 1516
         }
       },
       {
         "path": "/analytics/summary",
-        "reqs": 429,
-        "rps": 71.5,
-        "p50": 93.5,
-        "p95": 197.1,
-        "p99": 244.4,
+        "reqs": 498,
+        "rps": 83.0,
+        "p50": 77.7,
+        "p95": 189.2,
+        "p99": 261.4,
         "errors": 0,
+        "xfloor": 11.2,
         "codes": {
-          "200": 429
+          "200": 498
         }
       },
       {
         "path": "/analytics/executive-oee",
-        "reqs": 489,
-        "rps": 81.5,
-        "p50": 80.7,
-        "p95": 180.8,
-        "p99": 253.5,
+        "reqs": 536,
+        "rps": 89.3,
+        "p50": 73.5,
+        "p95": 172.2,
+        "p99": 217.8,
         "errors": 0,
+        "xfloor": 10.6,
         "codes": {
-          "200": 489
+          "200": 536
         }
       },
       {
         "path": "/work-orders",
-        "reqs": 1426,
-        "rps": 237.7,
-        "p50": 27.4,
-        "p95": 94.8,
-        "p99": 123.8,
+        "reqs": 1449,
+        "rps": 241.5,
+        "p50": 26.0,
+        "p95": 90.7,
+        "p99": 130.6,
         "errors": 0,
+        "xfloor": 3.7,
         "codes": {
-          "200": 1426
+          "200": 1449
         }
       },
       {
         "path": "/inventory/items",
-        "reqs": 1405,
-        "rps": 234.2,
-        "p50": 28.0,
-        "p95": 93.3,
-        "p99": 123.6,
+        "reqs": 1690,
+        "rps": 281.7,
+        "p50": 22.9,
+        "p95": 79.9,
+        "p99": 116.1,
         "errors": 0,
+        "xfloor": 3.3,
         "codes": {
-          "200": 1405
+          "200": 1690
         }
       },
       {
         "path": "/downtime-logs",
-        "reqs": 1442,
-        "rps": 240.3,
-        "p50": 26.7,
-        "p95": 95.0,
-        "p99": 123.0,
+        "reqs": 1700,
+        "rps": 283.3,
+        "p50": 22.6,
+        "p95": 82.0,
+        "p99": 119.6,
         "errors": 0,
+        "xfloor": 3.3,
         "codes": {
-          "200": 1442
+          "200": 1700
         }
       },
       {
         "path": "/agent-actions",
-        "reqs": 1476,
-        "rps": 246.0,
-        "p50": 25.7,
-        "p95": 93.4,
-        "p99": 123.1,
+        "reqs": 1719,
+        "rps": 286.5,
+        "p50": 21.6,
+        "p95": 81.2,
+        "p99": 119.7,
         "errors": 0,
+        "xfloor": 3.1,
         "codes": {
-          "200": 1476
+          "200": 1719
         }
       }
     ],
     "db_ms": {
-      "count machines": 0.67,
-      "list machines": 0.36,
-      "plant OEE": 1.43
+      "count machines": 0.5,
+      "list machines": 0.29,
+      "plant OEE": 1.13
     },
     "ws": {
       "connect_10_ms": 0.02,
       "broadcast_ms_per_round": 0.0,
       "frames_delivered": 200,
-      "fanout_per_sec": 2728512
+      "fanout_per_sec": 2832858
     },
     "mqtt": {
-      "messages": 165391,
+      "messages": 167555,
       "seconds": 4.0,
-      "msgs_per_sec": 41347
-    }
+      "msgs_per_sec": 41888
+    },
+    "measured": "2026-09-03 18:18 UTC"
   },
   "50": {
-    "floor_ms": 8.2,
+    "floor_ms": 9.1,
     "http": [
       {
         "path": "/machines",
-        "reqs": 1274,
-        "rps": 212.3,
-        "p50": 29.3,
-        "p95": 105.8,
-        "p99": 126.6,
+        "reqs": 1493,
+        "rps": 248.8,
+        "p50": 24.7,
+        "p95": 89.7,
+        "p99": 132.7,
         "errors": 0,
+        "xfloor": 2.7,
         "codes": {
-          "200": 1274
+          "200": 1493
         }
       },
       {
         "path": "/oee/summary",
-        "reqs": 1004,
-        "rps": 167.3,
-        "p50": 36.5,
-        "p95": 125.9,
-        "p99": 173.1,
+        "reqs": 1117,
+        "rps": 186.2,
+        "p50": 31.9,
+        "p95": 119.9,
+        "p99": 179.2,
         "errors": 0,
+        "xfloor": 3.5,
         "codes": {
-          "200": 1004
+          "200": 1117
         }
       },
       {
         "path": "/analytics/summary",
-        "reqs": 373,
-        "rps": 62.2,
-        "p50": 107.1,
-        "p95": 214.0,
-        "p99": 282.8,
+        "reqs": 381,
+        "rps": 63.5,
+        "p50": 107.2,
+        "p95": 225.7,
+        "p99": 254.5,
         "errors": 0,
+        "xfloor": 11.8,
         "codes": {
-          "200": 373
+          "200": 381
         }
       },
       {
         "path": "/analytics/executive-oee",
-        "reqs": 407,
-        "rps": 67.8,
-        "p50": 94.0,
-        "p95": 227.1,
-        "p99": 267.7,
+        "reqs": 452,
+        "rps": 75.3,
+        "p50": 86.8,
+        "p95": 200.7,
+        "p99": 249.4,
         "errors": 0,
+        "xfloor": 9.6,
         "codes": {
-          "200": 407
+          "200": 452
         }
       },
       {
         "path": "/work-orders",
-        "reqs": 1175,
-        "rps": 195.8,
-        "p50": 32.0,
-        "p95": 107.4,
-        "p99": 141.9,
+        "reqs": 1381,
+        "rps": 230.2,
+        "p50": 26.7,
+        "p95": 89.3,
+        "p99": 140.0,
         "errors": 0,
+        "xfloor": 2.9,
         "codes": {
-          "200": 1175
+          "200": 1381
         }
       },
       {
         "path": "/inventory/items",
-        "reqs": 1182,
-        "rps": 197.0,
-        "p50": 32.6,
-        "p95": 113.9,
-        "p99": 135.1,
+        "reqs": 1430,
+        "rps": 238.3,
+        "p50": 25.9,
+        "p95": 86.5,
+        "p99": 144.1,
         "errors": 0,
+        "xfloor": 2.9,
         "codes": {
-          "200": 1182
+          "200": 1430
         }
       },
       {
         "path": "/downtime-logs",
-        "reqs": 1253,
-        "rps": 208.8,
-        "p50": 30.2,
-        "p95": 104.4,
-        "p99": 149.6,
+        "reqs": 1520,
+        "rps": 253.3,
+        "p50": 25.0,
+        "p95": 89.1,
+        "p99": 128.5,
         "errors": 0,
+        "xfloor": 2.8,
         "codes": {
-          "200": 1253
+          "200": 1520
         }
       },
       {
         "path": "/agent-actions",
-        "reqs": 1430,
-        "rps": 238.3,
-        "p50": 27.4,
-        "p95": 93.8,
-        "p99": 119.0,
+        "reqs": 1665,
+        "rps": 277.5,
+        "p50": 22.6,
+        "p95": 83.2,
+        "p99": 122.1,
         "errors": 0,
+        "xfloor": 2.5,
         "codes": {
-          "200": 1430
+          "200": 1665
         }
       }
     ],
     "db_ms": {
-      "count machines": 0.67,
-      "list machines": 0.48,
-      "plant OEE": 1.42
+      "count machines": 0.43,
+      "list machines": 0.39,
+      "plant OEE": 1.01
     },
     "ws": {
       "connect_50_ms": 0.03,
       "broadcast_ms_per_round": 0.01,
       "frames_delivered": 1000,
-      "fanout_per_sec": 7017543
+      "fanout_per_sec": 7412893
     },
     "mqtt": {
-      "messages": 164231,
+      "messages": 167260,
       "seconds": 4.0,
-      "msgs_per_sec": 41057
-    }
+      "msgs_per_sec": 41814
+    },
+    "measured": "2026-09-03 18:18 UTC"
   },
   "250": {
-    "floor_ms": 8.0,
+    "floor_ms": 6.6,
     "http": [
       {
         "path": "/machines",
-        "reqs": 664,
-        "rps": 110.7,
-        "p50": 45.9,
-        "p95": 143.7,
-        "p99": 201.7,
+        "reqs": 769,
+        "rps": 128.2,
+        "p50": 38.0,
+        "p95": 138.7,
+        "p99": 191.9,
         "errors": 0,
+        "xfloor": 5.7,
         "codes": {
-          "200": 664
+          "200": 769
         }
       },
       {
         "path": "/oee/summary",
-        "reqs": 753,
-        "rps": 125.5,
-        "p50": 45.6,
-        "p95": 145.8,
-        "p99": 213.7,
+        "reqs": 859,
+        "rps": 143.2,
+        "p50": 41.9,
+        "p95": 140.1,
+        "p99": 172.2,
         "errors": 0,
+        "xfloor": 6.3,
         "codes": {
-          "200": 753
+          "200": 859
         }
       },
       {
         "path": "/analytics/summary",
-        "reqs": 246,
-        "rps": 41.0,
-        "p50": 210.6,
-        "p95": 275.5,
-        "p99": 313.8,
+        "reqs": 269,
+        "rps": 44.8,
+        "p50": 191.8,
+        "p95": 273.8,
+        "p99": 301.0,
         "errors": 0,
+        "xfloor": 28.9,
         "codes": {
-          "200": 246
+          "200": 269
         }
       },
       {
         "path": "/analytics/executive-oee",
-        "reqs": 233,
-        "rps": 38.8,
-        "p50": 206.1,
-        "p95": 296.9,
-        "p99": 326.5,
-        "errors": 0,
-        "codes": {
-          "200": 233
-        }
-      },
-      {
-        "path": "/work-orders",
-        "reqs": 667,
-        "rps": 111.2,
-        "p50": 50.3,
-        "p95": 157.2,
-        "p99": 201.3,
-        "errors": 0,
-        "codes": {
-          "200": 667
-        }
-      },
-      {
-        "path": "/inventory/items",
-        "reqs": 584,
-        "rps": 97.3,
-        "p50": 56.1,
-        "p95": 166.6,
-        "p99": 204.2,
-        "errors": 0,
-        "codes": {
-          "200": 584
-        }
-      },
-      {
-        "path": "/downtime-logs",
-        "reqs": 1023,
-        "rps": 170.5,
-        "p50": 36.5,
-        "p95": 133.7,
-        "p99": 147.1,
-        "errors": 0,
-        "codes": {
-          "200": 1023
-        }
-      },
-      {
-        "path": "/agent-actions",
-        "reqs": 1098,
-        "rps": 183.0,
-        "p50": 35.3,
-        "p95": 104.0,
-        "p99": 166.5,
-        "errors": 0,
-        "codes": {
-          "200": 1098
-        }
-      }
-    ],
-    "db_ms": {
-      "count machines": 0.62,
-      "list machines": 0.93,
-      "plant OEE": 1.59
-    },
-    "ws": {
-      "connect_250_ms": 0.15,
-      "broadcast_ms_per_round": 0.02,
-      "frames_delivered": 5000,
-      "fanout_per_sec": 11125946
-    },
-    "mqtt": {
-      "messages": 163429,
-      "seconds": 4.0,
-      "msgs_per_sec": 40857
-    }
-  },
-  "1000": {
-    "floor_ms": 8.0,
-    "http": [
-      {
-        "path": "/machines",
         "reqs": 247,
         "rps": 41.2,
-        "p50": 189.0,
-        "p95": 287.2,
-        "p99": 344.2,
+        "p50": 195.7,
+        "p95": 302.7,
+        "p99": 351.9,
         "errors": 0,
+        "xfloor": 29.5,
         "codes": {
           "200": 247
         }
       },
       {
-        "path": "/oee/summary",
-        "reqs": 668,
-        "rps": 111.3,
-        "p50": 53.6,
-        "p95": 160.8,
-        "p99": 210.5,
-        "errors": 0,
-        "codes": {
-          "200": 668
-        }
-      },
-      {
-        "path": "/analytics/summary",
-        "reqs": 105,
-        "rps": 17.5,
-        "p50": 492.4,
-        "p95": 573.9,
-        "p99": 677.9,
-        "errors": 0,
-        "codes": {
-          "200": 105
-        }
-      },
-      {
-        "path": "/analytics/executive-oee",
-        "reqs": 81,
-        "rps": 13.5,
-        "p50": 614.7,
-        "p95": 726.4,
-        "p99": 813.0,
-        "errors": 0,
-        "codes": {
-          "200": 81
-        }
-      },
-      {
         "path": "/work-orders",
-        "reqs": 669,
-        "rps": 111.5,
-        "p50": 51.0,
-        "p95": 156.6,
-        "p99": 206.9,
+        "reqs": 800,
+        "rps": 133.3,
+        "p50": 41.6,
+        "p95": 146.1,
+        "p99": 190.6,
         "errors": 0,
+        "xfloor": 6.3,
         "codes": {
-          "200": 669
+          "200": 800
         }
       },
       {
         "path": "/inventory/items",
-        "reqs": 355,
-        "rps": 59.2,
-        "p50": 161.8,
-        "p95": 242.7,
-        "p99": 254.6,
+        "reqs": 655,
+        "rps": 109.2,
+        "p50": 46.4,
+        "p95": 161.5,
+        "p99": 205.1,
         "errors": 0,
+        "xfloor": 7.0,
         "codes": {
-          "200": 355
+          "200": 655
         }
       },
       {
         "path": "/downtime-logs",
-        "reqs": 987,
-        "rps": 164.5,
-        "p50": 36.2,
-        "p95": 134.3,
-        "p99": 170.5,
+        "reqs": 1220,
+        "rps": 203.3,
+        "p50": 28.6,
+        "p95": 127.7,
+        "p99": 163.4,
         "errors": 0,
+        "xfloor": 4.3,
         "codes": {
-          "200": 987
+          "200": 1220
         }
       },
       {
         "path": "/agent-actions",
-        "reqs": 608,
-        "rps": 101.3,
-        "p50": 65.9,
-        "p95": 165.1,
-        "p99": 217.7,
+        "reqs": 1285,
+        "rps": 214.2,
+        "p50": 29.7,
+        "p95": 90.0,
+        "p99": 128.8,
         "errors": 0,
+        "xfloor": 4.5,
         "codes": {
-          "200": 608
+          "200": 1285
         }
       }
     ],
     "db_ms": {
-      "count machines": 0.86,
-      "list machines": 3.59,
-      "plant OEE": 1.76
+      "count machines": 0.4,
+      "list machines": 1.02,
+      "plant OEE": 1.04
+    },
+    "ws": {
+      "connect_250_ms": 0.08,
+      "broadcast_ms_per_round": 0.02,
+      "frames_delivered": 5000,
+      "fanout_per_sec": 11767472
+    },
+    "mqtt": {
+      "messages": 165530,
+      "seconds": 4.0,
+      "msgs_per_sec": 41382
+    },
+    "measured": "2026-09-03 18:18 UTC"
+  },
+  "1000": {
+    "floor_ms": 7.3,
+    "http": [
+      {
+        "path": "/machines",
+        "reqs": 251,
+        "rps": 41.8,
+        "p50": 184.2,
+        "p95": 316.4,
+        "p99": 338.6,
+        "errors": 0,
+        "xfloor": 25.1,
+        "codes": {
+          "200": 251
+        }
+      },
+      {
+        "path": "/oee/summary",
+        "reqs": 851,
+        "rps": 141.8,
+        "p50": 39.8,
+        "p95": 142.6,
+        "p99": 207.7,
+        "errors": 0,
+        "xfloor": 5.4,
+        "codes": {
+          "200": 851
+        }
+      },
+      {
+        "path": "/analytics/summary",
+        "reqs": 112,
+        "rps": 18.7,
+        "p50": 466.2,
+        "p95": 504.4,
+        "p99": 545.1,
+        "errors": 0,
+        "xfloor": 63.6,
+        "codes": {
+          "200": 112
+        }
+      },
+      {
+        "path": "/analytics/executive-oee",
+        "reqs": 89,
+        "rps": 14.8,
+        "p50": 574.5,
+        "p95": 709.3,
+        "p99": 747.3,
+        "errors": 0,
+        "xfloor": 78.4,
+        "codes": {
+          "200": 89
+        }
+      },
+      {
+        "path": "/work-orders",
+        "reqs": 809,
+        "rps": 134.8,
+        "p50": 39.4,
+        "p95": 150.8,
+        "p99": 196.6,
+        "errors": 0,
+        "xfloor": 5.4,
+        "codes": {
+          "200": 809
+        }
+      },
+      {
+        "path": "/inventory/items",
+        "reqs": 382,
+        "rps": 63.7,
+        "p50": 162.7,
+        "p95": 226.5,
+        "p99": 248.5,
+        "errors": 0,
+        "xfloor": 22.2,
+        "codes": {
+          "200": 382
+        }
+      },
+      {
+        "path": "/downtime-logs",
+        "reqs": 1174,
+        "rps": 195.7,
+        "p50": 29.5,
+        "p95": 135.5,
+        "p99": 171.0,
+        "errors": 0,
+        "xfloor": 4.0,
+        "codes": {
+          "200": 1174
+        }
+      },
+      {
+        "path": "/agent-actions",
+        "reqs": 657,
+        "rps": 109.5,
+        "p50": 59.4,
+        "p95": 161.8,
+        "p99": 212.1,
+        "errors": 0,
+        "xfloor": 8.1,
+        "codes": {
+          "200": 657
+        }
+      }
+    ],
+    "db_ms": {
+      "count machines": 0.52,
+      "list machines": 3.3,
+      "plant OEE": 1.66
     },
     "ws": {
       "connect_1000_ms": 0.34,
       "broadcast_ms_per_round": 0.08,
       "frames_delivered": 20000,
-      "fanout_per_sec": 11849745
+      "fanout_per_sec": 13008129
     },
     "mqtt": {
-      "messages": 160111,
+      "messages": 164773,
       "seconds": 4.0,
-      "msgs_per_sec": 40027
-    }
+      "msgs_per_sec": 41193
+    },
+    "measured": "2026-09-03 18:18 UTC"
   }
 }

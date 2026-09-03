@@ -3,7 +3,7 @@
 > Handover file. A new session should be able to read only this and continue.
 > Keep it short. Update it at the end of every completed task.
 
-**Updated:** 2026-09-01
+**Updated:** 2026-09-03
 **Master SHA examined:** `ce71a6c` (590 commits)
 **Production SHA:** `ce71a6c` (verified after merge — status ok / database ok / schema ok)  
 **Previous:** `0eb94ca` — `/health` `{"status":"ok","database":"ok","schema":"ok"}`
@@ -21,6 +21,8 @@
 | Route reconciliation: 143 frontend calls vs 256 registered routes — **0 unmatched**, nothing broken end-to-end | P2 | verified clean |
 | Founder handbook verified against master by 10 subsystem specialists: 385 claims confirmed, 20 misleading | P8 | verification done, affected sections synced |
 | `/machine-health` N+1: 3 queries per machine on a 3s poll (607 statements at 200 machines) — **measured first**, then batched to a flat 10 | P4 | fixed, tested, measured |
+| `loadtest.py`: reported raw ms while its docstring promised floor-normalised figures, and **overwrote a 4-scale results file with a 2-scale one**, destroying the 250/1000 evidence. Now reports `xfloor`, merges scales, and states a verdict | P4 | fixed, 22 checks, 6/6 mutations red |
+| First clean four-scale HTTP measurement (2026-09-03 18:18 UTC): 10/50/250/1000 machines, **zero errors in 32 endpoint/scale combinations, no regression vs #508 at any scale** | P4 | measured, documented |
 
 ---
 
@@ -38,8 +40,8 @@
 | 2 | MQTT publishes no `DowntimeStarted` | YES | BUG | **FIXED** |
 | 3 | 4 of 7 `SHARE_*` grants have no enforcement point | YES | INTENTIONAL — no read path exists, so nothing leaks. Consent recorded ahead of the feature | not a defect |
 | 4 | `oem_claims.accept` sets `status="Assigned"` by bulk UPDATE, bypassing `oem_service.transition` | YES | INTENTIONAL — the conditional UPDATE's row count *is* the security decision; routing it through the state machine would break claim atomicity | document, don't change |
-| 5b | **Whole poll cycle now measured (all 49 endpoints): 135 queries at 10 machines, 135 at 200 — FLAT.** No N+1s remain. Open question is the RATE (~45 q/s/tab), a product decision needing HTTP-level numbers | MEASURED | P4 — needs `loadtest.py` |
-| 5 | Dashboard polls `fetchAll` every 3s; 46 requests/round | **MEASURED** via `dashboard_perf.py` | PERFORMANCE — the N+1 in `/machine-health` was the real cost (607→10 queries). The remaining 45 endpoints are flat at 1-5 queries each | **largest win taken**; further work needs HTTP-level measurement (`loadtest.py`, never run) |
+| 5b | Poll cycle: 135 queries at 10 machines, 135 at 200 — query count FLAT. **But HTTP latency is not:** `/analytics/executive-oee` 73→575 ms and `/machines` 21→184 ms from 10 to 1000 machines. At 1000 the DB answers `list machines` in 3.3 ms while `/machines` takes 184 ms — **98% of the request is above the query**. Per-ROW cost, not N+1 | MEASURED both ways, one clean run | P4 — see below |
+| 5 | Dashboard polls `fetchAll` every 3s; 46 requests/round | **MEASURED** via `dashboard_perf.py` **and** `loadtest.py` | PERFORMANCE — the `/machine-health` N+1 was the real query cost (607→10). At ≤250 machines every endpoint is ≤210 ms and error-free | **largest win taken**; the next one is per-row serialisation cost at 1000 machines, not query count |
 | 6 | Copilot provider coupling | YES | Already has `AI_PROVIDER` anthropic/gemini branching — if/else, not a clean interface | P6 |
 
 ---
@@ -48,7 +50,7 @@
 
 - **`release_installation`** sets `status="Sold"` from any state including `Active` — verify whether the state machine should govern it. UNVERIFIED, needs a look.
 - **`manage_models` / `manage_branding`** capabilities are declared but no route requires them; there is no API to create a machine model (catalogue is seeded). Gap, not a bug.
-- **Load testing has never been run.** `docs/PERFORMANCE.md` and `load/thresholds.js` both say so in their own opening lines. Nothing in CI runs it.
+- **Load testing: `loadtest.py` HAS been run** — at #508 (four scales, to 1000 machines) and again 2026-09-03. Three files claimed it never had; all three are corrected. The **k6** scripts under `load/` genuinely have never run, and they are the ones that would measure the server rather than a Python client. Nothing in CI runs either.
 - **Only 3 of 193 backend suites use a real HTTP client**; the rest call route functions directly. Fast and legitimate, but it is not end-to-end API testing and should not be described as such.
 
 ---
@@ -93,7 +95,7 @@ Phases 2–6 not started. Note before starting Phase 2: the LLM is already read-
 1. **`release_installation` lifecycle** — verify, then either route through `transition()` or document why not.
 2. **AI Phase 1** — extract an `AIProvider` interface behind the existing `AI_PROVIDER` branching, no behaviour change, with tests.
 3. **AI Phase 3 (tools)** — now measurable: `test_ai_evaluation.py` gives routing/grounding/isolation scores to compare a tool-using copilot against. Start READ-ONLY tools.
-4. **Run `loadtest.py` once** — it has never been executed; it needs a scratch PostgreSQL and gives the first HTTP-level numbers.
+4. **Row caps on the fleet endpoints** — measured, and the smallest fix available. Every list endpoint has a hard cap except `/machines` (`machines_routes.py:45`, plain `.all()`), and the cap predicts the growth in exact order: none→8.6×, 500→7.1×, 300→2.7×, 200→1.5×, 100→1.3×. `/analytics/executive-oee` is 575 ms / 14.8 RPS at 1000 machines — the worst number in AMP — but aggregates rather than lists, so it needs profiling, not a cap. **Not yet a customer problem** (196 ms at 250 machines), so P4.
 5. **Sync remaining training-doc drift** (18 of 20 misleading items still unsynced; MQTT/events/twin sections are done).
 
 ---

@@ -1,10 +1,16 @@
 # Performance
 
-## Status: one measurement now exists (2026-09-01); the rest is still unmeasured
+## Status: two dimensions measured; the rest is still unmeasured
 
-**The dashboard poll cycle has been measured** with `backend/dashboard_perf.py`,
-which counts SQL statements per endpoint at 10 / 50 / 200 machines. It found a
-real N+1 in `/machine-health` and the fix is measured below. Everything *else*
+**SQL shape** — `backend/dashboard_perf.py` counts statements per endpoint at
+10 / 50 / 200 machines. It found a real N+1 in `/machine-health`; the fix is
+measured below.
+
+**HTTP latency** — `backend/loadtest.py` drives a real uvicorn at 10 / 50 / 250
+/ 1000 machines. Run at #508 and again on 2026-09-03; both are recorded below.
+
+Those two disagree in a useful way — query count is flat with factory size and
+latency is not — and the section below says what that means. Everything *else*
 in this document is still as unmeasured as the heading used to say.
 
 ### `/machine-health` — measured, fixed, re-measured
@@ -47,14 +53,151 @@ That is the good news. The number that is still worth a decision is the
 **rate**: 135 queries every 3 seconds, per open tab, is ~45 queries/second/tab
 regardless of factory size. That is a product question (poll interval, batching,
 or pushing more over the existing WebSocket), not a defect, and it should be
-decided against an HTTP-level measurement — `loadtest.py`, which has still never
-been run.
+decided against an HTTP-level measurement. `loadtest.py` supplies one; see the
+HTTP section below.
 
 **Method and its limits:** route functions are called directly against a seeded
 database and statements are counted via a SQLAlchemy `before_cursor_execute`
 hook — the same technique `oem_perf.py` uses. It measures SQL shape, **not**
 HTTP latency, serialisation, network or the browser. For those, `loadtest.py`
-drives a real uvicorn, and it has still never been run.
+drives a real uvicorn — see the HTTP section below.
+
+---
+
+## HTTP latency
+
+**A correction first.** Two paragraphs above used to say `loadtest.py` "has
+still never been run". That was false when written, and the same claim sat in
+`load/config.js` and in the chief-engineer handover. It was run at #508, and its
+results were committed to `backend/loadtest_results.json` — four scales, up to
+1000 machines — where nobody wrote them down. All three claims are now corrected.
+
+Everything below is one run: **2026-09-03 18:18 UTC**, all four scales, Python
+`requests` + 8 threads against a local uvicorn on a disposable PostgreSQL
+(`pg_scratch`), never production. **Zero errors in all 32 endpoint/scale
+combinations.** Compared endpoint-by-endpoint against #508, **nothing has
+regressed at any scale.**
+
+### Read the client floor before any number below it
+
+The driver's own overhead against a trivial endpoint was **6.6–9.1 ms p50**, and
+it is inside every figure here. A p50 near the floor means *the driver was
+measured, not the server*. The `xfloor` column — p50 as a multiple of that run's
+own floor — is the only figure comparable across machines or across days; the
+section after next shows why, with three runs of identical code.
+
+### The scaling curve
+
+p50 ms, and the same figure as a multiple of the client floor.
+
+| endpoint | 10 | 50 | 250 | **1000** | growth | **xfloor @1000** |
+|---|---:|---:|---:|---:|---:|---:|
+| `/machines` | 21.5 | 24.7 | 38.0 | **184.2** | 8.6× | **25×** |
+| `/analytics/executive-oee` | 73.5 | 86.8 | 195.7 | **574.5** | 7.8× | **78×** |
+| `/inventory/items` | 22.9 | 25.9 | 46.4 | **162.7** | 7.1× | **22×** |
+| `/analytics/summary` | 77.7 | 107.2 | 191.8 | **466.2** | 6.0× | **64×** |
+| `/agent-actions` | 21.6 | 22.6 | 29.7 | **59.4** | 2.7× | 8× |
+| `/oee/summary` | 25.1 | 31.9 | 41.9 | **39.8** | 1.6× | 5× |
+| `/work-orders` | 26.0 | 26.7 | 41.6 | **39.4** | 1.5× | 5× |
+| `/downtime-logs` | 22.6 | 25.0 | 28.6 | **29.5** | 1.3× | 4× |
+
+**Four endpoints are flat and four are not, and the reason is one line of code
+in each.** Every list endpoint has a hard row cap except one:
+
+| endpoint | row cap in the handler | rows at 1000 machines | growth |
+|---|---|---:|---:|
+| `/machines` | **none** — `.all()` | **1000** | 8.6× |
+| `/inventory/items` | `.limit(500)` | 500 | 7.1× |
+| `/agent-actions` | `.limit(300)` | 200 | 2.7× |
+| `/work-orders` | `.limit(200)` | 200 | 1.5× |
+| `/downtime-logs` | `.limit(100)` | 100 | 1.3× |
+
+The cap predicts the growth, in order, with no exceptions. `/machines`
+(`machines_routes.py:45`) is the only endpoint that returns the whole table, and
+it is the worst grower of the five. The two `/analytics/*` endpoints are a
+separate case — they aggregate rather than list — and they are the other two
+that grow.
+
+This is worth stating plainly because it makes the eventual fix small and
+obvious rather than architectural: the dashboard does not need 1000 machine rows
+every three seconds.
+
+### Latency scales even though query count does not
+
+The section above measures a flat **135 queries** per refresh whether the
+factory has 10 machines or 200. These same endpoints get up to **8.6× slower**.
+Both are true, and together they locate the cost. The clincher is the database
+measured without HTTP at 1000 machines:
+
+| | 10 machines | 1000 machines |
+|---|---:|---:|
+| `list machines` (SQL only) | 0.29 ms | **3.3 ms** |
+| `/machines` (same work over HTTP) | 21.5 ms | **184.2 ms** |
+
+At 1000 machines the database finishes in 3.3 ms and the endpoint takes 184 ms.
+**98% of that request is not the database.** It is per-**row** work above the
+query — serialisation, validation, Python looping — inside a *constant* number
+of statements. It is not an N+1, so the batching fix that took `/machine-health`
+from 607 queries to 10 in #525 does not apply here; the fix would be to stop
+building a full-fleet object per poll.
+
+`/analytics/executive-oee` at 1000 machines costs **575 ms** and sustains
+**14.8 RPS**, on an endpoint the dashboard polls every 3 seconds. That is the
+worst measured number in AMP.
+
+**It is not yet a customer problem.** At 250 machines — larger than any factory
+AMP serves today — the worst endpoint is 196 ms and the poll cycle is
+comfortable. This is recorded as a measured P4, not an emergency, and the
+measurement is here so the decision can be made from numbers when it matters.
+
+### Why `xfloor` and not milliseconds: three runs of identical code
+
+`loadtest.py` was run twice more on 2026-09-03 — once while the laptop was busy,
+once while it was idle — against code identical to #508's. 10 machines each:
+
+| | #508 | busy | idle |
+|---|---:|---:|---:|
+| client floor | 7.3 ms | **12.0 ms** | 7.1 ms |
+| MQTT ingest (no HTTP at all) | 41,347/s | **28,485/s** | 41,206/s |
+| `/machines` p50 | 24.2 ms | **38.0 ms** | 23.1 ms |
+| `/machines` **xfloor** | 3.3× | **3.2×** | 3.3× |
+| `/analytics/summary` p50 | 93.5 ms | **144.1 ms** | 80.9 ms |
+| `/analytics/summary` **xfloor** | 12.8× | **12.0×** | 11.4× |
+
+**Worst raw spread across the three: 1.78×. Worst `xfloor` spread: 1.16×.**
+
+The middle column looks like a severe regression and contains none. The client
+floor and the MQTT ingest loop moved with it, and neither touches AMP's request
+path — so the machine was busier. Normalising against each run's own floor
+removes about four fifths of the cross-run variance, which is why `xfloor` is
+the column to read and raw milliseconds are only meaningful within one run.
+
+`loadtest.py` now performs this comparison itself and prints a verdict, rather
+than printing two columns and leaving the reader to draw the wrong conclusion —
+which is what happened here, to me, before the normalisation existed.
+
+### The live layer is not a constraint at any measured size
+
+| at 1000 machines | |
+|---|---|
+| WebSocket connect, 1000 concurrent | 0.34 ms |
+| broadcast fan-out | 13,008,129 frames/sec |
+| MQTT ingest through the real handler | **41,193 msg/sec** |
+
+MQTT ingest did not degrade at all between 10 and 1000 machines (41,206 →
+41,193/s). A factory publishing one message per machine per second would use
+2.4% of that at 1000 machines. Neither the socket layer nor the ingest path is
+anywhere near a limit, and neither needs work.
+
+### What is still not established
+
+* Any of this on production hardware. Client and server share one Windows
+  laptop with no network between them, and Railway's container is smaller.
+* Concurrency beyond 8 client threads — the driver's own floor makes a Python
+  client the wrong tool above that. The k6 scripts under `load/` exist for this
+  and have genuinely never been run.
+* Anything above 1000 machines, and any tenant count above one.
+* Write load. Every endpoint measured here is a read.
 
 ---
 

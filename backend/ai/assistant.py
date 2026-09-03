@@ -287,20 +287,25 @@ _ROUTES = [
     (("help", "what can you", "what can i ask", "capabilit", "how do you work", "what do you do"), _help),
     (("last week", "vs last", "compared", "week on week", "week-on-week", "trend", "improv",
       "getting better", "getting worse", "better or worse", "since last"), _trend),
-    (("reorder", "restock", "stock", "inventory", "out of stock", "replenish"), _inventory),
-    (("wip", "work in progress", "work-in-progress", "in progress", "pipeline", "work order", "raw ", "semi", "finished good"), _flow),
+    (("reorder", "restock", "stock", "inventory", "out of stock", "replenish",
+      "raw material", "material"), _inventory),
+    (("wip", "work in progress", "work-in-progress", "in progress", "pipeline",
+      "work order", "raw ", "semi", "finished good", "waiting",
+      "between operations"), _flow),
     (("shift", "attainment", "crew", "night", "day shift"), _shift),
     (("deliver", "on-time", "on time", " late", "customer", "ship", "fulfil", "bugatti", "mercedes", "order"), _delivery),
     # "$" stays alongside "£": these are tokens the USER types, not display symbols, and
     # someone asking "what's this costing me in $" should still reach the cost answer.
-    (("cost", "money", "losing", "£", "$", "expensive", "spend", "margin"), _cost),
+    (("cost", "money", "losing", "£", "$", "expensive", "spend", "margin",
+      "financ"), _cost),
     (("quality", "defect", "reject", "scrap", "fail", "yield", "fpy", "first-pass", "first pass"), _quality),
-    (("compliance", "document", "audit", "iso", "sop", "controlled doc"), _compliance),
-    (("maintenance", "overdue", "service", "pm ", " task"), _maintenance),
-    (("downtime", "stoppage", "down time"), _downtime),
+    (("compliance", "document", "audit", "iso", "sop", "controlled doc",
+      "paperwork"), _compliance),
+    (("maintenance", "overdue", "servic", "pm ", " task", "due for"), _maintenance),
+    (("downtime", "stoppage", "down time", "broke down", "broken down"), _downtime),
     (("machine", "breakdown", "running", "idle", "offline", " down"), _machines),
     (("produc", "output", "units", "throughput", "made", "making", "good rate"), _production),
-    (("oee", "effective", "availability", "performance"), _oee),
+    (("oee", "effective", "efficien", "availability", "performance"), _oee),
     (("attention", "wrong", "problem", "issue", "priorit", "focus", "happening",
       "summary", "summarise", "summarize", "overview", "everything", "status"), _briefing),
 ]
@@ -350,6 +355,20 @@ def answer(db, tenant: str, question: str) -> dict:
         return {"question": question, "answer": text, "view": view, "matched": "find"}
 
     q = f" {(question or '').lower()} "
+    # FIRST MATCH WINS, and the order of _ROUTES is load-bearing.
+    #
+    # This was changed to "the longest matched key wins" — more specific should
+    # beat a loose fragment, and machines' " down" really does capture "which
+    # asset broke down most this week?". On the questions the change was tuned
+    # against it scored 100%. On a HELD-OUT set it went from 38% to 23%, and it
+    # was reverted.
+    #
+    # Table order is not arbitrary: it encodes which pillar should win when two
+    # match. "did the late crew hit target?" is a shift question, and delivery's
+    # " late" is a longer key than "crew" — specificity picks the wrong one,
+    # while the table's ordering picks the right one. Prefer adding a
+    # deliberate multi-word key ("raw material", "broke down") over changing how
+    # the winner is chosen. See test_ai_evaluation.py sections 1b and 1c.
     for keys, fn in _ROUTES:
         if any(k in q for k in keys):
             text, view = fn(db, tenant)

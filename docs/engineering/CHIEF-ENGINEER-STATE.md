@@ -73,7 +73,30 @@ paid tier kept silently billing Anthropic.
 Previously recorded state (now superseded):
 `ai_copilot.py` already branches on `AI_PROVIDER` (`anthropic` | `gemini`) with per-provider model defaults and a `urllib` call — no SDK. It is if/else branching rather than an `AIProvider` interface, but it is **not** hard-coupled to one vendor. A clean interface is worthwhile; it is not urgent.
 
-Phases 2–6 not started. Note before starting Phase 2: the LLM is already read-only and is handed a pre-built text context (`_build_factory_context`), which is the correct shape — do not rebuild it.
+**Phase 3 (tools) — the premise is now MEASURED, and it is not what I assumed.**
+`ai/assistant.answer` routes by keyword, first match wins. It scores 9/9 on the
+evaluation's original questions — which all contain a word it matches literally,
+so that mostly proved a dictionary lookup works. On paraphrases a plant manager
+would actually type it scored **10/18**, and on a HELD-OUT set written after the
+fact, **5/12 (42%)**.
+
+Two things came out of trying to fix it:
+
+* **Vocabulary was the bulk of it.** 5 of 7 tuned misses matched *nothing* —
+  "servicing" is not "service", "efficient" is not "effective", "financially",
+  "paperwork", "waiting". Those words are now keys.
+* **My first fix was a regression, caught only by the held-out set.** Replacing
+  first-match-wins with "longest matched key wins" sounded obviously better and
+  took held-out from 38% to **23%**. Table order encodes human judgement about
+  collisions ("did the late crew hit target?" is a shift question, but
+  delivery's `" late"` is a longer key than `"crew"`). Reverted.
+
+So the case for a model-chosen route is now **evidence, not preference**: ~42% of
+unseen phrasings route as a person would. `test_ai_evaluation.py` §1c holds that
+as a floor. **That set is burned** — it is in the repo, so measuring a real
+improvement needs FRESH questions scored BEFORE the router is touched.
+
+Phases 2, 4–6 not started. Note before starting Phase 2: the LLM is already read-only and is handed a pre-built text context (`_build_factory_context`), which is the correct shape — do not rebuild it.
 
 ---
 

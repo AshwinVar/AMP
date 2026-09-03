@@ -36,7 +36,27 @@ nobody has ever verified.
 """
 from datetime import date, datetime, timedelta
 
-# The state machine. A transition not listed here does not exist.
+# The state machine for transitions made THROUGH `transition()` below.
+#
+# TWO WRITES DELIBERATELY BYPASS IT, and a reader who does not know that will
+# trust an invariant this table does not actually enforce:
+#
+#   oem_claims.accept                     -> "Assigned"  (from Manufactured)
+#   connected_equipment_routes
+#       .release_installation             -> "Sold"      (from ANY state)
+#
+# Both are the moments a machine changes PARTY, and both are single conditional
+# UPDATEs whose ROW COUNT is the security and concurrency decision — accept only
+# where the claim is still Pending and the installation still unowned; release
+# only where this factory still owns it. Routing them through `transition()`
+# would mean fetch-then-mutate-then-commit, which loses exactly the atomicity
+# that makes a double-claim impossible. The bypass is the correct trade, not an
+# oversight.
+#
+# So this table governs the OEM PORTAL's writes (POST /oem/machines/{id}/
+# transition and .../commission). It does not govern the two above, and
+# `Manufactured -> Assigned` and `Active -> Sold` are both reachable in
+# production while being absent here.
 LIFECYCLE = {
     "Manufactured": ("Sold", "Decommissioned"),
     "Sold": ("Assigned", "Decommissioned"),

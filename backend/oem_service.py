@@ -50,13 +50,48 @@ from datetime import date, datetime, timedelta
 # where the claim is still Pending and the installation still unowned; release
 # only where this factory still owns it. Routing them through `transition()`
 # would mean fetch-then-mutate-then-commit, which loses exactly the atomicity
-# that makes a double-claim impossible. The bypass is the correct trade, not an
-# oversight.
+# that makes a double-claim impossible. The bypass is the correct trade.
+#
+# WHAT THAT REASONING MISSED, AND WHAT FIXED IT
+# It was written here as "the correct trade, not an oversight", and the
+# atomicity half was right. The half it missed is that bypassing the state
+# machine also bypasses its TERMINALITY. `"Decommissioned": ()` below says
+# nothing leaves that state, and `transition()` honoured it while these two did
+# not: a scrapped machine could be released back to "Sold" and then claimed by
+# a different factory, with no party seeing it had been condemned.
+#
+# So terminality is now asserted by both writes, in their WHERE clauses rather
+# than beside them — `is_terminal()` above is the one definition, and
+# test_decommissioned_is_terminal.py holds all three paths to it. A future
+# party-changing write must do the same: this table does not police it for you.
 #
 # So this table governs the OEM PORTAL's writes (POST /oem/machines/{id}/
 # transition and .../commission). It does not govern the two above, and
 # `Manufactured -> Assigned` and `Active -> Sold` are both reachable in
 # production while being absent here.
+DECOMMISSIONED = "Decommissioned"
+
+
+def is_terminal(status) -> bool:
+    """Is this a state nothing may leave?
+
+    One definition, used by `transition()` (implicitly, via an empty tuple of
+    targets) AND by the two writes that bypass it. Before this existed, only
+    `transition()` honoured terminality, so a scrapped machine could be released
+    back to "Sold" and then claimed by another factory — the documentation said
+    the bypass was a considered trade, and it was, but it silently gave up the
+    terminal state along with the state machine. See
+    test_decommissioned_is_terminal.py.
+
+    A NULL status reads as "Manufactured", matching `transition()`. Note that
+    it is non-terminal by TWO independent routes -- the `or "Manufactured"` and
+    the non-empty `("",)` default -- so a mutation removing either one alone is
+    invisible. Both are kept: the first for consistency with `transition()`,
+    the second so an unknown status is never silently treated as terminal.
+    """
+    return LIFECYCLE.get(status or "Manufactured", ("",)) == ()
+
+
 LIFECYCLE = {
     "Manufactured": ("Sold", "Decommissioned"),
     "Sold": ("Assigned", "Decommissioned"),

@@ -22,6 +22,7 @@ from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
+from sqlalchemy import case
 from sqlalchemy.orm import Session
 
 import models
@@ -474,7 +475,27 @@ def release_installation(installation_id: int, db: Session = Depends(_get_db),
                   .filter(models.MachineInstallation.id == inst.id,
                           models.MachineInstallation.factory_tenant_code == tenant)
                   .update({"factory_tenant_code": None, "machine_id": None,
-                           "site": "", "status": "Sold",
+                           "site": "",
+                           # A SCRAPPED machine keeps its terminal status. This
+                           # used to write "Sold" unconditionally, which put a
+                           # machine the factory had condemned back into the
+                           # manufacturer's sellable stock -- and from there it
+                           # was claimable by another factory, with nobody
+                           # seeing it had been scrapped. Decommissioned is
+                           # terminal (oem_service.LIFECYCLE) and letting the
+                           # machine GO is not a lifecycle transition: the
+                           # factory still stops holding it either way.
+                           #
+                           # A CASE, not a value computed from the row already
+                           # loaded above: that read happened in a separate
+                           # statement, and the point of this single conditional
+                           # UPDATE is that nothing between the two can change
+                           # the answer.
+                           "status": case(
+                               (models.MachineInstallation.status
+                                == oem_service.DECOMMISSIONED,
+                                oem_service.DECOMMISSIONED),
+                               else_="Sold"),
                            "decommissioned_at": datetime.utcnow(),
                            "updated_at": datetime.utcnow()},
                           synchronize_session=False))
@@ -485,9 +506,18 @@ def release_installation(installation_id: int, db: Session = Depends(_get_db),
               f"oem={inst.oem_code} serial={inst.serial_number} "
               f"{before} -> Sold, tenant={tenant} -> none")
     db.commit()
+    # Say what actually happened. Hardcoding "Sold" and "can issue a new
+    # installation code" told a factory that had just scrapped a machine it was
+    # back in sellable stock -- which was true then and is refused now, so the
+    # message would have promised something the system declines to do.
+    scrapped = oem_service.is_terminal(before)
     return {"installation_id": inst.id, "serial_number": inst.serial_number,
-            "manufacturer": inst.oem_code, "lifecycle_status": "Sold",
-            "message": ("Released. The manufacturer can issue a new installation "
+            "manufacturer": inst.oem_code,
+            "lifecycle_status": oem_service.DECOMMISSIONED if scrapped else "Sold",
+            "message": ("Released. It stays decommissioned and cannot be issued "
+                        "to another site; your service history stays here."
+                        if scrapped else
+                        "Released. The manufacturer can issue a new installation "
                         "code for its next site; your service history stays here.")}
 
 

@@ -29,7 +29,10 @@ import hashlib
 import secrets
 from datetime import datetime, timedelta
 
+from sqlalchemy import or_
+
 import models
+import oem_service
 
 # No I, L, O, U (read wrong off a sticker), no 0 or 1 (confused with O and I).
 _ALPHABET = "23456789ABCDEFGHJKMNPQRSTVWXYZ"
@@ -160,12 +163,35 @@ def usable(claim, tenant_code, installation, now=None):
     # already installed is dead even if the claim row never noticed.
     if installation.factory_tenant_code:
         return False
+    # A SCRAPPED machine is not stock. Decommissioned is terminal in the
+    # lifecycle, but this write bypasses transition() (deliberately -- the row
+    # count below is what makes a double-claim impossible), so terminality has
+    # to be asserted here too. Without it a machine one factory condemned could
+    # be recommissioned at another, and no party would see that it had been.
+    if oem_service.is_terminal(installation.status):
+        return False
     # An intended tenant is a HINT the OEM may set; when present it is enforced,
     # and when absent the claim is equally valid. It never assigns anything by
     # itself — acceptance still has to happen.
     if claim.intended_tenant_code and claim.intended_tenant_code != tenant_code:
         return False
     return True
+
+
+def not_terminal_clause():
+    """SQL for "this installation is not in a terminal state".
+
+    A named function so it can be COMPILED and asserted on. It cannot be tested
+    with a row: `status` is nullable=False and SQLite enforces that, so a
+    NULL-status installation cannot be created. The NULL branch still has to be
+    here -- in three-valued logic `NULL != 'Decommissioned'` evaluates to NULL,
+    not true, so a bare inequality silently drops such a row, and this repo's
+    convention is that a nullable=False column can still hold NULL in a row
+    written by raw SQL or a migration (transition() reads
+    `installation.status or "Manufactured"` for exactly that reason).
+    """
+    return or_(models.MachineInstallation.status.is_(None),
+               models.MachineInstallation.status != oem_service.DECOMMISSIONED)
 
 
 def accept(db, claim, installation, tenant_code, actor, now=None):
@@ -200,9 +226,16 @@ def accept(db, claim, installation, tenant_code, actor, now=None):
     if won != 1:
         return False
 
+    # `status != Decommissioned` is written as an OR against NULL on purpose.
+    # status is Column(String, nullable=False) with a "Manufactured" default, but
+    # that constraint is not retro-applied to a row written by raw SQL or a
+    # migration -- and in SQL `NULL != 'Decommissioned'` is NULL, not true, so a
+    # bare inequality would REFUSE a legitimate NULL-status machine. transition()
+    # reads a NULL status as "Manufactured"; so does this.
     took = (db.query(models.MachineInstallation)
               .filter(models.MachineInstallation.id == installation.id,
-                      models.MachineInstallation.factory_tenant_code.is_(None))
+                      models.MachineInstallation.factory_tenant_code.is_(None),
+                      not_terminal_clause())
               .update({"factory_tenant_code": tenant_code,
                        "status": "Assigned", "updated_at": now},
                       synchronize_session=False))

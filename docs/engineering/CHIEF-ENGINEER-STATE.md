@@ -42,7 +42,7 @@
 | 1 | MQTT→WS `asyncio.run(None)` | YES | BUG | **FIXED** |
 | 2 | MQTT publishes no `DowntimeStarted` | YES | BUG | **FIXED** |
 | 3 | 4 of 7 `SHARE_*` grants have no enforcement point | YES | INTENTIONAL — no read path exists, so nothing leaks. Consent recorded ahead of the feature | not a defect |
-| 4 | `oem_claims.accept` sets `status="Assigned"` by bulk UPDATE, bypassing `oem_service.transition` | YES | INTENTIONAL — the conditional UPDATE's row count *is* the security decision; routing it through the state machine would break claim atomicity | document, don't change |
+| 4 | `oem_claims.accept` sets `status="Assigned"` by bulk UPDATE, bypassing `oem_service.transition` | YES | INTENTIONAL for atomicity — **but the bypass also skipped TERMINALITY.** A scrapped machine could be released to "Sold" and re-claimed by another factory, with no party seeing it had been condemned | **FIXED** — `is_terminal()` asserted in both WHERE clauses |
 | 5b | Poll cycle: 135 queries at 10 machines, 135 at 200 — query count FLAT. **But HTTP latency is not:** `/analytics/executive-oee` 73→575 ms and `/machines` 21→184 ms from 10 to 1000 machines. At 1000 the DB answers `list machines` in 3.3 ms while `/machines` takes 184 ms — **98% of the request is above the query**. Per-ROW cost, not N+1 | MEASURED both ways, one clean run | P4 — see below |
 | 5 | Dashboard polls `fetchAll` every 3s; 46 requests/round | **MEASURED** via `dashboard_perf.py` **and** `loadtest.py` | PERFORMANCE — the `/machine-health` N+1 was the real query cost (607→10). At ≤250 machines every endpoint is ≤210 ms and error-free | **largest win taken**; the next one is per-row serialisation cost at 1000 machines, not query count |
 | 6 | Copilot provider coupling | YES | Already has `AI_PROVIDER` anthropic/gemini branching — if/else, not a clean interface | P6 |
@@ -51,7 +51,7 @@
 
 ## PRODUCT COMPLETION BACKLOG
 
-- **`release_installation`** sets `status="Sold"` from any state including `Active` — verify whether the state machine should govern it. UNVERIFIED, needs a look.
+- ~~`release_installation` sets `status="Sold"` from any state~~ — **VERIFIED AND FIXED.** From `Decommissioned` it resurrected a terminal state and put a scrapped machine back in sellable stock; `usable()`/`accept()` then let another factory claim it. Integrity defect, not a security one (no cross-tenant read). Both paths now guarded; 19 checks, 8/9 mutations red (the survivor documented: a NULL status is non-terminal by two independent routes).
 - **`manage_models` / `manage_branding`** capabilities are declared but no route requires them; there is no API to create a machine model (catalogue is seeded). Gap, not a bug.
 - **Load testing: `loadtest.py` HAS been run** — at #508 (four scales, to 1000 machines) and again 2026-09-03. Three files claimed it never had; all three are corrected. The **k6** scripts under `load/` genuinely have never run, and they are the ones that would measure the server rather than a Python client. Nothing in CI runs either.
 - **Only 3 of 193 backend suites use a real HTTP client**; the rest call route functions directly. Fast and legitimate, but it is not end-to-end API testing and should not be described as such.
@@ -82,6 +82,12 @@ Phases 2–6 not started. Note before starting Phase 2: the LLM is already read-
 - Which of `SHARE_ALARMS` / `SHARE_TELEMETRY` / `SHARE_MAINTENANCE_HISTORY` / `SHARE_DOWNTIME` matters commercially, and what the data must look like. Alarm codes are meaningless without the manufacturer's fault dictionary.
 - Whether warranty runs from despatch, delivery, installation or commissioning (`warranty_months` is declared and unused for exactly this reason).
 - Any real PLC/controller before touching industrial protocol drivers.
+
+---
+
+## HARNESS DEBT
+
+- **`audit_oem_adversarial.py` reports a false BREACH** and has since #522. Its CONTROL posts `{"service_hours": 123}` to `/oem/machines/{id}/service`, and #522 correctly made that a 403 when the factory has not granted `SHARE_OPERATING_HOURS` — a caller-supplied operand was a bisection oracle on the hour meter. The product is right; the harness fixture was not updated. Verified pre-existing by running the audit on master. Fix: grant the permission in its fixture, or split into "record a service" (no hours, expect 200) and "record hours without consent" (expect 403). **A harness that cries wolf gets ignored, so this is worth an hour.**
 
 ---
 

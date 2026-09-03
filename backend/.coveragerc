@@ -119,6 +119,17 @@ omit =
     #                         collision, event-tenancy contracts). Run by hand.
     audit_oem_specialist.py
     oem_perf.py
+    #   dashboard_perf         seeds 10/50/200 machines and counts the SQL each
+    #                          dashboard endpoint issues. Same category and the
+    #                          same rule: it produced the measurement that found
+    #                          the /machine-health N+1 (607 statements every
+    #                          three seconds), and leaving it in would let ADDING
+    #                          that measurement lower the number describing how
+    #                          well the application is tested — 78.0 to 77.9,
+    #                          under the floor, without one line of application
+    #                          code changing. The behaviour it proves IS
+    #                          measured, by test_machine_health_query_count.py.
+    dashboard_perf.py
     # The deployment migration contract (ADR-0018). Same category once more: it
     # spawns a fresh interpreter per step against a disposable PostgreSQL
     # database, so almost none of its lines execute in the measuring process

@@ -57,12 +57,29 @@ def check(label, condition, detail=""):
           + (f"   [{detail}]" if detail and not condition else ""))
 
 
-def run(floor, endpoints, measured="2026-09-03 10:00 UTC"):
-    """One scale's worth of results. `endpoints` maps path -> p50."""
-    return {"floor_ms": floor, "measured": measured,
-            "http": [{"path": p, "reqs": 100, "rps": 10.0, "p50": v,
-                      "p95": v * 2, "p99": v * 3, "errors": 0, "codes": {"200": 100}}
-                     for p, v in endpoints.items()]}
+def run(floor, endpoints, measured="2026-09-03 10:00 UTC", concurrency=8,
+        saturated=False):
+    """One scale's worth of results. `endpoints` maps path -> p50.
+
+    `saturated` sets RPS so p50 == concurrency/RPS exactly -- Little's Law
+    against a fully busy server, which is what the four slow endpoints measured
+    (ratios 1.01-1.09).
+
+    Otherwise it uses ratio 0.7, matching the eight endpoints that were NOT
+    saturated (0.61-0.81). Note the unsaturated case cannot be built by simply
+    inflating RPS: L = C/W is an identity for the whole system, not an
+    approximation, so an arbitrary RPS describes no physical run. What actually
+    separates the two populations is skew -- p50 sits further below the MEAN for
+    the fast endpoints -- and 0.7 is the middle of the measured band.
+    """
+    http = []
+    for p, v in endpoints.items():
+        rps = (1000.0 * concurrency / v) * (1.0 if saturated else 0.7)
+        http.append({"path": p, "reqs": 100, "rps": rps,
+                     "service_ms": 1000.0 / rps, "p50": v, "p95": v * 2,
+                     "p99": v * 3, "errors": 0, "codes": {"200": 100}})
+    return {"floor_ms": floor, "measured": measured, "concurrency": concurrency,
+            "http": http}
 
 
 def verdict_text(baseline, results):
@@ -150,6 +167,38 @@ def main():
     out = verdict_text({}, mixed)
     check("scales from DIFFERENT runs are flagged as not comparable",
           "CAUTION" in out, out)
+
+    print()
+    print("=" * 74)
+    print("4b. A QUEUEING p50 MUST NOT BE READ AS USER LATENCY")
+    print("=" * 74)
+    # The driver keeps 8 requests in flight at all times. Against a saturated
+    # server, Little's Law makes latency = 8/throughput -- so the p50 is what
+    # the LAST of eight simultaneous callers waits, not what one user waits.
+    # Measured, /analytics/executive-oee at 1000 machines is 574.5 ms p50 and
+    # 67.6 ms of service time. Reporting the first as user latency is an 8.5x
+    # overstatement, and it is the number someone would act on.
+    sat = run(7.3, {"/analytics/executive-oee": 574.5}, saturated=True)
+    out = verdict_text({}, {"1000": sat})
+    check("a saturated endpoint is called out as queueing",
+          "SATURATED" in out, out)
+    # Exactly at saturation the service time is p50/concurrency -- 574.5/8 =
+    # 71.8 ms. Computed, not hardcoded: the real run measured 67.6 ms because
+    # its ratio was 1.06 rather than a clean 1.00, and pinning either literal
+    # would make this assert the fixture instead of the arithmetic.
+    expected = f"{sat['http'][0]['service_ms']:.1f}ms"
+    check("...and the service time one user would wait is shown",
+          expected in out.replace(" ", ""), f"expected {expected} in output")
+    check("...and the two are explicitly not interchangeable",
+          "not interchangeable" in out, out)
+
+    # The other half: an endpoint with throughput to spare must NOT be labelled
+    # queueing, or the warning becomes noise that gets ignored.
+    out = verdict_text({}, {"10": run(7.3, FAST)})
+    check("an unsaturated endpoint is NOT called queueing",
+          "SATURATED" not in out, out)
+    check("...and the verdict says the latencies are service time",
+          "not queueing" in out, out)
 
     print()
     print("=" * 74)

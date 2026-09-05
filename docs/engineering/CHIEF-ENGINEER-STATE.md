@@ -137,15 +137,28 @@ re-deriving it is worse than none.
    no factory near that. Any fix must not silently truncate the fleet view —
    pagination or a lighter projection, not a bare `.limit()`.
 
-2. **AI Phase 3 — a model-chosen route.** BLOCKED for measurement, not for
-   building: there is no AI key in this environment, so routing quality cannot
-   be scored here. The case for it is measured and recorded
-   (`test_ai_evaluation.py` §1c): keyword routing answers ~42% of unseen
-   phrasings as a person would. **Write fresh held-out questions and score them
-   BEFORE touching the router** — §1c is burned, being in the repo.
-   The safety shape is fixed and non-negotiable: the model picks a NAME from a
-   fixed allowlist, AMP executes it with the caller's tenant, and the model
-   never sees or supplies a tenant.
+2. **AI Phase 3 — the SAFETY HALF is built and under CI; the model call is not.**
+   `assistant.answer(..., chosen_route=NAME)` is the seam: a model may propose
+   WHICH pillar answers, AMP looks the name up in a fixed allowlist derived from
+   `_ROUTES`, and executes it with the tenant the request already carries.
+   Proven in `test_ai_route_allowlist.py` (28 checks): a nonexistent function, a
+   PRIVATE function, a real-but-not-routable function, a module name, a dunder,
+   a SQL fragment, a path, an empty string, a number, a dict, a list and `True`
+   all fall back to keyword routing — none raises, none executes. Tenant
+   isolation holds in both directions. 4/5 mutations red; the one that matters
+   most catches swapping the allowlist for `getattr`, which would make
+   `_machines` reachable. The survivor is documented in the code: dropping the
+   `isinstance(str)` check opens nothing, because a dict fails the name
+   comparison anyway.
+   **NOTHING PASSES `chosen_route` YET, and `/ai/ask` is untouched.** That is
+   deliberate: routing quality cannot be measured with no AI key, and shipping
+   an unmeasurable behaviour change is what §1c of the evaluation exists to warn
+   against. **When a key exists:** write FRESH held-out questions and score them
+   BEFORE wiring the model call — §1c is burned, being in the repo. The bar to
+   beat is ~42%.
+   Also noted while investigating, unfixed and independent: `/ai/ask` returns no
+   `view` on the LLM success path (`ai_copilot.py:514`) while its fallback does
+   (`:509`), so users lose the drill-in link exactly when AI is switched on.
 
 3. **Training-doc drift** — P8, explicitly the lowest. 18 of 20 misleading items
    unsynced (MQTT / events / twin are done).

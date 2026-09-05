@@ -340,9 +340,78 @@ def digest(db, tenant: str) -> dict:
     return {"digest": " ".join(lines)}
 
 
-def answer(db, tenant: str, question: str) -> dict:
+def route_names():
+    """The FIXED allowlist of pillar names a model may choose from.
+
+    Derived from _ROUTES, so a pillar added to the table is offerable and a
+    pillar removed from it stops being offerable, with no second list to keep in
+    sync. "briefing" is included explicitly because it is the fallthrough rather
+    than a table entry.
+
+    This is the whole point of the allowlist: the model returns a NAME, and a
+    name is all it can return. It cannot name a table, a tenant, a SQL fragment
+    or a function that is not here. AMP looks the name up and calls the pillar
+    itself, with the tenant IT already holds.
+    """
+    names = {fn.__name__.lstrip("_") for _keys, fn in _ROUTES}
+    names.add("briefing")
+    return sorted(names)
+
+
+def _pillar(name):
+    """The pillar function for an allowlisted name, or None.
+
+    None for anything unrecognised -- including a name that exists in this module
+    but is not a routable pillar. `_find` and `_machine_answer` take a third
+    argument and are deliberately NOT reachable this way; a model cannot call
+    them by guessing.
+    """
+    # Belt and braces, and worth being honest about: removing this check does
+    # NOT open a hole, and a mutation deleting it survives the suite. A dict,
+    # list or int simply fails the `fn.__name__ == name` comparison below and
+    # falls through to None anyway. It stays because a route arrives as JSON
+    # from a model, and stating "this must be a string" at the boundary is
+    # cheaper to read than deriving that it cannot matter.
+    if not isinstance(name, str):
+        return None
+    for _keys, fn in _ROUTES:
+        if fn.__name__.lstrip("_") == name:
+            return fn
+    return _briefing if name == "briefing" else None
+
+
+def answer(db, tenant: str, question: str, chosen_route=None) -> dict:
     """Answer a plant question from the read-models: a sentence plus the view that
-    drills into it. Routes by keyword; defaults to 'what needs attention'."""
+    drills into it. Routes by keyword; defaults to 'what needs attention'.
+
+    `chosen_route` is the AI-roadmap phase-3 seam: a model may propose WHICH
+    pillar answers a question, and AMP executes it. The safety contract is that
+    the model's influence stops at a name:
+
+      * the name is looked up in the fixed allowlist (`route_names()`); anything
+        unrecognised is IGNORED and the keyword router runs, so the failure mode
+        is today's behaviour rather than an error or an unguarded call;
+      * `tenant` comes from this function's caller -- the request's authenticated
+        principal -- and never from the model. There is no code path by which a
+        proposed route can carry, alter or suggest a tenant;
+      * the model never touches the database. It sees a question and a list of
+        names; AMP does the reading.
+
+    Default None, so every existing caller behaves exactly as before. Nothing in
+    the product passes this yet: routing QUALITY cannot be measured in an
+    environment with no AI key, and shipping an unmeasurable behaviour change is
+    what test_ai_evaluation.py section 1c exists to warn against. The envelope
+    lands first so it is already correct and under CI on the day a key appears.
+    """
+    if chosen_route is not None:
+        fn = _pillar(chosen_route)
+        if fn is not None:
+            text, view = fn(db, tenant)
+            return {"question": question, "answer": text, "view": view,
+                    "matched": fn.__name__.lstrip("_"), "route_source": "model"}
+        # Unrecognised: fall through to the keyword router below. Deliberately
+        # silent to the caller -- an invalid proposal is not an error condition,
+        # it is a model being wrong, and the user still gets an answer.
     # A specific machine named in the question wins — answer about that machine.
     named = _machine_named(db, question)
     if named is not None:

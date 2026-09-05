@@ -362,8 +362,12 @@ def escalate_from_briefing(db, tenant) -> dict:
     from ai.briefing import build_briefing, DOWN_STATUSES  # lazy: avoids an import cycle at package load
 
     b = build_briefing(db, tenant)
-    if not b["has_data"]:
-        return {"escalated": False, "reason": "no_data"}
+    # NO has_data GATE. It used to return reason="no_data" here, which meant a
+    # machine hard-down on a plant that had not produced anything yet was never
+    # escalated — the commissioning window, when a customer is deciding whether
+    # this product notices things. The gate that matters is the one below: is
+    # there a high-severity alert to raise? An empty alert list already answers
+    # "no" for a genuinely quiet plant.
     top = next((a for a in b["alerts"] if a["severity"] == "high"), None)
     if top is None:
         return {"escalated": False, "reason": "no_high_alert"}

@@ -280,8 +280,17 @@ def test_escalation_agent_escalates_top_briefing_alert():
     assert db.query(models.Escalation).filter_by(source="Escalation agent").count() == 1
 
     # empty factory -> nothing to escalate, no crash
+    #
+    # The reason changed from "no_data" to "no_high_alert", and the assertion
+    # that matters is unchanged: nothing is escalated and nothing crashes.
+    # "no_data" came from a has_data gate at the top of the agent, and that gate
+    # was a defect — it also suppressed a HARD-DOWN machine on a plant that had
+    # not produced anything yet, which is every tenant's first week
+    # (test_briefing_down_before_production.py). The agent now decides on the
+    # only question that matters, "is there a high-severity alert?", and an
+    # empty factory answers no by having no alerts at all.
     empty = agents.escalate_from_briefing(_fresh_session(), "DEFAULT")
-    assert empty["escalated"] is False and empty["reason"] == "no_data"
+    assert empty["escalated"] is False and empty["reason"] == "no_high_alert", empty
 
 
 def test_yield_agent_proposes_on_low_yield():

@@ -129,13 +129,18 @@ were done — and one of them had been describing a defect that no longer existe
 in terms that were wrong even when it did. A handover nobody can trust without
 re-deriving it is worse than none.
 
-1. **Row cap on `/machines`** — P4, measured. `machines_routes.py:45` is
-   `db.query(models.Machine).order_by(...).all()`: the only list endpoint with
-   no cap, and the worst grower of the five (8.6× from 10 to 1000 machines,
-   against `.limit(500)`'s 7.1× and `.limit(100)`'s 1.3×). **Verified still
-   uncapped.** Not urgent: at 1000 machines one user waits 23.9 ms, and AMP has
-   no factory near that. Any fix must not silently truncate the fleet view —
-   pagination or a lighter projection, not a bare `.limit()`.
+1. ~~Row cap on `/machines`~~ — **CLOSED as "leave it alone", with a guard.**
+   Investigated properly and the answer flipped from "P4, do it later" to "must
+   not be done". The dashboard reduces the machines array into three headline
+   KPIs client-side (`app/dashboard/page.tsx:1755-1762`): `running` and
+   `breakdown` are `.filter().length`, `avgUtilization` is a mean over
+   `machines.length`. A bare `.limit()` would not shorten a visible list — it
+   would print an **understated breakdown count** and a mean over an arbitrary
+   id-ordered subset, with nothing on screen indicating it. Demonstrated:
+   `.limit(500)` against 600 machines reports **0 machines down when 5 are
+   broken**. `test_machines_not_capped.py` now fails CI on any `.limit()`, with
+   the reason attached. If it ever must change: pagination *and* moving the KPI
+   derivation off the truncated array — not a cap.
 
 2. **AI Phase 3 — a model-chosen route.** BLOCKED for measurement, not for
    building: there is no AI key in this environment, so routing quality cannot

@@ -425,6 +425,12 @@ def build_management_summary(machines, downtime_logs, shifts, production_records
         "unit_value_gbp": unit_value_gbp,
         "estimated_loss_value": estimated_loss_value,
         "breakdown_count": len([machine for machine in machines if machine.status == "Breakdown"]),
+        # This summary reports EXCEPTIONS, not a status census — which is why it
+        # has breakdown_count and no count for Running or Idle. Offline belongs
+        # in that company and was missing from it: a machine whose gateway
+        # dropped is unexpectedly not producing, exactly like a breakdown, and
+        # was the only such status the summary never mentioned.
+        "offline_count": len([machine for machine in machines if machine.status == "Offline"]),
         "machine_count": len(machines),
     }
 

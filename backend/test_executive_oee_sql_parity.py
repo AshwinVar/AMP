@@ -201,6 +201,11 @@ def reference_executive_oee(db):
         "production_achievement": plan_achievement,
         "running_machines": len([machine for machine in machines if machine.status == "Running"]),
         "breakdown_machines": len([machine for machine in machines if machine.status == "Breakdown"]),
+        # Added when Offline stopped being a status that no rollup counted
+        # (test_machine_status_buckets.py). This reference exists to be compared
+        # key-for-key against the endpoint, so it has to grow with it — and the
+        # comparison is exactly what caught the omission when it did not.
+        "offline_machines": len([machine for machine in machines if machine.status == "Offline"]),
     }
 
 

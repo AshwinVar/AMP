@@ -44,4 +44,5 @@ export type ExecutiveOee = {
   production_achievement: number;
   running_machines: number;
   breakdown_machines: number;
+  offline_machines: number;
 };

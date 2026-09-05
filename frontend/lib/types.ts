@@ -60,6 +60,7 @@ export type Summary = {
   idle: number;
   breakdown: number;
   maintenance: number;
+  offline: number;
   avg_utilization: number;
   avg_oee: number;
   avg_availability: number;

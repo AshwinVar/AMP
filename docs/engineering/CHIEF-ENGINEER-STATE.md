@@ -220,8 +220,8 @@ re-deriving it is worse than none.
    The `/ai/ask` missing-`view` defect noted here is **fixed (#546)** — and it
    was worse than the note said, see below.
 
-3. **OPEN, MEASURED, NOT FIXED: two `has_data` rules, so an unrun week reads as
-   0% OEE.** #556 closed the *window* half of the OEE split-brain (twin and the
+3. **DONE (#558), with a product decision left for you: two `has_data` rules,
+   so an unrun week read as 0% OEE.** #556 closed the *window* half of the OEE split-brain (twin and the
    contract selected different rows; 21 points apart). This is the other half —
    the same records, two ideas of what "no data" means:
 
@@ -245,15 +245,26 @@ re-deriving it is worse than none.
    * `analytics_engine.py:221` — `len(records) > 0` (`pooled_oee`, feeding twin / cost / losses / recovery)
    * `analytics_engine.py:370` — `record_count > 0` (`build_management_summary`)
 
-   Two ways to close it, and they are not equivalent. (a) Narrow: change the four
-   call sites to `planned > 0 or total > 0` and keep the integer return, so
-   `has_data` flips only for windows that are entirely unmeasurable — bounded,
-   and every surface that already branches on `has_data` then says "no
-   production" instead of showing 0%. (b) Wide: migrate callers onto
-   `oee_contract` and its `None`-for-undefined return — more honest, but it is an
-   interface change (ints to `None`) at every consumer, and whether a given
-   screen shows "—" or "0%" is partly a product call. **(a) is the one to do
-   first**; it is where the fabricated 0% actually reaches a customer.
+   **(a) IS DONE (#558).** The rule has one home — `oee_contract.is_measurable`
+   — and all four sites use it. Two things learned doing it, both worth keeping:
+
+   * The first attempt was a **no-op at three of the four sites**, and only the
+     mutations said so. Those endpoints publish a bare integer and no
+     `has_data`, so `avg_oee` is 0 whether the plant scored zero or never ran —
+     the flag they computed went in the bin. They now **publish `has_data`**,
+     which is what makes the fix reach a caller at all.
+   * `mutate_oee_contract.py`'s "has_data goes back to 'a row exists'" pattern
+     matched the expression that moved, so it **silently stopped applying**. A
+     mutation that cannot be applied is a guard switched off; that harness
+     reports it as a survivor, which is the only reason it was noticed.
+
+   **WHAT IS STILL OPEN, and it is now a product call rather than a defect:**
+   the frontend still renders `0%` for an unrun week, because nothing consumes
+   the new `has_data` flag yet. The API can now tell the two apart; the screen
+   cannot. Deciding whether that card shows "—", "not run", or "0%" is Ashwin's,
+   not mine — and option (b), migrating every consumer onto the contract's
+   `None`-for-undefined return, is the larger interface change that only makes
+   sense once that rendering decision exists.
 
 4. **Training-doc drift** — P8, explicitly the lowest. 18 of 20 misleading items
    unsynced (MQTT / events / twin are done).

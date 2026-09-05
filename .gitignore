@@ -48,3 +48,25 @@ backend/.pytest.db
 # Load-test run artifacts (the results JSON IS committed; these are not)
 backend/loadtest_server.log
 backend/dr_drill.sql
+
+# Claude Code session state. .claude/worktrees alone is ~15 MB of throwaway git
+# worktrees from parallel agent runs, and it is regenerated on demand. Not
+# ignoring it meant `git status` always showed it, one `git add -A` away from a
+# 15 MB commit. settings.local.json is separately excluded by a global ignore;
+# launch.json is a local dev-server config, not a project artifact.
+.claude/
+
+# A generated `tree /f` dump of the working directory: 1.6 MB, 37,720 lines, 145
+# of them node_modules. Regenerate it rather than commit it.
+tree.txt
+
+# Rendered training deliverables. The MARKDOWN SOURCES are tracked and
+# docs/build_training_pdf.py rebuilds these from them, so committing the
+# renderings would store ~570 KB of binary that goes stale the moment a source
+# changes. Note the rebuild is not byte-identical off Windows (the script
+# registers C:/Windows/Fonts and falls back to Helvetica elsewhere), which is
+# another reason the source is the artefact of record.
+docs/training/*.pdf
+docs/training/handbook.html
+docs/*.pdf
+docs/sales/*.pdf

@@ -220,7 +220,42 @@ re-deriving it is worse than none.
    The `/ai/ask` missing-`view` defect noted here is **fixed (#546)** — and it
    was worse than the note said, see below.
 
-3. **Training-doc drift** — P8, explicitly the lowest. 18 of 20 misleading items
+3. **OPEN, MEASURED, NOT FIXED: two `has_data` rules, so an unrun week reads as
+   0% OEE.** #556 closed the *window* half of the OEE split-brain (twin and the
+   contract selected different rows; 21 points apart). This is the other half —
+   the same records, two ideas of what "no data" means:
+
+   | case | `oee_contract` | `analytics_engine` |
+   |---|---|---|
+   | a row that recorded nothing | `has_data=False`, OEE unmeasured | `has_data=True`, **OEE 0%** |
+   | unplanned only (a shutdown week) | availability undefined | **OEE 0%** |
+   | a normal shift | 58% | 58% (agree) |
+
+   The contract names both as the reason it exists: *"an empty shift rendered as
+   a measured 0% OEE"* and *"Reporting 0% for an unscheduled weekend is a
+   fabricated loss."*
+
+   **Why it was not fixed in one go, and what the next session needs to know:**
+   `has_data` is a PARAMETER of `pooled_oee_from_sums`, so the rule lives at four
+   call sites, all of them "a row exists" rather than the contract's "something
+   measurable":
+
+   * `analytics_routes.py:112` — `record_count > 0` (`/analytics/summary`)
+   * `analytics_routes.py:868` — `bool(production_by_machine)` (`/analytics/executive-oee`)
+   * `analytics_engine.py:221` — `len(records) > 0` (`pooled_oee`, feeding twin / cost / losses / recovery)
+   * `analytics_engine.py:370` — `record_count > 0` (`build_management_summary`)
+
+   Two ways to close it, and they are not equivalent. (a) Narrow: change the four
+   call sites to `planned > 0 or total > 0` and keep the integer return, so
+   `has_data` flips only for windows that are entirely unmeasurable — bounded,
+   and every surface that already branches on `has_data` then says "no
+   production" instead of showing 0%. (b) Wide: migrate callers onto
+   `oee_contract` and its `None`-for-undefined return — more honest, but it is an
+   interface change (ints to `None`) at every consumer, and whether a given
+   screen shows "—" or "0%" is partly a product call. **(a) is the one to do
+   first**; it is where the fabricated 0% actually reaches a customer.
+
+4. **Training-doc drift** — P8, explicitly the lowest. 18 of 20 misleading items
    unsynced (MQTT / events / twin are done).
 
 ### Removed from this list, with why

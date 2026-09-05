@@ -117,7 +117,25 @@ Phases 2, 4–6 not started. Note before starting Phase 2: the LLM is already re
 
 - **Production has no MQTT broker.** `FastAPI MQTT connection error: ConnectionRefusedError(111)` on every boot; `MQTT_BROKER` is unset. The live-telemetry path therefore does not run in production today. The bridge fix above is correct but latent until a broker exists.
 - `RESEED_FACTORY` is consumed at `274946` and can be deleted from Railway.
-- `docs/training/` is **untracked** — 159 KB of handbook that is not in git and would be lost with the working tree.
+- ~~`docs/training/` is untracked — 159 KB~~ — **wrong twice over, and now
+  resolved.** 159 KB was the size of `AMP-FOUNDER-TECHNICAL-HANDBOOK.md` ALONE,
+  and that file was already tracked (#525) — so the most valuable file was never
+  at risk, and one file's size had been generalised to a whole directory while
+  inverting its status. `docs/training/` is 768 KB.
+  The real problem was different: `build_training_pdf.py` needs SIX markdown
+  sources and git held TWO, so nobody who cloned the repo could run its own
+  tracked build. All six are tracked now; the rendered PDF/HTML are gitignored
+  because the script rebuilds them (and not byte-identically off Windows, so the
+  markdown is the artefact of record). Same class: `.coveragerc:42` named
+  `reseed_inventory.py`, which was not in the repo. Now it is.
+  Also newly ignored: `.claude/` (15 MB of throwaway agent worktrees) and
+  `tree.txt` (1.6 MB generated dump) — 17 MB that sat in `git status`
+  permanently, one `git add -A` from being committed.
+  **Left uncommitted on purpose, because THE REPO IS PUBLIC:**
+  `docs/engineering/QA-FRAMEWORK-AUDIT.md`, whose headline finding — that
+  `auth.py` ships a fail-open `SECRET_KEY` — has been false since #326, and
+  `privacy-policy.html`, which is GMATS Field Service's, a different product.
+  Neither contains a secret; both are misplaced. Owner's call.
 
 ---
 

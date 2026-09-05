@@ -3,9 +3,18 @@
 > Handover file. A new session should be able to read only this and continue.
 > Keep it short. Update it at the end of every completed task.
 
-**Updated:** 2026-09-03 (performance line closed; see WHAT IS ACTUALLY OPEN)
-**Master SHA:** `040d30a` (#539)
-**Production SHA:** `040d30a` — verified `{"status":"ok","database":"ok","schema":"ok"}` at 22:49 UTC. Railway auto-deploys master, so this tracks HEAD; re-check `/health` rather than trusting this line's age.
+**Updated:** 2026-09-05 (the correctness line: #542–#559, see LAST COMPLETED TASKS)
+**Master SHA:** `208f564` (#559)
+**Production SHA:** `208f564` — verified live, not assumed:
+`{"status":"ok","database":"ok","schema":"ok","version":"208f564"}` from
+`https://flowmes-production.up.railway.app/health`. Railway auto-deploys master,
+so prod tracks HEAD; re-check `/health` rather than trusting this line's age.
+
+> This header was twenty PRs stale when it was found (`040d30a`/#539 while master
+> was `208f564`/#559). A handover whose own first three lines are wrong teaches a
+> new session not to trust the rest of it. **Update these three lines whenever you
+> merge**, and take the production SHA from `/health` rather than assuming the
+> deploy landed.
 
 ---
 
@@ -25,6 +34,23 @@
 | `loadtest.py`: reported raw ms while its docstring promised floor-normalised figures, and **overwrote a 4-scale results file with a 2-scale one**, destroying the 250/1000 evidence. Now reports `xfloor`, merges scales, and states a verdict | P4 | fixed, 22 checks, 6/6 mutations red |
 | First clean four-scale HTTP measurement (2026-09-03 18:18 UTC): 10/50/250/1000 machines, **zero errors in 32 endpoint/scale combinations, no regression vs #508 at any scale** | P4 | measured, documented |
 | **Corrected my own reading of it**: those p50s are measured under 8 concurrent clients and are pinned to 8/RPS by Little's Law (ratio 1.01–1.09 on the saturated four). Service time is up to 8.5× smaller — 575 ms → **67.6 ms**. Harness now prints both and names the saturated endpoints | P4 | corrected, 29 checks, 4/4 mutations red |
+
+### 2026-09-05 — the correctness line (#542–#559)
+
+One thread, pulled repeatedly: **the same fact defined in two places.**
+
+| Task | Priority | Status |
+|---|---|---|
+| **Two definitions of "the last 7 days".** `oee_contract` used `[now-7d, now)`; `ai/twin._recent_production` used `midnight(today-6)` with **no upper bound**, feeding oee/cost/losses/recovery. Same plant, same instant: **66% vs 87%**. `build_oee_summary` used BOTH, so `coverage` — the figure whose job is "measured from N of M machines" — described a different record set than the number it qualified: *"OEE 85%, measured from 0 of 1 machines"* | P1 | fixed #556, 4/4 mutations red |
+| **`has_data` meant "a row exists" at four call sites**, against the contract's "something measurable" — so a week the plant did not run rendered as a measured 0%. First attempt was a **no-op at three of the four** (they publish a bare integer and no flag); they now publish `has_data` | P2 | fixed #558, 6/6 mutations red |
+| **`Offline` was a valid machine status that no rollup counted.** Census endpoints published `machines` beside status counts that summed short. #552 fixes the per-zone rollup **#549 missed in the same file** | P2 | fixed #549 + #552, 7/7 mutations red |
+| **A record written in the same clock tick as the query was excluded from its own window.** `OeeWindow` end was `utcnow()` against `created_at < end`. ~15.6 ms Windows granularity made it a 35% local failure; microsecond Linux CI never saw it | P2 | fixed #550, 6/6 mutations red |
+| **A machine hard-down on day one raised nothing** — no alert, no escalation — because the plant had not produced yet. Every tenant starts there | P2 | fixed #554, 5/5 mutations red |
+| **Turning the AI copilot ON removed the drill-in button**; separately, `AICopilot.tsx` kept a ten-entry label table while the assistant had thirteen views | P3 | fixed #546, 10/10 mutations red |
+| **`DOWN_STATUSES` defined twice**, three consumers across the two copies | P5 | fixed #553, 5/5 mutations red |
+| MQTT boot: no broker could have been connected to, and one refusal killed ingest | P2 | fixed #543 |
+| **A held-out routing set whose held-out half is unprintable.** Keyword routing is **58%**, not the 42% recorded. First thing it caught was my own vocabulary pass: visible half 13→22, invisible half **15→15** | P4 | added #547 |
+| Row cap on `/machines` — investigated and **closed as "must not be done"**, with a CI guard and the reason attached | P4 | #542 |
 
 ---
 

@@ -1,6 +1,7 @@
 "use client";
 import { useEffect, useState } from "react";
 import { apiGet, apiPost } from "../lib/api";
+import { viewLabel } from "../lib/modules";
 
 type Turn = { q: string; a: string; view?: string; source?: string; model?: string | null; note?: string };
 type AiStatus = { enabled: boolean; provider?: string | null; model?: string | null };
@@ -15,11 +16,10 @@ const SUGGESTIONS = [
   "Summarise today's production.",
 ];
 
-const VIEW_LABEL: Record<string, string> = {
-  executive: "Executive OEE", machines: "Machines", inventory: "Inventory",
-  orders: "Orders & Dispatch", costing: "Costing", quality: "Quality",
-  cmms: "CMMS", downtime: "Downtime", analytics: "Analytics", overview: "Overview",
-};
+// The drill-in label comes from the nav catalogue, which is where a view's name
+// is defined. This file used to keep its own ten-entry copy, and the assistant
+// had since grown three more views (shifts, workorders, documents) it never
+// learned about — so those answers rendered no button. See viewLabel().
 
 // The AI Factory Copilot: ask a plain-language question about the plant and get an
 // answer straight from the live read-models (rule-first, no API key needed), with
@@ -141,12 +141,12 @@ export default function AICopilot({ onOpen }: { onOpen?: (viewKey: string) => vo
             </div>
             <p className="text-slate-200 text-sm whitespace-pre-wrap leading-relaxed">{t.a}</p>
             {t.note && <p className="text-amber-300/80 text-xs mt-2">{t.note}</p>}
-            {t.view && onOpen && VIEW_LABEL[t.view] && (
+            {t.view && onOpen && viewLabel(t.view) && (
               <button
                 onClick={() => onOpen(t.view!)}
                 className="mt-3 text-xs text-indigo-300 border border-indigo-500/40 rounded-lg px-3 py-1 hover:bg-indigo-500/10"
               >
-                Open {VIEW_LABEL[t.view]} →
+                Open {viewLabel(t.view)} →
               </button>
             )}
           </div>

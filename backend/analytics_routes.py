@@ -24,6 +24,7 @@ import ai.prediction
 import ai.twin
 import machine_status
 import models
+import oee_contract
 from analytics_engine import (
     build_management_summary,
     build_oee_trends,
@@ -109,7 +110,10 @@ def analytics_summary(db: Session = Depends(_get_db), current_user: dict = Depen
         total=int(total_sum),
         good=int(good_sum),
         ideal_seconds=int(ideal_sum),
-        has_data=record_count > 0,
+        # THE rule (oee_contract.is_measurable), not "a row exists": a week whose
+        # rows recorded nothing is a week the plant did not run, and reporting
+        # it as a measured 0% OEE is a fabricated loss.
+        has_data=oee_contract.is_measurable(planned_sum, total_sum),
     )
     avg_oee = pooled["oee"]
     avg_availability = pooled["availability"]
@@ -169,6 +173,12 @@ def analytics_summary(db: Session = Depends(_get_db), current_user: dict = Depen
 
     return {
         "machines": len(machines),
+        # Published so a consumer can tell "the plant scored 0%" from "the plant
+        # did not run". Without it avg_oee is 0 in BOTH cases and the caller
+        # cannot distinguish them — which is how an unrun week reads as a total
+        # loss. The dashboard still renders 0% until it uses this; the flag is
+        # the half that belongs in the API.
+        "has_data": pooled["has_data"],
         "running": running,
         "idle": idle,
         "breakdown": breakdown,
@@ -865,7 +875,10 @@ def get_executive_oee(
         ideal_seconds=sum(totals[2] for totals in production_by_machine.values()),
         total=sum(totals[3] for totals in production_by_machine.values()),
         good=sum(totals[4] for totals in production_by_machine.values()),
-        has_data=bool(production_by_machine),
+        # Same rule as every other surface -- see oee_contract.is_measurable.
+        has_data=oee_contract.is_measurable(
+            sum(totals[0] for totals in production_by_machine.values()),
+            sum(totals[3] for totals in production_by_machine.values())),
     )
     plant_availability = plant["availability"]
     plant_performance = plant["performance"]
@@ -945,6 +958,8 @@ def get_executive_oee(
         "production_target": total_target,
         "production_actual": total_actual,
         "production_achievement": plan_achievement,
+        # See /analytics/summary: 0% and "did not run" are different answers.
+        "has_data": plant["has_data"],
         "running_machines": len([machine for machine in machines if machine.status == "Running"]),
         "breakdown_machines": len([machine for machine in machines if machine.status == "Breakdown"]),
         # A machine whose gateway dropped is not producing, and this is the

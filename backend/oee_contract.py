@@ -212,6 +212,26 @@ class OeeWindow:
         return f"OeeWindow({self.label()}, start={self.start}, end={self.end})"
 
 
+def is_measurable(planned, total) -> bool:
+    """Whether a window contains anything OEE can be computed from.
+
+    THE rule, in one place, because it was in five. "Measurable" means something
+    was scheduled or something was made — NOT "a row exists", which is what
+    every caller outside this module used:
+
+        analytics_routes.py   record_count > 0              /analytics/summary
+        analytics_routes.py   bool(production_by_machine)   /analytics/executive-oee
+        analytics_engine.py   len(records) > 0              pooled_oee
+        analytics_engine.py   record_count > 0              build_management_summary
+
+    A row that recorded nothing satisfies all four and satisfies none of the
+    arithmetic, so an unrun week rendered as a MEASURED 0% OEE — the fabricated
+    loss the WHAT COUNTS AS WHAT section above exists to forbid. A factory that
+    did not run is not a factory that ran badly.
+    """
+    return float(planned or 0) > 0 or float(total or 0) > 0
+
+
 def _clamp(x):
     """[0, 1], symmetrically. See the module docstring for why both ends."""
     return max(0.0, min(x, 1.0))
@@ -253,7 +273,7 @@ def oee_from_sums(planned, runtime, total, good, ideal_seconds):
         # Measurable means something was scheduled or something was made.
         # Previously this was "a row exists", so an empty shift reported a
         # measured 0%.
-        "has_data": planned > 0 or total > 0,
+        "has_data": is_measurable(planned, total),
         "planned_minutes": planned,
         "runtime_minutes": runtime,
         "total_count": total,

@@ -4,6 +4,7 @@ from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 import models
+import oee_contract
 # Re-exported so existing `from analytics_engine import parse_duration_to_minutes`
 # call sites (recommendations_routes) keep working; single source of truth.
 from duration import parse_duration_to_minutes
@@ -218,7 +219,11 @@ def pooled_oee(records) -> dict:
         total=sum(r.total_count or 0 for r in records),
         good=sum(r.good_count or 0 for r in records),
         ideal_seconds=sum((r.ideal_cycle_time_seconds or 0) * (r.total_count or 0) for r in records),
-        has_data=len(records) > 0,
+        # THE rule, from the contract, not "a row exists". A set of rows that
+        # recorded nothing is not a plant that performed badly.
+        has_data=oee_contract.is_measurable(
+            sum(r.planned_minutes or 0 for r in records),
+            sum(r.total_count or 0 for r in records)),
     )
 
 
@@ -367,7 +372,9 @@ def build_management_summary(machines, downtime_logs, shifts, production_records
         planned_s, runtime_s, total_s, good_s, ideal_s, record_count = production_sums
         pooled = pooled_oee_from_sums(
             planned=planned_s, runtime=runtime_s, total=total_s,
-            good=good_s, ideal_seconds=ideal_s, has_data=record_count > 0,
+            good=good_s, ideal_seconds=ideal_s,
+            # Same rule as every other surface -- see oee_contract.is_measurable.
+            has_data=oee_contract.is_measurable(planned_s, total_s),
         )
         good = good_s
         runtime = runtime_s
@@ -424,6 +431,9 @@ def build_management_summary(machines, downtime_logs, shifts, production_records
         "estimated_loss_units": estimated_loss_units,
         "unit_value_gbp": unit_value_gbp,
         "estimated_loss_value": estimated_loss_value,
+        # Same reason as the analytics endpoints: avg_oee is 0 whether the
+        # plant scored zero or never ran, and only this tells them apart.
+        "has_data": pooled["has_data"],
         "breakdown_count": len([machine for machine in machines if machine.status == "Breakdown"]),
         # This summary reports EXCEPTIONS, not a status census — which is why it
         # has breakdown_count and no count for Running or Idle. Offline belongs

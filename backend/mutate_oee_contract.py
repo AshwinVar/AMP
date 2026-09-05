@@ -36,9 +36,15 @@ MUTATIONS = [
      "    availability = _clamp(runtime / planned) if planned > 0 else 0.0\n"
      "    performance = _clamp(ideal_seconds / (runtime * 60)) if runtime > 0 else 0.0\n"
      "    quality = _clamp(good / total) if total > 0 else 0.0"),
+    # The rule moved into is_measurable() when the four call sites outside this
+    # module were unified onto it, so the mutation now targets the rule itself.
+    # Its old pattern matched the inline expression and silently stopped
+    # applying — a mutation that cannot be applied is a guard that has been
+    # switched off, which is why this harness reports "pattern did not apply"
+    # as a SURVIVOR rather than skipping it quietly.
     ("has_data goes back to 'a row exists'", "oee_contract.py",
-     '        "has_data": planned > 0 or total > 0,',
-     '        "has_data": True,'),
+     "    return float(planned or 0) > 0 or float(total or 0) > 0",
+     "    return True"),
     ("the upper clamp is dropped (OEE can exceed 100%)", "oee_contract.py",
      "    return max(0.0, min(x, 1.0))", "    return max(0.0, x)"),
     ("the lower clamp is dropped (OEE can go negative)", "oee_contract.py",

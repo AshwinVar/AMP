@@ -206,6 +206,11 @@ def reference_executive_oee(db):
         # key-for-key against the endpoint, so it has to grow with it — and the
         # comparison is exactly what caught the omission when it did not.
         "offline_machines": len([machine for machine in machines if machine.status == "Offline"]),
+        # Added when the four has_data call sites were unified on
+        # oee_contract.is_measurable: the endpoint publishes the flag so a
+        # consumer can tell "scored 0%" from "did not run", and this
+        # reference exists to be compared key-for-key, so it grows with it.
+        "has_data": plant["has_data"],
     }
 
 

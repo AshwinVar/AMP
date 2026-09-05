@@ -643,11 +643,32 @@ async def startup_event():
         platform_routes.seed_tenant_configs(db)
         # Seed one demo PLC per industrial protocol.
         industrial_adapters.seed_industrial(db)
-        # Seed a dedicated GMATS client login (Supervisor — full access to GMATS inventory)
-        if not db.query(models.User).filter(models.User.username == "gmats").first():
-            db.add(models.User(username="gmats", password=hash_password("gmats@2026"), role="Supervisor", tenant_code="GMATS"))
+        # Seed a dedicated GMATS client login (Supervisor — full access to GMATS
+        # inventory) from env, on exactly the same terms as the Admin below.
+        #
+        # This block used to pass a literal password to hash_password() and then
+        # log the username and password together. The literal is not repeated
+        # here: this is a public repository, and a comment quoting a credential
+        # republishes it exactly as the code did.
+        #
+        # It was a working Supervisor credential for a real client tenant,
+        # hardcoded, seeded on every startup, and written to the application
+        # log. The Admin seed three lines below already said the rule
+        # — "password never hardcoded" — so the standard existed and this was the
+        # exception to it.
+        #
+        # Same shape as the Admin seed, deliberately: no default, and nothing is
+        # created when the variable is unset. On an existing database the user
+        # already exists and the `if not` guard makes this a no-op, so setting
+        # the variable does NOT rotate an exposed password — that is a
+        # production action, not a code one.
+        gmats_user = os.environ.get("GMATS_USERNAME", "gmats")
+        gmats_pw = os.environ.get("GMATS_PASSWORD")
+        if gmats_pw and not db.query(models.User).filter(models.User.username == gmats_user).first():
+            db.add(models.User(username=gmats_user, password=hash_password(gmats_pw),
+                               role="Supervisor", tenant_code="GMATS"))
             db.commit()
-            log.info("[SEED] GMATS client login (gmats / gmats@2026)")
+            log.info(f"[SEED] GMATS client login '{gmats_user}' created from GMATS_PASSWORD env")
         # Seed a GMATS Admin from env (password never hardcoded — set GMATS_ADMIN_PASSWORD in Railway).
         gmats_admin_user = os.environ.get("GMATS_ADMIN_USERNAME", "gmats_admin")
         gmats_admin_pw = os.environ.get("GMATS_ADMIN_PASSWORD")

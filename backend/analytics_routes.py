@@ -1056,22 +1056,29 @@ def get_factory_command_center(
         # zone (ADR-0010: a NULL/default must never leak into a displayed value).
         # Coalesce to the column's own declared default, matching the response heal.
         node_zone = node.zone or "Production"
+        # Buckets DERIVED from the canonical vocabulary, for the same reason as
+        # the plant-level counts above and the state summary.
+        #
+        # #549 fixed the fleet-wide counts and MISSED this one, three hundred
+        # lines further down the same file: a four-branch if/elif that dropped an
+        # Offline machine exactly as the four-tuple did. The lowercased status IS
+        # the existing key for all five (Running -> running, and so on), so this
+        # adds `offline` and changes no other number.
         zone = zone_summary.setdefault(
             node_zone,
-            {"zone": node_zone, "nodes": 0, "running": 0, "breakdown": 0, "idle": 0, "maintenance": 0},
+            dict({"zone": node_zone, "nodes": 0},
+                 **{s.lower(): 0 for s in machine_status.VALID_MACHINE_STATUSES}),
         )
         zone["nodes"] += 1
 
         if node.machine_id and node.machine_id in machine_map:
             status = machine_map[node.machine_id].status
-            if status == "Running":
-                zone["running"] += 1
-            elif status == "Breakdown":
-                zone["breakdown"] += 1
-            elif status == "Idle":
-                zone["idle"] += 1
-            elif status == "Maintenance":
-                zone["maintenance"] += 1
+            # `in` rather than a bare index: a legacy row can still hold a status
+            # outside the vocabulary, and that must not 500 the command centre.
+            # Such a node stays counted in `nodes` and in no status bucket, which
+            # is the honest reading of "we do not know what this machine is".
+            if status in machine_status.VALID_MACHINE_STATUSES:
+                zone[status.lower()] += 1
 
     return {
         "machines": len(machines),

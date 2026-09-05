@@ -2,6 +2,7 @@ import asyncio
 import json
 import os
 import threading
+import time
 from datetime import datetime
 
 from dotenv import load_dotenv
@@ -492,19 +493,106 @@ def on_message(client, userdata, msg):
         db.close()
 
 
-def start_mqtt_service():
-    def run():
-        client = mqtt.Client()
-        client.on_connect = on_connect
-        client.on_message = on_message
+def mqtt_is_configured():
+    """Was MQTT DELIBERATELY configured, as opposed to defaulted?
 
+    The RAW environment, not the MQTT_BROKER constant above -- that constant
+    carries a "127.0.0.1" default, so it cannot answer this question. This is
+    the same test monitoring.py makes, and for the same reason; the two must
+    agree or the health block and the log will tell different stories.
+    """
+    return bool((os.environ.get("MQTT_BROKER") or "").strip())
+
+
+def _build_client():
+    """A paho client with credentials and TLS applied if configured.
+
+    This used to be a bare `mqtt.Client()`. No `username_pw_set`, no `tls_set`,
+    and no MQTT_USERNAME / MQTT_PASSWORD / MQTT_TLS anywhere in the backend --
+    which meant no production-grade broker could be connected to AT ALL, since
+    they all require auth. docker-compose.yml says as much in its own comment:
+    "never point a production deployment at an anonymous broker". The anonymous
+    path still works unchanged for local development.
+    """
+    client = mqtt.Client()
+    client.on_connect = on_connect
+    client.on_message = on_message
+    username = (os.environ.get("MQTT_USERNAME") or "").strip()
+    if username:
+        client.username_pw_set(username, os.environ.get("MQTT_PASSWORD") or None)
+    if (os.environ.get("MQTT_TLS") or "").strip().lower() in ("1", "true", "yes", "on"):
+        client.tls_set()
+    return client
+
+
+def start_mqtt_service(client_factory=None, sleep=time.sleep, run_inline=False):
+    """Start the MQTT listener, or explain why there is nothing to start.
+
+    Two boot defects fixed here, both found by reading rather than by any test
+    or harness noticing:
+
+    NOT CONFIGURED IS NOT AN ERROR. MQTT_BROKER defaults to 127.0.0.1, so a
+    deployment that never configured MQTT still dialled localhost, failed, and
+    logged a connection ERROR every boot. Production has done that since launch.
+    It is a configuration fact, not a fault, and it now says so. Safe for the
+    health block: monitoring.py tests `configured` BEFORE `alive`, so an
+    unconfigured deployment still reports ok/not_configured rather than
+    critical/listener_stopped.
+
+    A REFUSED FIRST CONNECT WAS PERMANENT. paho's loop_forever() reconnects on
+    its own, but only after a SUCCESSFUL initial connect. The old code ran
+    connect() and loop_forever() in one try, so a refusal skipped the loop
+    entirely, the except swallowed it and the thread died with nothing to
+    restart it. A broker a second slow at cold start meant no ingest until
+    someone redeployed. The initial connect is now retried with linear backoff.
+
+    `client_factory`, `sleep` and `run_inline` exist for test_mqtt_boot.py --
+    there is no broker in CI, so the contract is asserted against a fake client.
+    """
+    if not mqtt_is_configured():
+        log.info("MQTT ingest not configured (MQTT_BROKER unset); no listener started. "
+                 "Telemetry over HTTP (POST /iot/telemetry, POST /industrial/signals) "
+                 "is unaffected.")
+        return None
+
+    host = (os.environ.get("MQTT_BROKER") or "").strip() or MQTT_BROKER
+    try:
+        port = int(os.environ.get("MQTT_PORT") or MQTT_PORT)
+    except (TypeError, ValueError):
+        port = MQTT_PORT
+    try:
+        retries = max(1, int(os.environ.get("MQTT_CONNECT_RETRIES") or 5))
+    except (TypeError, ValueError):
+        retries = 5
+    try:
+        backoff = float(os.environ.get("MQTT_CONNECT_BACKOFF_SECONDS") or 2)
+    except (TypeError, ValueError):
+        backoff = 2.0
+
+    def run():
+        client = (client_factory or _build_client)()
+        for attempt in range(1, retries + 1):
+            try:
+                client.connect(host, port, 60)
+                break
+            except Exception as e:
+                if attempt >= retries:
+                    log.info("MQTT connect to %s:%s failed after %d attempt(s): %s. "
+                             "No MQTT ingest for this process.", host, port, attempt, repr(e))
+                    return
+                log.info("MQTT connect to %s:%s failed (attempt %d/%d): %s; retrying",
+                         host, port, attempt, retries, repr(e))
+                sleep(backoff * attempt)
         try:
-            client.connect(MQTT_BROKER, MQTT_PORT, 60)
             client.loop_forever()
         except Exception as e:
-            log.info("FastAPI MQTT connection error: %s", repr(e))
+            log.info("FastAPI MQTT listener stopped: %s", repr(e))
+
+    if run_inline:
+        run()
+        return None
 
     thread = threading.Thread(target=run, daemon=True)
     thread.start()
-
-    log.info("FastAPI embedded MQTT service started")
+    log.info("FastAPI embedded MQTT service started (broker %s:%s)", host, port)
+    return thread

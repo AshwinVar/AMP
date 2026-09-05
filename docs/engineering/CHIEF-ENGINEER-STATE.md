@@ -115,7 +115,33 @@ Phases 2, 4–6 not started. Note before starting Phase 2: the LLM is already re
 
 ## MANUAL ACTION REQUIRED
 
-- **Production has no MQTT broker.** `FastAPI MQTT connection error: ConnectionRefusedError(111)` on every boot; `MQTT_BROKER` is unset. The live-telemetry path therefore does not run in production today. The bridge fix above is correct but latent until a broker exists.
+- **Production has no MQTT broker — and three things about that were wrong.**
+  Investigated properly (2026-09-04):
+  - **The error is harmless, not a fault.** It is logged exactly ONCE per boot;
+    there is no retry loop and no CPU burn (measured 0.0156 CPU-seconds, thread
+    then dead). `/health` does NOT lie — `monitoring.py` already reports
+    `ok / not_configured` when `MQTT_BROKER` is unset.
+  - **HTTP ingest already works in production.** `POST /iot/telemetry` and
+    `POST /industrial/signals` need no broker and are documented honestly as the
+    secondary path. BUT they are **not feature-equivalent**: they write no
+    `ProductionRecord` (so they feed **no OEE**), no `DowntimeLog`, publish no
+    `DowntimeStarted`, trigger no WebSocket broadcast, and do not auto-create
+    machines. "We have HTTP, MQTT is optional" understates the gap.
+  - **No broker could have been connected to anyway.** Until this session the
+    backend had ZERO occurrences of `username_pw_set` / `tls_set` /
+    `MQTT_USERNAME` / `MQTT_PASSWORD` / `MQTT_TLS`. Setting `MQTT_BROKER` on
+    Railway would not have been enough. That is now fixed and under test.
+
+  **What is still yours to do, in order:** provision a broker (Railway has no
+  managed MQTT — either an `eclipse-mosquitto` service in the project, as
+  `docker-compose.yml` already uses locally, or HiveMQ/EMQX Cloud); set
+  `MQTT_BROKER`, `MQTT_PORT`, and now `MQTT_USERNAME` / `MQTT_PASSWORD` /
+  `MQTT_TLS=1`; **configure per-tenant broker ACLs** — the whole multi-tenant
+  isolation model rests on the topic's tenant segment being broker-enforced, and
+  `check_payload_agrees` only stops the payload contradicting the topic, not a
+  publisher choosing another tenant's topic; provision each tenant in AMP first
+  (ingest rejects unprovisioned tenants by design); then confirm the `mqtt` block
+  in monitoring flips from `not_configured` to `listener_running`.
 - `RESEED_FACTORY` is consumed at `274946` and can be deleted from Railway.
 - `docs/training/` is **untracked** — 159 KB of handbook that is not in git and would be lost with the working tree.
 

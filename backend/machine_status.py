@@ -15,6 +15,28 @@ import math
 # The statuses a Machine may hold (what the seed, simulators and analytics use).
 VALID_MACHINE_STATUSES = ("Running", "Idle", "Breakdown", "Maintenance", "Offline")
 
+# Which of those mean HARD DOWN — stopped, and nobody planned it.
+#
+# Deliberately NOT "everything that is not Running": Maintenance is planned, and
+# a plant reporting scheduled servicing as a fault is crying wolf. Idle is a
+# machine waiting for work, which is a scheduling matter, not a breakdown.
+#
+# ONE DEFINITION, HERE, because there were two. `ai/assistant.py` and
+# `ai/briefing.py` each carried their own identical copy, and `ai/agents.py`
+# imported the briefing's. Nothing kept them equal: editing either one would
+# have made the copilot's "which machines are down?" and the briefing's "what
+# needs attention" disagree about the same plant — the exact class of split-brain
+# the machine-status vocabulary exists to prevent (#549, #552).
+#
+# "Down" is retained and is NOT in VALID_MACHINE_STATUSES. That is not an
+# oversight: normalize_machine_status rejects it today, so nothing can WRITE it,
+# but Machine.status has no database constraint and a row predating normalisation
+# could still hold it. Keeping it costs one string comparison and stops such a
+# machine reading as healthy. test_down_statuses_single_source.py pins both
+# halves of that so it cannot be "tidied up" into either the vocabulary or the
+# bin without a deliberate decision.
+DOWN_STATUSES = ("Breakdown", "Down", "Offline")
+
 _CANONICAL = {s.lower(): s for s in VALID_MACHINE_STATUSES}
 
 

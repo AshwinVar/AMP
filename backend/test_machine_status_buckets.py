@@ -24,6 +24,11 @@ status rollup in the product buckets FOUR statuses:
     bucket" — and was preserved verbatim through a rewrite because the rewrite's
     job was to keep the numbers identical. It was never a decision that Offline
     should vanish; it was a decision not to change behaviour that day.
+  * the PER-ZONE rollup in the same command centre, three hundred lines below
+    the fleet counts, through its own four-branch if/elif. The first version of
+    this fix corrected the fleet counts and MISSED this one, so an offline
+    machine kept vanishing from the zone view after the fleet view was fixed.
+    Two implementations of one rule, and only one of them got corrected.
 
 Measured on a six-machine fleet, one per status plus a spare, with utilization
 healthy everywhere so nothing else can fire:
@@ -71,7 +76,7 @@ def check(label, condition, detail=""):
           + (f"   [{detail}]" if detail and not condition else ""))
 
 
-def seed():
+def seed(extra_status=None):
     """One machine per valid status, plus a second Running so no count is 1 by
     coincidence. Utilization is HEALTHY on every machine, including the offline
     one: an earlier probe of this defect seeded utilization=0 for everything not
@@ -86,7 +91,10 @@ def seed():
     db = Session()
     tok = tenancy.set_current_tenant(None)
     db.add(models.TenantConfig(tenant_code=T))
-    for i, status in enumerate(machine_status.VALID_MACHINE_STATUSES + ("Running",)):
+    fleet = machine_status.VALID_MACHINE_STATUSES + ("Running",)
+    if extra_status is not None:
+        fleet = fleet + (extra_status,)
+    for i, status in enumerate(fleet):
         db.add(models.Machine(tenant_code=T, name=f"CELL-{i:02d}", site="P1",
                               status=status, utilization=85, downtime="0 min"))
         # Two transitions per machine INTO its status, so the state-summary
@@ -95,6 +103,18 @@ def seed():
         for _ in range(2):
             db.add(models.MachineEvent(tenant_code=T, machine_name=f"CELL-{i:02d}",
                                        old_status="Running", new_status=status))
+    db.flush()
+    # A floor layout for the per-zone rollup (section 5). Two zones so a single
+    # zone cannot hide a mis-bucketed machine in the other's total, plus ONE node
+    # with no machine at all — an "area" — because the zone rollup counts every
+    # node in `nodes` but only machine-bearing ones in the status buckets, and a
+    # test that assumed those were the same number would assert the wrong thing.
+    for i in range(len(fleet)):
+        db.add(models.FactoryLayoutNode(
+            tenant_code=T, machine_id=i + 1, node_name=f"CELL-{i:02d}",
+            zone="SMT" if i % 2 else "IC"))
+    db.add(models.FactoryLayoutNode(tenant_code=T, machine_id=None,
+                                    node_name="Goods In", zone="SMT"))
     db.commit()
     tenancy.reset_current_tenant(tok)
     return db
@@ -185,7 +205,43 @@ def main():
 
     print()
     print("=" * 74)
-    print("5. THE BUCKETS ARE DERIVED, SO A SIXTH STATUS CANNOT VANISH")
+    print("5. THE PER-ZONE ROLLUP BUCKETS THE SAME VOCABULARY")
+    print("=" * 74)
+    # This section exists because the first version of this fix MISSED it.
+    # /analytics/factory-command-center also rolls machine status up per zone,
+    # three hundred lines below the fleet counts, through its own four-branch
+    # if/elif -- so an offline machine kept vanishing from the zone view after
+    # the fleet view had been fixed. Two implementations of one rule, and only
+    # one of them got corrected.
+    #
+    # The property is NOT "the counts sum to nodes": a layout node with no
+    # machine is an area, not a machine, and is legitimately in no status
+    # bucket. It is "the counts sum to the nodes that HAVE a machine".
+    fcc = analytics_routes.get_factory_command_center(db, {"tenant": T})
+    zones = fcc["zone_summary"]
+    check("the zone rollup returned at least one zone", len(zones) >= 1, str(len(zones)))
+    by_id = {m.id: m for m in machines}
+    nodes = db.query(models.FactoryLayoutNode).all()
+    for zone in zones:
+        with_machine = len([n for n in nodes
+                            if (n.zone or "Production") == zone["zone"]
+                            and n.machine_id in by_id])
+        counted = sum(zone.get(s.lower(), 0) for s in VALID)
+        check(f"zone {zone['zone']!r}: status counts total {counted} for "
+              f"{with_machine} machine-bearing node(s)",
+              counted == with_machine,
+              f"{with_machine - counted} machine(s) in NO bucket")
+    check("the offline machine's zone counts it",
+          sum(z.get("offline", 0) for z in zones) == 1,
+          str([z.get("offline") for z in zones]))
+    zone_keys = set(zones[0]) - {"zone", "nodes"}
+    check("...and the zone buckets are the canonical vocabulary too",
+          zone_keys == {s.lower() for s in VALID},
+          f"buckets={sorted(zone_keys)}")
+
+    print()
+    print("=" * 74)
+    print("6. THE BUCKETS ARE DERIVED, SO A SIXTH STATUS CANNOT VANISH")
     print("=" * 74)
     # The durable half. A hardcoded tuple is how Offline was lost; this asserts
     # the tuple is gone rather than merely lengthened by one.
@@ -199,6 +255,43 @@ def main():
 
     tenancy.reset_current_tenant(tok)
     db.close()
+
+    print()
+    print("=" * 74)
+    print("7. A STATUS OUTSIDE THE VOCABULARY MUST NOT 500 THE COMMAND CENTRE")
+    print("=" * 74)
+    # Deriving the buckets turns "unknown status" from a silently-skipped branch
+    # into a dict lookup, and Machine.status has no database constraint — a
+    # legacy row, a migration or a raw-SQL write can hold anything.
+    # normalize_machine_status guards INGEST; it does not guard the table. So the
+    # membership check is load-bearing, and without this section a mutation
+    # deleting it survived: the shared fixture holds only valid statuses, so the
+    # guard was never once executed.
+    #
+    # Its own database on purpose. Dropping an unknown-status machine into the
+    # fixture above would break section 2's census legitimately — with a status
+    # outside the vocabulary the counts genuinely CANNOT sum to the fleet, which
+    # is the whole reason normalize_machine_status exists at the door.
+    odd = seed(extra_status="Faulted")
+    tok = tenancy.set_current_tenant(T)
+    try:
+        payload = analytics_routes.get_factory_command_center(odd, {"tenant": T})
+        raised = None
+    except Exception as exc:
+        payload, raised = None, exc
+    check("the command centre still answers", raised is None,
+          f"raised {type(raised).__name__}: {raised}")
+    if payload is not None:
+        zones = payload["zone_summary"]
+        check("...the unknown-status machine is in NO status bucket",
+              sum(z.get(s.lower(), 0) for z in zones for s in VALID) == len(machines),
+              str([{k: v for k, v in z.items() if k != "zone"} for z in zones]))
+        check("...and the census is honest about not adding up",
+              sum(payload.get(s.lower(), 0) for s in VALID) == payload["machines"] - 1,
+              f"counted={sum(payload.get(s.lower(), 0) for s in VALID)} "
+              f"machines={payload['machines']}")
+    tenancy.reset_current_tenant(tok)
+    odd.close()
 
     print()
     print("=" * 74)

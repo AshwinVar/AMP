@@ -18,6 +18,10 @@ export type FactoryZoneSummary = {
   breakdown: number;
   idle: number;
   maintenance: number;
+  // The zone rollup buckets the same five statuses the fleet counts do.
+  // Nothing renders zone_summary yet; the field is here so the type keeps
+  // describing the payload rather than a subset of it.
+  offline: number;
 };
 
 export type FactoryCommandCenter = {

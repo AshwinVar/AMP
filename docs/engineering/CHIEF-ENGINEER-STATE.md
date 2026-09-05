@@ -236,10 +236,24 @@ re-deriving it is worse than none.
 | copilot LLM prompt grows with machine count | **Measured, NO ACTION, and the measurement argues against one.** `_build_factory_context` bounds every section (downtime `.limit(8)`, shifts `.limit(5)`, low stock `[:15]`) except machines, which emits one line each. At 600 machines the prompt is 37 KB / ~9,300 tokens and **98% of it is the machine list**. But `claude-haiku-4-5` holds 200k, so it would take ~13,000 machines to threaten the window — and summarising the list changes what the model sees, which is an ANSWER-QUALITY change and unmeasurable with no key. Same trap as §1c. Revisit only when a key exists. |
 | `/ai/ask` returns no `view` | **Done (#546), and the note UNDERSTATED it.** There was a second, independent hole: `AICopilot.tsx` kept its own ten-entry `VIEW_LABEL` table while the assistant had grown to thirteen views, so `shifts`, `workorders` and `documents` answers named a real screen and the button was suppressed anyway — on the rules path too, not just with AI on. The label now derives from `NAV_ITEMS`. The obvious backend fix (call `answer()` and keep its view) was **measured and rejected**: it costs 2-6 queries for most routes and **22 for `_briefing`** — the FALLBACK route — which is +116% on this endpoint. `route_view()` resolves it from `@_drills_into` declarations with zero queries; the endpoint's query count is asserted in CI. |
 
+| an `Offline` machine was counted by nothing | **Done (#549).** `Offline` is the fifth `VALID_MACHINE_STATUS` and `normalize_machine_status("offline")` accepts it, but every rollup bucketed four — so the census surfaces published `machines` beside status counts that summed to LESS than it, and the state-summary bars came up short against `total_events`. Buckets now DERIVE from `VALID_MACHINE_STATUSES`. **Still open and deliberately not decided: nothing raises an ALERT for an offline machine.** That is a product call about severity ("we have lost sight of this asset" is not self-evidently Critical or Warning) and wants the founder, not a guess. |
+| `test_ai_copilot_context.py` "is flaky" | **It was never flaky — it was a real bug (#550).** `OeeWindow`'s default end was `datetime.utcnow()` against a filter of `created_at < end`, and a `ProductionRecord`'s `created_at` defaults to `utcnow()` too, so a record written in the same clock tick was excluded from its own window. Fixed by making the DEFAULT end the next representable instant; the half-open rule is untouched (widening to `<=` would break window tiling, and that mutation is now caught). |
+
 ## CONVENTIONS THAT BIND FUTURE SESSIONS
 
 - Failing test first; confirm it fails for the expected reason.
 - Mutation-test every security guard; investigate every surviving mutation.
+- **A test that fails ~35% of the time is a bug with a probability attached, not
+  "flaky CI".** #550 was found only because eight consecutive runs of an
+  UNMODIFIED tree were measured. Before that, stashing files one at a time and
+  reading pass/fail had confidently blamed an unrelated change — every one of
+  those readings was a coin flip. If a suite is intermittent, establish the base
+  rate on a clean tree BEFORE attributing it to anything.
+- **The local-vs-CI split is a clue, not an excuse.** `utcnow()` has ~15.6 ms
+  granularity on Windows and microseconds on Linux CI, which is exactly why a
+  real defect stayed green in CI for as long as it did. When something fails
+  locally and passes in CI, the environment difference is usually pointing AT
+  the bug rather than explaining it away.
 - eslint baseline is **exactly 134**.
 - Schema change ⇒ model + Alembic migration + fresh-schema test + upgrade test + PostgreSQL verification.
 - Never weaken a test to make a change pass.

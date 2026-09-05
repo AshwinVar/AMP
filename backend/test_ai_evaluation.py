@@ -201,6 +201,13 @@ def main():
     # than as a measurement. To measure a real improvement — an LLM router is
     # the obvious candidate, and this is the evidence that would justify one —
     # write fresh questions and score them BEFORE touching the router.
+    #
+    # THAT WAS DONE: test_ai_routing_holdout.py, 52 fresh questions, split
+    # even/odd into a tune half and a held-out half whose individual results it
+    # REFUSES TO PRINT. The first thing it caught was a vocabulary pass that
+    # moved its tune half 13 -> 22 and its held-out half 15 -> 15. So the
+    # advice above stands, and now has a second data point: keyword vocabulary
+    # buys the phrasings you looked at and nothing beyond them.
     UNSEEN = [
         ("how long were the presses idle?", "downtime"),
         ("did we ship everything we promised?", "delivery"),
@@ -228,7 +235,12 @@ def main():
     pct = 100.0 * hits / len(UNSEEN)
     print()
     print(f"  UNSEEN ROUTING: {hits}/{len(UNSEEN)}  ({pct:.0f}%)")
-    FLOOR = 5
+    # 5 when this set was written; 6 since the vocabulary pass measured by
+    # test_ai_routing_holdout.py. Routing is deterministic, so 6 is a hard fact
+    # and safe as a floor — but read it as ONE question on a twelve-question set,
+    # not as evidence the router generalises. That harness scored the same change
+    # on 26 questions nobody was allowed to look at, and it moved them by zero.
+    FLOOR = 6
     score("routing", f"unseen routing holds its floor of {FLOOR}/{len(UNSEEN)}",
           hits >= FLOOR,
           f"{hits}/{len(UNSEEN)} — BELOW the recorded floor; the router got worse")

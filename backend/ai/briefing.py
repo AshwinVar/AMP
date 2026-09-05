@@ -24,7 +24,10 @@ from ai.compliance import build_compliance_summary
 name = "briefing"
 
 FAIL_RATE_ALERT = 5                       # % fail rate worth flagging
-DOWN_STATUSES = ("Breakdown", "Down", "Offline")   # hard-down, not planned maintenance
+# Re-exported, not redefined. ai/agents.py imports DOWN_STATUSES from HERE and
+# ai/assistant.py had a second identical copy; the value now has one home, and
+# the rationale for what counts as hard-down lives with it (machine_status).
+from machine_status import DOWN_STATUSES
 _SEV = {"high": 3, "medium": 2, "low": 1}          # for ranking the feed
 
 

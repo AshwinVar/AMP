@@ -25,7 +25,10 @@ from currency import CURRENCY, money
 
 name = "assistant"
 
-DOWN_STATUSES = ("Breakdown", "Down", "Offline")
+# Re-exported, not redefined: this module used to carry its own identical copy
+# alongside ai/briefing.py's, with nothing keeping the two equal. The name stays
+# for every existing reference; the VALUE now has one home (machine_status).
+from machine_status import DOWN_STATUSES
 
 
 def _drills_into(view: str):

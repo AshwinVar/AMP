@@ -52,6 +52,23 @@ def _trend(daily: list) -> str:
     return "flat"
 
 
+def _machines_down_alert(db):
+    """The hard-down alert, or None. Reads MACHINES only — no production, no
+    OEE — which is why it can be raised on both sides of the has_data branch.
+
+    One definition, deliberately: the two paths that raise this alert must not
+    be able to describe the same broken machine differently, which is the whole
+    reason the fleet-status vocabulary lives in one place (#553)."""
+    down = [m for m in db.query(models.Machine).all() if (m.status or "") in DOWN_STATUSES]
+    if not down:
+        return None
+    return {
+        "key": "machines_down", "severity": "high",
+        "title": f"{len(down)} machine{_plural(len(down))} down",
+        "detail": ", ".join(sorted(m.name for m in down)), "module": "machines",
+    }
+
+
 def build_briefing(db, tenant: str) -> dict:
     """A prioritized digest for the top of the shift: headline OEE and its
     direction, ranked alerts drawn from every pillar read-model (most urgent
@@ -60,9 +77,25 @@ def build_briefing(db, tenant: str) -> dict:
     oee = build_oee_summary(db, tenant)
     plant = oee["plant"]
     if not plant["has_data"]:
+        # `has_data` means ONE thing: there is production to compute OEE from
+        # (ADR-0014 — an empty window is unmeasured, never 0%). That is a rule
+        # about the NUMBER, and this early return used to promote it into "there
+        # is nothing worth reporting", discarding every alert on the way out —
+        # including the one three lines below it that the code itself calls the
+        # most time-sensitive signal.
+        #
+        # Every tenant starts here. A new install has machines registered and no
+        # production history, which is exactly the commissioning window when
+        # equipment gets knocked about; a plant with two machines hard-down was
+        # told "No production data yet." OEE stays unreported, because that part
+        # was right. The alerts that do not depend on production now survive
+        # alongside it.
+        down_alert = _machines_down_alert(db)
         return {
             "has_data": False, "oee": 0, "oee_trend": "flat",
-            "headline": "No production data yet.", "alerts": [], "wins": [],
+            "headline": ("No production data yet."if down_alert is None else
+                         f"No production data yet — but {down_alert['title'].lower()}."),
+            "alerts": [down_alert] if down_alert else [], "wins": [],
         }
 
     downtime = build_downtime_summary(db, tenant)
@@ -73,14 +106,9 @@ def build_briefing(db, tenant: str) -> dict:
     alerts: list = []
 
     # 1. Machines hard-down right now — the most time-sensitive signal.
-    down = [m for m in db.query(models.Machine).all() if (m.status or "") in DOWN_STATUSES]
-    if down:
-        names = ", ".join(sorted(m.name for m in down))
-        alerts.append({
-            "key": "machines_down", "severity": "high",
-            "title": f"{len(down)} machine{_plural(len(down))} down",
-            "detail": names, "module": "machines",
-        })
+    down_alert = _machines_down_alert(db)
+    if down_alert:
+        alerts.append(down_alert)
 
     # 2. Supply risk — an out-of-stock part will stop the line.
     if inventory["out_of_stock"] > 0:

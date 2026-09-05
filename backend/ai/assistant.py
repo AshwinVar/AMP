@@ -317,6 +317,15 @@ def _trend(db, tenant):
 def _briefing(db, tenant):
     b = build_briefing(db, tenant)
     if not b["has_data"]:
+        # "No production data" is about OEE, not about the plant. A machine can be
+        # hard-down before anything has been produced, and build_briefing now
+        # says so; repeating "nothing to report" over the top of an alert it is
+        # holding would put the conflation back one layer up.
+        if b["alerts"]:
+            lead = "; ".join(a["title"] for a in b["alerts"][:3])
+            detail = b["alerts"][0].get("detail")
+            return (f"No production data yet, but {lead}"
+                    + (f" ({detail})." if detail else "."), "overview")
         return "No production data yet — nothing to report.", "overview"
     if not b["alerts"]:
         return f"Plant OEE {b['oee']}% and nothing needs attention right now.", "overview"
@@ -361,6 +370,11 @@ def digest(db, tenant: str) -> dict:
     from the pillar read-models into a plain-English paragraph."""
     b = build_briefing(db, tenant)
     if not b["has_data"]:
+        # Same reasoning as _briefing above: report the alert if one is being held.
+        if b["alerts"]:
+            a = b["alerts"][0]
+            return {"digest": f"No production data yet, but {a['title'].lower()}"
+                              + (f" ({a['detail']})." if a.get("detail") else ".")}
         return {"digest": "No production data yet — nothing to report."}
     cost = build_cost_summary(db, tenant)
     delivery = build_delivery_summary(db, tenant)

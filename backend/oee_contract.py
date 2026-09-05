@@ -146,6 +146,24 @@ import models
 # number swing on one bad shift.
 DEFAULT_WINDOW_DAYS = 7
 
+# The smallest gap the storage layer can distinguish. datetime carries
+# microseconds and both PostgreSQL `timestamp` and SQLAlchemy's SQLite DATETIME
+# string round-trip them, so one microsecond is genuinely the next representable
+# instant rather than an arbitrary fudge.
+_TICK = timedelta(microseconds=1)
+
+
+def _now():
+    """The current instant, as the default window uses it.
+
+    A seam, and only a seam. It exists so the boundary rule can be tested by
+    PINNING the clock: the alternative is a test that hopes a record and a query
+    land in the same tick, which fails about a third of the time on Windows and
+    essentially never on CI — non-evidence of exactly the kind that let the
+    boundary bug survive in the first place.
+    """
+    return datetime.utcnow()
+
 
 class OeeWindow:
     """A half-open time window [start, end). See the module docstring.
@@ -161,7 +179,29 @@ class OeeWindow:
     __slots__ = ("start", "end", "days")
 
     def __init__(self, days=DEFAULT_WINDOW_DAYS, now=None):
-        self.end = now or datetime.utcnow()
+        # THE DEFAULT END IS THE NEXT INSTANT, NOT THIS ONE.
+        #
+        # `end` is EXCLUSIVE, and a ProductionRecord's created_at defaults to
+        # datetime.utcnow() exactly as this did. A record written in the same
+        # clock tick as the query therefore carried EXACTLY the window's end and
+        # was dropped from its own window — measured live:
+        #
+        #     stored created_at   2026-09-05 02:19:59.037681
+        #     window end          2026-09-05 02:19:59.037681
+        #     created_at < end    -> false, so has_data was False
+        #
+        # utcnow() has ~15.6 ms granularity on Windows, so the collision is
+        # common there (3 failures in 8 runs of test_ai_copilot_context.py) and
+        # rare on a microsecond-grained Linux CI box, which is how it survived.
+        #
+        # The fix is NOT to widen the filter to `<=`: half-open is what makes
+        # [d-14, d-7) and [d-7, d) tile without sharing a record, and
+        # test_oee_window_boundary.py section 3 pins that. Instead the default
+        # end is the next representable instant, so everything that has ALREADY
+        # happened is inside a window ending "now" while the comparison stays
+        # strictly exclusive. An explicit `now=` — what a caller passes to build
+        # adjacent windows — is used verbatim.
+        self.end = now if now is not None else _now() + _TICK
         self.days = days
         self.start = None if days is None else self.end - timedelta(days=days)
 

@@ -202,9 +202,21 @@ re-deriving it is worse than none.
    **NOTHING PASSES `chosen_route` YET, and `/ai/ask` is untouched.** That is
    deliberate: routing quality cannot be measured with no AI key, and shipping
    an unmeasurable behaviour change is what §1c of the evaluation exists to warn
-   against. **When a key exists:** write FRESH held-out questions and score them
-   BEFORE wiring the model call — §1c is burned, being in the repo. The bar to
-   beat is ~42%.
+   against.
+   **THE BAR IS NO LONGER ~42%, AND THE INSTRUMENT NOW EXISTS (#547).**
+   `test_ai_routing_holdout.py` is the fresh held-out set §1c asked for: 52
+   questions, four per pillar, written before any was scored, split mechanically
+   even → tune / odd → held-out. **It refuses to print which held-out questions
+   missed** — only the total — so a held-out miss cannot be fixed by name.
+   Current keyword routing: **held-out 15/26 (58%)**, §1c 6/12 (50%). That is
+   the number a model router must beat, on that harness, and nothing else counts.
+   The first thing it caught was **my own change**: thirteen words of real
+   factory vocabulary took the tune half 13 → 22 and left held-out at exactly
+   15. Nine fixes, zero generalisation. It also re-runs the historical disaster
+   as a mutation — longest-matched-key-wins scores tune **23 (better than
+   shipped)** and held-out 14, and is caught *only* by the invisible half.
+   Read that as the standing warning: **a rise in a score you can see is
+   evidence of nothing.**
    The `/ai/ask` missing-`view` defect noted here is **fixed (#546)** — and it
    was worse than the note said, see below.
 
@@ -220,6 +232,8 @@ re-deriving it is worse than none.
 | "six tables UNMEASURED at age" | **Measured.** All eight, 455,000 rows: 0 endpoints over 100 ms. |
 | "write load not established" | **Measured.** At 122 writes/s — one message per machine per second on a 200-machine plant — reads are within noise of idle. Above ~1,000/s something shows, but the measurement contradicts itself (1 writer at 1000/s → +40%, 4 writers at 1434/s → +10%), so only the realistic-rate result is claimed. |
 | `analytics_summary` "scans the whole table on a 3-second poll" | **Wrong twice, and stale.** It is not polled — the frontend never calls it; it backs `/reports/daily-summary.txt`. And the scan was removed in #531. Verified both. |
+| success/fallback response-shape divergence | **Swept, EMPTY.** #546 was one instance of a class worth checking — a degraded path returning keys the success path does not, which a UI branches on. An AST scan of every route handler with a try/except found exactly two divergences, both the deliberate `note` ("AI model temporarily unavailable"). No other endpoint has it. Do not re-scan. |
+| copilot LLM prompt grows with machine count | **Measured, NO ACTION, and the measurement argues against one.** `_build_factory_context` bounds every section (downtime `.limit(8)`, shifts `.limit(5)`, low stock `[:15]`) except machines, which emits one line each. At 600 machines the prompt is 37 KB / ~9,300 tokens and **98% of it is the machine list**. But `claude-haiku-4-5` holds 200k, so it would take ~13,000 machines to threaten the window — and summarising the list changes what the model sees, which is an ANSWER-QUALITY change and unmeasurable with no key. Same trap as §1c. Revisit only when a key exists. |
 | `/ai/ask` returns no `view` | **Done (#546), and the note UNDERSTATED it.** There was a second, independent hole: `AICopilot.tsx` kept its own ten-entry `VIEW_LABEL` table while the assistant had grown to thirteen views, so `shifts`, `workorders` and `documents` answers named a real screen and the button was suppressed anyway — on the rules path too, not just with AI on. The label now derives from `NAV_ITEMS`. The obvious backend fix (call `answer()` and keep its view) was **measured and rejected**: it costs 2-6 queries for most routes and **22 for `_briefing`** — the FALLBACK route — which is +116% on this endpoint. `route_view()` resolves it from `@_drills_into` declarations with zero queries; the endpoint's query count is asserted in CI. |
 
 ## CONVENTIONS THAT BIND FUTURE SESSIONS

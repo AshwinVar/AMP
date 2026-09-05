@@ -34,10 +34,36 @@ def _band(health: int) -> str:
 
 
 def _recent_production(db, machine_id=None, days: int = 7):
+    # THE canonical window (oee_contract), not a second definition of it.
+    #
     # Window in SQL — production_records grows continuously, so a full-table scan
-    # filtered in Python would get slower every week.
-    cutoff = datetime.combine(datetime.utcnow().date() - timedelta(days=days - 1), datetime.min.time())
-    q = db.query(models.ProductionRecord).filter(models.ProductionRecord.created_at >= cutoff)
+    # filtered in Python would get slower every week. That part was always right.
+    # The BOUNDS were a private copy:
+    #
+    #     cutoff = midnight(today - (days - 1))
+    #     filter(created_at >= cutoff)          # and no upper bound at all
+    #
+    # which is a different set of rows from `[now - days, now)`. A record 6.9
+    # days old was in the contract's window and not in this one; a record dated
+    # in the FUTURE by a skewed gateway clock was in this one and not the
+    # contract's. Measured on one plant at one moment — six good days and one bad
+    # shift seven days back — the two answered 66% and 87%.
+    #
+    # It showed up hardest in ai/oee.build_oee_summary, which took the plant OEE
+    # from here and `coverage` from oee_contract, so the figure that exists to
+    # say "measured from N of M machines" was describing a different record set
+    # than the number it qualified: one machine with one 6.9-day-old record read
+    # "no data" with "1 of 1 reporting, complete", and one future-dated record
+    # read "OEE 85%" with "0 of 1 reporting".
+    #
+    # This is not a new rule, it is the existing one applied where a copy had
+    # grown — the same shape as DOWN_STATUSES (#553) and the status buckets
+    # (#549, #552).
+    import oee_contract
+    window = oee_contract.OeeWindow(days)
+    q = db.query(models.ProductionRecord).filter(
+        models.ProductionRecord.created_at >= window.start,
+        models.ProductionRecord.created_at < window.end)
     if machine_id is not None:
         q = q.filter(models.ProductionRecord.machine_id == machine_id)
     return q.all()

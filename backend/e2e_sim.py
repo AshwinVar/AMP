@@ -31,9 +31,38 @@ import urllib.error
 import urllib.request
 from datetime import datetime, timedelta
 
-BASE = os.environ.get("AMP_URL", "https://flowmes-production.up.railway.app").rstrip("/")
+# Defaults point at LOCALHOST and carry no credential.
+#
+# AMP_URL used to default to the deployed Railway host and AMP_PASS to a literal
+# password. Neither literal is repeated here — this is a public repository, and a
+# comment quoting a credential republishes it exactly as the code did.
+#
+# With those defaults, `python e2e_sim.py` with no environment set drove
+# state-mutating calls
+# (set_status -> "Breakdown", among others) against PRODUCTION, authenticated
+# with a credential committed to a public repository. Either half is a problem;
+# together they are a one-command way to change a live client's factory.
+#
+# AMP_PASS now has no default, so the script stops rather than authenticating
+# with something checked into git, and AMP_URL points at localhost so the
+# blast radius of a bare invocation is a developer's own machine.
+BASE = os.environ.get("AMP_URL", "http://localhost:8000").rstrip("/")
 USER = os.environ.get("AMP_USER", "gmats")
-PASS = os.environ.get("AMP_PASS", "gmats@2026")  # demo-tenant credential
+PASS = os.environ.get("AMP_PASS")
+
+# Aiming this at a remote host is a deliberate act, so it has to be spelled out.
+# ALLOW_REMOTE is not a security control — anyone running the script can set it —
+# it is a guard against the accident the old default made easy.
+if PASS is None:
+    raise SystemExit(
+        "e2e_sim: set AMP_PASS. It has no default on purpose — the previous one "
+        "was a real credential committed to a public repo."
+    )
+if not BASE.startswith(("http://localhost", "http://127.0.0.1")) and not os.environ.get("AMP_ALLOW_REMOTE"):
+    raise SystemExit(
+        f"e2e_sim: refusing to drive state-mutating traffic at {BASE}. "
+        "This script sets machine statuses. Set AMP_ALLOW_REMOTE=1 if you mean it."
+    )
 TOKEN = None
 CHECKS = []  # (label, ok) — critical linkages that decide the exit code
 

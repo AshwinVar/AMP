@@ -26,6 +26,7 @@ export type FactoryCommandCenter = {
   breakdown: number;
   idle: number;
   maintenance: number;
+  offline: number;
   total_downtime_minutes: number;
   active_work_orders: number;
   behind_plans: number;

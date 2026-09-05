@@ -22,6 +22,7 @@ from sqlalchemy.orm import Session, joinedload
 import ai
 import ai.prediction
 import ai.twin
+import machine_status
 import models
 from analytics_engine import (
     build_management_summary,
@@ -85,6 +86,12 @@ def analytics_summary(db: Session = Depends(_get_db), current_user: dict = Depen
     idle = len([m for m in machines if m.status == "Idle"])
     breakdown = len([m for m in machines if m.status == "Breakdown"])
     maintenance = len([m for m in machines if m.status == "Maintenance"])
+    # Offline is the fifth VALID_MACHINE_STATUS and was counted by none of the
+    # four above, so this response published `machines` alongside status counts
+    # that summed to LESS than it — an offline machine simply was not in the
+    # census. It is what an ingest path writes when a gateway drops, which is
+    # the machine a manager most needs on the screen.
+    offline = len([m for m in machines if m.status == "Offline"])
     # utilization is a nullable Integer (Column(Integer, default=0)); average only
     # the machines that actually have a reading so a single NULL row can't 500 the
     # summary (None in sum()) and an unset machine doesn't drag the mean toward 0.
@@ -166,6 +173,7 @@ def analytics_summary(db: Session = Depends(_get_db), current_user: dict = Depen
         "idle": idle,
         "breakdown": breakdown,
         "maintenance": maintenance,
+        "offline": offline,
         "avg_utilization": avg_utilization,
         "avg_oee": avg_oee,
         "avg_availability": avg_availability,
@@ -263,10 +271,23 @@ def get_machine_state_summary(db: Session = Depends(_get_db), current_user: dict
     # over the whole history. MachineEvent is in SCOPED_MODELS, so the do_orm_execute
     # hook (ADR-0002) tenant-scopes this aggregate exactly as it did the .all() scan.
     #
-    # total_events counts EVERY event (incl. Offline / any non-tracked status), so it
-    # stays >= the sum of the four charted buckets — the same reconciliation the old
-    # per-row loop kept (an Offline event bumped total_events but no bucket).
-    tracked = ("Running", "Idle", "Breakdown", "Maintenance")
+    # Buckets are the CANONICAL VOCABULARY, not a hand-written subset.
+    #
+    # This used to read `tracked = ("Running", "Idle", "Breakdown", "Maintenance")`
+    # with a comment noting that "an Offline event bumped total_events but no
+    # bucket". That was true, and it meant the stacked bars for an offline machine
+    # summed to LESS than the total beside them, with nothing on the chart saying
+    # which events were missing. Offline is not an exotic status — it is the fifth
+    # entry in VALID_MACHINE_STATUSES and what an ingest path reports when a
+    # gateway drops, i.e. the machine you most need telling about.
+    #
+    # Deriving the buckets means the bars always reconcile with total_events, and
+    # a sixth status added to the vocabulary gets a bucket rather than silently
+    # falling into the gap. An event whose status is NOT in the vocabulary still
+    # only bumps total_events — normalize_machine_status is what keeps those out
+    # of Machine.status in the first place, and total_events remains the honest
+    # ">= the bars" reconciliation for any that predate it.
+    tracked = machine_status.VALID_MACHINE_STATUSES
     summary = {}
     for machine_name, new_status, count in (
         db.query(models.MachineEvent.machine_name, models.MachineEvent.new_status, func.count())
@@ -275,7 +296,8 @@ def get_machine_state_summary(db: Session = Depends(_get_db), current_user: dict
     ):
         machine = summary.setdefault(
             machine_name,
-            {"machine_name": machine_name, "Running": 0, "Idle": 0, "Breakdown": 0, "Maintenance": 0, "total_events": 0},
+            dict({"machine_name": machine_name}, total_events=0,
+                 **{status: 0 for status in tracked}),
         )
         count = int(count)
         if new_status in tracked:
@@ -925,6 +947,10 @@ def get_executive_oee(
         "production_achievement": plan_achievement,
         "running_machines": len([machine for machine in machines if machine.status == "Running"]),
         "breakdown_machines": len([machine for machine in machines if machine.status == "Breakdown"]),
+        # A machine whose gateway dropped is not producing, and this is the
+        # executive view of whether the plant is producing. It was reported here
+        # as neither running nor broken — i.e. not at all.
+        "offline_machines": len([machine for machine in machines if machine.status == "Offline"]),
     }
 
 
@@ -957,6 +983,10 @@ def get_factory_command_center(
     breakdown = len([machine for machine in machines if machine.status == "Breakdown"])
     idle = len([machine for machine in machines if machine.status == "Idle"])
     maintenance = len([machine for machine in machines if machine.status == "Maintenance"])
+    # Same census gap as /analytics/summary: this publishes `machines` beside the
+    # status counts, so leaving Offline out made them sum short by exactly the
+    # machines whose gateway had dropped.
+    offline = len([machine for machine in machines if machine.status == "Offline"])
 
     # The four counts and the quality rate below used to hydrate a whole growing
     # table into Python just to count/sum it with a list comprehension (rule-4
@@ -1049,6 +1079,7 @@ def get_factory_command_center(
         "breakdown": breakdown,
         "idle": idle,
         "maintenance": maintenance,
+        "offline": offline,
         "total_downtime_minutes": total_downtime,
         "active_work_orders": active_work_orders,
         "behind_plans": behind_plans,

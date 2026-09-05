@@ -41,6 +41,7 @@ export default function MachineStateSummary({
             <Bar dataKey="Idle" stackId="a" fill="#facc15" />
             <Bar dataKey="Breakdown" stackId="a" fill="#ef4444" />
             <Bar dataKey="Maintenance" stackId="a" fill="#3b82f6" />
+            <Bar dataKey="Offline" stackId="a" fill="#94a3b8" />
           </BarChart>
         </ResponsiveContainer>
       </div>

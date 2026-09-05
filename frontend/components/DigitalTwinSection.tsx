@@ -152,12 +152,17 @@ export default function DigitalTwinSection({
         </button>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-4 xl:grid-cols-10 gap-4">
+      {/* These five status counts sit beside "Machines" and are read as a census
+          of it. Offline was missing, so on a plant with a dropped gateway the
+          four visible counts added up to less than the total sitting next to
+          them, with nothing on screen saying which machine had gone. */}
+      <div className="grid grid-cols-1 md:grid-cols-4 xl:grid-cols-11 gap-4">
         <Kpi title="Machines" value={commandCenter?.machines ?? 0} />
         <Kpi title="Running" value={commandCenter?.running ?? 0} />
         <Kpi title="Breakdown" value={commandCenter?.breakdown ?? 0} />
         <Kpi title="Idle" value={commandCenter?.idle ?? 0} />
         <Kpi title="Maintenance" value={commandCenter?.maintenance ?? 0} />
+        <Kpi title="Offline" value={commandCenter?.offline ?? 0} />
         <Kpi title="Downtime" value={`${commandCenter?.total_downtime_minutes ?? 0}m`} />
         <Kpi title="Work Orders" value={commandCenter?.active_work_orders ?? 0} />
         <Kpi title="Behind Plans" value={commandCenter?.behind_plans ?? 0} />

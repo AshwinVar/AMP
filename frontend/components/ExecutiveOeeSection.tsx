@@ -30,7 +30,7 @@ export default function ExecutiveOeeSection({ data }: { data: ExecutiveOee | nul
         </p>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-4 xl:grid-cols-8 gap-4">
+      <div className="grid grid-cols-1 md:grid-cols-4 xl:grid-cols-9 gap-4">
         <Kpi title="Plant OEE" value={`${data?.plant_oee ?? 0}%`} highlight={data?.plant_oee ?? 0} />
         <Kpi title="Availability" value={`${data?.plant_availability ?? 0}%`} />
         <Kpi title="Performance" value={`${data?.plant_performance ?? 0}%`} />
@@ -39,6 +39,10 @@ export default function ExecutiveOeeSection({ data }: { data: ExecutiveOee | nul
         <Kpi title="Actual" value={data?.production_actual ?? 0} />
         <Kpi title="Achievement" value={`${data?.production_achievement ?? 0}%`} />
         <Kpi title="Breakdowns" value={data?.breakdown_machines ?? 0} />
+        {/* A machine whose gateway dropped is not producing either, and this is
+            the management view of whether the plant is producing. It was shown
+            here as neither running nor broken, i.e. not at all. */}
+        <Kpi title="Offline" value={data?.offline_machines ?? 0} />
       </div>
 
       <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">

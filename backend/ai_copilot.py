@@ -511,7 +511,15 @@ def ai_ask(payload: dict, db: Session = Depends(get_db), current_user: dict = De
             "source": "rules",
             "note": "AI model temporarily unavailable — answered from live factory data.",
         }
-    return {"answer": answer, "model": _current_model(), "source": "llm"}
+    # The drill-in view is AMP's, not the model's. The rules fallback above has
+    # always returned one and the UI renders "Open <view> ->" from it
+    # (AICopilot.tsx), so without this the button disappeared exactly when a key
+    # was configured: turning AI ON took a feature away. `route_view` reads the
+    # same routing table with NO queries — measured, running the pillar instead
+    # would cost up to 116% of this endpoint's context build (ai/assistant.py).
+    import ai
+    return {"answer": answer, "view": ai.assistant.route_view(question),
+            "model": _current_model(), "source": "llm"}
 
 
 @router.post("/report")

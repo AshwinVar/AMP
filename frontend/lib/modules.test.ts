@@ -13,6 +13,7 @@ import {
   getViewModuleIn,
   isViewEnabled,
   isViewEnabledIn,
+  viewLabel,
   navItemsFromPacks,
   withAlwaysOpen,
   type ModuleKey,
@@ -294,5 +295,48 @@ describe("the static tables agree with each other", () => {
   it("has no duplicate view keys, which would make gating ambiguous", () => {
     const keys = NAV_ITEMS.map((n) => n.key);
     expect(new Set(keys).size).toBe(keys.length);
+  });
+});
+
+describe("viewLabel - the copilot drill-in button", () => {
+  /**
+   * AICopilot renders "Open <label> ->" under an answer, and used to look the
+   * label up in its OWN ten-entry table. The backend assistant can name
+   * thirteen views, so a shift, WIP or compliance answer named a real screen
+   * and the component silently rendered no button, because its private copy had
+   * never heard of that key. The label now comes from the nav, which is where a
+   * view is defined. backend/test_copilot_drill_in.py section 5 holds the other
+   * end: every view the assistant declares is a key in NAV_ITEMS.
+   */
+  const ASSISTANT_VIEWS = [
+    "analytics", "cmms", "costing", "documents", "downtime", "executive",
+    "inventory", "machines", "orders", "overview", "quality", "shifts",
+    "workorders",
+  ];
+
+  it("labels every view the copilot can return", () => {
+    const unlabelled = ASSISTANT_VIEWS.filter((v) => !viewLabel(v));
+    expect(unlabelled).toEqual([]);
+  });
+
+  it("labels the three the old hand-written table had drifted past", () => {
+    // The regression, named. These are real nav screens whose drill-in button
+    // never rendered.
+    expect(viewLabel("shifts")).toBe("Shifts");
+    expect(viewLabel("workorders")).toBe("Work Orders");
+    expect(viewLabel("documents")).toBe("Documents");
+  });
+
+  it("uses the nav label verbatim, so the button and the sidebar agree", () => {
+    for (const item of NAV_ITEMS) {
+      expect(viewLabel(item.key), item.key).toBe(item.label);
+    }
+  });
+
+  it("returns null for a view nothing owns, so no button is offered", () => {
+    // Null rather than the raw key: a button reading "Open workorders ->" would
+    // be worse than no button, and a truthy fallback would render one.
+    expect(viewLabel("not-a-view")).toBeNull();
+    expect(viewLabel("")).toBeNull();
   });
 });

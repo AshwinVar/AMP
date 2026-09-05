@@ -156,6 +156,23 @@ export function getViewModule(viewKey: string): ModuleKey {
   return NAV_ITEMS.find((n) => n.key === viewKey)?.module ?? "core";
 }
 
+/**
+ * The human name of a view, or null if nothing in the catalogue owns that key.
+ *
+ * The nav is the ONE place a view's name is written. AICopilot kept its own
+ * copy for the "Open <view> →" drill-in, and the copy had drifted: it listed
+ * ten of the thirteen views the backend assistant can return, so a shift, WIP
+ * or compliance answer silently rendered no button at all — the assistant named
+ * a real screen and the UI refused to offer it because its private table had
+ * never heard of it. Deriving the label means adding a nav entry is enough.
+ *
+ * null (not the raw key) for an unknown view, so a caller shows nothing rather
+ * than a button reading "Open workorders →".
+ */
+export function viewLabel(viewKey: string): string | null {
+  return NAV_ITEMS.find((n) => n.key === viewKey)?.label ?? null;
+}
+
 // ── Role-based view access ────────────────────────────────────────
 // Plans gate by feature pack (above); roles gate by who's logged in.
 // Admin sees everything (except cross-tenant founder-only views); a

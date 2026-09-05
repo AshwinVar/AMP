@@ -205,9 +205,8 @@ re-deriving it is worse than none.
    against. **When a key exists:** write FRESH held-out questions and score them
    BEFORE wiring the model call — §1c is burned, being in the repo. The bar to
    beat is ~42%.
-   Also noted while investigating, unfixed and independent: `/ai/ask` returns no
-   `view` on the LLM success path (`ai_copilot.py:514`) while its fallback does
-   (`:509`), so users lose the drill-in link exactly when AI is switched on.
+   The `/ai/ask` missing-`view` defect noted here is **fixed (#546)** — and it
+   was worse than the note said, see below.
 
 3. **Training-doc drift** — P8, explicitly the lowest. 18 of 20 misleading items
    unsynced (MQTT / events / twin are done).
@@ -221,6 +220,7 @@ re-deriving it is worse than none.
 | "six tables UNMEASURED at age" | **Measured.** All eight, 455,000 rows: 0 endpoints over 100 ms. |
 | "write load not established" | **Measured.** At 122 writes/s — one message per machine per second on a 200-machine plant — reads are within noise of idle. Above ~1,000/s something shows, but the measurement contradicts itself (1 writer at 1000/s → +40%, 4 writers at 1434/s → +10%), so only the realistic-rate result is claimed. |
 | `analytics_summary` "scans the whole table on a 3-second poll" | **Wrong twice, and stale.** It is not polled — the frontend never calls it; it backs `/reports/daily-summary.txt`. And the scan was removed in #531. Verified both. |
+| `/ai/ask` returns no `view` | **Done (#546), and the note UNDERSTATED it.** There was a second, independent hole: `AICopilot.tsx` kept its own ten-entry `VIEW_LABEL` table while the assistant had grown to thirteen views, so `shifts`, `workorders` and `documents` answers named a real screen and the button was suppressed anyway — on the rules path too, not just with AI on. The label now derives from `NAV_ITEMS`. The obvious backend fix (call `answer()` and keep its view) was **measured and rejected**: it costs 2-6 queries for most routes and **22 for `_briefing`** — the FALLBACK route — which is +116% on this endpoint. `route_view()` resolves it from `@_drills_into` declarations with zero queries; the endpoint's query count is asserted in CI. |
 
 ## CONVENTIONS THAT BIND FUTURE SESSIONS
 

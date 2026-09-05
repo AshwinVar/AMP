@@ -28,6 +28,33 @@ name = "assistant"
 DOWN_STATUSES = ("Breakdown", "Down", "Offline")
 
 
+def _drills_into(view: str):
+    """Declare the view a pillar's answer drills into, WITHOUT executing it.
+
+    Every pillar already returns `(text, view)`, and the view half is a constant
+    per pillar. Reading it off the function lets `route_view()` answer "which
+    screen owns this question?" with ZERO queries -- which is the whole point.
+
+    Measured, on a 60-machine factory with seven populated tables: running a
+    pillar just to learn its view costs 2-6 queries for most routes and **22 for
+    `_briefing`**, which is 116% of the queries `/ai/ask` spends building its
+    model context. `_briefing` is also the FALLBACK route, so the naive version
+    of this -- call `answer()` and keep only its view -- would roughly double the
+    database work on exactly the free-form questions people type once an LLM is
+    connected.
+
+    This is a second place the view is written, and second places drift. It
+    cannot drift silently: `test_copilot_drill_in.py` executes every routable
+    pillar against a seeded factory and asserts the declaration equals what the
+    function actually returned. Change one without the other and CI fails.
+    """
+    def deco(fn):
+        fn.view = view
+        return fn
+    return deco
+
+
+@_drills_into("inventory")
 def _inventory(db, tenant):
     inv = build_inventory_summary(db, tenant)
     if inv["at_risk"] == 0:
@@ -38,6 +65,7 @@ def _inventory(db, tenant):
     return f"{inv['at_risk']} item(s) at or below reorder level — reorder {lead} first.{oos}{pos}", "inventory"
 
 
+@_drills_into("orders")
 def _delivery(db, tenant):
     d = build_delivery_summary(db, tenant)
     if d["total"] == 0:
@@ -54,6 +82,7 @@ def _delivery(db, tenant):
     return ans, "orders"
 
 
+@_drills_into("costing")
 def _cost(db, tenant):
     c = build_cost_summary(db, tenant)
     if not c["has_data"]:
@@ -66,6 +95,7 @@ def _cost(db, tenant):
     return ans, "costing"
 
 
+@_drills_into("quality")
 def _quality(db, tenant):
     q = build_quality_summary(db, tenant)
     if q["inspections"] == 0:
@@ -79,6 +109,7 @@ def _quality(db, tenant):
     return ans, "quality"
 
 
+@_drills_into("cmms")
 def _maintenance(db, tenant):
     m = build_maintenance_summary(db, tenant)
     if m["open"] == 0:
@@ -95,6 +126,7 @@ def _maintenance(db, tenant):
     return ans, "cmms"
 
 
+@_drills_into("documents")
 def _compliance(db, tenant):
     c = build_compliance_summary(db, tenant)
     if c["total"] == 0:
@@ -112,6 +144,7 @@ def _compliance(db, tenant):
     return ans, "documents"
 
 
+@_drills_into("downtime")
 def _downtime(db, tenant):
     dt = build_downtime_summary(db, tenant)
     if dt["total_events"] == 0:
@@ -125,6 +158,7 @@ def _downtime(db, tenant):
     return ans, "downtime"
 
 
+@_drills_into("machines")
 def _machines(db, tenant):
     machines = db.query(models.Machine).all()
     down = [m for m in machines if (m.status or "") in DOWN_STATUSES]
@@ -139,6 +173,7 @@ def _machines(db, tenant):
     return "Machines needing attention: " + "; ".join(parts) + ".", "machines"
 
 
+@_drills_into("analytics")
 def _production(db, tenant):
     p = build_production_summary(db, tenant)
     if p["runs"] == 0:
@@ -149,6 +184,7 @@ def _production(db, tenant):
     return ans, "analytics"
 
 
+@_drills_into("workorders")
 def _flow(db, tenant):
     f = build_flow_summary(db, tenant)
     if f["total"] == 0:
@@ -158,6 +194,7 @@ def _flow(db, tenant):
             f"({f['total']} total). Pipeline: {stages}."), "workorders"
 
 
+@_drills_into("shifts")
 def _shift(db, tenant):
     sh = build_shift_summary(db, tenant)
     if sh["entries"] == 0:
@@ -175,6 +212,7 @@ def _shift(db, tenant):
     return ans, "shifts"
 
 
+@_drills_into("executive")
 def _oee(db, tenant):
     o = build_oee_summary(db, tenant)
     plant = o["plant"]
@@ -213,6 +251,7 @@ def _find(db, tenant, question):
     return ans, top["view"]
 
 
+@_drills_into("overview")
 def _help(db, tenant):
     return (
         "I can answer about OEE & performance, the cost of losses, order delivery, "
@@ -253,6 +292,7 @@ def _machine_answer(db, tenant, machine):
     return ans, "machines"
 
 
+@_drills_into("executive")
 def _trend(db, tenant):
     sc = build_scorecard(db, tenant)
     if not sc["has_data"]:
@@ -270,6 +310,7 @@ def _trend(db, tenant):
     return "Vs last week: " + "; ".join(moves) + ".", "executive"
 
 
+@_drills_into("overview")
 def _briefing(db, tenant):
     b = build_briefing(db, tenant)
     if not b["has_data"]:
@@ -356,6 +397,38 @@ def route_names():
     names = {fn.__name__.lstrip("_") for _keys, fn in _ROUTES}
     names.add("briefing")
     return sorted(names)
+
+
+def route_view(question: str) -> str:
+    """Which view a question drills into, WITHOUT reading the database.
+
+    Exists for `/ai/ask`. When an LLM answers, the prose comes from the model but
+    the "Open Machines ->" button under it does not: the view is AMP's call, made
+    from AMP's own routing table, so switching the copilot to an LLM cannot move
+    a user to a screen the model picked. Before this, that path returned no view
+    at all and the button simply vanished the moment a key was configured -- the
+    rules fallback beside it kept its own drill-in, so turning AI ON removed a
+    feature.
+
+    Deliberately NARROWER than `answer()`: it runs only the keyword table, and
+    skips the two DB-touching branches that come first there -- the
+    machine-name lookup and the `find ...` prefix. A question naming a machine
+    almost always also carries a machines keyword ("down", "running",
+    "machine"), so it lands on the same view; when it does not, the answer is
+    the briefing's "overview", which is the honest default rather than a wrong
+    screen. That trade buys a view for ZERO queries, which is the entire reason
+    this exists (see `_drills_into`).
+
+    A pillar with no data returns "overview" instead of its own view (`_trend`
+    is the only route where that differs). This cannot know that without running
+    the pillar, so it names the pillar's view either way -- an empty screen the
+    user can read, rather than a link they never get.
+    """
+    q = f" {(question or '').lower()} "
+    for keys, fn in _ROUTES:
+        if any(k in q for k in keys):
+            return fn.view
+    return _briefing.view
 
 
 def _pillar(name):

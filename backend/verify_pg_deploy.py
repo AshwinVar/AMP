@@ -105,12 +105,29 @@ ok = None
 if state["ok"]:
     db = SessionLocal()
     try:
-        if not db.query(models.User).filter(models.User.username == "deploy_probe").first():
-            db.add(models.User(username="deploy_probe", password=hash_password("probe-pw"),
+        # The probe password is GENERATED PER RUN, never a literal.
+        # This used to be a hardcoded string creating a persistent Admin
+        # user -- in a public repository. It is only ever meant to touch a
+        # throwaway database, but pg_scratch.scratch_url falls back to
+        # DATABASE_URL from the environment, so a developer whose shell
+        # pointed at production would have created an Admin account there
+        # whose password anyone could read on GitHub. Generating it removes
+        # the class rather than relying on the target always being right.
+        probe_pw = __import__("secrets").token_urlsafe(24)
+        # SET the password rather than create-if-absent. With a per-run
+        # secret, "create only when missing" would authenticate run 2
+        # against run 1's password and fail -- the scenarios use a fresh
+        # database each time so it would not bite today, but a harness that
+        # only works on a virgin database is a trap for whoever reuses one.
+        probe = db.query(models.User).filter(models.User.username == "deploy_probe").first()
+        if probe is None:
+            db.add(models.User(username="deploy_probe", password=hash_password(probe_pw),
                                role="Admin", tenant_code="DEFAULT", is_active=True))
-            db.commit()
+        else:
+            probe.password = hash_password(probe_pw)
+        db.commit()
         token = core_routes.login(schemas.UserLogin(username="deploy_probe",
-                                                    password="probe-pw"), db=db)
+                                                    password=probe_pw), db=db)
         ok = bool(token.get("access_token"))
     finally:
         db.close()

@@ -1,0 +1,79 @@
+#!/bin/sh
+# AMP pre-commit guard.
+#
+# Two incidents this hook exists for, both real, both from one session:
+#
+#   1. A commit landed on LOCAL MASTER. A `git checkout` during a bisect moved
+#      the branch out from under the work and nothing re-checked before
+#      committing. It was caught only because the push went to a branch that
+#      turned out to be empty. origin/master was never touched, but only by
+#      luck of the push target.
+#
+#   2. A read-only investigation agent left a source file MUTATED in the working
+#      tree -- `if SHARE_OPERATING_HOURS in grants:` rewritten to `if True:`,
+#      a consent gate disabled. It was caught by the test suite, not by review,
+#      and it would have been committed silently alongside unrelated work.
+#
+# Enable once per clone:   git config core.hooksPath .githooks
+# Check it is on:          git config --get core.hooksPath
+#
+# Bypass deliberately (rare, and say why in the commit):  git commit --no-verify
+
+branch="$(git rev-parse --abbrev-ref HEAD 2>/dev/null)"
+
+# ---------------------------------------------------------------- 1. branch
+case "$branch" in
+  master|main)
+    echo "pre-commit: REFUSING -- you are on '$branch'." >&2
+    echo "  Work goes on a branch and reaches master through a PR." >&2
+    echo "  If you already made edits here:" >&2
+    echo "     git checkout -b <branch>        # takes the changes with you" >&2
+    echo "  If the commit already exists on master:" >&2
+    echo "     git checkout -b <branch> && git checkout master && git reset --hard origin/master" >&2
+    exit 1
+    ;;
+  HEAD)
+    echo "pre-commit: REFUSING -- detached HEAD. Check out a branch first." >&2
+    exit 1
+    ;;
+esac
+
+# ------------------------------------------- 2. tracked files changed but NOT staged
+#
+# Not a refusal: a partial commit is legitimate. But an unstaged modification to
+# a tracked source file is exactly what a stray agent edit looks like, and the
+# whole failure mode is that nobody looked. Print them so they cannot pass
+# unnoticed.
+unstaged="$(git diff --name-only --diff-filter=M -- . 2>/dev/null)"
+if [ -n "$unstaged" ]; then
+  echo "pre-commit: NOTE -- tracked files modified but NOT staged:" >&2
+  echo "$unstaged" | sed 's/^/    /' >&2
+  echo "  If you did not make one of these edits, inspect it before pushing:" >&2
+  echo "     git diff -- <path>" >&2
+fi
+
+# --------------------------------------------------- 3. obvious secret shapes
+#
+# Narrow on purpose. A noisy hook gets bypassed, and a bypassed hook guards
+# nothing. This catches the shape that actually shipped: a secret-looking name
+# assigned a literal, in a file being committed.
+staged="$(git diff --cached --name-only --diff-filter=ACM | grep -E '\.(py|ts|tsx|js|jsx|yml|yaml|env|sh)$' || true)"
+if [ -n "$staged" ]; then
+  hits="$(git diff --cached -U0 -- $staged 2>/dev/null \
+    | grep -E '^\+' \
+    | grep -vE '^\+\+\+' \
+    | grep -inE '(password|passwd|secret|api_?key|private_key|access_token)[a-z_]*[[:space:]]*[:=][[:space:]]*["'"'"'][^"'"'"'{$<][^"'"'"']{4,}["'"'"']' \
+    || true)"
+  if [ -n "$hits" ]; then
+    echo "pre-commit: REFUSING -- a staged line assigns a secret-shaped name a literal." >&2
+    echo "  Matching lines are NOT printed here, on purpose: this hook must not" >&2
+    echo "  copy a secret into your terminal scrollback or CI log." >&2
+    echo "  Count: $(printf '%s\n' "$hits" | wc -l). Review with:  git diff --cached" >&2
+    echo "  Read from the environment instead, as the GMATS_ADMIN_PASSWORD seed does." >&2
+    echo "  If it is genuinely not a secret (a placeholder, a test fixture in an" >&2
+    echo "  in-memory database), commit with --no-verify and say so in the message." >&2
+    exit 1
+  fi
+fi
+
+exit 0

@@ -56,7 +56,22 @@ One thread, pulled repeatedly: **the same fact defined in two places.**
 
 ## KNOWN P0 / P1
 
-**None open.** The downtime-scan defect below was P2 and is fixed.
+**ONE OPEN, AND IT NEEDS YOU, NOT CODE.** A working Supervisor credential for
+the GMATS tenant was hardcoded in `main.py`, seeded on every startup, written
+to the application log, and repeated as a default in `e2e_sim.py` whose
+`AMP_URL` defaulted to production. The repository is PUBLIC.
+
+#561 removed it from source and added a guard, but **that does not undo the
+exposure**: the password is in the git history of a public repo and must be
+treated as compromised until it is ROTATED IN PRODUCTION. Setting
+`GMATS_PASSWORD` does nothing to the live database, because the seed's
+`if not exists` guard makes it a no-op where the user already exists.
+
+The Admin account three lines below had always done it correctly
+(`GMATS_ADMIN_PASSWORD` from env, "password never hardcoded"), so the standard
+existed and this was the exception to it.
+
+The downtime-scan defect below was P2 and is fixed.
 
 ---
 
@@ -292,7 +307,45 @@ re-deriving it is worse than none.
    `None`-for-undefined return, is the larger interface change that only makes
    sense once that rendering decision exists.
 
-4. **Training-doc drift** — P8, explicitly the lowest. 18 of 20 misleading items
+4. **OPEN — four verified defects from the 2026-09-06 fan-out, all the same
+   shape.** A 14-agent hunt across eight defect classes produced 29 raw
+   findings; six survived adversarial verification (each verifier had to
+   reproduce the failure itself, and none was refuted). Two are shipped (#562
+   maintenance-overdue; the credential one was found separately, #561). These
+   four are reproduced, unfixed, and each is *one rule with more than one
+   implementation* — the pattern this whole line of work has been mining:
+
+   * **`ai/supply.py` is the only PO reader that does not exclude `Cancelled`.**
+     A cancelled purchase order is reported as "late", enters the chase list,
+     keeps its never-to-arrive units in the receipt-rate denominator, and drives
+     supplier reliability to 0%. `/supply-summary` says 1 late and 0%
+     reliability where `/supplier-performance` says 0 overdue — **both cards are
+     on the same dashboard**. `ai/delivery.py` (the customer-order mirror)
+     already carries this exact fix with the failure documented verbatim in its
+     docstring; `ai/supply.py` is the same code path, unfixed. Also
+     `orders_routes.py:690` and `:750` both exclude it. Reproduced.
+   * **`/analytics/purchasing` counts 4 of the 7 statuses the app writes.** The
+     `partial` bucket reads `status_counts.get("Partial")` while
+     `factory_simulator._purchase_orders` writes `"Partially Received"` — two
+     spellings of one state — and the Reorder agent writes `"Draft"`, which no
+     bucket has. Seeded book of 10 POs: total 10, buckets sum to 5.
+   * **`/analytics/operator-terminal` has the `"Started"` vs `"In Progress"`
+     synonym split** that was fixed in its four sibling rollups and missed here
+     (`analytics_routes.py:1499`). Every live job is created `"In Progress"`
+     (`tick_operator`, `_operator_jobs`, `e2e_sim`), so `started` is always 0
+     while `total_jobs` counts them. 8 jobs -> total 8, buckets sum to 6.
+   * **"Open escalation" has three implementations giving three counts** for the
+     same four rows: 3 (`/analytics/factory-command-center`, `/system-health`),
+     1 (`/analytics/escalations`), 2 (the read-model and `ai/handover`). The
+     withdrawn (`"Cancelled"`) escalation — again what a human rejection writes —
+     is counted as open backlog forever by the analytics endpoints.
+
+   Also found and fixed en route: the **agents' dedup whitelist** is
+   `("Proposed","Open")`, so moving an agent's task or escalation to
+   `"In Progress"` makes the agent propose a **duplicate while a technician is
+   working the first one** (`ai/agents.py:171` and `:279`). Not yet fixed.
+
+5. **Training-doc drift** — P8, explicitly the lowest. 18 of 20 misleading items
    unsynced (MQTT / events / twin are done).
 
 ### Removed from this list, with why

@@ -128,8 +128,9 @@ def test_distinct_unknown_machines_are_not_collapsed_by_group_by():
 
 def test_total_reconciles_and_overdue_excludes_completed_and_future():
     """total_tasks counts EVERY row (incl. a status outside the open/in-progress/
-    completed buckets), and 'overdue' is exactly the past-dated, not-completed
-    tasks — a completed-but-past task and a future-dated task are NOT overdue."""
+    completed buckets), and 'overdue' is exactly the past-dated tasks that are
+    still outstanding — a completed-but-past task, a CANCELLED one and a
+    future-dated one are NOT overdue."""
     db = _fresh_session()
     today = datetime.utcnow().date()
     db.add(models.Machine(id=1, name="LATHE-1", status="Running", utilization=70, line="A"))
@@ -138,7 +139,7 @@ def test_total_reconciles_and_overdue_excludes_completed_and_future():
         _task("R-2", 1, "Breakdown", "In Progress", 0, today - timedelta(days=1)),  # overdue
         _task("R-3", 1, "Preventive", "Completed", 15, today - timedelta(days=2)),  # past but done -> not overdue
         _task("R-4", 1, "Preventive", "Open", 0, today + timedelta(days=3)),        # future -> not overdue
-        _task("R-5", 1, "Breakdown", "Cancelled", 0, today - timedelta(days=9)),    # unbucketed status, past+not-completed -> overdue
+        _task("R-5", 1, "Breakdown", "Cancelled", 0, today - timedelta(days=9)),    # withdrawn -> NOT overdue
     ])
     db.commit()
 
@@ -146,8 +147,23 @@ def test_total_reconciles_and_overdue_excludes_completed_and_future():
     assert out["total_tasks"] == 5
     # open + in_progress + completed do NOT have to equal total (Cancelled is neither)
     assert out["open"] == 2 and out["in_progress"] == 1 and out["completed"] == 1
-    # overdue = R-1, R-2, R-5 (past-dated AND not completed) = 3
-    assert out["overdue"] == 3, out["overdue"]
+    # overdue = R-1, R-2 = 2. R-5 is "Cancelled" and USED to be counted here,
+    # asserted as "past + not-completed -> overdue".
+    #
+    # That was a literal reading of the words rather than of the meaning, and it
+    # had a concrete cost: `ai/agents.py` sets a proposed task to "Cancelled"
+    # when a human REJECTS it in the Approvals Inbox, so
+    # POST /maintenance/generate-overdue-escalations raised a High/Critical
+    # escalation for exactly the work a human had just declined — and
+    # re-declining did not help, because the dedup only skips a "Resolved"
+    # escalation. Cancelling a task is the act of saying it will not be done;
+    # whatever cancelled it, the task is not outstanding.
+    #
+    # The rule now lives once, in ai.maintenance.overdue_clause, shared by this
+    # endpoint, the read-model and the escalation generator — which previously
+    # gave 3, 1 and 3 for the same rows. See
+    # test_overdue_maintenance_one_rule.py.
+    assert out["overdue"] == 2, out["overdue"]
     # only the single completed 15-min repair drives MTTR
     assert out["avg_repair_minutes"] == 15
     assert out["total_downtime_minutes"] == 15

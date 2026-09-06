@@ -454,17 +454,10 @@ def generate_maintenance_overdue_escalations(
     # silently dropping an unfinished, past-dated task. OR the NULL back in (a NULL
     # status is not-Completed, i.e. still overdue), matching the analytics count and
     # the late-order / review-due NULL-status convention (#295/#298).
-    tasks = (
-        db.query(models.MaintenanceTask)
-        .filter(
-            models.MaintenanceTask.planned_date < today,
-            or_(
-                models.MaintenanceTask.status.is_(None),
-                models.MaintenanceTask.status != "Completed",
-            ),
-        )
-        .all()
-    )
+    import ai.maintenance
+    tasks = db.query(models.MaintenanceTask).filter(
+        ai.maintenance.overdue_clause(today)
+    ).all()
 
     created = 0
 

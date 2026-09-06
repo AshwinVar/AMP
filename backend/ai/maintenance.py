@@ -28,6 +28,50 @@ OPEN_STATUSES = ("Proposed", "Open", "In Progress")
 PRIORITY_ORDER = {"Critical": 0, "High": 1, "Medium": 2, "Low": 3}
 _PRIORITIES = ["Critical", "High", "Medium", "Low"]
 
+# Work that is finished or withdrawn. NOT the same question as OPEN_STATUSES:
+# that one is "is this task in an open state", used for the open-task load; this
+# one is "is there still work here", used for OVERDUE.
+TERMINAL_STATUSES = ("Completed", "Cancelled")
+
+
+def overdue_clause(today):
+    """THE overdue predicate — planned in the past and not finished or withdrawn.
+
+    ONE DEFINITION, because there were two and they disagreed in both
+    directions:
+
+        analytics_routes / factory_ops_routes:
+            planned_date < today AND (status IS NULL OR status != "Completed")
+        ai/maintenance.build_maintenance_summary:
+            status IN OPEN_STATUSES AND planned_date < today
+
+    A "Cancelled" task was overdue to the first pair and not to the read-model; a
+    NULL-status task was overdue to the first pair and silently dropped by the
+    second's IN(). On four past-due rows the two answered 3 and 1.
+
+    The "Cancelled" half is the one that hurt. `ai/agents.py` writes exactly that
+    status when a human REJECTS an agent-proposed task in the Approvals Inbox:
+
+        item.status = "Open" if approve else "Cancelled"
+
+    so `status != "Completed"` was true of every task a human had declined, and
+    POST /maintenance/generate-overdue-escalations raised a High/Critical
+    escalation for it. The human's decision was not ignored, it was converted
+    into an alert — and re-declining did not help, because the dedup only skips a
+    "Resolved" escalation.
+
+    The NULL handling is kept deliberately: SQL's `status != 'X'` evaluates to
+    NULL, not TRUE, for a NULL status, so without the explicit IS NULL an
+    unfinished past-dated row disappears from the count. That convention is the
+    same one the late-order and review-due counts use (#295/#298), and the
+    comment those two call sites carried was right about it.
+    """
+    return and_(
+        models.MaintenanceTask.planned_date < today,
+        or_(models.MaintenanceTask.status.is_(None),
+            models.MaintenanceTask.status.notin_(TERMINAL_STATUSES)),
+    )
+
 # Execution window — maintenance is a slow-moving, monthly discipline, so the
 # same 30 days the reliability read-model uses (not the 7-day pillar window).
 EXECUTION_WINDOW_DAYS = 30
@@ -59,7 +103,10 @@ def build_maintenance_summary(db, tenant: str) -> dict:
 
     by_priority = Counter(t.priority or "Medium" for t in tasks)
     pending_approval = sum(1 for t in tasks if t.status == "Proposed")   # agent-proposed, awaiting a human
-    overdue = sum(1 for t in tasks if t.planned_date and t.planned_date < today)
+    # Counted with THE shared clause, not from `tasks` above: that list is
+    # filtered to OPEN_STATUSES, which answers "in an open state" and drops a
+    # NULL-status row that is still unfinished and past due.
+    overdue = db.query(models.MaintenanceTask).filter(overdue_clause(today)).count()
 
     def _sort_key(t):
         is_overdue = 0 if (t.planned_date and t.planned_date < today) else 1

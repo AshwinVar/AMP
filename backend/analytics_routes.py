@@ -1215,12 +1215,12 @@ def get_maintenance_analytics(
     # back in (a NULL status is not-Completed, i.e. still overdue) to keep the same
     # basis as the escalation generator that acts on this very set, and matching the
     # late-order / review-due / open-escalation NULL-status convention (#295/#298).
+    # THE shared predicate (ai.maintenance.overdue_clause). This used to spell
+    # the rule out here as `status != "Completed"`, which counted a task a
+    # human had REJECTED (ai/agents.py writes "Cancelled" on reject) as
+    # outstanding work, and disagreed with the read-model rendered beside it.
     overdue = db.query(func.count(models.MaintenanceTask.id)).filter(
-        models.MaintenanceTask.planned_date < today,
-        or_(
-            models.MaintenanceTask.status.is_(None),
-            models.MaintenanceTask.status != "Completed",
-        ),
+        ai.maintenance.overdue_clause(today)
     ).scalar() or 0
 
     # total_downtime_minutes is the honest sum over EVERY task (an open task can

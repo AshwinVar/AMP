@@ -173,6 +173,91 @@ def main():
 
     print()
     print("=" * 74)
+    print("6. NO STARTUP-REACHABLE SEEDER CREATES A USER FROM A LITERAL")
+    print("=" * 74)
+    # The GMATS defect precisely. main.py's startup block calls several seeders;
+    # a literal password in ANY of them ships a credential the same way. AST, not
+    # a regex, so a password inside a comment or docstring cannot trip it and a
+    # multi-line call cannot hide from it.
+    import ast
+    STARTUP_SEEDERS = ["main.py", "demo_aeron.py", "gmats_inventory_routes.py",
+                       "platform_routes.py", "industrial_adapters.py",
+                       "factory_simulator.py", "reset_factory.py", "onboard_tenant.py"]
+    literal_seeds = []
+    for fname in STARTUP_SEEDERS:
+        path = os.path.join(HERE, fname)
+        if not os.path.exists(path):
+            continue
+        tree = ast.parse(open(path, encoding="utf-8").read())
+        for node in ast.walk(tree):
+            if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+                    and node.func.attr == "User"):
+                continue
+            for kw in node.keywords:
+                if kw.arg != "password":
+                    continue
+                v = kw.value
+                # password=hash_password(<literal>)  ->  a shipped credential
+                if (isinstance(v, ast.Call) and isinstance(v.args, list) and v.args
+                        and isinstance(v.args[0], ast.Constant)
+                        and isinstance(v.args[0].value, str)):
+                    literal_seeds.append(f"{fname}:{node.lineno}")
+                # password=<literal>  ->  worse, and unhashed
+                elif isinstance(v, ast.Constant) and isinstance(v.value, str):
+                    literal_seeds.append(f"{fname}:{node.lineno} (unhashed!)")
+    check(f"none of the {len(STARTUP_SEEDERS)} startup seeders hardcodes a password",
+          not literal_seeds, "; ".join(literal_seeds))
+
+    print()
+    print("=" * 74)
+    print("7. NO MODULE AIMS AT A DEPLOYED HOST BY DEFAULT")
+    print("=" * 74)
+    # e2e_sim's other half, generalised. A script whose default target is a
+    # deployed host runs against production for anyone who forgets a variable —
+    # and these scripts mutate state.
+    URL_DEFAULT = re.compile(
+        r"""^\s*(?:BASE|URL|AMP_URL|HOST|ENDPOINT|API)\w*\s*=\s*(?:os\.environ\.get\(\s*["'][^"']+["']\s*,\s*)?f?["'](https?://[^"']+)["']""",
+        re.M)
+    remote = []
+    for path in source_files():
+        text = open(path, encoding="utf-8", errors="replace").read()
+        for m in URL_DEFAULT.finditer(text):
+            url = m.group(1)
+            if url.startswith(("http://localhost", "http://127.0.0.1")):
+                continue
+            if "{" in url:          # an f-string built from a port/host variable
+                continue
+            line = text[:m.start()].count("\n") + 1
+            remote.append(f"{os.path.relpath(path, HERE)}:{line} -> {url}")
+    check("no default target outside localhost", not remote, "; ".join(remote))
+
+    print()
+    print("=" * 74)
+    print("8. THE PROCESS GUARDS EXIST AND SAY WHAT THEY MUST")
+    print("=" * 74)
+    # Both of these exist because of a specific incident. A guard file that has
+    # been emptied or renamed is a guard that is gone, and nothing else would
+    # notice.
+    hook = os.path.join(os.path.dirname(HERE), ".githooks", "pre-commit")
+    check("the pre-commit hook is committed", os.path.exists(hook), hook)
+    if os.path.exists(hook):
+        h = open(hook, encoding="utf-8").read()
+        check("...it refuses commits on master/main", "master|main)" in h)
+        check("...it refuses a detached HEAD", "HEAD)" in h)
+        check("...it refuses a staged secret literal",
+              "secret-shaped name a literal" in h)
+        check("...and it does NOT echo the matching line",
+              "NOT printed here" in h)
+    guard = os.path.join(HERE, "tree_guard.py")
+    check("tree_guard.py is committed", os.path.exists(guard), guard)
+    if os.path.exists(guard):
+        g = open(guard, encoding="utf-8").read()
+        check("...it offers snapshot and verify", "def snapshot" in g and "def verify" in g)
+        check("...and it points at worktree isolation as the primary control",
+              'isolation: "worktree"' in g)
+
+    print()
+    print("=" * 74)
     if failures:
         print(f"{len(failures)} FAILED")
         for f in failures:
@@ -180,13 +265,31 @@ def main():
     else:
         print("ALL CHECKS PASSED")
         print()
-        print("NOTE: this proves the SOURCE is clean. The old password remains in")
-        print("the git history of a PUBLIC repository and must be rotated in")
-        print("production before it can be considered dead. That is an owner")
-        print("action — the seed's `if not exists` guard means setting")
-        print("GMATS_PASSWORD does nothing where the user already exists.")
+        print("NOTE: this proves the SOURCE is clean. It says nothing about the")
+        print("live database, and on 2026-09-06 those were not the same thing:")
+        print("the old password STILL AUTHENTICATED against production, returning")
+        print("a token with role=Admin, after a rotation was believed done.")
+        print()
+        print("Setting GMATS_PASSWORD cannot rotate anything — the seed's")
+        print("`if not exists` guard makes it a no-op wherever the user already")
+        print("exists, which is every deployed environment. Rotation has to change")
+        print("the stored hash on the row. Re-verify against /login, not against")
+        print("this file.")
     print("=" * 74)
     return 1 if failures else 0
+
+
+def test_no_hardcoded_credentials():
+    """The pytest entry point.
+
+    CI runs this file as `python test_X.py`, but the coverage job runs pytest,
+    and pytest collects module-level ``test_*`` functions and nothing else. A
+    suite exposing only ``main()`` runs in the `backend` job and contributes
+    NOTHING to the coverage measurement, so a new module lands as pure
+    uncovered denominator and pushes the floor DOWN. That is what happened to
+    this PR: tree_guard.py plus a main()-only suite dropped coverage below 78.
+    """
+    assert main() == 0, "see the FAIL lines above"
 
 
 if __name__ == "__main__":

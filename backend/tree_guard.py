@@ -95,7 +95,15 @@ def verify():
         state = json.load(fh)
     before, after = state["files"], _scan()
 
-    changed = sorted(p for p in before if p in after and before[p] != after[p])
+    # `after.get(p) is not None` is load-bearing, not defensive. _digest()
+    # returns None for a file that is gone, and None != <hash>, so without it
+    # every DELETED file was ALSO listed as MODIFIED — the same path printed
+    # twice under two headings, in the one moment you need to know which
+    # actually happened. Mutation testing found it: disabling the `deleted`
+    # branch entirely changed nothing, because `changed` was already
+    # catching every deletion.
+    changed = sorted(p for p in before
+                     if after.get(p) is not None and before[p] != after[p])
     deleted = sorted(p for p in before if after.get(p) is None and before[p] is not None)
     added = sorted(p for p in after if p not in before)
 

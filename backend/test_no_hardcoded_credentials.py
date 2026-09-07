@@ -279,5 +279,18 @@ def main():
     return 1 if failures else 0
 
 
+def test_no_hardcoded_credentials():
+    """The pytest entry point.
+
+    CI runs this file as `python test_X.py`, but the coverage job runs pytest,
+    and pytest collects module-level ``test_*`` functions and nothing else. A
+    suite exposing only ``main()`` runs in the `backend` job and contributes
+    NOTHING to the coverage measurement, so a new module lands as pure
+    uncovered denominator and pushes the floor DOWN. That is what happened to
+    this PR: tree_guard.py plus a main()-only suite dropped coverage below 78.
+    """
+    assert main() == 0, "see the FAIL lines above"
+
+
 if __name__ == "__main__":
     raise SystemExit(main())

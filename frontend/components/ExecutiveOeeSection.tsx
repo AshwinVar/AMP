@@ -9,6 +9,39 @@ import {
 
 import type { ExecutiveOee } from "../lib/phase15-types";
 
+/**
+ * Was there anything to measure? `/analytics/executive-oee` answers this in
+ * `has_data`, computed by `oee_contract.is_measurable` — the one rule all four
+ * backend call sites use since #558. Before this, the dashboard never asked.
+ */
+function measured(data: ExecutiveOee | null): boolean {
+  return data != null && data.has_data;
+}
+
+/**
+ * One of the four POOLED plant figures, or an honest placeholder.
+ *
+ * Three states, not two, because three things are actually different:
+ *
+ *   no payload yet   "—"        nothing has been asked, let alone answered
+ *   nothing to measure "Not run" the week happened and the plant did not run
+ *   measured          "58%"      including a real, terrible 0%
+ *
+ * A plant that DID run and produced nothing usable has an OEE of 0%, and that is
+ * exactly when the number matters most — so this cannot simply hide the card.
+ * What it must not do is print that same 0% for a shutdown week, a bank holiday,
+ * or a tenant's first morning, which is what `?? 0` did.
+ *
+ * Only the four pooled ratios go through here. Target, Actual, Breakdowns and
+ * Achievement answer different questions with their own data presence —
+ * Achievement especially, being actual-over-target, has a 0% that can be true.
+ */
+function pooled(data: ExecutiveOee | null, value: number | undefined): string {
+  if (data == null) return "—";
+  if (!data.has_data) return "Not run";
+  return `${value ?? 0}%`;
+}
+
 function oeeStyle(value: number) {
   if (value >= 85) return "border-green-500/40 bg-green-500/10 text-green-300";
   if (value >= 65) return "border-yellow-500/40 bg-yellow-500/10 text-yellow-300";
@@ -31,10 +64,15 @@ export default function ExecutiveOeeSection({ data }: { data: ExecutiveOee | nul
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-4 xl:grid-cols-9 gap-4">
-        <Kpi title="Plant OEE" value={`${data?.plant_oee ?? 0}%`} highlight={data?.plant_oee ?? 0} />
-        <Kpi title="Availability" value={`${data?.plant_availability ?? 0}%`} />
-        <Kpi title="Performance" value={`${data?.plant_performance ?? 0}%`} />
-        <Kpi title="Quality" value={`${data?.plant_quality ?? 0}%`} />
+        {/* pooled(): 0% and "did not run" are different answers, and this card
+            used to give the same one to both. See the helper above. `highlight`
+            is dropped when there is nothing to measure — colouring an unmeasured
+            week red is the loudest way to state a number you do not have. */}
+        <Kpi title="Plant OEE" value={pooled(data, data?.plant_oee)}
+             highlight={measured(data) ? data?.plant_oee ?? 0 : undefined} />
+        <Kpi title="Availability" value={pooled(data, data?.plant_availability)} />
+        <Kpi title="Performance" value={pooled(data, data?.plant_performance)} />
+        <Kpi title="Quality" value={pooled(data, data?.plant_quality)} />
         <Kpi title="Target" value={data?.production_target ?? 0} />
         <Kpi title="Actual" value={data?.production_actual ?? 0} />
         <Kpi title="Achievement" value={`${data?.production_achievement ?? 0}%`} />

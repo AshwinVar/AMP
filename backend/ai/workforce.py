@@ -61,6 +61,49 @@ def _is_done(status) -> bool:
     return (status or "").strip().lower() in DONE_STATUSES
 
 
+# The live states, split. DONE_STATUSES above answers "is this job closed out",
+# which is all this module needs; the operator terminal card publishes
+# `total_jobs` beside a Started / Paused / Completed breakdown and therefore
+# needs the live half split in two, with somewhere for everything else to go.
+#
+# Grounded in the writers, not invented:
+#   Started      OperatorTerminalSection.tsx dropdown, models.py:679 column
+#                default, schemas.py:1112 schema default
+#   In Progress  factory_simulator.py:529 and :1004, e2e_sim.py:162
+#   Paused       OperatorTerminalSection.tsx dropdown, factory_simulator.py:529
+RUNNING_STATUSES = {"started", "in progress"}
+PAUSED_STATUSES = {"paused"}
+# Anything unrecognised, and NULL. `job_status` is Column(String,
+# default="Started") WITHOUT nullable=False and OperatorJobExecutionUpdate types
+# it Optional[str] = None, so a real NULL is reachable by PATCH as well as by
+# raw SQL. An explicit bucket, because the alternative is a job that is in the
+# total and in none of the parts — which is the defect this was written for.
+OTHER_BUCKET = "other"
+# The buckets the census publishes, in the order they read on the card.
+CENSUS_BUCKETS = ("started", "paused", "completed", OTHER_BUCKET)
+
+
+def job_status_bucket(status) -> str:
+    """Which census bucket an operator job's status belongs to.
+
+    Matched lowercased and trimmed, exactly like `_is_done` above, so a
+    simulator, a migration or an API client writing "  PAUSED  " cannot open a
+    hole in a breakdown published beside a total. `analytics_routes` used to do
+    an exact-string GROUP BY here, which dropped every "In Progress" job — about
+    a quarter of the simulated plant — and every NULL.
+
+    Completed is decided by `_is_done`, not by a second list: this must never
+    become another implementation of the rule it sits beneath."""
+    if _is_done(status):
+        return "completed"
+    norm = (status or "").strip().lower()
+    if norm in RUNNING_STATUSES:
+        return "started"
+    if norm in PAUSED_STATUSES:
+        return "paused"
+    return OTHER_BUCKET
+
+
 def _rank(o):
     """The shared worst-first ordering used by both the summary's per-operator
     list and the drill-down's per-machine list: an entry with real volume

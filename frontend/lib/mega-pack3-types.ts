@@ -63,6 +63,10 @@ export type OperatorAnalytics = {
   started: number;
   paused: number;
   completed: number;
+  // Jobs whose status is neither running, paused nor closed out — an
+  // unrecognised word or a NULL. Published so the breakdown accounts for
+  // total_jobs; normally 0.
+  other: number;
   good_count: number;
   rejected_count: number;
   quality_rate: number;

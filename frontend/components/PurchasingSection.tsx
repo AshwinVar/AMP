@@ -90,12 +90,20 @@ export default function PurchasingSection({
         </button>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-4 xl:grid-cols-9 gap-4">
+      <div className="grid grid-cols-1 md:grid-cols-4 xl:grid-cols-6 gap-4">
         <Kpi title="Suppliers" value={analytics?.suppliers ?? 0} />
         <Kpi title="POs" value={analytics?.purchase_orders ?? 0} />
+        {/* POs is the total, so the buckets beside it have to account for
+            every purchase order. Draft (the Reorder agent's proposals),
+            Cancelled and Other were all missing, and "Partial" was matched
+            against a word nothing writes — so this row used to fall short of
+            its own total with nothing on screen explaining the gap. */}
+        <Kpi title="Draft" value={analytics?.draft ?? 0} />
         <Kpi title="Open" value={analytics?.open ?? 0} />
         <Kpi title="Partial" value={analytics?.partial ?? 0} />
         <Kpi title="Received" value={analytics?.received ?? 0} />
+        <Kpi title="Cancelled" value={analytics?.cancelled ?? 0} />
+        <Kpi title="Other" value={analytics?.other ?? 0} />
         <Kpi title="Overdue" value={analytics?.overdue ?? 0} />
         <Kpi title="Ordered" value={analytics?.ordered_qty ?? 0} />
         <Kpi title="Received Qty" value={analytics?.received_qty ?? 0} />

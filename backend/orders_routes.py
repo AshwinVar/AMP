@@ -17,6 +17,7 @@ from sqlalchemy import case, func, or_
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+import ai.supply
 import models
 from csv_safe import import_row_error, read_upload_text
 import schemas
@@ -710,13 +711,35 @@ def get_purchasing_analytics(
         name = supplier_names.get(supplier_id, f"Supplier {supplier_id}")
         supplier_pending[name] = supplier_pending.get(name, 0) + int(pending)
 
+    # Fold the raw status words onto census buckets. The GROUP BY above stays in
+    # SQL (one row per distinct status, not one per PO) and the vocabulary lives
+    # in ONE place — ai/supply.STATUS_BUCKETS, beside the received/cancelled sets
+    # the supply read-model already classifies the same rows by.
+    #
+    # These four keys used to be exact-string lookups, and one of them —
+    # "Partial" — is a word NOTHING in this repository writes. The simulator
+    # writes "Partially Received" (factory_simulator.py:404) and the Reorder
+    # agent writes "Draft" (ai/agents.py:262), so on the seeded plant that KPI
+    # read 0 while a fifth of the book was partly delivered, and six of nine POs
+    # were counted in `purchase_orders` and shown in none of the parts beside it.
+    buckets = {b: 0 for b in ai.supply.CENSUS_BUCKETS}
+    for status, count in status_counts.items():
+        buckets[ai.supply.status_bucket(status)] += int(count)
+
     return {
         "suppliers": len(supplier_names),
         "purchase_orders": purchase_orders,
-        "open": status_counts.get("Open", 0),
-        "partial": status_counts.get("Partial", 0),
-        "received": status_counts.get("Received", 0),
-        "cancelled": status_counts.get("Cancelled", 0),
+        # An agent proposal awaiting a human, kept out of `open` so the card does
+        # not present it as spend already committed to a supplier.
+        "draft": buckets["draft"],
+        "open": buckets["open"],
+        "partial": buckets["partial"],
+        "received": buckets["received"],
+        "cancelled": buckets["cancelled"],
+        "other": buckets[ai.supply.OTHER_BUCKET],
+        # NOT part of that partition: `overdue` is a DATE cross-cut
+        # (expected_delivery_date < today on a non-terminal PO), so a PO can be
+        # Open and overdue at once. Unchanged by this fix.
         "overdue": overdue,
         "ordered_qty": ordered_qty,
         "received_qty": received_qty,

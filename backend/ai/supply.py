@@ -32,6 +32,55 @@ CANCELLED_STATUSES = {"cancelled", "canceled"}
 # States where nothing is going to arrive, so the PO is not inbound load.
 _NOT_INBOUND = ("received", "cancelled")
 
+# Every PO status word this repository actually writes, folded onto the bucket
+# the purchasing census publishes. Grounded in the writers, not invented:
+#
+#   Open, Partially Received, Received, Overdue   factory_simulator.py:404
+#   Draft                                         ai/agents.py:262 (Reorder agent)
+#   Approved / Cancelled                          ai/agents.py:127 (the human's decision)
+#   Open                                          models.py:343 column default
+#
+# It exists because /analytics/purchasing looked up four exact strings, one of
+# which — "Partial" — nothing writes. So that KPI could only ever read zero while
+# a fifth of the simulated book was partially received, and six of nine POs
+# landed in no bucket at all beside a total that counted them.
+#
+# The received and cancelled halves are DERIVED from the sets above rather than
+# restated, so there is still one list of what "received" means, not two.
+#
+# "Overdue" folds into `open`: as a status word it means an outstanding order
+# that is late, and lateness is already reported separately from the DATE, so
+# giving the word its own bucket would count the same idea twice in two shapes.
+#
+# "Draft" does NOT fold into `open`. An agent proposal nobody has approved is not
+# a commitment to a supplier, and hiding it inside `open` would overstate
+# committed spend on a card a buyer reads to decide what to order next.
+STATUS_BUCKETS = {
+    **{s: "received" for s in RECEIVED_STATUSES},
+    **{s: "cancelled" for s in CANCELLED_STATUSES},
+    **{s: "open" for s in LATE_STATUSES},
+    "draft": "draft",
+    "open": "open",
+    "approved": "open",
+    "partially received": "partial",
+    "partial": "partial",
+}
+# Anything unrecognised, and NULL. An explicit bucket, because the alternative is
+# a PO counted in the total and shown in none of the parts — which is the defect.
+OTHER_BUCKET = "other"
+# The buckets the census publishes, in the order they read on the card.
+CENSUS_BUCKETS = ("draft", "open", "partial", "received", "cancelled", OTHER_BUCKET)
+
+
+def status_bucket(status) -> str:
+    """Which census bucket a PO status word belongs to.
+
+    Matched lowercased and trimmed, like the sets above, so a migration or an
+    API client writing "  RECEIVED  " or the US "canceled" cannot open a hole in
+    a breakdown published beside a total. Unknown words and NULL return
+    OTHER_BUCKET — visible, rather than dropped."""
+    return STATUS_BUCKETS.get((status or "").strip().lower(), OTHER_BUCKET)
+
 
 def _pct(part: int, whole: int) -> int:
     return round(part / whole * 100) if whole else 0

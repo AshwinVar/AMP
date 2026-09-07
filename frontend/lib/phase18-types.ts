@@ -28,10 +28,17 @@ export type PurchaseOrder = {
 export type PurchasingAnalytics = {
   suppliers: number;
   purchase_orders: number;
+  // An agent proposal awaiting a human decision — deliberately its own
+  // bucket, not folded into `open`, so the card does not present it as spend
+  // already committed to a supplier.
+  draft: number;
   open: number;
   partial: number;
   received: number;
   cancelled: number;
+  // A status word the census does not recognise, or a NULL. Published so the
+  // breakdown accounts for purchase_orders; normally 0.
+  other: number;
   overdue: number;
   ordered_qty: number;
   received_qty: number;

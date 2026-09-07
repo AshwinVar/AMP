@@ -3,12 +3,13 @@
 > Handover file. A new session should be able to read only this and continue.
 > Keep it short. Update it at the end of every completed task.
 
-**Updated:** 2026-09-05 (the correctness line: #542–#559, see LAST COMPLETED TASKS)
-**Master SHA:** `208f564` (#559)
-**Production SHA:** `208f564` — verified live, not assumed:
-`{"status":"ok","database":"ok","schema":"ok","version":"208f564"}` from
-`https://flowmes-production.up.railway.app/health`. Railway auto-deploys master,
-so prod tracks HEAD; re-check `/health` rather than trusting this line's age.
+**Updated:** 2026-09-07 (security closure + the vocabulary line: #560–#566)
+**Master SHA:** `2ece0a0` (#565)
+**Production SHA:** `a01ded7` (#564) — verified live, not assumed:
+`{"status":"ok","database":"ok","schema":"ok","version":"a01ded7"}` from
+`https://flowmes-production.up.railway.app/health`, read at 00:29 UTC while
+#565 was still deploying. Railway auto-deploys master, so prod tracks HEAD;
+re-check `/health` rather than trusting this line's age.
 
 > This header was twenty PRs stale when it was found (`040d30a`/#539 while master
 > was `208f564`/#559). A handover whose own first three lines are wrong teaches a
@@ -52,20 +53,71 @@ One thread, pulled repeatedly: **the same fact defined in two places.**
 | **A held-out routing set whose held-out half is unprintable.** Keyword routing is **58%**, not the 42% recorded. First thing it caught was my own vocabulary pass: visible half 13→22, invisible half **15→15** | P4 | added #547 |
 | Row cap on `/machines` — investigated and **closed as "must not be done"**, with a CI guard and the reason attached | P4 | #542 |
 
+### 2026-09-07 — the vocabulary line (#560–#566)
+
+The same thread, one turn further: **a status word meaning different things in
+different files.** Every one of these was a state somebody had already decided
+about — withdrawn, cancelled, in progress — that one surface honoured and
+another did not.
+
+| Task | Priority | Status |
+|---|---|---|
+| **A working client credential in a PUBLIC repo**, seeded on startup, logged, and the default in a script aimed at production | P0 | source closed #561, class closed #564 — **rotation still open, see below** |
+| **Rejecting an agent's maintenance task made the agent escalate it.** "Overdue" had two definitions; `!= "Completed"` is true of a task a human declined, so the decision was converted into a High/Critical alert | P1 | fixed #562, 9/9 mutations red |
+| **Withdrawing an escalation silenced that alert forever.** Five spellings of "open escalation" across eight sites. `from-smart-alerts` dedups on `!= "Resolved"`, and `"Cancelled"` satisfies it — so one supervisor withdrawing one duplicate meant that machine could never raise that alert again | P1 | fixed #565, 13/13 mutations red |
+| **An agent re-proposed work a technician was already doing** — the dedup whitelist had no `"In Progress"`, which is exactly what the UI writes when someone picks the job up | P1 | fixed #565 |
+| **Cancelling a purchase order marked the SUPPLIER down for it.** A withdrawn PO past its date read as `late`, and `late` is the reliability denominator, the worst-suppliers sort key, and the chase-list test | P2 | **#566 OPEN** (CI running at the time of writing), 10/10 mutations red |
+| **`tree_guard.py` shipped untested, and turned CI's coverage job red.** Testing it found a real defect in it: every DELETED file was also listed as MODIFIED, so the `deleted` branch was dead code | P3 | fixed #564, 9/9 mutations red |
+| **23 suites are invisible to pytest**, so what they prove counts as untested. This is what made a well-tested new module lower the coverage floor | P4 | 3 fixed, rest recorded |
+
 ---
 
 ## KNOWN P0 / P1
 
-**ONE OPEN, AND IT NEEDS YOU, NOT CODE.** A working Supervisor credential for
-the GMATS tenant was hardcoded in `main.py`, seeded on every startup, written
-to the application log, and repeated as a default in `e2e_sim.py` whose
-`AMP_URL` defaulted to production. The repository is PUBLIC.
+**ONE OPEN, AND IT NEEDS YOU, NOT CODE. THE ROTATION HAS NOT TAKEN EFFECT.**
+
+A working Supervisor credential for the GMATS tenant was hardcoded in
+`main.py`, seeded on every startup, written to the application log, and
+repeated as a default in `e2e_sim.py` whose `AMP_URL` defaulted to production.
+The repository is PUBLIC.
 
 #561 removed it from source and added a guard, but **that does not undo the
-exposure**: the password is in the git history of a public repo and must be
-treated as compromised until it is ROTATED IN PRODUCTION. Setting
-`GMATS_PASSWORD` does nothing to the live database, because the seed's
-`if not exists` guard makes it a no-op where the user already exists.
+exposure**. It was reported rotated; it is not. Verified against production
+before anything else, in a run whose controls prove the test is real:
+
+| probe | result |
+|---|---|
+| the exposed password | **HTTP 200, token issued, `role=Admin`** |
+| a never-valid password for the same user | 401 "Invalid password" |
+| an unknown username | 401 "Invalid username" |
+
+The token was discarded unused and neither the old nor any new credential was
+printed, logged or committed. The cause is the one #561 documented: the seed's
+`if not exists` guard makes `GMATS_PASSWORD` a **no-op** where the user
+already exists, so setting the env var changes nothing in the live database.
+Rotation has to happen IN THE DATABASE — reset the `gmats` user's password
+directly (or delete the row and let the env-driven seed recreate it).
+
+Also for you to decide: the account answered `role=Admin`, while the seed
+creates it as `Supervisor`. Somebody promoted it, or it predates the seed.
+Confirm which role that login is supposed to hold before rotating.
+
+Items 2 and 3 of the closure are BLOCKED on the same thing: verifying the new
+credential works only through the intended mechanism, and reviewing production
+audit logs for use during the exposure window, both require authenticating as
+that account, which was declined. Note for whoever does it: **failed logins
+are not audited at all** (`core_routes.py` calls `log_audit` only on success
+and on the two blocked-tenant paths), so the audit trail cannot show attempts,
+only successful sign-ins.
+
+Items 4–8 are CLOSED and merged (#561, #564): no production credential
+literals in source, tests or the eight startup-reachable seeders (AST-checked);
+no credential written to a log line; `e2e_sim` defaults to localhost with no
+default password and refuses a remote host without `AMP_ALLOW_REMOTE`
+(asserted behaviourally against RFC 5737 TEST-NET-1, because the first
+substring-based version survived a `if False:` mutation); `tree_guard.py` +
+worktree isolation for read-only investigators; `.githooks/pre-commit`
+refusing commits on master/main.
 
 The Admin account three lines below had always done it correctly
 (`GMATS_ADMIN_PASSWORD` from env, "password never hardcoded"), so the standard
@@ -86,6 +138,12 @@ The downtime-scan defect below was P2 and is fixed.
 | 5b | Poll cycle: 135 queries at 10 machines, 135 at 200 — query count FLAT. **But HTTP latency is not:** `/analytics/executive-oee` 73→575 ms and `/machines` 21→184 ms from 10 to 1000 machines. At 1000 the DB answers `list machines` in 3.3 ms while `/machines` takes 184 ms — **98% of the request is above the query**. Per-ROW cost, not N+1 | MEASURED both ways, one clean run | P4 — see below |
 | 5 | Dashboard polls `fetchAll` every 3s; 46 requests/round | **MEASURED** via `dashboard_perf.py` **and** `loadtest.py` | PERFORMANCE — the `/machine-health` N+1 was the real query cost (607→10). At ≤250 machines every endpoint is ≤210 ms and error-free | **largest win taken**; the next one is per-row serialisation cost at 1000 machines, not query count |
 | 6 | Copilot provider coupling | YES | Already has `AI_PROVIDER` anthropic/gemini branching — if/else, not a clean interface | P6 |
+| 7 | Agents' dedup whitelisted `("Proposed","Open")`, so a technician moving an item to "In Progress" made the agent propose it AGAIN | YES | BUG | **FIXED #565** |
+| 8 | "Open escalation" had five spellings across eight sites. A **withdrawn** escalation gagged its own alert permanently (`from-smart-alerts` dedup matched it), inflated two dashboard cards, and told operators it "still requires action" | YES | BUG | **FIXED #565** |
+| 9 | `ai/supply.py` classified a **Cancelled** PO as `late`, so withdrawing an order lowered that supplier's reliability score, pushed them up the worst-suppliers sort, and put the PO on the chase list | YES | BUG | fix merged? **check #566** — it was open when this line was written |
+| 10 | `/analytics/operator-terminal` publishes `total_jobs` beside `started`/`paused`/`completed`, but the simulator writes `"In Progress"` (`factory_simulator.py:529,1004`) and the column defaults to `"Started"` and is nullable — so the parts do not sum to the total on a live plant | YES — vocabulary confirmed in source | CENSUS GAP | **NEXT** |
+| 10b | **`/analytics/purchasing` buckets a PO vocabulary nothing writes.** It publishes `purchase_orders` (the total) beside `open`/`partial`/`received`/`cancelled`, but `factory_simulator.py:404` writes `["Open","Open","Partially Received","Received","Overdue"]` and `ai/agents.py:262` writes `"Draft"` (`"Approved"` after the human accepts, per `_draft_po_exists`). So **`partial` reads 0 while a fifth of the book is partially received**, and Overdue/Draft/Approved have no bucket at all — the card's parts fall short of its own total by however many the Reorder agent has proposed. Same PR should settle whether an unapproved `Draft` belongs in `ai/supply.py`'s `late` bucket and therefore in `reliability_rate` (it currently does, once seven days old — nobody sent it, so it is not the supplier's failure) | YES — every writer read | CENSUS GAP + one rule, two vocabularies | **NEXT** |
+| 11 | **23 backend suites are invisible to pytest**, so everything they prove counts as untested in the `coverage` job. pytest collects module-level `test_*` functions and nothing else; these expose only `main()`. That is how adding a well-tested module (`tree_guard.py`) pushed the floor DOWN and turned #564 red. Three-line entry points added to 3 of them (#565, #564); the rest are listed by `grep -rL "^def test_" backend/test_*.py` | YES — measured, 78.17% after the fix against a 78 floor | MEASUREMENT GAP | P4 — margin is 0.17pp, so the next untested module repeats this |
 
 ---
 
@@ -155,6 +213,20 @@ Phases 2, 4–6 not started. Note before starting Phase 2: the LLM is already re
 ---
 
 ## MANUAL ACTION REQUIRED
+
+- **ROTATE THE GMATS PASSWORD IN THE DATABASE. It is still live.** Verified by
+  probe against production on 2026-09-07: the exposed credential authenticates,
+  returns a token and reports `role=Admin`, with a never-valid password and an
+  unknown username both correctly refused in the same run. Setting
+  `GMATS_PASSWORD` cannot do it — the seed's `if not exists` guard makes it a
+  no-op for an existing user. Reset the row's password directly, or delete the
+  user and let the env-driven seed recreate it. While you are there, confirm
+  whether that login should hold `Admin` (what it answers) or `Supervisor`
+  (what the seed creates). See KNOWN P0 / P1 for the full table.
+- **Git history still contains the credential.** Not rewritten, deliberately —
+  history rewriting on a public repo is your call, not an autonomous one, and
+  it does not help anyway once a secret has been published. Rotation is the
+  fix; a history rewrite is optional tidying afterwards.
 
 - **Production has no MQTT broker — and three things about that were wrong.**
   Investigated properly (2026-09-04):
@@ -389,6 +461,27 @@ re-deriving it is worse than none.
   response must assert the response ARRIVED — a minimum expected count, or an
   explicit error branch — before interpreting its emptiness. The same mistake in
   a health check or an alerting rule is how an outage goes unnoticed.
+- **A new suite MUST expose a module-level `test_*` function.** CI's per-file
+  runner (`python test_X.py`) finds `main()`; the `coverage` job runs pytest,
+  and pytest collects module-level `test_*` functions and NOTHING else. A suite
+  that only has `main()` therefore proves nothing to the coverage measurement,
+  and adding a well-tested module to the repo pushes the floor DOWN — which is
+  what turned #564 red. Three lines are enough:
+  `def test_x(): assert main() == 0`. Check with
+  `python -m pytest --collect-only -q <file>`; zero collected is the bug.
+- **If the scenarios ARE module-level `test_*` functions, they must raise.**
+  The `check()` helper used across this repo RECORDS a failure and returns —
+  under pytest that reports green. Either keep the scenarios private
+  (`_check_*`) behind one asserting entry point, or assert inside each.
+- **Mutation harnesses must read AND write with `newline=""`.** These files are
+  CRLF. Reading in text mode without it converts to LF, so the "restore" rewrites
+  every line ending and `git status` shows a file the harness swears it did not
+  touch. Multi-line find-patterns written with `\n` simply never match — and a
+  pattern that does not match is a DISABLED mutation, which measures nothing
+  while looking identical to a guard that works. Report those as survivors.
+- **Escape sequences do not survive Bash heredoc → Python → file.** Use the Edit
+  tool for exact strings. This bit twice in one session: an em dash in a
+  mutation pattern, and `"\\0"` becoming a NUL byte.
 - eslint baseline is **exactly 134**.
 - Schema change ⇒ model + Alembic migration + fresh-schema test + upgrade test + PostgreSQL verification.
 - Never weaken a test to make a change pass.

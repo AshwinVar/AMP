@@ -21,6 +21,7 @@ from sqlalchemy.orm import Session, joinedload
 
 import ai
 import ai.escalations
+import ai.workforce
 import ai.prediction
 import ai.twin
 import machine_status
@@ -1476,11 +1477,25 @@ def get_operator_terminal_analytics(db: Session = Depends(_get_db), current_user
     # class fixed in the work-order rollup (#275) and predictive scorer (#274).
     # COALESCE(SUM(...), 0) treats a NULL count as the column's own default of 0
     # and never sees an empty-table NULL either.
+    # GROUP BY the raw word, then fold it onto a census bucket in Python. The
+    # grouping stays in SQL (one row per distinct status, not one per job), and
+    # the vocabulary lives in ONE place: ai/workforce.job_status_bucket, beside
+    # the DONE_STATUSES the workforce read-model already judges the same rows by.
+    #
+    # It used to read the three exact strings "Started"/"Paused"/"Completed" out
+    # of this dict, which meant every "In Progress" job — what
+    # factory_simulator.py:529/:1004 and e2e_sim.py:162 write, roughly a quarter
+    # of the simulated plant — was counted in total_jobs and shown in none of
+    # the three buckets published beside it. A NULL job_status went the same way.
     status_counts = dict(
         db.query(models.OperatorJobExecution.job_status, func.count())
         .group_by(models.OperatorJobExecution.job_status)
         .all()
     )
+    buckets = {b: 0 for b in ai.workforce.CENSUS_BUCKETS}
+    for status, count in status_counts.items():
+        buckets[ai.workforce.job_status_bucket(status)] += int(count)
+
     total_jobs, good, rejected = db.query(
         func.count(models.OperatorJobExecution.id),
         func.coalesce(func.sum(models.OperatorJobExecution.good_count), 0),
@@ -1493,9 +1508,14 @@ def get_operator_terminal_analytics(db: Session = Depends(_get_db), current_user
 
     return {
         "total_jobs": total_jobs,
-        "started": status_counts.get("Started", 0),
-        "paused": status_counts.get("Paused", 0),
-        "completed": status_counts.get("Completed", 0),
+        "started": buckets["started"],
+        "paused": buckets["paused"],
+        "completed": buckets["completed"],
+        # Published, not swallowed. `total_jobs` is rendered beside these on
+        # OperatorTerminalSection.tsx:13, so the breakdown has to account for
+        # every job or the card shows a total bigger than its own parts with
+        # nothing on screen explaining the gap.
+        "other": buckets[ai.workforce.OTHER_BUCKET],
         "good_count": good,
         "rejected_count": rejected,
         "quality_rate": quality_rate,

@@ -54,6 +54,14 @@ omit =
     #   mutate_*      break one guard at a time and assert a suite goes red.
     #                 By construction most of their lines run only while a
     #                 mutation is applied.
+    #
+    # mutate_*.py is a GLOB, not a list. It used to be one entry per harness,
+    # and the list is a convention nobody wrote down as a rule: #565's harness
+    # was simply never added, and #566's second one then took the total under
+    # the floor with no application code changed — which is the exact perverse
+    # incentive the paragraph above was written to prevent. Nothing in the
+    # application is named mutate_*; `grep -rn "import mutate_"` matches only
+    # the harnesses themselves, so the glob cannot swallow shipped code.
     #   pg_scratch    the shared helper both use to build a throwaway database.
     # None is importable by the app (grep: nothing in main.py's closure imports
     # them), and counting them would let adding verification LOWER the number
@@ -61,10 +69,7 @@ omit =
     verify_pg_migration.py
     verify_pg_docnumbers.py
     verify_pg_bom.py
-    mutate_mqtt_identity.py
-    mutate_doc_numbers.py
-    mutate_bom.py
-    mutate_oee_contract.py
+    mutate_*.py
     pg_scratch.py
     # Same category again, added closing the customer-readiness blockers. Left
     # off this list they cost 4.2 points — 80.24% to 76.07%, under the 78 floor
@@ -78,8 +83,6 @@ omit =
     #   loadtest              starts its own uvicorn and hammers it
     #   restore_drill         pg_dump -> restore -> migrate -> boot -> log in
     verify_pg_approvals.py
-    mutate_approval_gate.py
-    mutate_ws_auth.py
     audit_three_customers.py
     audit_adversarial_final.py
     loadtest.py
@@ -98,20 +101,14 @@ omit =
     #   audit_oem_adversarial  two OEMs against three factories, 60 checks
     #   oem_perf               builds a 10,000-machine fleet and counts SQL
     verify_pg_oem.py
-    mutate_oem_auth.py
-    mutate_oem_sharing.py
-    mutate_oem_service.py
     #   mutate_oem_lifecycle   12 mutations of the OEM WRITE path and the
     #                          tenant an event is filed under
-    mutate_oem_lifecycle.py
     #   mutate_oem_provisioning  16 mutations of the manufacturer's front door,
     #                            the founder gate, and the lockout guard
-    mutate_oem_provisioning.py
     #   mutate_oem_claim       23 mutations of the machine-claim credential, the
     #                          factory's authority, and the two conditional
     #                          UPDATEs that decide a race
     #   verify_pg_claim        25 real two-thread races on PostgreSQL 18.3
-    mutate_oem_claim.py
     verify_pg_claim.py
     audit_oem_adversarial.py
     #   audit_oem_specialist  attacks the ASSUMPTIONS the OEM boundary rests on

@@ -22,6 +22,15 @@ TOP_N = 10
 RECEIVED_STATUSES = {"received", "closed", "completed", "complete", "delivered"}
 # A status that itself declares the PO late, regardless of the expected date.
 LATE_STATUSES = {"overdue"}
+# The buyer withdrew it. Neither received (nothing arrived) nor late (nobody is
+# waiting). Matched lowercased like the sets above, so "canceled" and a padded
+# "  Cancelled  " land here too rather than falling through to a date
+# comparison. orders_routes.py treats ("Received", "Cancelled") as terminal for
+# the /analytics/purchasing overdue count and the overdue-PO escalation
+# generator; this is the same rule, in the vocabulary this module uses.
+CANCELLED_STATUSES = {"cancelled", "canceled"}
+# States where nothing is going to arrive, so the PO is not inbound load.
+_NOT_INBOUND = ("received", "cancelled")
 
 
 def _pct(part: int, whole: int) -> int:
@@ -29,14 +38,32 @@ def _pct(part: int, whole: int) -> int:
 
 
 def _state(po, today) -> str:
-    """A single PO's receipt state. Received when the full quantity is in (or the
-    status says so); otherwise late if past its expected date (or flagged
-    overdue), at-risk if due soon, else on track."""
+    """A single PO's receipt state. Cancelled when the buyer withdrew it;
+    received when the full quantity is in (or the status says so); otherwise
+    late if past its expected date (or flagged overdue), at-risk if due soon,
+    else on track.
+
+    Without the cancelled branch a withdrawn PO past its date fell through to
+    `late`, and `late` is the denominator of reliability_rate, the primary sort
+    key of the worst-suppliers list, and the membership test for the chase list
+    — so cancelling an order marked the SUPPLIER down for the BUYER's decision.
+
+    The cancelled check sits AFTER the receipt test, deliberately. A PO that was
+    cancelled but whose goods actually arrived in full was already classified
+    `received` before this rule existed, and it should stay that way: the
+    quantity is evidence of what physically happened, the status word is an
+    administrative label applied afterwards, and this read-model answers "can I
+    count on this supplier". They delivered. Ranking cancelled first would have
+    moved that delivery out of the numerator — a change beyond the defect, and
+    one that penalises the supplier a second way.
+    """
     ordered = po.order_quantity or 0
     received = po.received_quantity or 0
     status = (po.status or "").strip().lower()
     if status in RECEIVED_STATUSES or (ordered > 0 and received >= ordered):
         return "received"
+    if status in CANCELLED_STATUSES:
+        return "cancelled"
     if status in LATE_STATUSES:
         return "late"
     due = po.expected_delivery_date
@@ -61,7 +88,10 @@ def build_supply_summary(db, tenant: str) -> dict:
     pos = db.query(models.PurchaseOrder).all()
     supplier_names = {s.id: s.supplier_name for s in db.query(models.Supplier).all()}
 
-    totals = {"received": 0, "on_track": 0, "at_risk": 0, "late": 0}
+    # "cancelled" is a bucket here because `total` is published beside these
+    # counts: a breakdown that does not partition the vocabulary is a total
+    # that does not add up to its own parts.
+    totals = {"received": 0, "on_track": 0, "at_risk": 0, "late": 0, "cancelled": 0}
     ordered_units = received_units = 0
     per_supplier: dict = {}
     chase = []
@@ -77,7 +107,7 @@ def build_supply_summary(db, tenant: str) -> dict:
         name_ = supplier_names.get(p.supplier_id, "—")
         s = per_supplier.setdefault(name_, {
             "supplier": name_, "pos": 0,
-            "received": 0, "on_track": 0, "at_risk": 0, "late": 0,
+            "received": 0, "on_track": 0, "at_risk": 0, "late": 0, "cancelled": 0,
             "ordered": 0, "received_units": 0,
         })
         s["pos"] += 1
@@ -104,7 +134,10 @@ def build_supply_summary(db, tenant: str) -> dict:
     due_set = set(upcoming_days)
     due_count = {d: 0 for d in upcoming_days}
     for p in pos:
-        if p.expected_delivery_date in due_set and _state(p, today) != "received":
+        # `not in _NOT_INBOUND`, not `!= "received"`: a cancelled PO is not
+        # stock about to arrive, and counting it as inbound load promised a
+        # delivery that was never coming.
+        if p.expected_delivery_date in due_set and _state(p, today) not in _NOT_INBOUND:
             due_count[p.expected_delivery_date] += 1
     upcoming = [{"date": d.isoformat(), "pos": due_count[d]} for d in upcoming_days]
 
@@ -136,6 +169,7 @@ def build_supply_summary(db, tenant: str) -> dict:
         "on_track": totals["on_track"],
         "at_risk": totals["at_risk"],
         "late": totals["late"],
+        "cancelled": totals["cancelled"],
         "receipt_rate": _pct(received_units, ordered_units),
         # POs that have come due (received or late) and, of those, the share received
         # in full — the honest "can I count on inbound supply?" number, reconciled
@@ -172,7 +206,10 @@ def build_supplier_detail(db, tenant: str, supplier: str) -> dict:
         pos = [p for p in db.query(models.PurchaseOrder).all()
                if name_by_id.get(p.supplier_id, "—") == supplier]
 
-    totals = {"received": 0, "on_track": 0, "at_risk": 0, "late": 0}
+    # "cancelled" is a bucket here because `total` is published beside these
+    # counts: a breakdown that does not partition the vocabulary is a total
+    # that does not add up to its own parts.
+    totals = {"received": 0, "on_track": 0, "at_risk": 0, "late": 0, "cancelled": 0}
     ordered_units = received_units = overdue_units = 0
     chase = []
     for p in pos:
@@ -207,7 +244,10 @@ def build_supplier_detail(db, tenant: str, supplier: str) -> dict:
     due_set = set(upcoming_days)
     due_count = {d: 0 for d in upcoming_days}
     for p in pos:
-        if p.expected_delivery_date in due_set and _state(p, today) != "received":
+        # `not in _NOT_INBOUND`, not `!= "received"`: a cancelled PO is not
+        # stock about to arrive, and counting it as inbound load promised a
+        # delivery that was never coming.
+        if p.expected_delivery_date in due_set and _state(p, today) not in _NOT_INBOUND:
             due_count[p.expected_delivery_date] += 1
     upcoming = [{"date": d.isoformat(), "pos": due_count[d]} for d in upcoming_days]
 
@@ -242,6 +282,7 @@ def build_supplier_detail(db, tenant: str, supplier: str) -> dict:
         "on_track": totals["on_track"],
         "at_risk": totals["at_risk"],
         "late": totals["late"],
+        "cancelled": totals["cancelled"],
         "receipt_rate": _pct(received_units, ordered_units),
         # POs that have come due (received or late). When it's 0 no PO is due yet,
         # so reliability_rate is a floored empty denominator (0), NOT a real 0% —

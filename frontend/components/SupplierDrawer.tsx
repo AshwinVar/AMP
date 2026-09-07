@@ -5,7 +5,7 @@ import { apiGet } from "../lib/api";
 import { useModalFocus } from "../lib/useModalFocus";
 
 // Mirrors the backend supplier drill-down (ai/supply.py build_supplier_detail).
-type State = "received" | "on_track" | "at_risk" | "late";
+type State = "received" | "on_track" | "at_risk" | "late" | "cancelled";
 
 type ChasePo = {
   po_no: string; item_name: string; expected_delivery_date: string | null;
@@ -24,7 +24,7 @@ type SupplierDetail = {
   category: string | null;
   supplier_status: string | null;
   total: number;
-  received: number; on_track: number; at_risk: number; late: number;
+  received: number; on_track: number; at_risk: number; late: number; cancelled: number;
   receipt_rate: number;
   resolved: number;
   reliability_rate: number;
@@ -46,12 +46,14 @@ const STATE_LABEL: Record<State, string> = {
   on_track: "on track",
   at_risk: "at risk",
   late: "late",
+  cancelled: "cancelled",
 };
 const STATE_CLS: Record<State, string> = {
   received: "text-emerald-400",
   on_track: "text-slate-400",
   at_risk: "text-amber-400",
   late: "text-red-400",
+  cancelled: "text-slate-500",
 };
 
 const dueLabel = (o: ChasePo) =>
@@ -158,8 +160,11 @@ export default function SupplierDrawer({ supplier, onClose }: { supplier: string
               </div>
 
               {/* State mix */}
-              <div className="grid grid-cols-4 gap-2">
-                {(["received", "on_track", "at_risk", "late"] as State[]).map((k) => (
+              {/* Five buckets, not four: `total` is rendered above them, so the
+                  mix has to partition the vocabulary or the card shows a total
+                  bigger than its own parts with nothing on screen explaining it. */}
+              <div className="grid grid-cols-5 gap-2">
+                {(["received", "on_track", "at_risk", "late", "cancelled"] as State[]).map((k) => (
                   <div key={k} className="rounded-lg border border-slate-800 bg-slate-900/40 px-3 py-2 text-center">
                     <p className={`text-xl font-bold ${STATE_CLS[k]}`}>{detail[k]}</p>
                     <p className="text-[11px] text-slate-500 capitalize">{STATE_LABEL[k]}</p>

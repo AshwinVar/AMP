@@ -7,7 +7,7 @@ import SupplierDrawer from "./SupplierDrawer";
 // Mirrors the backend supply read-model (ai/supply.py build_supply_summary).
 type BySupplier = {
   supplier: string; pos: number;
-  received: number; on_track: number; at_risk: number; late: number;
+  received: number; on_track: number; at_risk: number; late: number; cancelled: number;
   ordered: number; received_units: number; receipt_rate: number;
   reliability_rate: number;
 };
@@ -18,7 +18,7 @@ type ChasePo = {
 };
 type SupplySummary = {
   total: number;
-  received: number; on_track: number; at_risk: number; late: number;
+  received: number; on_track: number; at_risk: number; late: number; cancelled: number;
   receipt_rate: number;
   resolved: number;
   reliability_rate: number;
@@ -71,6 +71,10 @@ export default function SupplySnapshot({ onOpen }: { onOpen?: (viewKey: string) 
     { key: "on_track", label: "On track", cls: "text-slate-300" },
     { key: "at_risk", label: "At risk", cls: "text-amber-400" },
     { key: "late", label: "Late", cls: "text-red-400" },
+    // `total` is rendered above this row, so the row has to account for every
+    // PO. A withdrawn order used to be counted as Late, which both inflated
+    // this bucket and marked the supplier down for the buyer's own decision.
+    { key: "cancelled", label: "Cancelled", cls: "text-slate-500" },
   ];
 
   return (
@@ -98,7 +102,7 @@ export default function SupplySnapshot({ onOpen }: { onOpen?: (viewKey: string) 
       </div>
 
       {/* state mix */}
-      <div className="mt-4 grid grid-cols-4 gap-2">
+      <div className="mt-4 grid grid-cols-5 gap-2">
         {states.map((s) => (
           <div key={s.key} className="rounded-lg border border-slate-800 bg-slate-900/40 px-3 py-2 text-center">
             <p className={`text-xl font-bold ${s.cls}`}>{d[s.key] as number}</p>

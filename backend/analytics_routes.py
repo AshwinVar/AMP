@@ -20,6 +20,7 @@ from sqlalchemy import func, or_
 from sqlalchemy.orm import Session, joinedload
 
 import ai
+import ai.escalations
 import ai.prediction
 import ai.twin
 import machine_status
@@ -1023,17 +1024,13 @@ def get_factory_command_center(
         models.ProductionPlan.status == "Behind"
     ).scalar() or 0
 
-    # open_escalations = not Resolved. status is String default="Open" (not NOT
-    # NULL); the old Python `row.status != "Resolved"` counted a NULL-status row as
-    # open (None != "Resolved" is True), but SQL's `status != 'Resolved'` is NULL —
-    # not TRUE — for a NULL status and would silently drop it. OR the NULL back in
-    # to keep the same basis (the same subtlety as the late-order / review-due
-    # counts, #295/#298).
+    # open_escalations via the shared predicate. This used to be `status IS NULL
+    # OR status != "Resolved"`, which counted a CANCELLED escalation as open
+    # forever — so a supervisor withdrawing one left this card permanently one
+    # ahead of the escalation queue and the shift handover, which both read
+    # ai/escalations.py's terminal-state set. One rule, one home (#565).
     open_escalations = db.query(func.count(models.Escalation.id)).filter(
-        or_(
-            models.Escalation.status.is_(None),
-            models.Escalation.status != "Resolved",
-        )
+        ai.escalations.open_clause()
     ).scalar() or 0
 
     # low_stock: current_stock <= reorder_level. Both are Column(Integer, default=0)
@@ -1519,17 +1516,11 @@ def get_system_health(db: Session = Depends(_get_db), current_user: dict = Depen
     machines = db.query(func.count(models.Machine.id)).scalar() or 0
     users = db.query(func.count(models.User.id)).scalar() or 0
     alerts = db.query(func.count(models.Alert.id)).scalar() or 0
-    # "Open" = every escalation NOT explicitly Resolved. status is
-    # Column(String, default="Open") WITHOUT nullable=False, so a raw-SQL /
-    # migration / cleared write can store NULL. The old Python `row.status !=
-    # "Resolved"` counted a NULL as open (None != "Resolved" is True), but SQL's
-    # `status != 'Resolved'` is NULL — not TRUE — for a NULL status and would
-    # silently drop that row. OR the NULL back in to keep the exact same basis.
+    # "Open" = not in a terminal state, via the shared predicate — the same
+    # number the command centre, the handover and the escalation queue report
+    # (#565). Withdrawn is off the queue; NULL is still open.
     open_escalations = db.query(func.count(models.Escalation.id)).filter(
-        or_(
-            models.Escalation.status.is_(None),
-            models.Escalation.status != "Resolved",
-        )
+        ai.escalations.open_clause()
     ).scalar() or 0
     # "Unread" is an equality match, so a NULL status is excluded either way
     # (Python `None == "Unread"` and SQL `status = 'Unread'` are both false/NULL)

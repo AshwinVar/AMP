@@ -14,6 +14,7 @@ from sqlalchemy import func, or_
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+import ai.escalations
 import models
 import schemas
 from auth import get_current_user, require_roles
@@ -687,20 +688,13 @@ def generate_system_notifications(db: Session = Depends(_get_db), current_user: 
     # /analytics/system-health and /analytics/final-executive-summary headline
     # (get_system_health) so the notification's "N escalation(s) still require
     # action" reconciles with the open-escalations count the tenant already sees on
-    # the dashboard. status is Column(String, default="Open") WITHOUT nullable=False,
-    # so a raw-SQL / migration / cleared write can store NULL. A bare
-    # `status != 'Resolved'` is NULL — not TRUE — for that row in SQL, so it was
-    # silently dropped here while the headline OR'd it back in and counted it as
-    # open: the notification then undercounted the very backlog it exists to flag.
-    # OR the NULL in to keep the exact same basis.
+    # the dashboard. Both now run the shared predicate: this used to be `status IS
+    # NULL OR status != "Resolved"`, which told operators that escalations someone
+    # had already WITHDRAWN "still require action" — an alert about work nobody is
+    # ever going to do is how a notification channel gets ignored (#565).
     open_escalations = (
         db.query(func.count(models.Escalation.id))
-        .filter(
-            or_(
-                models.Escalation.status.is_(None),
-                models.Escalation.status != "Resolved",
-            )
-        )
+        .filter(ai.escalations.open_clause())
         .scalar()
     ) or 0
     if open_escalations > 0:

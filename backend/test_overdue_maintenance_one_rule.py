@@ -193,5 +193,15 @@ def main():
     return 1 if failures else 0
 
 
+def test_overdue_maintenance_one_rule():
+    """The pytest entry point — see test_open_escalation_one_rule.py for why.
+
+    Without it this suite runs in CI's `backend` job and contributes nothing to
+    the coverage job, so everything it proves about ai/maintenance.py reads as
+    untested.
+    """
+    assert main() == 0, "see the FAIL lines above"
+
+
 if __name__ == "__main__":
     raise SystemExit(main())

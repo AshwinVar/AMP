@@ -14,11 +14,11 @@ Per ADR-0009; imports only lower-level/shared modules, never main.
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Response
-from sqlalchemy import or_
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 import ai
+import ai.escalations
 import ai.agents
 import ai.platform_status
 import ai.trends
@@ -247,24 +247,19 @@ def create_escalations_from_smart_alerts(
     for alert in alerts:
         title = f'{alert.get("type", "Alert")} - {alert.get("machine", "Factory")}'
 
-        # Dedup against an already-open escalation for this alert. status is
-        # Column(String, default="Open") WITHOUT nullable=False, so a raw-SQL /
-        # migration / cleared-field row can hold a genuine NULL, and SQL's bare
-        # `status != 'Resolved'` is NULL — not TRUE — for it, so the dedup MISSED a
-        # NULL-status open escalation and raised a DUPLICATE. A NULL status is not a
-        # terminal state (still open) — the same convention every open-escalation
-        # READER already applies (analytics /escalations #295, system-notifications
-        # #403) — so OR the NULL in: it blocks the duplicate instead of inflating
-        # the very open-escalation count the readers report. A Resolved escalation
-        # still lets a fresh recurrence through.
+        # Dedup against an already-open escalation for this alert, using the same
+        # predicate every reader uses. It used to be `status IS NULL OR status !=
+        # "Resolved"`, and the gap was not academic: "Cancelled" is `!=
+        # "Resolved"`, so a WITHDRAWN escalation matched here and the alert was
+        # skipped — permanently. One supervisor withdrawing one duplicate
+        # breakdown escalation meant that machine could never raise that alert
+        # again, however often it actually broke down. Withdrawn is terminal;
+        # a NULL status is still open, so it still blocks a duplicate (#565).
         existing = (
             db.query(models.Escalation)
             .filter(
                 models.Escalation.title == title,
-                or_(
-                    models.Escalation.status.is_(None),
-                    models.Escalation.status != "Resolved",
-                ),
+                ai.escalations.open_clause(),
             )
             .first()
         )

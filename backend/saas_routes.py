@@ -17,9 +17,10 @@ import secrets
 from typing import List
 
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import func, or_
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
+import ai.escalations
 import models
 import offboard_tenant
 import onboard_tenant
@@ -292,21 +293,14 @@ def get_tenant_activity(db: Session = Depends(_get_db),
                              .filter(models.ProductionRecord.created_at >= cutoff).count())
             orders_7d = (db.query(models.CustomerOrder)
                          .filter(models.CustomerOrder.created_at >= cutoff).count())
-            # "Open" = not in a terminal state. status is Column(String,
-            # default="Open") WITHOUT nullable=False, so a raw-SQL / migration /
-            # cleared-field row can hold a NULL — and SQL's `status NOT IN (...)`
-            # evaluates to NULL (not TRUE) for it, silently DROPPING an open
-            # NULL-status escalation from this count and undercounting the panel.
-            # OR the NULL back in (a NULL status is not a terminal state, i.e.
-            # still open), matching the reconciled open-escalation convention the
-            # dashboard headline and the maintenance/late-order counts already use
-            # (analytics /analytics/escalations #295, system-notifications #403).
+            # "Open" = not in a terminal state, via the shared predicate. This
+            # panel had its OWN terminal list — ("Resolved", "Cancelled",
+            # "Closed"), case-sensitive and missing the "canceled" spelling
+            # ai/escalations.py carries — so the number the platform operator
+            # reads here to judge whether a customer is struggling did not match
+            # the number that customer sees on their own dashboard (#565).
             open_escalations = (db.query(models.Escalation)
-                                .filter(or_(
-                                    models.Escalation.status.is_(None),
-                                    ~models.Escalation.status.in_(
-                                        ("Resolved", "Cancelled", "Closed")),
-                                )).count())
+                                .filter(ai.escalations.open_clause()).count())
             last_production = (db.query(models.ProductionRecord.created_at)
                                .order_by(models.ProductionRecord.created_at.desc())
                                .limit(1).scalar())

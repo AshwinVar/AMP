@@ -64,6 +64,26 @@ def _is_closed(status) -> bool:
     return _norm(status) in CLOSED_STATUSES
 
 
+def open_clause():
+    """SQL for "this escalation is still on the queue" — the one definition.
+
+    It had four. `!= "Resolved"` (the command centre, system health and the
+    smart-alert dedup) counted a WITHDRAWN escalation as open forever, which
+    also meant a cancelled one permanently suppressed its own alert from ever
+    being raised again. `IN ("Proposed", "Open")` (the agents' dedup) missed an
+    IN PROGRESS one, so an agent re-proposed work a technician had already
+    picked up. Only this form — the complement of CLOSED_STATUSES — agrees with
+    `_is_closed()`, which is what the read-model reports against.
+
+    COALESCE+LOWER+TRIM because `status` is Column(String, default="Open")
+    WITHOUT nullable=False: a raw-SQL or migrated row can hold a real NULL, and
+    SQL's `status != 'x'` is NULL — not TRUE — for it, which silently drops the
+    row. A NULL status is not a terminal state, so it stays open (#295/#298).
+    """
+    return func.lower(func.trim(func.coalesce(models.Escalation.status, ""))).notin_(
+        CLOSED_STATUSES)
+
+
 def _is_resolved(status) -> bool:
     return _norm(status) == RESOLVED
 
@@ -116,7 +136,7 @@ def build_escalation_summary(db, tenant: str) -> dict:
     # test to fail if it goes.
     rows = (db.query(models.Escalation).filter(or_(
         models.Escalation.created_at >= cutoff,
-        func.lower(func.trim(func.coalesce(models.Escalation.status, ""))).notin_(CLOSED_STATUSES),
+        open_clause(),
     )).all())
 
     def _days_open(e) -> int:

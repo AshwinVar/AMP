@@ -16,7 +16,7 @@ from datetime import datetime, timedelta
 
 import approvals
 import models
-from ai import prediction
+from ai import escalations, maintenance, prediction
 from events import (
     ProductionCompleted, DowntimeStarted, InventoryLow, QualityInspectionFailed, event_bus,
 )
@@ -168,7 +168,7 @@ def _open_auto_task_exists(db, machine_id, task_type) -> bool:
         .filter(
             models.MaintenanceTask.machine_id == machine_id,
             models.MaintenanceTask.task_type == task_type,
-            models.MaintenanceTask.status.in_(("Proposed", "Open")),
+            models.MaintenanceTask.status.in_(maintenance.OPEN_STATUSES),
         )
         .first()
         is not None
@@ -276,7 +276,7 @@ def _open_agent_escalation_exists(db, machine_id) -> bool:
         db.query(models.Escalation)
         .filter(models.Escalation.machine_id == machine_id,
                 models.Escalation.source == "Escalation agent",
-                models.Escalation.status.in_(("Proposed", "Open")))
+                escalations.open_clause())
         .first()
         is not None
     )
@@ -338,7 +338,7 @@ def open_briefing_escalation_ids(db, tenant) -> dict:
     rows = (db.query(models.Escalation)
             .filter(models.Escalation.tenant_code == tenant,
                     models.Escalation.source == "Escalation agent",
-                    models.Escalation.status.in_(("Proposed", "Open")),
+                    escalations.open_clause(),
                     models.Escalation.notes.like("%[briefing:%"))
             .order_by(models.Escalation.id)
             .all())

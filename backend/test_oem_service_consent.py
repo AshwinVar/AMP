@@ -495,5 +495,18 @@ async def run_all():
     return 1 if failures else 0
 
 
+def test_oem_service_consent():
+    """The pytest entry point.
+
+    CI runs this file as `python test_oem_service_consent.py`; the `coverage` job
+    runs pytest,
+    which collects module-level ``test_*`` functions and NOTHING else. Without
+    this, everything the suite proves is counted as UNTESTED — which is how
+    adding a well-tested module pushed the floor down and turned #564 and #566
+    red. See CHIEF-ENGINEER-STATE.md, CONVENTIONS.
+    """
+    assert asyncio.run(run_all()) == 0, "see the FAIL lines above"
+
+
 if __name__ == "__main__":
     raise SystemExit(asyncio.run(run_all()))

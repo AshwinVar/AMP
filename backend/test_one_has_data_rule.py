@@ -212,5 +212,18 @@ def main():
     return 1 if failures else 0
 
 
+def test_one_has_data_rule():
+    """The pytest entry point.
+
+    CI runs this file as `python test_one_has_data_rule.py`; the `coverage` job
+    runs pytest,
+    which collects module-level ``test_*`` functions and NOTHING else. Without
+    this, everything the suite proves is counted as UNTESTED — which is how
+    adding a well-tested module pushed the floor down and turned #564 and #566
+    red. See CHIEF-ENGINEER-STATE.md, CONVENTIONS.
+    """
+    assert main() == 0, "see the FAIL lines above"
+
+
 if __name__ == "__main__":
     raise SystemExit(main())

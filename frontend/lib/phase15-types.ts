@@ -35,6 +35,11 @@ export type ExecutiveOee = {
   plant_performance: number;
   plant_quality: number;
   plant_oee: number;
+  // Was there anything to measure? Computed by oee_contract.is_measurable
+  // (#558) and published with the reason beside it in analytics_routes.py:
+  // "0% and 'did not run' are different answers". The field existed on the
+  // wire before it existed here, so no consumer could ask.
+  has_data: boolean;
   machine_ranking: ExecutiveMachineOee[];
   downtime_pareto: DowntimeParetoRow[];
   shift_oee: ShiftOeeRow[];

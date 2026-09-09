@@ -15,6 +15,18 @@ import math
 # The statuses a Machine may hold (what the seed, simulators and analytics use).
 VALID_MACHINE_STATUSES = ("Running", "Idle", "Breakdown", "Maintenance", "Offline")
 
+# The one healthy state. Named because a rollup that says "all machines are
+# running" must derive that claim from what running IS, not from the absence of
+# the two states it happened to check for — which is how ai/assistant.py came to
+# answer "All 12 machines are running" on a plant with idle machines. Idle is in
+# the vocabulary above and was in neither of that function's branches.
+RUNNING = "Running"
+
+# A machine that is not producing, whatever the reason: everything the
+# vocabulary allows except Running. Derived, so a status added above cannot be
+# forgotten here.
+NOT_RUNNING_STATUSES = tuple(s for s in VALID_MACHINE_STATUSES if s != RUNNING)
+
 # Which of those mean HARD DOWN — stopped, and nobody planned it.
 #
 # Deliberately NOT "everything that is not Running": Maintenance is planned, and

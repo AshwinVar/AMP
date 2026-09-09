@@ -28,7 +28,7 @@ name = "assistant"
 # Re-exported, not redefined: this module used to carry its own identical copy
 # alongside ai/briefing.py's, with nothing keeping the two equal. The name stays
 # for every existing reference; the VALUE now has one home (machine_status).
-from machine_status import DOWN_STATUSES
+from machine_status import DOWN_STATUSES, RUNNING
 
 
 def _drills_into(view: str):
@@ -163,17 +163,44 @@ def _downtime(db, tenant):
 
 @_drills_into("machines")
 def _machines(db, tenant):
+    """What the machines are doing.
+
+    The "all running" claim is derived from what RUNNING IS, not from the
+    absence of the states this function happens to check. It used to say
+
+        if not down and not maint:
+            return f"All {len(machines)} machines are running."
+
+    and Idle is in neither `DOWN_STATUSES` nor "Maintenance" — so on an ordinary
+    plant (tick_machine_status writes Idle at 15% weight) the copilot answered,
+    in a full sentence, that every machine was running while several sat waiting
+    for work. That is the census defect of #568/#569 in prose, and worse in one
+    way: a bucket reading 0 is a number a manager can distrust, but this is a
+    claim made by the thing they asked for the truth.
+
+    Idle is still NOT a down status. machine_status.py is right that idle is a
+    scheduling matter and planned maintenance is not a fault; this does not
+    promote either to an alarm, it stops the sentence calling them running.
+    """
     machines = db.query(models.Machine).all()
+    running = [m for m in machines if (m.status or "") == RUNNING]
+    if len(running) == len(machines):
+        return f"All {len(machines)} machines are running.", "machines"
+
     down = [m for m in machines if (m.status or "") in DOWN_STATUSES]
     maint = [m for m in machines if (m.status or "") == "Maintenance"]
-    if not down and not maint:
-        return f"All {len(machines)} machines are running.", "machines"
+    idle = [m for m in machines if (m.status or "") == "Idle"]
     parts = []
     if down:
         parts.append(f"{len(down)} down ({', '.join(sorted(m.name for m in down))})")
     if maint:
         parts.append(f"{len(maint)} in maintenance")
-    return "Machines needing attention: " + "; ".join(parts) + ".", "machines"
+    if idle:
+        parts.append(f"{len(idle)} idle")
+    # The headline carries its own denominator, so a status word nobody itemised
+    # cannot become a false claim about all of them.
+    head = f"{len(running)} of {len(machines)} machines running"
+    return (head + ("; " + "; ".join(parts) if parts else "") + ".", "machines")
 
 
 @_drills_into("analytics")

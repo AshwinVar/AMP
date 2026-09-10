@@ -199,6 +199,8 @@ class MachineEventResponse(BaseModel):
 
     class Config:
         from_attributes = True
+    _heal_utilization = field_validator("utilization", mode="before")(_coalesce_null_count)
+    _heal_source = field_validator("source", mode="before")(_coalesce_null_text('mqtt'))
 
 
 class WorkOrderCreate(BaseModel):
@@ -265,6 +267,8 @@ class WorkOrderResponse(BaseModel):
 
     class Config:
         from_attributes = True
+    _heal_status = field_validator("status", mode="before")(_coalesce_null_text('Planned'))
+    _heal_material_state = field_validator("material_state", mode="before")(_coalesce_null_text('RAW'))
 
 
 class ProductionPlanCreate(BaseModel):
@@ -314,6 +318,7 @@ class ProductionPlanResponse(BaseModel):
 
     class Config:
         from_attributes = True
+    _heal_status = field_validator("status", mode="before")(_coalesce_null_text('Planned'))
 
 
 
@@ -512,6 +517,7 @@ class QualityInspectionResponse(BaseModel):
 
     class Config:
         from_attributes = True
+    _heal_status = field_validator("status", mode="before")(_coalesce_null_text('Open'))
 
 
 
@@ -632,6 +638,8 @@ class CustomerOrderResponse(BaseModel):
 
     class Config:
         from_attributes = True
+    _heal_priority = field_validator("priority", mode="before")(_coalesce_null_text('Medium'))
+    _heal_status = field_validator("status", mode="before")(_coalesce_null_text('Pending'))
 
 
 
@@ -667,6 +675,7 @@ class SupplierResponse(BaseModel):
 
     class Config:
         from_attributes = True
+    _heal_status = field_validator("status", mode="before")(_coalesce_null_text('Active'))
 
 
 class PurchaseOrderCreate(BaseModel):
@@ -716,6 +725,7 @@ class PurchaseOrderResponse(BaseModel):
 
     class Config:
         from_attributes = True
+    _heal_status = field_validator("status", mode="before")(_coalesce_null_text('Open'))
 
 
 
@@ -925,6 +935,8 @@ class ProductionScheduleResponse(BaseModel):
 
     class Config:
         from_attributes = True
+    _heal_priority = field_validator("priority", mode="before")(_coalesce_null_text('Medium'))
+    _heal_status = field_validator("status", mode="before")(_coalesce_null_text('Scheduled'))
 
 
 
@@ -962,6 +974,7 @@ class IoTTelemetryResponse(BaseModel):
 
     class Config:
         from_attributes = True
+    _heal_source = field_validator("source", mode="before")(_coalesce_null_text('MQTT'))
 
 
 class AIRecommendationCreate(BaseModel):
@@ -991,6 +1004,9 @@ class AIRecommendationResponse(BaseModel):
 
     class Config:
         from_attributes = True
+    _heal_severity = field_validator("severity", mode="before")(_coalesce_null_text('Medium'))
+    _heal_confidence = field_validator("confidence", mode="before")(_coalesce_null_int(75))
+    _heal_status = field_validator("status", mode="before")(_coalesce_null_text('Open'))
 
 
 
@@ -1183,6 +1199,7 @@ class AuditLogResponse(BaseModel):
 
     class Config:
         from_attributes = True
+    _heal_actor = field_validator("actor", mode="before")(_coalesce_null_text('system'))
 
 
 class NotificationCreate(BaseModel):
@@ -1208,6 +1225,8 @@ class NotificationResponse(BaseModel):
 
     class Config:
         from_attributes = True
+    _heal_severity = field_validator("severity", mode="before")(_coalesce_null_text('Info'))
+    _heal_status = field_validator("status", mode="before")(_coalesce_null_text('Unread'))
 
 
 class ReportRequestCreate(BaseModel):
@@ -1231,6 +1250,9 @@ class ReportRequestResponse(BaseModel):
 
     class Config:
         from_attributes = True
+    _heal_requested_by = field_validator("requested_by", mode="before")(_coalesce_null_text('Admin'))
+    _heal_format = field_validator("format", mode="before")(_coalesce_null_text('PDF'))
+    _heal_status = field_validator("status", mode="before")(_coalesce_null_text('Generated'))
 
 class IndustrialDeviceCreate(BaseModel):
     device_code: str
@@ -1262,6 +1284,9 @@ class IndustrialDeviceResponse(BaseModel):
 
     class Config:
         from_attributes = True
+    _heal_device_type = field_validator("device_type", mode="before")(_coalesce_null_text('PLC'))
+    _heal_protocol = field_validator("protocol", mode="before")(_coalesce_null_text('MQTT'))
+    _heal_status = field_validator("status", mode="before")(_coalesce_null_text('Online'))
 
 
 class IndustrialSignalCreate(BaseModel):
@@ -1298,6 +1323,8 @@ class IndustrialSignalResponse(BaseModel):
 
     class Config:
         from_attributes = True
+    _heal_quality = field_validator("quality", mode="before")(_coalesce_null_text('Good'))
+    _heal_source_protocol = field_validator("source_protocol", mode="before")(_coalesce_null_text('MQTT'))
 
 
 class PlcSignalMappingCreate(BaseModel):
@@ -1321,6 +1348,7 @@ class PlcSignalMappingResponse(BaseModel):
 
     class Config:
         from_attributes = True
+    _heal_enabled = field_validator("enabled", mode="before")(_coalesce_null_text('Yes'))
 
 
 class AgentPolicyUpdate(BaseModel):

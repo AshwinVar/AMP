@@ -18,7 +18,7 @@ from datetime import datetime, timedelta
 import models
 # The single definition of a purchase order's receipt state (ai.supply owns it) —
 # the part drill-down reuses it so "received" can't mean two different things.
-from ai.supply import _state as _po_state
+from ai.supply import _state as _po_state, _NOT_INBOUND
 
 name = "coverage"
 
@@ -216,8 +216,23 @@ def build_part_runway(db, tenant: str, item_code: str) -> dict:
     inbound_units = 0
     for p in pos:
         po_state = _po_state(p, today)
-        if po_state == "received":
-            continue                                  # already in stock, not future cover
+        if po_state in _NOT_INBOUND:
+            # Nothing is going to arrive from these. `received` is already in
+            # stock; `cancelled` was withdrawn by the buyer.
+            #
+            # This used to skip only "received", so a CANCELLED purchase order
+            # became future cover: its outstanding units went into inbound_units
+            # and, if it was dated before the projected stockout, the verdict
+            # came out "covered" — PartRunwayDrawer then told the buyer
+            # "600 kg on order, first landing 12 Mar — before the 14 Mar
+            # stockout". They do not reorder, and nothing arrives. Of this whole
+            # family of defects it is the one with a physical consequence.
+            #
+            # _NOT_INBOUND is ai/supply.py's, not a second list: that module owns
+            # the receipt-state definition (see this file's import), and
+            # build_supply_summary / build_supplier_detail already answer this
+            # exact question with it.
+            continue
         outstanding = max(0, (p.order_quantity or 0) - (p.received_quantity or 0))
         inbound_units += outstanding
         due = p.expected_delivery_date

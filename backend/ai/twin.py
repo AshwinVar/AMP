@@ -13,6 +13,7 @@ from datetime import datetime, timedelta
 from sqlalchemy import func
 
 import models
+from ai.maintenance import OPEN_STATUSES
 import tenancy
 # Pooled OEE (ratio of sums) is the single source of truth in analytics_engine,
 # shared with build_management_summary / analytics_summary so every surface agrees.
@@ -137,9 +138,18 @@ def _downtime_by_machine(db, limit_each=3):
 
 
 def _open_task_counts(db):
-    """Open/proposed maintenance tasks per machine, in one grouped query."""
+    """Maintenance tasks in an open state, per machine, in one grouped query.
+
+    OPEN_STATUSES, not a hardcoded ("Proposed", "Open"). That pair is missing
+    "In Progress" — exactly what the Approvals Inbox writes when a human accepts
+    an agent's proposal (ai/agents.py:129) and what a technician sets when they
+    pick the job up. So this reported ZERO open maintenance tasks for a machine
+    somebody was working on right now, on the cockpit whose whole job is to say
+    what is happening to that machine. Same defect as #565's agent dedup, in a
+    different consumer.
+    """
     rows = (db.query(models.MaintenanceTask.machine_id, func.count())
-              .filter(models.MaintenanceTask.status.in_(("Proposed", "Open")))
+              .filter(models.MaintenanceTask.status.in_(OPEN_STATUSES))
               .group_by(models.MaintenanceTask.machine_id).all())
     return {machine_id: n for machine_id, n in rows}
 

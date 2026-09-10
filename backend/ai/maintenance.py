@@ -141,6 +141,28 @@ def build_maintenance_summary(db, tenant: str) -> dict:
     }
 
 
+def is_overdue(task, today) -> bool:
+    """The Python twin of `overdue_clause()`, for callers that already hold the
+    rows and must not re-derive the rule from a status whitelist.
+
+    `build_maintenance_execution` used to select its backlog as
+
+        open_tasks = [t for t in all_tasks if t.status in OPEN_STATUSES]
+        overdue = [t for t in open_tasks if t.planned_date and t.planned_date < today]
+
+    which is precisely what build_maintenance_summary's own comment warns
+    against: OPEN_STATUSES answers "in an open state" and `None in (...)` is
+    False, so a NULL-status row that is unfinished and past due vanished — while
+    /analytics/maintenance, using the SQL clause, counted it. One backlog, two
+    numbers, on the same screen.
+
+    test_maintenance_live_tasks.py pins this against `overdue_clause` row-for-row
+    so the two representations cannot drift into two rules."""
+    return (task.planned_date is not None
+            and task.planned_date < today
+            and (task.status is None or task.status not in TERMINAL_STATUSES))
+
+
 def is_reactive(task_type) -> bool:
     """True when the task type says the work was triggered by a failure rather
     than scheduled ahead of it. Unknown / blank types read as planned — we only
@@ -180,7 +202,12 @@ def build_maintenance_execution(db, tenant: str) -> dict:
         and_(models.MaintenanceTask.status == "Completed",
              or_(models.MaintenanceTask.completed_date >= cutoff,
                  models.MaintenanceTask.completed_date.is_(None))),
-        models.MaintenanceTask.status.in_(OPEN_STATUSES),
+        # NOT status.in_(OPEN_STATUSES): that whitelist drops a NULL-status row,
+        # so an unfinished past-due task never entered this list and could not be
+        # counted as overdue below however the counting was written. Non-terminal
+        # is the same status half overdue_clause() uses.
+        or_(models.MaintenanceTask.status.is_(None),
+            models.MaintenanceTask.status.notin_(TERMINAL_STATUSES)),
     )).all())
     names = {m.id: m.name for m in db.query(models.Machine).all()}
 
@@ -202,7 +229,8 @@ def build_maintenance_execution(db, tenant: str) -> dict:
 
     # The open backlog and how long the overdue part has been sitting.
     open_tasks = [t for t in all_tasks if t.status in OPEN_STATUSES]
-    overdue = [t for t in open_tasks if t.planned_date and t.planned_date < today]
+    # THE shared rule, not a second derivation from open_tasks — see is_overdue.
+    overdue = [t for t in all_tasks if is_overdue(t, today)]
     overdue_days = {t.task_no: (today - t.planned_date).days for t in overdue}
     aging: Counter = Counter(_aging_bucket(d) for d in overdue_days.values())
     oldest_days = max(overdue_days.values()) if overdue_days else None

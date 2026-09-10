@@ -1269,7 +1269,8 @@ def test_factory_command_center_counts_reconcile_with_independent_numbers():
     # Pin every headline to a hand-derived number after moving the counts/sums into
     # SQL, including the NULL-status subtleties that must stay byte-identical to the
     # old Python comprehensions:
-    #   active_work_orders = status IN (Running, Planned): a NULL status excluded.
+    #   active_work_orders = every order not in a FINISHED state (work_order_status),
+    #     so a NULL status and a Delayed order are both included.
     #   behind_plans       = status == "Behind": a NULL status excluded.
     #   open_escalations   = status != Resolved: a NULL status STILL counts as open
     #                        (old Python `None != "Resolved"` is True), so it's OR'd
@@ -1329,7 +1330,17 @@ def test_factory_command_center_counts_reconcile_with_independent_numbers():
     assert out["running"] == 1 and out["breakdown"] == 1, out
     assert out["idle"] == 1 and out["maintenance"] == 1, out
     assert out["total_downtime_minutes"] == 180, out          # 135 (2h15) + 45
-    assert out["active_work_orders"] == 2, out                # Running + Planned; NULL/Completed/Delayed out
+    # Every order that is not FINISHED: Running, Planned, Delayed and the
+    # NULL-status one. Only Completed is out.
+    #
+    # This asserted 2 with the comment "NULL/Completed/Delayed out", which pinned
+    # the defect rather than the behaviour: a DELAYED work order is outstanding
+    # work by any reading, and a NULL-status row is unfinished too. The KPI is
+    # rendered as "Work Orders" on the Digital Twin card, and on a
+    # simulator-seeded plant — where half the book is "In Progress" and nothing
+    # is "Running" — the old whitelist counted the Planned sixth. See
+    # work_order_status.py and test_work_order_active.py (#579).
+    assert out["active_work_orders"] == 4, out
     assert out["behind_plans"] == 2, out                      # 2 Behind; NULL out
     # E0 Open, E1 In Progress, E2 Resolved, E3 Open->NULLed. Open ones:
     # E0, E1, and E3 (NULL, still counts as open) = 3; E2 Resolved excluded.

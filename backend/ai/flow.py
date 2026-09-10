@@ -18,6 +18,7 @@ from datetime import datetime
 from sqlalchemy import func
 
 import models
+from work_order_status import CLOSED_STATUSES
 
 name = "flow"
 
@@ -67,7 +68,10 @@ TOP_N = 8
 STALE_DAYS = 14        # an open WO older than this is festering, not fresh
 # Terminal states — matched lowercased so vocabulary drift ("Complete"/"Closed")
 # can't silently keep a finished order in the open backlog.
-_CLOSED = {"completed", "complete", "done", "closed", "cancelled", "canceled"}
+# The shared vocabulary (work_order_status), not a private copy. This module
+# had it right first; the copy moved out so the command centre and the risk
+# engine can use the same rule instead of inventing a third and a fourth.
+_CLOSED = set(CLOSED_STATUSES)
 AGING_BUCKETS = [("0-3 days", 0, 3), ("4-7 days", 4, 7), ("8-14 days", 8, 14), ("15+ days", 15, None)]
 
 

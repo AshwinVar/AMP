@@ -27,6 +27,7 @@ import ai.twin
 import machine_status
 import models
 import oee_contract
+import work_order_status
 from analytics_engine import (
     build_management_summary,
     build_oee_trends,
@@ -1014,10 +1015,22 @@ def get_factory_command_center(
     # scan, and each predicate is written to keep the numbers BYTE-IDENTICAL to the
     # Python versions, including the NULL-status subtleties.
 
-    # active_work_orders: status IN (Running, Planned). A NULL status is not IN the
-    # set (SQL and the old Python `in [...]` agree), so it stays excluded.
+    # active_work_orders: every order that is not FINISHED, via the shared rule.
+    #
+    # This was IN ("Running", "Planned"), and factory_simulator.py:279 writes the
+    # book as ["Planned", "In Progress", "In Progress", "In Progress",
+    # "Completed", "On Hold"] — so half the orders are "In Progress", none are
+    # "Running", and this KPI counted the Planned sixth and called it the active
+    # work. "On Hold" and a NULL status were missing too.
+    #
+    # /analytics/work-orders 570 lines above already found and folded this exact
+    # synonym; the note there explains that the UI dropdown writes "Running"
+    # while the simulator and e2e sim write "In Progress". The rewrite that made
+    # this predicate SQL was told to keep the numbers byte-identical to the
+    # Python it replaced, and did — faithfully preserving the bug, because the
+    # vocabulary had no single home to be rewritten against. It has one now.
     active_work_orders = db.query(func.count(models.WorkOrder.id)).filter(
-        models.WorkOrder.status.in_(["Running", "Planned"])
+        work_order_status.open_clause()
     ).scalar() or 0
 
     # behind_plans: status == "Behind" (a NULL status is excluded either way).

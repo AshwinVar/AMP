@@ -12,8 +12,8 @@ export default function MaintenanceSection({ machines, tasks, analytics, form, s
         <div><h2 className="text-3xl font-bold">Maintenance / CMMS</h2><p className="text-slate-400 mt-2">Preventive maintenance, breakdown tasks, service history and MTTR tracking.</p></div>
         <button onClick={generateOverdueEscalations} className="rounded-xl bg-white text-slate-950 font-semibold px-4 py-3">Generate Overdue Escalations</button>
       </div>
-      <div className="grid grid-cols-1 md:grid-cols-4 xl:grid-cols-8 gap-4">
-        <Kpi title="Tasks" value={analytics?.total_tasks ?? 0}/><Kpi title="Open" value={analytics?.open ?? 0}/><Kpi title="In Progress" value={analytics?.in_progress ?? 0}/><Kpi title="Completed" value={analytics?.completed ?? 0}/><Kpi title="Overdue" value={analytics?.overdue ?? 0}/><Kpi title="PM" value={analytics?.preventive ?? 0}/><Kpi title="Breakdown" value={analytics?.breakdown ?? 0}/><Kpi title="Avg Repair" value={`${analytics?.avg_repair_minutes ?? 0}m`}/>
+      <div className="grid grid-cols-1 md:grid-cols-4 xl:grid-cols-6 gap-4">
+        <Kpi title="Tasks" value={analytics?.total_tasks ?? 0}/><Kpi title="Open" value={analytics?.open ?? 0}/><Kpi title="In Progress" value={analytics?.in_progress ?? 0}/><Kpi title="Completed" value={analytics?.completed ?? 0}/><Kpi title="Proposed" value={analytics?.proposed ?? 0}/><Kpi title="Cancelled" value={analytics?.cancelled ?? 0}/><Kpi title="Other" value={analytics?.other ?? 0}/><Kpi title="Overdue" value={analytics?.overdue ?? 0}/><Kpi title="PM" value={analytics?.preventive ?? 0}/><Kpi title="Breakdown" value={analytics?.breakdown ?? 0}/><Kpi title="Avg Repair" value={`${analytics?.avg_repair_minutes ?? 0}m`}/>
       </div>
       <form onSubmit={createTask} className="rounded-2xl bg-slate-900 border border-slate-800 p-5 grid grid-cols-1 md:grid-cols-4 xl:grid-cols-8 gap-4">
         <input className="bg-slate-950 border border-slate-700 rounded-xl px-4 py-3" placeholder="Task No" value={form.task_no} onChange={(e) => setForm({...form, task_no:e.target.value})} required/>

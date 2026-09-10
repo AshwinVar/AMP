@@ -21,6 +21,7 @@ from sqlalchemy.orm import Session, joinedload
 
 import ai
 import ai.escalations
+import ai.maintenance
 import ai.workforce
 import ai.prediction
 import ai.twin
@@ -1198,11 +1199,41 @@ def get_maintenance_analytics(
         .group_by(models.MaintenanceTask.task_type)
         .all()
     )
+    # STATUS — a partition, because total_tasks is published beside it and
+    # MaintenanceSection.tsx:16 renders them on one row. This used to read three
+    # exact strings, and ai/agents.py:129 writes two more: "Proposed" on every
+    # agent proposal and "Cancelled" when a human rejects one. Both were counted
+    # in Tasks and shown nowhere. `other` catches a NULL (status is
+    # Column(String, default="Open") WITHOUT nullable=False) and anything else,
+    # so the row cannot fall short of its own total again (#568, #569).
     open_count = status_counts.get("Open", 0)
     in_progress = status_counts.get("In Progress", 0)
     completed = status_counts.get("Completed", 0)
-    preventive = type_counts.get("Preventive", 0)
-    breakdown = type_counts.get("Breakdown", 0)
+    proposed = status_counts.get("Proposed", 0)
+    cancelled = status_counts.get("Cancelled", 0)
+    other_status = total_tasks - (open_count + in_progress + completed
+                                  + proposed + cancelled)
+
+    # TYPE — planned vs reactive, through ai.maintenance.is_reactive.
+    #
+    # `breakdown` used to be type_counts.get("Breakdown"), and NO backend writer
+    # emits that word: factory_simulator writes Preventive / Corrective /
+    # Predictive / Lubrication / Calibration, reset_factory writes Corrective and
+    # Preventive, and the agents write "Predictive (auto)" / "Quality (auto)" /
+    # "Yield (auto)". Only the manual create form offers "Breakdown". So on every
+    # seeded or simulated tenant this KPI was pinned at 0 while the Corrective
+    # tasks — the actual firefighting — sat in the table three rows below it.
+    #
+    # is_reactive() is the rule ai/maintenance.py already classifies the same
+    # table by, matched as lowercased substrings so "Predictive (auto)" reads
+    # planned while the defect-driven "Quality (auto)" reads reactive.
+    #
+    # `preventive` widens with it, from "typed exactly Preventive" to all planned
+    # work. That is deliberate: a Lubrication task IS preventive maintenance, and
+    # a KPI published beside a total should account for it. PM + Breakdown now
+    # equals total_tasks.
+    breakdown = sum(n for t, n in type_counts.items() if ai.maintenance.is_reactive(t))
+    preventive = total_tasks - breakdown
 
     # Overdue = planned in the past and not yet finished. Filtered in SQL (on the
     # now-indexed planned_date, see main._ensure_index) so a growing backlog never
@@ -1258,6 +1289,13 @@ def get_maintenance_analytics(
         "open": open_count,
         "in_progress": in_progress,
         "completed": completed,
+        # Published, not swallowed: the agents write these two, and a
+        # total is rendered beside the row.
+        "proposed": proposed,
+        "cancelled": cancelled,
+        "other": other_status,
+        # A DATE cross-cut, not part of the status partition: a task can
+        # be Open and overdue at once.
         "overdue": overdue,
         "preventive": preventive,
         "breakdown": breakdown,

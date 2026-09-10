@@ -45,6 +45,12 @@ export type MaintenanceAnalytics = {
   open: number;
   in_progress: number;
   completed: number;
+  // The agents write these two (ai/agents.py:129: Proposed on every
+  // proposal, Cancelled when a human rejects one), and `other` catches a
+  // NULL status. Published so the row accounts for total_tasks.
+  proposed: number;
+  cancelled: number;
+  other: number;
   overdue: number;
   preventive: number;
   breakdown: number;

@@ -110,11 +110,17 @@ export default function EscalationSection({
         </button>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-4 xl:grid-cols-8 gap-4">
+      <div className="grid grid-cols-1 md:grid-cols-4 xl:grid-cols-6 gap-4">
         <Kpi title="Total" value={analytics?.total ?? 0} />
         <Kpi title="Open" value={analytics?.open ?? 0} />
         <Kpi title="In Progress" value={analytics?.in_progress ?? 0} />
         <Kpi title="Resolved" value={analytics?.resolved ?? 0} />
+        {/* Total is rendered above, so the status row has to account for it.
+            Proposed is an agent waiting on a human; Cancelled is one they
+            declined. Both used to be counted in Total and shown nowhere. */}
+        <Kpi title="Proposed" value={analytics?.proposed ?? 0} />
+        <Kpi title="Cancelled" value={analytics?.cancelled ?? 0} />
+        <Kpi title="Other" value={analytics?.other ?? 0} />
         <Kpi title="Critical" value={analytics?.critical ?? 0} />
         <Kpi title="High" value={analytics?.high ?? 0} />
         <Kpi title="Medium" value={analytics?.medium ?? 0} />

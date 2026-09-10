@@ -539,11 +539,35 @@ def get_escalation_analytics(
         .all()
     )
 
+    # A partition, because `total` is published beside it and
+    # EscalationSection.tsx:114 renders them on one row. This used to read three
+    # exact strings, and ai/agents.py writes two more: every agent-raised
+    # escalation starts "Proposed" (:306, :389) and a human REJECTING one in the
+    # Approvals Inbox writes "Cancelled" (:131). Both were counted in Total and
+    # shown nowhere. `other` catches a NULL — status is Column(String,
+    # default="Open") WITHOUT nullable=False — so the row cannot fall short of
+    # its own total again (#568, #569, #576).
+    #
+    # NOT the same question as ai.escalations.open_clause(): that answers "is
+    # this still on the queue" (Proposed is, Cancelled is not) and is used by
+    # every reader of the backlog. This is "which word is on the row".
+    #
+    # The severity row below is left alone deliberately: severity is NOT NULL and
+    # every writer emits one of those four, so it already partitions.
+    proposed = status_counts.get("Proposed", 0)
+    cancelled = status_counts.get("Cancelled", 0)
+    other_status = total - (status_counts.get("Open", 0)
+                            + status_counts.get("In Progress", 0)
+                            + status_counts.get("Resolved", 0)
+                            + proposed + cancelled)
     return {
         "total": total,
         "open": status_counts.get("Open", 0),
         "in_progress": status_counts.get("In Progress", 0),
         "resolved": status_counts.get("Resolved", 0),
+        "proposed": proposed,
+        "cancelled": cancelled,
+        "other": other_status,
         "critical": severity_counts.get("Critical", 0),
         "high": severity_counts.get("High", 0),
         "medium": severity_counts.get("Medium", 0),

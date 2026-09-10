@@ -951,9 +951,15 @@ def test_escalation_analytics_buckets_and_reconciled_totals():
     # severity is NOT NULL and every row here has a named severity, so the four
     # severity buckets reconcile with the headline total.
     assert out["critical"] + out["high"] + out["medium"] + out["low"] == out["total"], out
-    # the named status buckets + the two unnamed-status rows (Cancelled, NULL)
-    # also account for every row — nothing double-counted, nothing dropped.
-    assert out["open"] + out["in_progress"] + out["resolved"] + 2 == out["total"], out
+    # A REAL partition, not a constant that makes the arithmetic work. This
+    # assertion used to read `+ 2` with a comment calling the result "nothing
+    # dropped" — the two unnamed-status rows (Cancelled, NULL) were counted in
+    # the total and rendered in no bucket, and adding 2 documented the hole
+    # rather than checking the census. Both now have buckets (#577).
+    assert (out["open"] + out["in_progress"] + out["resolved"]
+            + out["proposed"] + out["cancelled"] + out["other"]
+            == out["total"]), out
+    assert out["cancelled"] == 1 and out["other"] == 1, out
     print("PASS escalation analytics: SQL buckets match hand totals, severity reconciles (6 rows)")
 
 

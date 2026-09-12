@@ -118,7 +118,18 @@ seven. This PR closes the worst face of it; the rest are listed below.
 | **The scorecard's "Plant OEE" arrow and the recovery card's improving/worsening badge compared a week against itself.** Both hand-rolled "last week" as `[midnight(today-13), midnight(today-6))` against a rolling current window, overlapping it by `24h - (time since midnight)` — ~10h at 14:00 UTC, a **full 24h at midnight**. A plant whose only run was on the boundary day published a confident green *"OEE improved N points week on week"* when there was no prior week at all, and the same data gave a **different delta depending on the hour the dashboard was opened** | P1 | fixed #584, 7/7 mutations red |
 | `oee_contract` already documented the mechanism — *"an explicit `now=` — what a caller passes to build adjacent windows — is used verbatim"*. It now exposes `prior_window(current)`, and one anchor is threaded through the request so `prior.end is current.start` exactly | P1 | 26 checks |
 
-**Still open, same root cause, each needing its own measurement because they move published figures:** `twin-cockpit-oee-panel-mixed-basis`, `weekly-28-of-30` (`ai/reliability.py:209` — a 30-day headline over a 28-day sparkline), `exec-oee-lifetime-vs-twin-7day`. **The daily series still reads `oee: 0` for a day with no production**, so an idle day draws as a catastrophic one — the #585 fabricated-zero rule applied to a typed frontend series, and its own change.
+**Still open, same root cause, each needing its own measurement because they move published figures:** `twin-cockpit-oee-panel-mixed-basis`, `exec-oee-lifetime-vs-twin-7day`. **The daily series still reads `oee: 0` for a day with no production**, so an idle day draws as a catastrophic one — the #585 fabricated-zero rule applied to a typed frontend series, and its own change.
+
+### 2026-09-13 — the failure sparkline covered 28 of the 30 days it sat under (#589)
+
+| Task | Priority | Status |
+|---|---|---|
+| **Four buckets of seven days under a 30-day headline** — and the code said so itself: *"the last 4 whole weeks (28 of the 30 days)"*. A stoppage on day 29 or 30 counted in `failures`, MTBF and `top_modes`, and was drawn in **no bar**. The buckets now derive from the window: 30 = 4×7 + 2, so the oldest is two days and says so | P2 | fixed #589, 8/8 mutations red |
+| **`_window_logs` had no upper bound either** (`created_at >= start` and nothing else), so a future-dated stoppage — a bad gateway clock, a manual entry — was in the headline, MTBF and MTTR and outside every bucket. Same shape as the recorded-cost query in #587 | P2 | fixed #589 |
+| **The bars were labelled with a bare date but cut at the query's time of day**, so ~half of the labelled day sat in the bar before it, and which half moved with the hour the drawer was opened. Each bucket now publishes `week_end` and `days` | P3 | fixed #589 |
+| `test_reliability.py` asserted `len(weekly) == 4` — pinning the defect. Now derives the count, and asserts the property that matters: **the bars account for the headline** | P3 | updated with reasoning |
+
+**Honest note on the one mutation that needed a structural guard:** flipping the bucket comparison to `<=` survives every fixture, because the edges come from a `utcnow()` taken inside the read-model while a row's `created_at` comes from an earlier one — an exact hit needs a microsecond coincidence. Unlike #584, where two windows shared a boundary instant **by construction**, this is not reachable by data, so it is pinned structurally rather than with a fixture that cannot see it.
 
 ### 2026-09-12 — a customer's production data was written into the shared platform log (#588)
 

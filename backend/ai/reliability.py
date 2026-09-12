@@ -49,12 +49,22 @@ def _mtbf_hours(operating_minutes: float, failures: int):
     return round(operating_minutes / failures / 60, 1)
 
 
-def _window_logs(db, start):
+def _window_logs(db, start, end=None):
     """Downtime records inside the window. Filtered in SQL and again in Python so
-    rows with a NULL created_at can't slip through."""
+    rows with a NULL created_at can't slip through.
+
+    BOUNDED AT BOTH ENDS. This used to filter `created_at >= start` only, so a
+    future-dated stoppage -- which a bad gateway clock or a manual entry can
+    produce -- was counted in the failure total, in MTBF and in MTTR, and fell
+    outside every bucket of the weekly sparkline drawn beside them. Same shape as
+    the recorded-cost query fixed in #587."""
+    q = db.query(models.DowntimeLog).filter(models.DowntimeLog.created_at >= start)
+    if end is not None:
+        q = q.filter(models.DowntimeLog.created_at < end)
     return [
-        d for d in db.query(models.DowntimeLog).filter(models.DowntimeLog.created_at >= start).all()
+        d for d in q.all()
         if d.created_at and d.created_at >= start
+        and (end is None or d.created_at < end)
     ]
 
 
@@ -137,7 +147,7 @@ def build_reliability_summary(db, tenant: str) -> dict:
     now = datetime.utcnow()
     start = now - timedelta(days=WINDOW_DAYS)
 
-    logs = _window_logs(db, start)
+    logs = _window_logs(db, start, now)
     # _rank_rows already loads the machines (one row per machine), so len(rows) is
     # the machine count — no need for a second db.query(Machine).all() here.
     rows, failures, repair_minutes = _rank_rows(db, logs)
@@ -174,7 +184,7 @@ def build_machine_reliability(db, tenant: str, machine_id: int) -> dict:
     today = now.date()
 
     machine = db.query(models.Machine).filter(models.Machine.id == machine_id).first()
-    logs = _window_logs(db, start)
+    logs = _window_logs(db, start, now)
     rows, failures, repair_minutes = _rank_rows(db, logs)
     # Fleet baseline from the rows we already have — the same numbers the summary
     # returns, without recomputing the whole summary (which would repeat the
@@ -202,18 +212,36 @@ def build_machine_reliability(db, tenant: str, machine_id: int) -> dict:
     # Rank among the fleet on the shared least-reliable-first ordering (1 = worst).
     rank = next(i for i, r in enumerate(rows, start=1) if r["machine_id"] == machine_id)
 
-    # Weekly failure trend over the last 4 whole weeks (28 of the 30 days) — the
-    # sparkline that says "getting worse" faster than any single number.
+    # Weekly failure trend covering the WHOLE window -- the sparkline that says
+    # "getting worse" faster than any single number, and that has to add up to
+    # the number it sits under.
+    #
+    # This used to be four buckets of seven days: 28 of the 30, as its own
+    # comment admitted. A stoppage on day 29 or 30 was counted in `failures`, in
+    # MTBF and in top_modes, and drawn in NO BAR. The buckets now derive from the
+    # window, so they tile it exactly; 30 = 4x7 + 2, so the oldest is two days
+    # and says so rather than pretending to be a week.
+    #
+    # Each bucket also publishes the end of its range. The boundaries are cut at
+    # the query's time of day, so a bare `week_start` label implied a calendar
+    # week the bar does not cover -- roughly half of that date sits in the bar
+    # before it, and which half moves with the hour the drawer is opened.
+    whole_weeks, remainder = divmod(WINDOW_DAYS, 7)
+    spans = ([remainder] if remainder else []) + [7] * whole_weeks
     weekly = []
-    for w in range(WEEKS - 1, -1, -1):
-        w_start = now - timedelta(days=7 * (w + 1))
-        w_end = now - timedelta(days=7 * w)
+    cursor = start
+    for days in spans:
+        w_start, w_end = cursor, cursor + timedelta(days=days)
         bucket = [d for d in mine if w_start <= d.created_at < w_end]
         weekly.append({
             "week_start": w_start.date().isoformat(),
+            "week_end": w_end.date().isoformat(),
+            "days": days,
             "failures": len(bucket),
             "minutes": sum(_duration_minutes(d.duration) for d in bucket),
+            **({"partial": True} if days != 7 else {}),
         })
+        cursor = w_end
 
     # Direction of travel: this half of the window against the previous half.
     half = now - timedelta(days=WINDOW_DAYS / 2)

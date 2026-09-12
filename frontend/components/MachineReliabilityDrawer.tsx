@@ -7,7 +7,19 @@ import { parseApiDate } from "../lib/apiDate";
 
 // Mirrors the backend machine drill-down (ai/reliability.py build_machine_reliability).
 type Mode = { reason: string; count: number; minutes: number };
-type Week = { week_start: string; failures: number; minutes: number };
+// `week_end` and `days` state the range a bar actually covers: the buckets are
+// cut at the query's time of day, so a bare `week_start` implied a calendar
+// week the bar does not cover. `partial` marks the short oldest bucket — 30
+// days is four sevens and a remainder — so the bars tile the whole window and
+// sum to the headline (backend test_reliability_sparkline_span.py).
+type Week = {
+  week_start: string;
+  week_end: string;
+  days: number;
+  failures: number;
+  minutes: number;
+  partial?: boolean;
+};
 type Failure = { reason: string; minutes: number; notes: string | null; at: string };
 type Task = {
   task_no: string; task_type: string; priority: string; status: string;
@@ -218,9 +230,9 @@ export default function MachineReliabilityDrawer({
                     {detail.weekly.map((w) => (
                       <div
                         key={w.week_start}
-                        className="flex-1 rounded-sm bg-red-500/60"
+                        className={`flex-1 rounded-sm bg-red-500/60 ${w.partial ? "opacity-50" : ""}`}
                         style={{ height: `${w.failures === 0 ? 0 : Math.max(4, Math.round((w.failures / weekPeak) * 100))}%` }}
-                        title={`Week of ${w.week_start}: ${w.failures} failure(s), ${minsLabel(w.minutes)} down`}
+                        title={`${w.week_start} → ${w.week_end} (${w.days}d${w.partial ? ", partial" : ""}): ${w.failures} failure(s), ${minsLabel(w.minutes)} down`}
                       />
                     ))}
                   </div>

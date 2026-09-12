@@ -179,9 +179,17 @@ def test_machine_drilldown_reads_one_machine_against_the_fleet():
     assert d["recent_failures"] == 3 and d["prior_failures"] == 1
     assert d["trend"] == "worsening"
 
-    # Weekly buckets run oldest -> newest and cover the last 4 whole weeks.
-    assert len(d["weekly"]) == 4
-    assert [w["failures"] for w in d["weekly"]] == [1, 0, 1, 2]   # 25d / — / 10d / 4d+2d ago
+    # Weekly buckets run oldest -> newest and cover the WHOLE window, not four
+    # whole weeks of it. 30 = 4x7 + 2, so there are five buckets and the oldest
+    # is the two-day remainder. Asserting four was pinning the defect: a stoppage
+    # on day 29 or 30 counted in `failures`/MTBF and appeared in no bar (#589).
+    whole, remainder = divmod(reliability.WINDOW_DAYS, 7)
+    assert len(d["weekly"]) == whole + (1 if remainder else 0), len(d["weekly"])
+    assert sum(w["days"] for w in d["weekly"]) == reliability.WINDOW_DAYS
+    # 30-28d: — / 28-21d: 25d ago / 21-14d: — / 14-7d: 10d ago / 7-0d: 4d + 2d ago
+    assert [w["failures"] for w in d["weekly"]] == [0, 1, 0, 1, 2]
+    # The property that matters: the bars account for the headline.
+    assert sum(w["failures"] for w in d["weekly"]) == d["failures"]
 
     # Failure log is newest-first and carries the parsed repair minutes.
     assert [f["minutes"] for f in d["failures_log"]] == [60, 120, 120, 60]

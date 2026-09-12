@@ -204,7 +204,7 @@ mosquitto_pub -h localhost -p 1883 -t flowmes/DEFAULT/-/machines \
   -m '{"machine":"SMT-1","status":"Running","utilization":72,
        "total_count":100,"good_count":97,"rejected_count":3}'
 
-docker compose logs -f backend    # look for "DB UPDATED -> SMT-1"
+docker compose logs -f backend    # look for "MQTT accepted DEFAULT/- SMT-1: Idle -> Running"
 ```
 
 No local `mosquitto_pub`? Use the broker container's own client:

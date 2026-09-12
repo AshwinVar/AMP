@@ -3,12 +3,12 @@
 > Handover file. A new session should be able to read only this and continue.
 > Keep it short. Update it at the end of every completed task.
 
-**Updated:** 2026-09-07 (security closure, the vocabulary line, the census
-line, and the routing measurement: #560–#572)
-**Master SHA:** `8d1b5a6` (#571)
-**Production SHA:** `8d1b5a6` — verified live, not assumed:
-`{"status":"ok","database":"ok","schema":"ok","version":"8d1b5a6"}` from
-`https://flowmes-production.up.railway.app/health`, read at 02:04 UTC.
+**Updated:** 2026-09-12 (the honesty line — what AMP published that was not
+measured: #580–#587)
+**Master SHA:** `dee05de` (#586)
+**Production SHA:** `dee05de` — verified live, not assumed:
+`{"status":"ok","database":"ok","schema":"ok","version":"dee05de"}` from
+`https://flowmes-production.up.railway.app/health`, read at 12:32 UTC.
 Master and production are in step. Railway auto-deploys master, so prod tracks
 HEAD; re-check `/health` rather than trusting this line's age.
 
@@ -118,7 +118,19 @@ seven. This PR closes the worst face of it; the rest are listed below.
 | **The scorecard's "Plant OEE" arrow and the recovery card's improving/worsening badge compared a week against itself.** Both hand-rolled "last week" as `[midnight(today-13), midnight(today-6))` against a rolling current window, overlapping it by `24h - (time since midnight)` — ~10h at 14:00 UTC, a **full 24h at midnight**. A plant whose only run was on the boundary day published a confident green *"OEE improved N points week on week"* when there was no prior week at all, and the same data gave a **different delta depending on the hour the dashboard was opened** | P1 | fixed #584, 7/7 mutations red |
 | `oee_contract` already documented the mechanism — *"an explicit `now=` — what a caller passes to build adjacent windows — is used verbatim"*. It now exposes `prior_window(current)`, and one anchor is threaded through the request so `prior.end is current.start` exactly | P1 | 26 checks |
 
-**Still open, same root cause, each needing its own measurement because they move published figures:** `cost-daily-vs-headline` (the cost-of-losses face of the same basis mismatch), `twin-cockpit-oee-panel-mixed-basis`, `weekly-28-of-30` (`ai/reliability.py:209` — a 30-day headline over a 28-day sparkline), `exec-oee-lifetime-vs-twin-7day`. **The daily series still reads `oee: 0` for a day with no production**, so an idle day draws as a catastrophic one — the #585 fabricated-zero rule applied to a typed frontend series, and its own change.
+**Still open, same root cause, each needing its own measurement because they move published figures:** `twin-cockpit-oee-panel-mixed-basis`, `weekly-28-of-30` (`ai/reliability.py:209` — a 30-day headline over a 28-day sparkline), `exec-oee-lifetime-vs-twin-7day`. **The daily series still reads `oee: 0` for a day with no production**, so an idle day draws as a catastrophic one — the #585 fabricated-zero rule applied to a typed frontend series, and its own change.
+
+### 2026-09-12 — the cost chart could sum to zero under a five-figure headline (#587)
+
+The cost face of #586, and larger, because a cost figure is read as money.
+`build_cost_summary` published **three figures on three bases under one
+`"days": 7` label**.
+
+| Task | Priority | Status |
+|---|---|---|
+| **Headline £30,760; every bar £0.** `loss_cost` pools the rolling `OeeWindow(7)`; `daily` bucketed seven calendar dates, so a costly run on the partial eighth date was priced into the headline and drawn in no bar | P2 | fixed #587, 8/8 mutations red |
+| **`by_type` had NO UPPER BOUND** — `CostRecord.created_at >= midnight(today-6)` and nothing else. A cost record dated **three days in the future** was published as part of this week's costs. Now bounded at both ends by the same window | P2 | fixed #587 |
+| `test_cost.py` asserted `len(daily) == 7` — pinning the defect — while already asserting the bars sum to the headline, which was the half it had right. The length now derives from the contract | P3 | updated with reasoning |
 
 ### 2026-09-12 — the OEE trend bars could not add up to the headline (#586)
 

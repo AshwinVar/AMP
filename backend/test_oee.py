@@ -11,7 +11,9 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 import models
+import oee_contract
 from database import Base
+from datetime import timedelta
 from ai import oee
 
 
@@ -30,7 +32,17 @@ def test_empty_plant_reports_no_data():
     assert s["machine_count"] == 1 and s["machines_with_data"] == 0
     assert s["machines"] == [] and s["biggest_drag"] is None and s["by_line"] == []
     assert s["worst"] is None and s["best"] is None
-    assert len(s["daily"]) == 7 and all(d["oee"] == 0 for d in s["daily"])   # flat-zero trend
+    # The trend covers every calendar date the rolling window TOUCHES, which is 8
+    # when the window opens mid-day and 7 exactly at midnight — not a fixed 7.
+    # Pinning 7 was pinning the defect: a 7x24h window that starts part-way
+    # through a day put the records on its partial eighth date in the headline
+    # and in no bar (#586). Derived from the contract rather than hardcoded, so
+    # this cannot go stale at midnight UTC.
+    window = oee_contract.OeeWindow(oee.WINDOW_DAYS)
+    touched = len({(window.start + timedelta(hours=h)).date()
+                   for h in range(0, oee.WINDOW_DAYS * 24 + 1)})
+    assert len(s["daily"]) == touched, (len(s["daily"]), touched)
+    assert all(d["oee"] == 0 for d in s["daily"])                            # flat-zero trend
 
 
 def test_plant_oee_pools_machines_and_ranks_worst_first():
@@ -58,9 +70,14 @@ def test_plant_oee_pools_machines_and_ranks_worst_first():
     assert s["worst"]["oee"] <= s["best"]["oee"]                    # worst-first
     assert s["machines"][0]["machine_id"] == s["worst"]["machine_id"]
     assert s["machines"][-1]["machine_id"] == s["best"]["machine_id"]
-    # 7-day trend: production is all today, so the last day equals the plant OEE
-    # and the earlier (empty) days read 0.
-    assert len(s["daily"]) == 7
+    # The trend spans the calendar dates the rolling window touches (see the
+    # note in test_empty_plant_reports_no_data). Production is all today, so the
+    # last day equals the plant OEE and the earlier (empty) days read 0 — the
+    # part that actually matters here, and the part a fixed length was obscuring.
+    window = oee_contract.OeeWindow(oee.WINDOW_DAYS)
+    touched = len({(window.start + timedelta(hours=h)).date()
+                   for h in range(0, oee.WINDOW_DAYS * 24 + 1)})
+    assert len(s["daily"]) == touched, (len(s["daily"]), touched)
     assert s["daily"][-1]["oee"] == s["plant"]["oee"]
     assert s["daily"][0]["oee"] == 0
     # per-line OEE: SMT (PRESS-01, quality 90/100) and IC (CNC-02, quality 380/400)

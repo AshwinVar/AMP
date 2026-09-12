@@ -23,7 +23,10 @@ type OeeSummary = {
   machine_count: number;
   machines_with_data: number;
   biggest_drag: "availability" | "performance" | "quality" | null;
-  daily: { date: string; oee: number }[];
+  // `partial` marks the oldest bar when the rolling window opens mid-day, so
+  // the series covers the eight calendar dates a 7x24h window touches and
+  // pools back to the headline. See backend test_oee_bars_explain_headline.py.
+  daily: { date: string; oee: number; partial?: boolean }[];
   by_line: { line: string; oee: number; availability: number; performance: number; quality: number; has_data: boolean }[];
   worst: MachineOee | null;
   best: MachineOee | null;
@@ -168,10 +171,13 @@ export default function OeeSnapshot() {
                 <div
                   key={d.date}
                   className="flex-1 flex flex-col items-center justify-end gap-1"
-                  title={`${d.oee}% on ${d.date}`}
+                  title={`${d.oee}% on ${d.date}${d.partial ? " (partial day — the 7-day window opens part-way through it)" : ""}`}
                 >
                   <span className="text-[10px] text-slate-400">{d.oee || ""}</span>
-                  <div className={`w-full rounded-t ${barColor(d.oee)}`} style={{ height: `${h}px` }} />
+                  <div
+                    className={`w-full rounded-t ${barColor(d.oee)} ${d.partial ? "opacity-50" : ""}`}
+                    style={{ height: `${h}px` }}
+                  />
                   <span className="text-[10px] text-slate-500">{wk(d.date)}</span>
                 </div>
               );

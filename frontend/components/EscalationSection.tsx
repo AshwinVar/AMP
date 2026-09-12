@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import type { Escalation, EscalationAnalytics } from "../lib/phase12-types";
+import { statusOptions } from "../lib/status-vocab";
 import { LiveInput } from "../lib/useLiveField";
 
 type Machine = {
@@ -157,10 +158,7 @@ export default function EscalationSection({
           value={form.severity}
           onChange={(e) => setForm({ ...form, severity: e.target.value })}
         >
-          <option>Critical</option>
-          <option>High</option>
-          <option>Medium</option>
-          <option>Low</option>
+          {statusOptions("Escalation", "severity", form.severity).map((option) => <option key={option}>{option}</option>)}
         </select>
 
         <input
@@ -282,9 +280,7 @@ export default function EscalationSection({
                         )
                       }
                     >
-                      <option>Open</option>
-                      <option>In Progress</option>
-                      <option>Resolved</option>
+                      {statusOptions("Escalation", "status", row.status).map((option) => <option key={option}>{option}</option>)}
                     </select>
                   </td>
 

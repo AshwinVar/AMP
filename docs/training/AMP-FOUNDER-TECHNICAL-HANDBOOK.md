@@ -1530,6 +1530,25 @@ export default function OeeSnapshot() {
 }
 ```
 
+### Dropdowns: one vocabulary, stated once
+
+A controlled `<select value={row.status}>` whose `<option>` list does not contain `row.status` renders an **empty box**. React does not warn, the row is still there, and the operator simply cannot read the status. Six sections hardcoded their own lists and those lists drifted from what the backend writes — seeding a real factory and counting, **42 of 123 rows (34%) rendered blank**, including **12 of 12 quality inspections**, because nothing in AMP has ever written the four statuses that screen offered.
+
+The vocabulary lives in `lib/status-vocab.json` and is rendered through `statusOptions(model, field, current)`:
+
+```tsx
+<select value={row.status} onChange={...}>
+  {statusOptions("MaintenanceTask", "status", row.status).map((o) => <option key={o}>{o}</option>)}
+</select>
+```
+
+Two rules make it hold:
+
+- **`options` vs `systemOnly`.** `options` are what a *human* may choose. `systemOnly` are values only an agent or a seeder writes — `"Proposed"`, the reorder agent's `"Draft"`. A system-only value is **shown** when a row holds one and never **offered**. That distinction is load-bearing: `ai/agents.approve_action` transitions only `if item.status == "Proposed"`, so an operator who overwrites it makes that pending approval a permanent no-op.
+- **Complement, not whitelist.** `statusOptions` appends the row's current value when the list doesn't already contain it. A vocabulary nobody remembered to update then degrades to *showing the truth* instead of to *showing nothing*.
+
+`backend/test_status_vocabulary_parity.py` reads the same JSON and walks the backend's AST for every literal that reaches a status/priority/type column, so a status added anywhere in the backend fails CI before it can blank a screen.
+
 ### The founder's three questions
 - **"I want a new Mission Control card."** Add a card to `components/MissionControlSection.tsx` (fetch its read-model via `apiGet`, 30 s interval), or write a new `*Snapshot.tsx` and drop it in.
 - **"I want a new Machine Cockpit field."** Add it to `ai/twin.build_machine_detail` (backend) and render it in `components/MachineDetailDrawer.tsx`.

@@ -71,6 +71,19 @@ another did not.
 | **`tree_guard.py` shipped untested, and turned CI's coverage job red.** Testing it found a real defect in it: every DELETED file was also listed as MODIFIED, so the `deleted` branch was dead code | P3 | fixed #564, 9/9 mutations red |
 | **23 suites are invisible to pytest**, so what they prove counts as untested. This is what made a well-tested new module lower the coverage floor | P4 | 3 fixed, rest recorded |
 
+### 2026-09-12 — the same thread, now on the screen (#581)
+
+The vocabulary line reached the UI. A `<select>` is a **whitelist of the values
+it can display**, and every one of them had drifted from what the backend
+writes. A controlled select bound to a value its option list does not contain
+renders an **empty box** — no React warning, no error, nothing in a log.
+
+| Task | Priority | Status |
+|---|---|---|
+| **34% of every seeded row rendered a blank status dropdown** across six screens. Measured, not guessed: seed with `factory_simulator.seed_all`, then count rows whose stored value is absent from the list its own screen offers — **42 of 123**, including **12 of 12 quality inspections**, because nothing in AMP has ever written the four statuses that screen offered (and `statusStyle` coloured only those four, so every row also drew the same yellow pill — the column carried no information at all) | P2 | fixed #581, 7/8 mutations red |
+| **The blank box was a live way to break the agent approval chain by looking at it.** `ai/agents.approve_action` transitions only `if item.status == "Proposed"`, and no list offered `"Proposed"` — so an operator clicking the empty box to find out what it was overwrote it, and approving *or* rejecting that task afterwards did nothing, permanently | P1 | fixed #581 |
+| The vocabulary now lives once, in `frontend/lib/status-vocab.json`, read by **both** sides: TypeScript renders from it, `backend/test_status_vocabulary_parity.py` walks the backend AST and fails if a value it writes is missing from it | P2 | added, 5 sections |
+
 ---
 
 ## KNOWN P0 / P1
@@ -549,6 +562,12 @@ re-deriving it is worse than none.
   11,025 statements at 81.2% (2026-08-04) to 14,133 at 79.98%, so coverage has
   drifted down ~1.2 points while the codebase grew 28%. That is the number to
   watch, not the floor.
+- **Complement, not whitelist — and that includes UI controls.** A `<select>` is
+  a whitelist of what it can *display*, so a value nobody listed renders as an
+  empty box rather than as an error. `statusOptions()` appends the row's current
+  value when the list lacks it: an unknown value degrades to *showing the truth*
+  instead of to *showing nothing*. Same rule as the SQL side — an unrecognised
+  word must default to the safe direction, never vanish.
 - eslint baseline is **exactly 134**.
 - Schema change ⇒ model + Alembic migration + fresh-schema test + upgrade test + PostgreSQL verification.
 - Never weaken a test to make a change pass.

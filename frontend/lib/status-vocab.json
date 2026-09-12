@@ -1,0 +1,66 @@
+{
+  "QualityInspection": {
+    "status": {
+      "options": ["Passed", "Failed", "Rework", "Open", "In Review", "Closed", "Rejected"],
+      "systemOnly": []
+    }
+  },
+  "Supplier": {
+    "status": {
+      "options": ["Active", "On Hold", "Inactive"],
+      "systemOnly": []
+    }
+  },
+  "PurchaseOrder": {
+    "status": {
+      "options": ["Open", "Partial", "Partially Received", "Received", "Overdue", "Cancelled"],
+      "systemOnly": ["Draft", "Approved"]
+    }
+  },
+  "Escalation": {
+    "status": {
+      "options": ["Open", "In Progress", "Resolved", "Cancelled"],
+      "systemOnly": ["Proposed"]
+    },
+    "severity": {
+      "options": ["Critical", "High", "Medium", "Low"],
+      "systemOnly": []
+    }
+  },
+  "MaintenanceTask": {
+    "status": {
+      "options": ["Open", "In Progress", "Completed", "Cancelled"],
+      "systemOnly": ["Proposed"]
+    },
+    "task_type": {
+      "options": ["Preventive", "Corrective", "Breakdown", "Predictive", "Calibration", "Inspection", "Lubrication"],
+      "systemOnly": []
+    },
+    "priority": {
+      "options": ["Critical", "High", "Medium", "Low"],
+      "systemOnly": []
+    }
+  },
+  "CustomerOrder": {
+    "status": {
+      "options": ["Pending", "In Production", "Ready to Dispatch", "Partial", "Partially Dispatched", "Dispatched", "Cancelled"],
+      "systemOnly": []
+    },
+    "priority": {
+      "options": ["Critical", "High", "Medium", "Low"],
+      "systemOnly": []
+    }
+  },
+  "ProductionPlan": {
+    "status": {
+      "options": ["Planned", "Running", "Completed", "Behind"],
+      "systemOnly": ["In Progress", "On Hold"]
+    }
+  },
+  "WorkOrder": {
+    "status": {
+      "options": ["Planned", "In Progress", "Completed", "On Hold"],
+      "systemOnly": []
+    }
+  }
+}

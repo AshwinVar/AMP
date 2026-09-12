@@ -1,6 +1,7 @@
 import type { WorkOrder } from "../lib/phase9-types";
 import type { ProductionPlan } from "../lib/phase11-types";
 import type { QualityAnalytics, QualityInspection } from "../lib/phase14-types";
+import { statusOptions } from "../lib/status-vocab";
 import { LiveInput } from "../lib/useLiveField";
 
 type Machine = {
@@ -13,12 +14,16 @@ type Machine = {
 
 function statusStyle(status: string) {
   switch (status) {
+    case "Passed":
     case "Closed":
       return "border-green-500/40 bg-green-500/10 text-green-300";
     case "In Review":
       return "border-blue-500/40 bg-blue-500/10 text-blue-300";
+    case "Failed":
     case "Rejected":
       return "border-red-500/40 bg-red-500/10 text-red-300";
+    case "Rework":
+      return "border-orange-500/40 bg-orange-500/10 text-orange-300";
     default:
       return "border-yellow-500/40 bg-yellow-500/10 text-yellow-300";
   }
@@ -226,10 +231,7 @@ export default function QualitySection({
           value={form.status}
           onChange={(e) => setForm({ ...form, status: e.target.value })}
         >
-          <option>Open</option>
-          <option>In Review</option>
-          <option>Closed</option>
-          <option>Rejected</option>
+          {statusOptions("QualityInspection", "status", form.status).map((option) => <option key={option}>{option}</option>)}
         </select>
 
         <input
@@ -344,10 +346,7 @@ export default function QualitySection({
                         )
                       }
                     >
-                      <option>Open</option>
-                      <option>In Review</option>
-                      <option>Closed</option>
-                      <option>Rejected</option>
+                      {statusOptions("QualityInspection", "status", row.status).map((option) => <option key={option}>{option}</option>)}
                     </select>
                   </td>
 

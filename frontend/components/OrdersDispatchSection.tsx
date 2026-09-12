@@ -1,6 +1,7 @@
 import type { WorkOrder } from "../lib/phase9-types";
 import type { ProductionPlan } from "../lib/phase11-types";
 import type { CustomerOrder, CustomerOrderAnalytics } from "../lib/phase17-types";
+import { statusOptions } from "../lib/status-vocab";
 import { LiveInput } from "../lib/useLiveField";
 
 function statusStyle(status: string) {
@@ -126,10 +127,7 @@ export default function OrdersDispatchSection({
         <input className="bg-slate-950 border border-slate-700 rounded-xl px-4 py-3" type="number" placeholder="Order Qty" value={form.order_quantity} onChange={(e) => setForm({ ...form, order_quantity: Number(e.target.value) })} required />
 
         <select className="bg-slate-950 border border-slate-700 rounded-xl px-4 py-3" value={form.priority} onChange={(e) => setForm({ ...form, priority: e.target.value })}>
-          <option>Critical</option>
-          <option>High</option>
-          <option>Medium</option>
-          <option>Low</option>
+          {statusOptions("CustomerOrder", "priority", form.priority).map((option) => <option key={option}>{option}</option>)}
         </select>
 
         <input className="bg-slate-950 border border-slate-700 rounded-xl px-4 py-3" type="date" value={form.due_date} onChange={(e) => setForm({ ...form, due_date: e.target.value })} required />
@@ -195,10 +193,7 @@ export default function OrdersDispatchSection({
                         value={row.priority}
                         onChange={(e) => updateOrder(row.id, row.dispatched_quantity, row.status, e.target.value)}
                       >
-                        <option>Critical</option>
-                        <option>High</option>
-                        <option>Medium</option>
-                        <option>Low</option>
+                        {statusOptions("CustomerOrder", "priority", row.priority).map((option) => <option key={option}>{option}</option>)}
                       </select>
                     </td>
                     <td className="py-3 px-4">{row.due_date}</td>
@@ -208,10 +203,7 @@ export default function OrdersDispatchSection({
                         value={row.status}
                         onChange={(e) => updateOrder(row.id, row.dispatched_quantity, e.target.value, row.priority)}
                       >
-                        <option>Pending</option>
-                        <option>Partial</option>
-                        <option>Dispatched</option>
-                        <option>Cancelled</option>
+                        {statusOptions("CustomerOrder", "status", row.status).map((option) => <option key={option}>{option}</option>)}
                       </select>
                     </td>
                     <td className="py-3 px-4">

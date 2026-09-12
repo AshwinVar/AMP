@@ -1,5 +1,6 @@
 import type { InventoryItem } from "../lib/phase13-types";
 import type { PurchaseOrder, PurchasingAnalytics, Supplier } from "../lib/phase18-types";
+import { statusOptions } from "../lib/status-vocab";
 import { LiveInput } from "../lib/useLiveField";
 
 function statusStyle(status: string) {
@@ -121,9 +122,7 @@ export default function PurchasingSection({
         <input className="bg-slate-950 border border-slate-700 rounded-xl px-4 py-3" placeholder="Phone" value={supplierForm.phone} onChange={(e) => setSupplierForm({ ...supplierForm, phone: e.target.value })} />
         <input className="bg-slate-950 border border-slate-700 rounded-xl px-4 py-3" placeholder="Category" value={supplierForm.category} onChange={(e) => setSupplierForm({ ...supplierForm, category: e.target.value })} />
         <select className="bg-slate-950 border border-slate-700 rounded-xl px-4 py-3" value={supplierForm.status} onChange={(e) => setSupplierForm({ ...supplierForm, status: e.target.value })}>
-          <option>Active</option>
-          <option>On Hold</option>
-          <option>Inactive</option>
+          {statusOptions("Supplier", "status", supplierForm.status).map((option) => <option key={option}>{option}</option>)}
         </select>
         <button type="submit" className="rounded-xl bg-white text-slate-950 font-semibold px-4 py-3">Add Supplier</button>
       </form>
@@ -149,10 +148,7 @@ export default function PurchasingSection({
         <input className="bg-slate-950 border border-slate-700 rounded-xl px-4 py-3" placeholder="Unit" value={poForm.unit} onChange={(e) => setPoForm({ ...poForm, unit: e.target.value })} required />
         <input className="bg-slate-950 border border-slate-700 rounded-xl px-4 py-3" type="date" value={poForm.expected_delivery_date} onChange={(e) => setPoForm({ ...poForm, expected_delivery_date: e.target.value })} required />
         <select className="bg-slate-950 border border-slate-700 rounded-xl px-4 py-3" value={poForm.status} onChange={(e) => setPoForm({ ...poForm, status: e.target.value })}>
-          <option>Open</option>
-          <option>Partial</option>
-          <option>Received</option>
-          <option>Cancelled</option>
+          {statusOptions("PurchaseOrder", "status", poForm.status).map((option) => <option key={option}>{option}</option>)}
         </select>
         <button type="submit" className="rounded-xl bg-white text-slate-950 font-semibold px-4 py-3">Create PO</button>
       </form>
@@ -181,9 +177,7 @@ export default function PurchasingSection({
                     <td className="py-3 px-4">{row.category || "-"}</td>
                     <td className="py-3 px-4">
                       <select className="bg-slate-950 border border-slate-700 rounded-lg px-2 py-1" value={row.status} onChange={(e) => updateSupplier(row.id, e.target.value)}>
-                        <option>Active</option>
-                        <option>On Hold</option>
-                        <option>Inactive</option>
+                        {statusOptions("Supplier", "status", row.status).map((option) => <option key={option}>{option}</option>)}
                       </select>
                     </td>
                     <td className="py-3 px-4">
@@ -229,10 +223,7 @@ export default function PurchasingSection({
                       <td className="py-3 px-4">{row.expected_delivery_date}</td>
                       <td className="py-3 px-4">
                         <select className={`rounded-full px-3 py-1 text-xs border bg-slate-950 ${statusStyle(row.status)}`} value={row.status} onChange={(e) => updatePurchaseOrder(row.id, row.received_quantity, e.target.value)}>
-                          <option>Open</option>
-                          <option>Partial</option>
-                          <option>Received</option>
-                          <option>Cancelled</option>
+                          {statusOptions("PurchaseOrder", "status", row.status).map((option) => <option key={option}>{option}</option>)}
                         </select>
                       </td>
                       <td className="py-3 px-4">

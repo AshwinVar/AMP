@@ -1,5 +1,6 @@
 import type { ProductionPlan, ProductionPlanAnalytics } from "../lib/phase11-types";
 import type { WorkOrder } from "../lib/phase9-types";
+import { statusOptions } from "../lib/status-vocab";
 import { LiveInput } from "../lib/useLiveField";
 
 type Machine = {
@@ -104,10 +105,7 @@ export default function ProductionPlanSection({
         <input className="bg-slate-950 border border-slate-700 rounded-xl px-4 py-3" placeholder="Shift" value={form.shift_name} onChange={(e) => setForm({ ...form, shift_name: e.target.value })} required />
 
         <select className="bg-slate-950 border border-slate-700 rounded-xl px-4 py-3" value={form.status} onChange={(e) => setForm({ ...form, status: e.target.value })}>
-          <option>Planned</option>
-          <option>Running</option>
-          <option>Completed</option>
-          <option>Behind</option>
+          {statusOptions("ProductionPlan", "status", form.status).map((option) => <option key={option}>{option}</option>)}
         </select>
 
         <button type="submit" className="rounded-xl bg-white text-slate-950 font-semibold px-4 py-3">Create Plan</button>
@@ -157,10 +155,7 @@ export default function ProductionPlanSection({
                     </td>
                     <td className="py-3 px-4">
                       <select className={`rounded-full px-3 py-1 text-xs border bg-slate-950 ${statusStyle(plan.status)}`} value={plan.status} onChange={(e) => updatePlan(plan.id, plan.actual_quantity, e.target.value)}>
-                        <option>Planned</option>
-                        <option>Running</option>
-                        <option>Completed</option>
-                        <option>Behind</option>
+                        {statusOptions("ProductionPlan", "status", plan.status).map((option) => <option key={option}>{option}</option>)}
                       </select>
                     </td>
                     <td className="py-3 px-4">

@@ -15,7 +15,8 @@ from ai.production import build_production_summary
 from ai.delivery import build_delivery_summary
 from ai.cost import build_cost_summary, downtime_minutes, DOWNTIME_COST_PER_MIN, SCRAP_COST_PER_UNIT
 from currency import CURRENCY
-from ai.twin import _oee_from_records
+from ai.twin import _oee_from_records, _recent_production
+import oee_contract
 
 name = "scorecard"
 
@@ -50,16 +51,18 @@ def _period_kpis(records) -> dict:
     }
 
 
-def _prior_records(db):
-    """Production records from the 7 days before the current window (7-13 days
-    ago). Bounded in SQL — the table grows continuously."""
-    today = datetime.utcnow().date()
-    lo = datetime.combine(today - timedelta(days=2 * WINDOW_DAYS - 1), datetime.min.time())
-    hi = datetime.combine(today - timedelta(days=WINDOW_DAYS - 1), datetime.min.time())
-    return (db.query(models.ProductionRecord)
-            .filter(models.ProductionRecord.created_at >= lo,
-                    models.ProductionRecord.created_at < hi)
-            .all())
+def _prior_records(db, current):
+    """Production records from the 7 days immediately before `current`.
+
+    Derived from the SAME anchor as the current half, so the two tile exactly
+    (oee_contract.prior_window). This used to be hand-rolled from calendar
+    midnights -- [midnight(today-13), midnight(today-6)) -- against a ROLLING
+    current window, which overlapped it by up to 24 hours and let a week be
+    compared against itself. See test_week_halves_tile.py.
+
+    Bounded in SQL -- the table grows continuously."""
+    return _recent_production(db, days=current.days,
+                              now=oee_contract.prior_window(current).end)
 
 
 def _delta(cur, prior, has_prior, lower_is_better=False):
@@ -79,11 +82,14 @@ def build_scorecard(db, tenant: str) -> dict:
     each with a tone and a change vs the prior 7 days, composed from the pillar
     read-models (ADR-0007). Delivery reliability is order-state based, so it has
     no weekly delta."""
-    oee = build_oee_summary(db, tenant)["plant"]
+    # ONE anchor for the whole request: the headline and the "last week" it is
+    # subtracted from must abut, not be built from two separate utcnow() calls.
+    window = oee_contract.OeeWindow(WINDOW_DAYS)
+    oee = build_oee_summary(db, tenant, now=window.end)["plant"]
     prod = build_production_summary(db, tenant)
     delivery = build_delivery_summary(db, tenant)
     cost = build_cost_summary(db, tenant)
-    prior = _period_kpis(_prior_records(db))
+    prior = _period_kpis(_prior_records(db, window))
 
     # Delivery reliability — of the orders that have come due (delivered or late),
     # the share actually delivered. Reuses the delivery read-model's own definition

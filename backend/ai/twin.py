@@ -34,7 +34,7 @@ def _band(health: int) -> str:
     return "Critical"
 
 
-def _recent_production(db, machine_id=None, days: int = 7):
+def _recent_production(db, machine_id=None, days: int = 7, now=None):
     # THE canonical window (oee_contract), not a second definition of it.
     #
     # Window in SQL — production_records grows continuously, so a full-table scan
@@ -61,7 +61,10 @@ def _recent_production(db, machine_id=None, days: int = 7):
     # grown — the same shape as DOWN_STATUSES (#553) and the status buckets
     # (#549, #552).
     import oee_contract
-    window = oee_contract.OeeWindow(days)
+    # `now` threads ONE anchor through a request so a caller can build the
+    # adjacent prior window against exactly this window's start rather than
+    # against a fresh utcnow() milliseconds later (oee_contract.prior_window).
+    window = oee_contract.OeeWindow(days, now=now)
     q = db.query(models.ProductionRecord).filter(
         models.ProductionRecord.created_at >= window.start,
         models.ProductionRecord.created_at < window.end)

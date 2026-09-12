@@ -120,6 +120,15 @@ seven. This PR closes the worst face of it; the rest are listed below.
 
 **Still open, same root cause, each needing its own measurement because they move published figures:** `twin-cockpit-oee-panel-mixed-basis`, `weekly-28-of-30` (`ai/reliability.py:209` — a 30-day headline over a 28-day sparkline), `exec-oee-lifetime-vs-twin-7day`. **The daily series still reads `oee: 0` for a day with no production**, so an idle day draws as a catastrophic one — the #585 fabricated-zero rule applied to a typed frontend series, and its own change.
 
+### 2026-09-12 — a customer's production data was written into the shared platform log (#588)
+
+| Task | Priority | Status |
+|---|---|---|
+| **`mqtt_service.on_message` logged the whole decoded payload at INFO, for every message.** Machine names, production counts, good/reject splits and every `readings` value — into a **multi-tenant** log stream, at whatever rate the plant publishes. Read by anyone with platform log access and retained by the host's aggregator for ITS retention, not the 14 days `docs/RETENTION.md` promises for `iot_telemetry`. A compressor reporting every few seconds writes its owner's operational data there all day | P1 | fixed #588, 7/7 mutations red |
+| The banner carried a **leading newline**, splitting one record across two lines of a stream `JsonFormatter` emits as one JSON object per line — so the following line was not parseable as a record | P3 | fixed #588 |
+| **Mutation testing found a second per-message INFO line** naming the same machine (the `/ws/live` broadcast). A mutation that stopped the ACCEPT line naming the machine survived, because that one still was. Two records per message for one fact; now one, asserted **as a count** so a third cannot appear | P2 | fixed in the same PR |
+| **Not a blanket redaction.** INFO keeps one low-cardinality accept line — tenant, site, machine, status transition — because that is exactly what the field procedure reads to prove a gateway is talking to AMP. The body moves to DEBUG, and every rejection warning is untouched: a silently dropped message is the failure the whole ingest path is written to avoid | P2 | 16 checks |
+
 ### 2026-09-12 — the cost chart could sum to zero under a five-figure headline (#587)
 
 The cost face of #586, and larger, because a cost figure is read as money.

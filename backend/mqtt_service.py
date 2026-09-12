@@ -276,11 +276,26 @@ def on_message(client, userdata, msg):
     tenant_token = None
 
     try:
-        log.info("\nRAW MQTT MESSAGE RECEIVED")
-        log.info("Topic: %s", msg.topic)
-
         raw_payload = msg.payload.decode()
-        log.info("Payload: %s", raw_payload)
+        # THE BODY GOES TO DEBUG, NOT INFO.
+        #
+        # This used to log a "RAW MQTT MESSAGE RECEIVED" banner, the topic, and
+        # the whole decoded payload at INFO, for every message. On a multi-tenant
+        # deployment that put one customer's machine names, production counts and
+        # every `readings` value into the shared platform log stream, at whatever
+        # rate their plant publishes — read by anyone with platform log access,
+        # and retained by the host's aggregator for ITS retention, not the 14 days
+        # docs/RETENTION.md promises for iot_telemetry.
+        #
+        # The banner also carried a leading newline, which splits one record
+        # across two lines of a stream JsonFormatter emits as one JSON object per
+        # line.
+        #
+        # What INFO keeps is the accept line further down: tenant, site, machine
+        # and the status transition. That is what the field procedure reads to
+        # prove a gateway is talking to AMP, and it is low-cardinality and
+        # count-free. See test_mqtt_log_hygiene.py.
+        log.debug("MQTT message on %s: %s", msg.topic, raw_payload)
 
         payload = json.loads(raw_payload)
         if not isinstance(payload, dict):
@@ -344,12 +359,12 @@ def on_message(client, userdata, msg):
         db.commit()
         db.refresh(machine)
 
-        log.info(
-            f"DB UPDATED → {machine.name} | "
-            f"{old_status} → {status} | "
-            f"{old_utilization}% → {utilization}% | "
-            f"Downtime: {downtime_value}"
-        )
+        # The one INFO line per accepted message. Names where it routed and what
+        # changed — enough to prove ingest is live from a log stream — without
+        # the counts or readings the body carries.
+        log.info("MQTT accepted %s/%s %s: %s -> %s (%s%% -> %s%%)",
+                 route.tenant, route.site or "-", machine.name,
+                 old_status, status, old_utilization, utilization)
 
         if old_status != status:
             event = models.MachineEvent(
@@ -478,10 +493,14 @@ def on_message(client, userdata, msg):
 
         safe_broadcast(live_event)
 
-        log.info(
-            f"FASTAPI MQTT → WS BROADCAST: "
-            f"{machine.name} | {status} | {utilization}%"
-        )
+        # DEBUG, not INFO: this is the SECOND per-message line naming a
+        # customer's machine, and the accept line above already recorded that the
+        # message landed and what it changed. Two INFO records per message double
+        # the stream for no extra fact. Found by mutation testing — a mutation
+        # that stopped the accept line naming the machine survived, because this
+        # line was still naming it.
+        log.debug("MQTT broadcast to /ws/live: %s | %s | %s%%",
+                  machine.name, status, utilization)
 
     except Exception as e:
         db.rollback()

@@ -177,11 +177,16 @@ def main():
     # overlap band.
     db = _session()
     m = _machine(db)
-    now = datetime.utcnow()
-    only_run = datetime.combine((now - timedelta(days=7)).date(), datetime.min.time()) \
-        + timedelta(hours=23, minutes=30)
-    if only_run >= now:                         # guard: keep the probe in the past
-        only_run = now - timedelta(days=6, hours=23)
+    # Anchored to the WINDOW, not to midnight.
+    #
+    # This probe used to be `midnight(today-7) + 23:30`, which is inside the
+    # current window only while the clock reads earlier than 23:30 UTC — after
+    # that it falls into the PRIOR window and the assertion flips. It passed when
+    # written at midday and failed in a sweep at 00:35, which is the very defect
+    # class this file exists to fix, in the file itself. One hour past the
+    # window's own start is inside the current half at every hour of the day.
+    window = oee_contract.OeeWindow(7)
+    only_run = window.start + timedelta(hours=1)
     _record(db, m.id, only_run)
 
     card = scorecard.build_scorecard(db, "DEFAULT")

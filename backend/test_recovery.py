@@ -17,8 +17,12 @@ def _run(records, rate=None, prior=None):
     # and _unit_value; stub all three so no DB is needed (rate=None means the tenant
     # hasn't configured one; prior=None means no prior week -> trend "new").
     orig_prod, orig_prior, orig_val = rec._recent_production, rec._prior_production, rec._unit_value
-    rec._recent_production = lambda db, days=7: records
-    rec._prior_production = lambda db, days=7: (prior or [])
+    # Signatures track the real ones: _recent_production takes the request's
+    # anchor (now=), and _prior_production is handed the CURRENT window rather
+    # than a day count, because the prior half is now derived from it
+    # (oee_contract.prior_window) instead of hand-rolled from midnights.
+    rec._recent_production = lambda db, days=7, now=None, machine_id=None: records
+    rec._prior_production = lambda db, current: (prior or [])
     rec._unit_value = lambda db, tenant: rate
     try:
         return rec.build_recovery_summary(db=None, tenant="DEFAULT")

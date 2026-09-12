@@ -42,12 +42,12 @@ def _daily_oee(records, days: int) -> list:
             for d in window]
 
 
-def build_oee_summary(db, tenant: str) -> dict:
+def build_oee_summary(db, tenant: str, now=None) -> dict:
     """Plant-level OEE over the last 7 days, a daily trend, and a worst-first
     per-machine breakdown. The plant figure pools every machine's minutes and
     counts (so it weights by real output, not a naive average of averages).
     production_records and machines are auto-scoped (ADR-0002)."""
-    records = _recent_production(db, days=WINDOW_DAYS)
+    records = _recent_production(db, days=WINDOW_DAYS, now=now)
     plant = _oee_from_records(records)
 
     all_machines = db.query(models.Machine).all()
@@ -84,7 +84,7 @@ def build_oee_summary(db, tenant: str) -> dict:
     # but it must not be presented as a whole-plant figure when it is not.
     import oee_contract
     coverage = oee_contract.coverage(db, tenant,
-                                     oee_contract.OeeWindow(WINDOW_DAYS))
+                                     oee_contract.OeeWindow(WINDOW_DAYS, now=now))
 
     return {
         "days": WINDOW_DAYS,

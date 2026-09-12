@@ -212,6 +212,31 @@ class OeeWindow:
         return f"OeeWindow({self.label()}, start={self.start}, end={self.end})"
 
 
+def prior_window(current):
+    """The window immediately BEFORE `current`, tiling exactly against it.
+
+    `prior.end is current.start`, so the two halves share a boundary instant and
+    no record: half-open intervals [t-2d, t-d) and [t-d, t) partition the range,
+    which is the whole reason the default end is exclusive (see OeeWindow above).
+
+    THIS EXISTS BECAUSE TWO CALLERS HAND-ROLLED IT IN MIDNIGHTS. ai/scorecard and
+    ai/recovery built "last week" as
+    [midnight(today-13), midnight(today-6)) and compared it against the ROLLING
+    current window. `midnight(today-6)` is the start of day-6, so the prior half
+    ran through the end of day-7 while the current half already started part-way
+    through day-7 -- an overlap of (24h - time since midnight): ten hours at
+    14:00 UTC, a full day at midnight. Every record in that band was counted on
+    both sides of a subtraction, so a week could be compared against itself and
+    still publish a confident coloured arrow. See test_week_halves_tile.py.
+
+    Pass the SAME anchor to both halves. Building two windows from two separate
+    utcnow() calls leaves a sub-millisecond gap between them, which is harmless
+    but is not a partition, and this function cannot enforce what it is not
+    given.
+    """
+    return OeeWindow(current.days, now=current.start)
+
+
 def is_measurable(planned, total) -> bool:
     """Whether a window contains anything OEE can be computed from.
 

@@ -13,6 +13,7 @@ from datetime import datetime, timedelta
 
 import models
 from ai.twin import _recent_production
+import oee_contract
 # World-class benchmarks + the shared "component to focus on" definition live in
 # analytics_engine (ADR-0010), so recovery's "biggest lever" and the OEE summary's
 # "biggest drag" are literally the same rule.
@@ -48,17 +49,18 @@ _EMPTY = {
 MINUTES_PER_DAY = 24 * 60
 
 
-def _prior_production(db, days: int = WINDOW_DAYS):
-    """Production in the window BEFORE the current one (days..2*days ago) — last
-    week — so the opportunity can be trended. Auto-scoped like every query here
-    (ADR-0002)."""
-    today = datetime.utcnow().date()
-    start = datetime.combine(today - timedelta(days=2 * days - 1), datetime.min.time())
-    end = datetime.combine(today - timedelta(days=days - 1), datetime.min.time())
-    return (db.query(models.ProductionRecord)
-            .filter(models.ProductionRecord.created_at >= start,
-                    models.ProductionRecord.created_at < end)
-            .all())
+def _prior_production(db, current):
+    """Production in the window immediately BEFORE `current` — last week — so the
+    opportunity can be trended. Auto-scoped like every query here (ADR-0002).
+
+    Derived from the SAME anchor as the current window, so the two tile exactly
+    (oee_contract.prior_window). It used to be built from calendar midnights,
+    [midnight(today-13), midnight(today-6)), and compared against the ROLLING
+    current window: an overlap of up to 24 hours, so a plant whose only run was
+    on the boundary day was trended "flat" against itself instead of "new".
+    See test_week_halves_tile.py."""
+    return _recent_production(db, days=current.days,
+                              now=oee_contract.prior_window(current).end)
 
 
 def _physical_good(records, good: int, days: int) -> int:
@@ -81,7 +83,10 @@ def _physical_good(records, good: int, days: int) -> int:
 def build_recovery_summary(db, tenant: str) -> dict:
     """The recovery opportunity over the last 7 days: gap to world-class OEE and
     what closing it is worth in good units. production_records is auto-scoped."""
-    records = _recent_production(db, days=WINDOW_DAYS)
+    # ONE anchor for the whole request, so the prior window below abuts this one
+    # exactly rather than being built from a later utcnow().
+    window = oee_contract.OeeWindow(WINDOW_DAYS)
+    records = _recent_production(db, days=WINDOW_DAYS, now=window.end)
     o = pooled_oee(records)
     if not o["has_data"] or o["oee"] <= 0:
         return dict(_EMPTY)
@@ -130,7 +135,7 @@ def build_recovery_summary(db, tenant: str) -> dict:
     # Trend: is the plant closing the gap? Compare this window's OEE to last
     # week's, via the shared week-over-week direction (one dead-band, so this badge
     # and the scorecard's OEE delta can't disagree). "new" until there's a prior week.
-    po = pooled_oee(_prior_production(db, days=WINDOW_DAYS))
+    po = pooled_oee(_prior_production(db, window))
     if po["has_data"] and po["oee"] > 0:
         prior_oee = po["oee"]
         delta = o["oee"] - prior_oee

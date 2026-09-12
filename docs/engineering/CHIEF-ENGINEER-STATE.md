@@ -104,6 +104,22 @@ compressors in India. Not a reporting defect — a **fabrication** defect.
 | **Measured before and after, which is why it waited.** #579 built `work_order_status.py` for this family, fixed the command centre, and named this line as the outstanding caller — deferred deliberately because it moves published scores. It lifts **3 of 8** machines by +10 (pressure 1478 / 1234 / 639 against a 500 threshold) and moves **no risk band**: all three sit deep inside Low, and the one High machine has no open orders | P2 | measured, recorded in the suite |
 | The SQL loader (`ai/prediction`) and the Python re-filter are now pinned against each other row-for-row over 11 statuses incl. NULL, `""` and `"  Completed  "` — two implementations of "open" was the defect | P2 | 22 checks |
 
+### 2026-09-12 — "this week vs last week" compared a week against itself (#584)
+
+A 60-agent window audit (3 adversarial verifiers per finding) turned up **17
+raw findings** across the analytics read-models, collapsing to **one root
+cause**: a headline built from the canonical ROLLING window
+(`OeeWindow(7)` = `[utcnow-7d, utcnow)`, which touches EIGHT calendar dates)
+compared against, or bucketed into, a MIDNIGHT-anchored calendar window of
+seven. This PR closes the worst face of it; the rest are listed below.
+
+| Task | Priority | Status |
+|---|---|---|
+| **The scorecard's "Plant OEE" arrow and the recovery card's improving/worsening badge compared a week against itself.** Both hand-rolled "last week" as `[midnight(today-13), midnight(today-6))` against a rolling current window, overlapping it by `24h - (time since midnight)` — ~10h at 14:00 UTC, a **full 24h at midnight**. A plant whose only run was on the boundary day published a confident green *"OEE improved N points week on week"* when there was no prior week at all, and the same data gave a **different delta depending on the hour the dashboard was opened** | P1 | fixed #584, 7/7 mutations red |
+| `oee_contract` already documented the mechanism — *"an explicit `now=` — what a caller passes to build adjacent windows — is used verbatim"*. It now exposes `prior_window(current)`, and one anchor is threaded through the request so `prior.end is current.start` exactly | P1 | 26 checks |
+
+**Still open, same root cause, each needing its own measurement because they move published figures:** `oee-summary-headline-vs-daily` (headline pools 8 dates, the trend bars draw 7, so the bars can never explain the number), `cost-daily-vs-headline` (same, on cost of losses), `twin-cockpit-oee-panel-mixed-basis`, `weekly-28-of-30` (`ai/reliability.py:209` — a 30-day headline over a 28-day sparkline), `scorecard-zero-not-no-data` (a plant that has not run publishes OEE 0% rather than "no data"), `exec-oee-lifetime-vs-twin-7day`.
+
 ---
 
 ## KNOWN P0 / P1

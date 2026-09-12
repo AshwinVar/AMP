@@ -5,6 +5,7 @@ from sqlalchemy import (Boolean, Column, Integer, String, ForeignKey, DateTime, 
 from sqlalchemy import true as sa_true
 from sqlalchemy.orm import relationship
 
+import industrial_demo
 from database import Base
 
 # Trial length for new companies (days from tenant creation).
@@ -938,8 +939,16 @@ class IndustrialDevice(Base):
     ip_address = Column(String, nullable=True)
     topic = Column(String, nullable=True)
     linked_machine_id = Column(Integer, ForeignKey("machines.id"), nullable=True)
-    status = Column(String, default="Online")
+    status = Column(String, default="Registered")
     created_at = Column(DateTime, default=datetime.utcnow)
+
+    @property
+    def simulated(self) -> bool:
+        """True only for AMP's own demo fleet — the devices it may invent
+        readings for. Not a column: it is derived from the seeded device codes
+        (industrial_demo), so it cannot be set, migrated or drifted into being
+        true for a device a customer registered."""
+        return industrial_demo.is_demo_device(self.device_code)
 
 
 class IndustrialSignal(Base):

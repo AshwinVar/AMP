@@ -54,7 +54,13 @@ def _session():
     return sessionmaker(bind=engine)
 
 
-def _add_device(db, protocol="Modbus TCP", status="Online", code="PLC-01"):
+def _add_device(db, protocol="Modbus TCP", status="Online", code=None):
+    """A device row. Defaults to a DEMO code because every polling test in this
+    file is about what happens once tick_industrial has decided to poll —
+    tick_industrial now advances only AMP's own demo fleet, so a customer-
+    registered code would make each of them pass for the wrong reason (nothing
+    polled at all). Pass an explicit code to test the fleet filter itself."""
+    code = code or ia.DEMO_DEVICE_CODES[1]
     device = models.IndustrialDevice(
         device_code=code, device_name="Line A PLC", device_type="PLC",
         protocol=protocol, ip_address="192.168.10.22:502", status=status,
@@ -243,10 +249,20 @@ def test_offline_devices_are_not_polled():
     Failure this catches: tick_industrial polling every row regardless of status,
     which would fabricate live signals for a PLC that is known to be down and
     make the connectivity dashboard claim a dead device is reporting.
+
+    UPDATED for the demo-fleet rule. This test's own reasoning turned out to
+    apply one case wider than it was written for: "known to be down" and "never
+    contacted at all" are the same lie, and tick_industrial polled a device a
+    HUMAN registered just as happily. It now advances only AMP's seeded demo
+    fleet (industrial_demo.DEMO_DEVICE_CODES), so this fixture uses a demo code
+    — otherwise the control below is testing the fleet filter, not the status
+    filter, and would read as the status filter working when it had been
+    deleted. The registered-device rule has its own suite:
+    test_no_invented_plc_readings.py.
     """
     Session = _session()
     db = Session()
-    _add_device(db, status="Offline", code="PLC-OFF")
+    _add_device(db, status="Offline", code=ia.DEMO_DEVICE_CODES[1])
     ia.tick_industrial(db)
     assert db.query(models.IndustrialSignal).count() == 0
 
@@ -266,7 +282,15 @@ def test_offline_devices_are_not_polled():
     ia.tick_industrial(db)
     assert db.query(models.IndustrialSignal).count() == 3, db.query(models.IndustrialSignal).count()
     db.close()
-    print("PASS an Offline device (and an empty floor) is skipped; Online is polled")
+
+    # ...and the SECOND filter, stated here so the two cannot be confused: an
+    # Online device outside the demo fleet is still never polled.
+    other = _session()()
+    _add_device(other, status="Online", code="PLC-CUSTOMER-01")
+    ia.tick_industrial(other)
+    assert other.query(models.IndustrialSignal).count() == 0
+    other.close()
+    print("PASS an Offline device (and an empty floor) is skipped; Online demo devices are polled")
 
 
 def test_an_adapter_failure_propagates_and_costs_the_rest_of_the_tick():

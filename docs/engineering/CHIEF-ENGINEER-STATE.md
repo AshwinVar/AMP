@@ -84,6 +84,18 @@ renders an **empty box** — no React warning, no error, nothing in a log.
 | **The blank box was a live way to break the agent approval chain by looking at it.** `ai/agents.approve_action` transitions only `if item.status == "Proposed"`, and no list offered `"Proposed"` — so an operator clicking the empty box to find out what it was overwrote it, and approving *or* rejecting that task afterwards did nothing, permanently | P1 | fixed #581 |
 | The vocabulary now lives once, in `frontend/lib/status-vocab.json`, read by **both** sides: TypeScript renders from it, `backend/test_status_vocabulary_parity.py` walks the backend AST and fails if a value it writes is missing from it | P2 | added, 5 sections |
 
+### 2026-09-12 — AMP was inventing readings for real PLCs (#582)
+
+Found while answering a founder question about connecting a customer's
+compressors in India. Not a reporting defect — a **fabrication** defect.
+
+| Task | Priority | Status |
+|---|---|---|
+| **Registering a real PLC produced invented readings within one tick.** `tick_industrial` advanced every device whose status was `Online`, and `IndustrialDeviceCreate.status` defaulted to `"Online"` — so a device added for a real compressor at a real IP got `random.randint()` pressure/temperature values stamped `quality="Good"` and tagged with its real protocol, over a protocol AMP cannot speak. Reproduced: **60 fabricated readings attributed to `COMP-01` at `192.168.10.22:502`** | **P0** | fixed #582, 10/10 mutations red |
+| The screen was the other half of it: `status: "Online"` posted from the browser, a green "connected" badge, *"signals will start flowing"*, "Awaiting first poll…", and the invented numbers in the same green as everything else. The only disclaimer sat under the protocol grid, nowhere near the number | P1 | fixed #582, 7 render tests |
+| `GET /industrial/protocols` described itself as *"the connectivity surface AMP speaks"*. It is a catalogue of what an on-site **edge agent** would install — `library` names the package, none of which is a dependency | P2 | fixed #582 |
+| **The repo had already written the rule down and applied it one case too narrowly.** `test_adapter_resilience` guards a device *known to be down* — *"would fabricate live signals ... and make the connectivity dashboard claim a dead device is reporting"*. A device never contacted at all is the same lie; only the first was guarded | P1 | second filter added to that suite too |
+
 ---
 
 ## KNOWN P0 / P1
@@ -568,6 +580,10 @@ re-deriving it is worse than none.
   value when the list lacks it: an unknown value degrades to *showing the truth*
   instead of to *showing nothing*. Same rule as the SQL side — an unrecognised
   word must default to the safe direction, never vanish.
-- eslint baseline is **exactly 134**.
+- eslint baseline is **exactly 133** (was 134 until #582). The one that went was
+  `react/no-unescaped-entities` on `IndustrialConnectivity.tsx` — the old header
+  said "AMP's adapter layer", and the sentence that replaced it has no
+  apostrophe. Incidental, not a cleanup; the number is a ceiling for NEW
+  problems, so it moves down with the code and never back up.
 - Schema change ⇒ model + Alembic migration + fresh-schema test + upgrade test + PostgreSQL verification.
 - Never weaken a test to make a change pass.

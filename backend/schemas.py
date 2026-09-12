@@ -1262,7 +1262,12 @@ class IndustrialDeviceCreate(BaseModel):
     ip_address: Optional[str] = None
     topic: Optional[str] = None
     linked_machine_id: Optional[int] = None
-    status: str = "Online"
+    # NOT "Online". Registering a device tells AMP the PLC exists; it does not
+    # establish that AMP has ever reached it — AMP ships no protocol driver and
+    # opens no socket to a PLC. Defaulting to Online printed a green "connected"
+    # badge for a device nothing had contacted. A caller that genuinely knows the
+    # state may still supply one.
+    status: str = "Registered"
 
 
 class IndustrialDeviceUpdate(BaseModel):
@@ -1280,13 +1285,18 @@ class IndustrialDeviceResponse(BaseModel):
     topic: Optional[str] = None
     linked_machine_id: Optional[int] = None
     status: str
+    # Whether AMP invents this device's readings. Read from the ORM property, so
+    # it is derived from the seeded demo codes rather than stored — the screen
+    # cannot label an invented number as invented if the API never says so, and a
+    # disclaimer under the protocol grid is not attached to the number.
+    simulated: bool = False
     created_at: Optional[datetime] = None
 
     class Config:
         from_attributes = True
     _heal_device_type = field_validator("device_type", mode="before")(_coalesce_null_text('PLC'))
     _heal_protocol = field_validator("protocol", mode="before")(_coalesce_null_text('MQTT'))
-    _heal_status = field_validator("status", mode="before")(_coalesce_null_text('Online'))
+    _heal_status = field_validator("status", mode="before")(_coalesce_null_text('Registered'))
 
 
 class IndustrialSignalCreate(BaseModel):

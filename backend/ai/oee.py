@@ -28,18 +28,41 @@ TREND_HALVES = 2
 TREND_WINDOW_DAYS = WINDOW_DAYS * TREND_HALVES
 
 
-def _daily_oee(records, days: int) -> list:
-    """Plant OEE per calendar day over the window (oldest -> newest), so the card
-    can draw a trend. Each day pools that day's records; a day with no production
-    reads 0 (nothing ran)."""
-    today = datetime.utcnow().date()
-    window = [today - timedelta(days=i) for i in range(days - 1, -1, -1)]
+def _daily_oee(records, window) -> list:
+    """Plant OEE per calendar day across `window` (oldest -> newest), so the card
+    can draw a trend that ADDS UP to the headline above it.
+
+    The bars are derived from the WINDOW, not from a day count. A rolling 7x24h
+    window that starts part-way through a day touches EIGHT calendar dates, and
+    the series used to draw only `[today-6 ... today]` -- so every record on that
+    partial eighth date was pooled into the headline and appeared in no bar.
+    Measured at 11:48 UTC: headline 45%, bars pooling to 83%, and nothing on the
+    card accounting for the 38-point gap. See test_oee_bars_explain_headline.py.
+
+    The oldest bar is flagged `partial` when the window opens mid-day, because it
+    is: the window covers only part of it. Drawing it as a whole day would move
+    the lie rather than remove it.
+
+    KNOWN AND DELIBERATE: a day with no production still reads 0 rather than
+    "no data", so an idle day draws as a catastrophic one. Same class as the
+    fabricated zeros fixed in #585, but on a typed frontend series -- its own
+    change.
+    """
+    start_date = window.start.date()
+    end_date = (window.end - timedelta(microseconds=1)).date()
+    span = [start_date + timedelta(days=i)
+            for i in range((end_date - start_date).days + 1)]
+    # Partial only when the window does not open exactly at midnight; at midnight
+    # it tiles seven whole days and nothing is partial.
+    opens_mid_day = window.start.time() != datetime.min.time()
     by_day: dict = {}
     for r in records:
         if r.created_at:
             by_day.setdefault(r.created_at.date(), []).append(r)
-    return [{"date": d.isoformat(), "oee": _oee_from_records(by_day[d])["oee"] if d in by_day else 0}
-            for d in window]
+    return [{"date": d.isoformat(),
+             "oee": _oee_from_records(by_day[d])["oee"] if d in by_day else 0,
+             **({"partial": True} if (i == 0 and opens_mid_day) else {})}
+            for i, d in enumerate(span)]
 
 
 def build_oee_summary(db, tenant: str, now=None) -> dict:
@@ -94,7 +117,9 @@ def build_oee_summary(db, tenant: str, now=None) -> dict:
         "machine_count": len(names),
         "machines_with_data": len(machines),
         "biggest_drag": drag,                 # the component pulling plant OEE down
-        "daily": _daily_oee(records, WINDOW_DAYS),  # 7-day OEE trend
+        # Built from the same window the records came from, so the bars tile it
+        # and pool back to `plant` above (rule 1: one definition of the window).
+        "daily": _daily_oee(records, oee_contract.OeeWindow(WINDOW_DAYS, now=now)),
         "by_line": by_line,                   # OEE per production line (SMT / IC)
         "worst": machines[0] if machines else None,
         "best": machines[-1] if machines else None,

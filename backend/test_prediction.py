@@ -81,55 +81,70 @@ def _wo(machine_id, no, status, target, actual):
     )
 
 
-def test_work_order_pressure_counts_only_active_orders():
-    """The SQL bound in assess_from_db (status IN active) must produce IDENTICAL
-    risk to the old whole-table scan: Completed/Planned orders are never used, so
-    their outstanding gap must not touch work_order_pressure. Independently
-    derived: Running (800-200)=600 + Delayed (100-50)=50 = 650, and the huge
-    Completed/Planned gaps (5000, 9000) are excluded."""
+def test_work_order_pressure_counts_only_open_orders():
+    """The SQL bound in assess_from_db must produce IDENTICAL risk to a
+    whole-table scan: a FINISHED order carries no outstanding demand, so its gap
+    must not touch work_order_pressure.
+
+    UPDATED in #583, and the update is the point. This test used to assert 650,
+    excluding a Planned order with 9,000 units outstanding — because the engine
+    bounded on ACTIVE_WORK_ORDER_STATUSES = ("Running", "Delayed"), two words AMP
+    never writes. The test was pinning the whitelist, so it agreed with the
+    engine and both were wrong about the plant: a Planned order that has produced
+    nothing is the largest outstanding demand there is.
+
+    "Open" is now work_order_status's complement — every status except the
+    finished ones. Independently derived: Running (800-200)=600 + Delayed
+    (100-50)=50 + Planned (9000-0)=9000 = 9,650. Only the Completed 5,000 is
+    excluded."""
     db = _fresh_session()
     m = models.Machine(name="M1", status="Running", utilization=75, tenant_code="DEFAULT")
     db.add(m)
     db.flush()
     db.add_all([
-        _wo(m.id, "WO-RUN", "Running", 800, 200),      # +600 pressure
-        _wo(m.id, "WO-DLY", "Delayed", 100, 50),        # +50 pressure
-        _wo(m.id, "WO-DONE", "Completed", 5000, 0),     # excluded
-        _wo(m.id, "WO-PLAN", "Planned", 9000, 0),       # excluded
+        _wo(m.id, "WO-RUN", "Running", 800, 200),      # +600  (unknown word -> open)
+        _wo(m.id, "WO-DLY", "Delayed", 100, 50),        # +50   (unknown word -> open)
+        _wo(m.id, "WO-PLAN", "Planned", 9000, 0),       # +9000 (real outstanding demand)
+        _wo(m.id, "WO-DONE", "Completed", 5000, 0),     # excluded: finished
     ])
     db.commit()
 
     row = prediction.assess_from_db(db)[0]
-    assert row["work_order_pressure"] == 650, row["work_order_pressure"]
-    # 650 >= 500, so the high-load reason fires — and it fires from the active
-    # orders alone, not the (much larger) excluded Completed/Planned gaps.
+    assert row["work_order_pressure"] == 9650, row["work_order_pressure"]
+    # The Completed 5,000 is the one gap that must NOT count, and dropping it is
+    # what makes this an assertion rather than "sum everything".
     assert "high active work-order load" in row["reasons"], row["reasons"]
-    print("PASS work-order pressure counts only active orders (SQL bound is behaviour-preserving)")
+    print("PASS work-order pressure counts every OPEN order and no finished one")
 
 
-def test_no_active_work_orders_means_no_pressure():
-    """A machine whose only work orders are Completed/Planned has zero pressure
-    and no work-order-load reason — the excluded rows contribute nothing."""
+def test_no_open_work_orders_means_no_pressure():
+    """A machine whose work is all FINISHED has zero pressure and no
+    work-order-load reason.
+
+    The Planned row that used to sit in this fixture moved out with #583: it is
+    open work, so keeping it here would have asserted that 9,000 outstanding
+    units are worth nothing. Cancelled joins Completed instead — a withdrawn
+    order is off the board, the same call ai/supply makes for a cancelled PO."""
     db = _fresh_session()
     m = models.Machine(name="M1", status="Running", utilization=75, tenant_code="DEFAULT")
     db.add(m)
     db.flush()
     db.add_all([
         _wo(m.id, "WO-DONE", "Completed", 5000, 0),
-        _wo(m.id, "WO-PLAN", "Planned", 9000, 0),
+        _wo(m.id, "WO-CANC", "Cancelled", 9000, 0),
     ])
     db.commit()
 
     row = prediction.assess_from_db(db)[0]
     assert row["work_order_pressure"] == 0, row["work_order_pressure"]
     assert "high active work-order load" not in row["reasons"], row["reasons"]
-    print("PASS inactive work orders contribute no pressure")
+    print("PASS finished work orders contribute no pressure")
 
 
 if __name__ == "__main__":
     test_old_history_washes_out()
     test_recent_history_scores()
     test_current_state_is_not_windowed()
-    test_work_order_pressure_counts_only_active_orders()
-    test_no_active_work_orders_means_no_pressure()
+    test_work_order_pressure_counts_only_open_orders()
+    test_no_open_work_orders_means_no_pressure()
     print("ALL PREDICTION TESTS PASSED")

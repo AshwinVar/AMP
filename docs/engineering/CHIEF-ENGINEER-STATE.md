@@ -96,6 +96,14 @@ compressors in India. Not a reporting defect — a **fabrication** defect.
 | `GET /industrial/protocols` described itself as *"the connectivity surface AMP speaks"*. It is a catalogue of what an on-site **edge agent** would install — `library` names the package, none of which is a dependency | P2 | fixed #582 |
 | **The repo had already written the rule down and applied it one case too narrowly.** `test_adapter_resilience` guards a device *known to be down* — *"would fabricate live signals ... and make the connectivity dashboard claim a dead device is reporting"*. A device never contacted at all is the same lie; only the first was guarded | P1 | second filter added to that suite too |
 
+### 2026-09-12 — the deferred risk factor, now measured (#583)
+
+| Task | Priority | Status |
+|---|---|---|
+| **A published risk factor that could only ever score zero.** `predictive_engine.ACTIVE_WORK_ORDER_STATUSES = ("Running", "Delayed")` — AMP writes neither word. Intersection with a seeded plant's vocabulary (Planned / In Progress / Completed / On Hold): **EMPTY**. So work-order pressure was 0 for every machine and *"high active work-order load"* had never appeared as a reason, ever | P2 | fixed #583, 8/8 mutations red |
+| **Measured before and after, which is why it waited.** #579 built `work_order_status.py` for this family, fixed the command centre, and named this line as the outstanding caller — deferred deliberately because it moves published scores. It lifts **3 of 8** machines by +10 (pressure 1478 / 1234 / 639 against a 500 threshold) and moves **no risk band**: all three sit deep inside Low, and the one High machine has no open orders | P2 | measured, recorded in the suite |
+| The SQL loader (`ai/prediction`) and the Python re-filter are now pinned against each other row-for-row over 11 statuses incl. NULL, `""` and `"  Completed  "` — two implementations of "open" was the defect | P2 | 22 checks |
+
 ---
 
 ## KNOWN P0 / P1

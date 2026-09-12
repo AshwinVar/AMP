@@ -2,6 +2,7 @@ from collections import defaultdict
 
 # Was a local digit-concatenation parser that misread hour formats ("1 hr" -> 1
 # minute), understating downtime in the risk score. Use the shared correct one.
+import work_order_status
 from duration import parse_duration_to_minutes
 
 
@@ -25,12 +26,14 @@ def _int(value):
     return value if value is not None else 0
 
 
-# The only work-order statuses that carry outstanding demand, so the only ones
-# that contribute to work_order_pressure below. Exposed as the single source of
-# truth (rule-1: don't spell the set out a second way) so the DB loader
-# (ai.prediction) can bound its WorkOrder query to exactly this set in SQL,
-# rather than hydrating the whole (growing) work_orders table and filtering here.
-ACTIVE_WORK_ORDER_STATUSES = ("Running", "Delayed")
+# Which work orders carry outstanding demand is work_order_status's question,
+# answered once. This module used to keep its own answer --
+# ACTIVE_WORK_ORDER_STATUSES = ("Running", "Delayed") -- and AMP writes neither
+# word: the vocabulary is Planned / In Progress / Completed / On Hold, so the
+# whitelist intersected the plant in NOTHING and the pressure factor below could
+# only ever score zero. work_order_status names the ENDINGS instead and treats
+# everything else as open, so a word nobody thought of defaults to the safe
+# direction for a backlog. See test_work_order_pressure.py for the measurement.
 
 
 def classify_risk(score: int):
@@ -105,10 +108,12 @@ def calculate_predictive_risk(machines, downtime_logs, production_records,
             breakdown_events_by_machine[event.machine_id] += 1
 
     for work_order in work_orders:
-        # A defensive re-filter (the DB loader already bounds to these statuses in
-        # SQL): if a caller passes an unfiltered list, only active work orders
-        # count toward pressure — same set as ACTIVE_WORK_ORDER_STATUSES.
-        if work_order.status in ACTIVE_WORK_ORDER_STATUSES:
+        # A defensive re-filter (the DB loader already bounds this in SQL with
+        # work_order_status.open_clause()): if a caller passes an unfiltered list,
+        # only OPEN work orders count toward pressure. Same rule, same module, so
+        # the SQL and the Python cannot drift into two answers -- pinned row for
+        # row in test_work_order_pressure.py section 4.
+        if not work_order_status.is_closed(work_order.status):
             # Guard BOTH operands: actual_quantity was already coalesced, but a NULL
             # target_quantity (same legacy/raw-SQL rows) made `None - int` raise
             # TypeError on the very same line. No known target = no known outstanding

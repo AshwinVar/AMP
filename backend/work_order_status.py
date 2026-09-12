@@ -8,6 +8,11 @@ being answered in four places, and they disagreed.
     ai/flow.py:70           NOT IN _CLOSED                the WIP board
     predictive_engine:33    ("Running", "Delayed")        the risk factor
 
+All four now import from here. The risk factor was the last one and was fixed
+separately (#583) rather than with the rest, because it changes PUBLISHED RISK
+SCORES: on a seeded plant it lifts three of eight machines by +10 and moves no
+risk band. test_work_order_pressure.py carries that measurement.
+
 `factory_simulator.py:279` writes the book as
 
     ["Planned", "In Progress", "In Progress", "In Progress", "Completed", "On Hold"]

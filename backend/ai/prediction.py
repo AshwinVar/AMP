@@ -20,7 +20,8 @@ from sqlalchemy import func
 
 import models
 from duration import parse_duration_to_minutes
-from predictive_engine import ACTIVE_WORK_ORDER_STATUSES, calculate_predictive_risk
+import work_order_status
+from predictive_engine import calculate_predictive_risk
 
 name = "prediction"
 
@@ -105,17 +106,23 @@ def assess_from_db(db):
         # poll. /machine-health took 1633 ms, of which 76 ms was SQL. See
         # _history_aggregates and test_predictive_risk_aggregates.py.
         (), (), (),
-        # Work-order load is point-in-time (unwindowed by date), but only ACTIVE
+        # Work-order load is point-in-time (unwindowed by date), but only OPEN
         # orders carry outstanding demand — the engine sums pressure over exactly
-        # ACTIVE_WORK_ORDER_STATUSES. Bound that in SQL rather than hydrating the
-        # whole (growing) work_orders table and filtering in Python (rule-4): the
-        # Completed/Planned rows are never used, so this returns identical risk
-        # while reading only the handful of active orders. Filtered on the indexed
-        # work_orders.status column (main.py _ensure_index). WorkOrder is in
-        # SCOPED_MODELS, so this stays tenant-scoped by the ORM hook (ADR-0002)
+        # the rows work_order_status calls open. Bound that in SQL rather than
+        # hydrating the whole (growing) work_orders table and filtering in Python
+        # (rule-4): a finished order contributes nothing, so this returns
+        # identical risk while reading only the open backlog. Filtered on the
+        # indexed work_orders.status column (main.py _ensure_index). WorkOrder is
+        # in SCOPED_MODELS, so this stays tenant-scoped by the ORM hook (ADR-0002)
         # exactly as the old .all() scan did.
+        #
+        # This used to read `.in_(ACTIVE_WORK_ORDER_STATUSES)` — ("Running",
+        # "Delayed") — which matched nothing AMP writes, so it returned an empty
+        # list and the pressure factor was dead. The complement also fixes the
+        # NULL hole: SQL's `status NOT IN (...)` is NULL, not TRUE, for a row with
+        # no status, and open_clause() coalesces before comparing.
         db.query(models.WorkOrder)
-        .filter(models.WorkOrder.status.in_(ACTIVE_WORK_ORDER_STATUSES))
+        .filter(work_order_status.open_clause())
         .all(),
         aggregates=_history_aggregates(db, cutoff),
     )

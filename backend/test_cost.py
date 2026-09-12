@@ -9,7 +9,9 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 import models
+import oee_contract
 from database import Base
+from datetime import timedelta
 from ai import cost
 
 
@@ -84,8 +86,17 @@ def test_cost_prices_downtime_and_scrap_and_rolls_up_recorded():
     assert s["by_line"] == [{"line": "SMT", "downtime_cost": 480, "scrap_cost": 250, "cost": 730}]
     # and to the machine that incurred it, costliest first
     assert s["by_machine"] == [{"machine_id": 1, "name": "M1", "downtime_cost": 480, "scrap_cost": 250, "cost": 730}]
-    # 7-day trend; today's run carries the whole $730
-    assert len(s["daily"]) == 7 and s["daily"][-1]["cost"] == 730
+    # The trend spans the calendar dates the rolling window TOUCHES — eight when
+    # it opens mid-day, seven exactly at midnight. Pinning a fixed 7 was pinning
+    # the defect: the partial eighth date's cost was in the headline and in no
+    # bar, so the chart could sum to zero under a five-figure figure (#587).
+    # Derived from the contract so it cannot go stale at midnight UTC.
+    window = oee_contract.OeeWindow(cost.WINDOW_DAYS)
+    touched = len({(window.start + timedelta(hours=h)).date()
+                   for h in range(0, cost.WINDOW_DAYS * 24 + 1)})
+    assert len(s["daily"]) == touched, (len(s["daily"]), touched)
+    assert s["daily"][-1]["cost"] == 730
+    # The property that actually matters, and which this suite already had right.
     assert sum(d["cost"] for d in s["daily"]) == 730
 
     # empty -> no data, no crash

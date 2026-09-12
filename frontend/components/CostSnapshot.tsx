@@ -16,7 +16,10 @@ type CostSummary = {
   biggest: string | null;
   by_line: { line: string; downtime_cost: number; scrap_cost: number; cost: number }[];
   by_machine: { machine_id: number; name: string; downtime_cost: number; scrap_cost: number; cost: number }[];
-  daily: { date: string; cost: number }[];
+  // `partial` marks the oldest bar when the rolling 7x24h window opens
+  // mid-day, so the series covers the eight calendar dates it touches and
+  // sums back to the headline (backend test_cost_bars_explain_headline.py).
+  daily: { date: string; cost: number; partial?: boolean }[];
   recorded_total: number;
   by_type: { type: string; amount: number }[];
 };
@@ -111,13 +114,13 @@ export default function CostSnapshot({ onOpen }: { onOpen?: (viewKey: string) =>
             {s.daily.map((d) => (
               <div
                 key={d.date}
-                className="flex-1 rounded-sm bg-red-500/60"
+                className={`flex-1 rounded-sm bg-red-500/60 ${d.partial ? "opacity-50" : ""}`}
                 // A zero-loss day (no downtime, no scrap) renders no bar, not a
                 // 3% phantom sliver that reads as a loss that never happened —
                 // the money twin of the downtime daily series #464 already
                 // guarded. A nonzero day keeps its 3% floor to stay visible.
                 style={{ height: `${barPct(d.cost, dailyPeak, 3)}%` }}
-                title={`${d.date}: ${money(d.cost)}`}
+                title={`${d.date}: ${money(d.cost)}${d.partial ? " (partial day — the 7-day window opens part-way through it)" : ""}`}
               />
             ))}
           </div>

@@ -51,11 +51,16 @@ def downtime_minutes(records) -> int:
     return sum(max(0, (r.planned_minutes or 0) - (r.runtime_minutes or 0)) for r in records)
 
 
-def build_cost_summary(db, tenant: str) -> dict:
+def build_cost_summary(db, tenant: str, now=None) -> dict:
     """The cost of the week's losses — downtime and scrap priced at standard
     rates, biggest first — plus the costs actually recorded in the period rolled
     up by type. production_records and cost_records are auto-scoped (ADR-0002)."""
-    records = _recent_production(db, days=WINDOW_DAYS)
+    # ONE anchor for the request: the headline, the daily bars and the recorded
+    # costs beside them must all be the same seven days. They were three
+    # different bases under one "days": 7 label (#587).
+    import oee_contract
+    window = oee_contract.OeeWindow(WINDOW_DAYS, now=now)
+    records = _recent_production(db, days=WINDOW_DAYS, now=window.end)
     downtime_min = downtime_minutes(records)
     rejected = sum(r.rejected_count or 0 for r in records)
 
@@ -103,23 +108,40 @@ def build_cost_summary(db, tenant: str) -> dict:
     machine_cost = {m["machine_id"]: m["cost"] for m in machine_rows}
 
     # Daily loss cost across the window (oldest -> newest), for the trend.
-    today = datetime.utcnow().date()
-    window = [today - timedelta(days=i) for i in range(WINDOW_DAYS - 1, -1, -1)]
-    day_agg = {d: {"downtime_min": 0, "rejected": 0} for d in window}
+    #
+    # The buckets are derived from the WINDOW, not from a day count. A rolling
+    # 7x24h window that opens mid-day touches EIGHT calendar dates, and this
+    # series used to draw only [today-6 ... today] -- so a costly run on the
+    # partial eighth date was priced into the headline and appeared in no bar.
+    # Measured: headline 30,760 with every bar at 0, a chart summing to ZERO
+    # under a five-figure figure. Same shape as the OEE trend (#586).
+    start_date = window.start.date()
+    end_date = (window.end - timedelta(microseconds=1)).date()
+    span = [start_date + timedelta(days=i)
+            for i in range((end_date - start_date).days + 1)]
+    opens_mid_day = window.start.time() != datetime.min.time()
+    day_agg = {d: {"downtime_min": 0, "rejected": 0} for d in span}
     for r in records:
         d = r.created_at.date() if r.created_at else None
         if d in day_agg:
             day_agg[d]["downtime_min"] += max(0, (r.planned_minutes or 0) - (r.runtime_minutes or 0))
             day_agg[d]["rejected"] += r.rejected_count or 0
     daily = [{"date": d.isoformat(),
-              "cost": day_agg[d]["downtime_min"] * DOWNTIME_COST_PER_MIN + day_agg[d]["rejected"] * SCRAP_COST_PER_UNIT}
-             for d in window]
+              "cost": day_agg[d]["downtime_min"] * DOWNTIME_COST_PER_MIN + day_agg[d]["rejected"] * SCRAP_COST_PER_UNIT,
+              **({"partial": True} if (i == 0 and opens_mid_day) else {})}
+             for i, d in enumerate(span)]
 
     # Costs actually logged in the window, grouped by type (worst first).
-    # Windowed in SQL — the table grows as costs are logged.
-    window_start = datetime.combine(today - timedelta(days=WINDOW_DAYS - 1), datetime.min.time())
+    # Windowed in SQL -- the table grows as costs are logged.
+    #
+    # BOUNDED AT BOTH ENDS, against the same window as everything above. This
+    # used to be `>= midnight(today-6)` with NO UPPER BOUND, which put money not
+    # yet spent inside a 7-day card: a cost record dated three days in the future
+    # was published as part of this week's costs, on a third basis from the two
+    # figures beside it.
     recs = (db.query(models.CostRecord)
-            .filter(models.CostRecord.created_at >= window_start).all())
+            .filter(models.CostRecord.created_at >= window.start,
+                    models.CostRecord.created_at < window.end).all())
     by_type_amt: Counter = Counter()
     for c in recs:
         by_type_amt[c.cost_type or "Other"] += c.amount or 0

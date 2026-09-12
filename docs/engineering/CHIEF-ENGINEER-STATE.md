@@ -118,7 +118,16 @@ seven. This PR closes the worst face of it; the rest are listed below.
 | **The scorecard's "Plant OEE" arrow and the recovery card's improving/worsening badge compared a week against itself.** Both hand-rolled "last week" as `[midnight(today-13), midnight(today-6))` against a rolling current window, overlapping it by `24h - (time since midnight)` — ~10h at 14:00 UTC, a **full 24h at midnight**. A plant whose only run was on the boundary day published a confident green *"OEE improved N points week on week"* when there was no prior week at all, and the same data gave a **different delta depending on the hour the dashboard was opened** | P1 | fixed #584, 7/7 mutations red |
 | `oee_contract` already documented the mechanism — *"an explicit `now=` — what a caller passes to build adjacent windows — is used verbatim"*. It now exposes `prior_window(current)`, and one anchor is threaded through the request so `prior.end is current.start` exactly | P1 | 26 checks |
 
-**Still open, same root cause, each needing its own measurement because they move published figures:** `oee-summary-headline-vs-daily` (headline pools 8 dates, the trend bars draw 7, so the bars can never explain the number), `cost-daily-vs-headline` (same, on cost of losses), `twin-cockpit-oee-panel-mixed-basis`, `weekly-28-of-30` (`ai/reliability.py:209` — a 30-day headline over a 28-day sparkline), `scorecard-zero-not-no-data` (a plant that has not run publishes OEE 0% rather than "no data"), `exec-oee-lifetime-vs-twin-7day`.
+**Still open, same root cause, each needing its own measurement because they move published figures:** `oee-summary-headline-vs-daily` (headline pools 8 dates, the trend bars draw 7, so the bars can never explain the number), `cost-daily-vs-headline` (same, on cost of losses), `twin-cockpit-oee-panel-mixed-basis`, `weekly-28-of-30` (`ai/reliability.py:209` — a 30-day headline over a 28-day sparkline), `exec-oee-lifetime-vs-twin-7day`.
+
+### 2026-09-12 — a plant that had not run was reported as a plant running badly (#585)
+
+| Task | Priority | Status |
+|---|---|---|
+| **Three of the scorecard's four KPIs fabricated a zero when their pillar had no data.** Reproduced on a plant that dispatched an order and produced nothing: *Plant OEE 0% (red), Good rate 0% (red), Cost of losses £0 (**green**), Delivery reliability 100% (green)*. Read as a customer reads it: the plant ran catastrophically, everything it made was scrap, and it eliminated all its losses. The plant was idle | P1 | fixed #585, 7/7 mutations red |
+| **Not hidden by `has_data`** — that is an OR across three pillars, so one pillar with data publishes the whole strip including the two with none. A shutdown, a holiday week or a tenant mid-onboarding is exactly that case | P1 | each KPI now asks its own pillar |
+| **Mutation testing found a second defect inside the fix.** `good_rate`'s basis was `runs > 0` — the count-the-rows rule `oee_contract.is_measurable` was written to replace (*"a row that recorded nothing satisfies all four and satisfies none of the definitions"*). A production record with `total_count 0` published a good rate. Now `total > 0` | P2 | fixed in the same PR |
+| The tone is the string `"none"`, not Python `None`: the contract `_tone(None, ...)` already returns, in `ScorecardStrip.toneCls` (slate) and in its TS union. **The first version of the test asserted `None`** — inventing a convention beside an existing one, which would have painted the literal class `undefined` | P3 | test corrected to the codebase's contract |
 
 ---
 

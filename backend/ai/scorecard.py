@@ -109,11 +109,56 @@ def build_scorecard(db, tenant: str) -> dict:
     good_d, good_dt = _delta(prod["good_rate"], prior["good_rate"], prior["has"])
     cost_d, cost_dt = _delta(cost["loss_cost"], prior["loss_cost"], prior["has"], lower_is_better=True)
 
+    # A KPI WITH NO DATA UNDER IT PUBLISHES None, NOT ZERO.
+    #
+    # Zero means "measured, and it was zero". None means "nothing to measure",
+    # and the strip already renders it as an em dash -- which is exactly what
+    # delivery reliability below has always done when no order has come due.
+    # Three of the four KPIs were outside that contract, so a plant that had not
+    # run reported OEE 0% in RED, good rate 0% in RED, and cost of losses 0 in
+    # GREEN: "it ran catastrophically, everything it made was scrap, and it
+    # eliminated all its losses". None of that happened; the plant was idle.
+    #
+    # This is reachable in spite of the payload-level has_data below, because
+    # that is an OR across three pillars: one pillar with data publishes the
+    # whole strip, including the pillars that have none. A plant that dispatched
+    # an order this week and produced nothing -- a shutdown, a holiday week, a
+    # tenant mid-onboarding -- is precisely that case. See
+    # test_scorecard_no_data.py.
+    # Each KPI asks ITS OWN pillar, and asks the right question of it. A good
+    # RATE needs units inspected, not rows: `runs > 0` is the count-the-rows rule
+    # oee_contract.is_measurable was written to replace ("a row that recorded
+    # nothing satisfies all four and satisfies none of the definitions"), and a
+    # production record with total_count 0 is exactly that row. Mutation testing
+    # earned this: swapping OEE's basis for `prod["runs"] > 0` survived until a
+    # fixture held a row that recorded nothing.
+    measured_oee = oee["has_data"]
+    measured_prod = prod["total"] > 0
+    measured_cost = cost["has_data"]
+
+    def _kpi(value, measured, lo=None, hi=None, tone=None):
+        """value+tone when the pillar was measured; (None, "none") when it was not.
+
+        The tone is the STRING "none", not Python None: that is the existing
+        contract `_tone(None, ...)` already returns for delivery reliability, it
+        is in ScorecardStrip's `toneCls` map (slate, i.e. uncoloured) and in its
+        TS union. Returning Python None here would have rendered
+        `toneCls[null]` -> undefined and put the literal class "undefined" on the
+        element -- a new convention where one already existed."""
+        if not measured:
+            return None, _tone(None, lo, hi)
+        return value, (tone if tone is not None else _tone(value, lo, hi))
+
+    oee_v, oee_tone = _kpi(oee["oee"], measured_oee, 85, 70)
+    good_v, good_tone = _kpi(prod["good_rate"], measured_prod, 98, 95)
+    cost_v, cost_tone = _kpi(cost["loss_cost"], measured_cost,
+                             tone=("good" if cost["loss_cost"] == 0 else "warn"))
+
     kpis = [
-        {"key": "oee", "label": "Plant OEE", "value": oee["oee"], "unit": "%",
-         "tone": _tone(oee["oee"], 85, 70), "delta": oee_d, "delta_tone": oee_dt},
-        {"key": "good_rate", "label": "Good rate", "value": prod["good_rate"], "unit": "%",
-         "tone": _tone(prod["good_rate"], 98, 95), "delta": good_d, "delta_tone": good_dt},
+        {"key": "oee", "label": "Plant OEE", "value": oee_v, "unit": "%",
+         "tone": oee_tone, "delta": oee_d, "delta_tone": oee_dt},
+        {"key": "good_rate", "label": "Good rate", "value": good_v, "unit": "%",
+         "tone": good_tone, "delta": good_d, "delta_tone": good_dt},
         # key stays "on_time" so the strip still drills into the orders view; the
         # displayed label and value are the honest delivery-reliability number.
         {"key": "on_time", "label": "Delivery reliability", "value": reliability, "unit": "%",
@@ -122,8 +167,8 @@ def build_scorecard(db, tenant: str) -> dict:
         # formatting: ai/report.py, ai/assistant.py and frontend ScorecardStrip.tsx all
         # test it against the currency symbol. It must come from currency.CURRENCY, not a
         # literal, or the strip silently falls through to suffix formatting ("49740£").
-        {"key": "loss_cost", "label": "Cost of losses", "value": cost["loss_cost"], "unit": CURRENCY,
-         "tone": ("good" if cost["loss_cost"] == 0 else "warn"), "delta": cost_d, "delta_tone": cost_dt},
+        {"key": "loss_cost", "label": "Cost of losses", "value": cost_v, "unit": CURRENCY,
+         "tone": cost_tone, "delta": cost_d, "delta_tone": cost_dt},
     ]
     return {
         "has_data": oee["has_data"] or prod["runs"] > 0 or delivery["total"] > 0,

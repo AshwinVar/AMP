@@ -1,18 +1,23 @@
 """
 Industrial connectivity — protocol adapter framework + simulator.
 
-AMP talks to shop-floor PLCs through a small adapter layer. Each industrial
-protocol (OPC UA, Modbus TCP, Siemens S7, Allen-Bradley, Beckhoff, Omron) has an
-adapter that knows how to read tags/registers from that protocol and normalise
-them into AMP signals.
+AMP itself opens NO connection to a PLC, in any protocol. This module is the
+SHAPE a driver would take plus a simulator for AMP's own demo fleet: none of
+asyncua / pymodbus / python-snap7 / pycomm3 / pyads is a dependency,
+`ProtocolAdapter.read` raises NotImplementedError, and `get_adapter()` returns
+`SimulatorAdapter` for every device, always. PROTOCOLS is a catalogue of what an
+on-site edge agent WOULD use — it is not a driver list, and must never be
+presented as one.
 
-Real drivers run on an on-site edge agent (they need the PLC hardware + the
-vendor library noted in PROTOCOLS below). In the cloud demo we can't reach a
-physical PLC, so `SimulatorAdapter` produces realistic values for each protocol —
-the architecture is identical, only the `read()` implementation differs. To go
-live on a customer's floor you implement `read()` per protocol on the edge agent
-using the listed library; everything downstream (signals, mappings, dashboards)
-is unchanged.
+Real drivers run on that edge agent, which this repository does not ship. AMP's
+own boundary for machine data is MQTT (`mqtt_service`). To go live on a
+customer's floor, something on site speaks the machine's protocol and publishes
+to AMP; everything downstream (signals, mappings, dashboards) is unchanged.
+
+WHO MAY BE SIMULATED. Only AMP's own demo fleet (`industrial_demo`). A device a
+human registered is never simulated — see test_no_invented_plc_readings.py, and
+the sixty invented readings that used to be attributed to a real compressor PLC
+at a real IP over a protocol AMP cannot speak.
 """
 import random
 import re
@@ -24,7 +29,9 @@ from logging_config import get_logger
 # emit belongs in the JSON stream with a level, not on raw stdout.
 log = get_logger(__name__)
 
+import industrial_demo
 import models
+from industrial_demo import DEMO_DEVICES, DEMO_DEVICE_CODES
 from fastapi import APIRouter
 
 # The supported protocols. `library` is the Python package an edge agent would
@@ -157,14 +164,8 @@ def get_adapter(device) -> ProtocolAdapter:
 
 # ── Seed + live tick ─────────────────────────────────────────────
 
-_DEMO_DEVICES = [
-    ("PLC-OPCUA-01", "Line A OPC UA Server",   "opcua",    "192.168.10.21"),
-    ("PLC-MODBUS-01", "Compressor Modbus PLC",  "modbus",   "192.168.10.22"),
-    ("PLC-S7-01",    "Siemens S7-1200 Press",   "s7",       "192.168.10.23"),
-    ("PLC-AB-01",    "Allen-Bradley Conveyor",  "ab",       "192.168.10.24"),
-    ("PLC-BECK-01",  "Beckhoff CNC Axis",       "beckhoff", "192.168.10.25"),
-    ("PLC-OMRON-01", "Omron Packaging PLC",     "omron",    "192.168.10.26"),
-]
+# The demo fleet lives in industrial_demo so that models.IndustrialDevice can
+# import it too (models cannot import this module — this module imports models).
 
 
 def seed_industrial(db):
@@ -172,7 +173,7 @@ def seed_industrial(db):
     if db.query(models.IndustrialDevice).count() > 0:
         return
     machines = db.query(models.Machine).all()
-    for i, (code, name, proto, ip) in enumerate(_DEMO_DEVICES):
+    for i, (code, name, proto, ip) in enumerate(DEMO_DEVICES):
         meta = _PROTOCOL_BY_KEY[proto]
         db.add(models.IndustrialDevice(
             device_code=code, device_name=name,
@@ -187,9 +188,29 @@ def seed_industrial(db):
 
 
 def tick_industrial(db):
-    """Poll each online device through its adapter and store the signals.
-    This is what keeps the connectivity dashboard live."""
-    devices = db.query(models.IndustrialDevice).filter(models.IndustrialDevice.status == "Online").all()
+    """Advance AMP's own DEMO fleet, and nothing else.
+
+    Every value this writes is `random.randint()` — no socket is opened, because
+    AMP has no PLC driver. So the one rule that matters is WHOSE rows may receive
+    an invented number, and the answer is only the devices AMP seeded for itself.
+
+    It used to poll every row whose status was "Online", and
+    `IndustrialDeviceCreate.status` defaulted to "Online". Registering a real
+    compressor PLC at a real IP therefore produced fabricated pressure and
+    temperature readings within one tick, stamped `quality="Good"` and tagged
+    with that device's real protocol — data presented as measurement from a
+    machine AMP had never contacted. test_adapter_resilience already called that
+    failure by its name for a device known to be DOWN ("would fabricate live
+    signals ... and make the connectivity dashboard claim a dead device is
+    reporting"); a device never contacted at all is the same lie.
+
+    The status filter stays: an operator who marks a demo device Offline still
+    expects it to go quiet.
+    """
+    devices = (db.query(models.IndustrialDevice)
+               .filter(models.IndustrialDevice.status == "Online",
+                       models.IndustrialDevice.device_code.in_(DEMO_DEVICE_CODES))
+               .all())
     if not devices:
         return
     device = random.choice(devices)
@@ -215,5 +236,11 @@ router = APIRouter(prefix="/industrial", tags=["Industrial Adapters"])
 
 @router.get("/protocols")
 def industrial_protocols():
-    """The supported protocol adapters — the connectivity surface AMP speaks."""
+    """The protocol catalogue: what an on-site EDGE AGENT would need, per protocol.
+
+    Not a driver list and not a capability claim. AMP speaks none of these — the
+    `library` field names the package the edge agent would install. Presenting
+    this as "protocols AMP supports" is what made a registered device look
+    connected.
+    """
     return PROTOCOLS

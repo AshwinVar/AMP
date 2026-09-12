@@ -7,6 +7,7 @@ interface Protocol { key: string; name: string; port: number; library: string; t
 interface Device {
   id: number; device_code: string; device_name: string; device_type: string;
   protocol: string; ip_address: string | null; status: string; linked_machine_id: number | null;
+  simulated: boolean;
 }
 interface Signal {
   id: number; device_id: number; signal_name: string; signal_value: string;
@@ -54,10 +55,12 @@ export default function IndustrialConnectivity() {
         device_type: "PLC",
         protocol: form.protocol || (protocols[0]?.name ?? "Modbus TCP"),
         ip_address: form.ip_address,
-        status: "Online",
+        // No status. AMP has not contacted this PLC and ships no driver for it,
+        // so it must not claim the device is Online; the server defaults to
+        // "Registered".
       });
       setForm({ device_code: "", device_name: "", protocol: "", ip_address: "" });
-      setMsg("✓ Device added — signals will start flowing.");
+      setMsg("✓ Device registered. AMP does not poll PLCs — signals appear once your edge agent publishes them.");
       load();
     } catch (e: any) {
       setMsg(e?.message?.replace(/^POST .* failed: \d+ /, "") || "Failed to add device — Admin/Supervisor only.");
@@ -67,14 +70,19 @@ export default function IndustrialConnectivity() {
   const statusBadge = (s: string) =>
     s === "Online"
       ? "text-green-400 border-green-500/40 bg-green-500/10"
-      : "text-red-400 border-red-500/40 bg-red-500/10";
+      : s === "Offline"
+        ? "text-red-400 border-red-500/40 bg-red-500/10"
+        // Registered, or anything else: AMP has no basis for a verdict, so it
+        // must not paint one. Green said "connected" for a device nothing had
+        // reached; red would say "down", which is equally unfounded.
+        : "text-slate-400 border-slate-600 bg-slate-800";
 
   return (
     <section className="mt-8 space-y-6">
       <div>
         <h2 className="text-3xl font-bold">Industrial Connectivity</h2>
         <p className="text-slate-400 mt-2 text-sm">
-          Connect shop-floor PLCs over their native protocols through AMP's adapter layer. Live signals update every few seconds.
+          Register the shop-floor PLCs an on-site edge agent reports for. <span className="text-slate-300">AMP does not connect to PLCs itself</span> — it receives what your gateway publishes.
         </p>
       </div>
 
@@ -97,7 +105,7 @@ export default function IndustrialConnectivity() {
           ))}
         </div>
         <p className="text-slate-500 text-xs mt-2">
-          Real drivers run on an on-site edge agent using the library shown; the cloud demo streams simulated signals through the same adapters.
+          A catalogue, not a driver list: AMP speaks none of these. The library shown is the package an on-site edge agent would install to read that protocol and publish to AMP.
         </p>
       </div>
 
@@ -129,14 +137,23 @@ export default function IndustrialConnectivity() {
                   <span className="font-medium">{d.device_name}</span>
                   <span className="text-xs text-slate-400 bg-slate-800 border border-slate-700 rounded px-2 py-0.5">{d.protocol}</span>
                   <span className="text-xs text-slate-500 font-mono">{d.ip_address || "—"}</span>
+                  {d.simulated && (
+                    <span className="text-xs text-amber-300 border border-amber-500/40 bg-amber-500/10 rounded px-2 py-0.5">
+                      Simulated demo device
+                    </span>
+                  )}
                   <span className={`ml-auto rounded-full px-2 py-0.5 text-xs border ${statusBadge(d.status)}`}>{d.status}</span>
                 </div>
                 <div className="flex flex-wrap gap-2">
-                  {latest.length === 0 && <span className="text-slate-500 text-xs">Awaiting first poll…</span>}
+                  {latest.length === 0 && (
+                    <span className="text-slate-500 text-xs">
+                      No data yet — AMP has not received anything for this device.
+                    </span>
+                  )}
                   {latest.map((s) => (
                     <span key={s.signal_name} className="text-xs bg-slate-950 border border-slate-700 rounded-lg px-2.5 py-1">
                       <span className="text-slate-400">{s.signal_name}</span>{" "}
-                      <span className="font-mono font-semibold text-green-400">{s.numeric_value}</span>{" "}
+                      <span className={`font-mono font-semibold ${d.simulated ? "text-amber-300" : "text-green-400"}`}>{s.numeric_value}</span>{" "}
                       <span className="text-slate-500">{s.unit}</span>
                     </span>
                   ))}

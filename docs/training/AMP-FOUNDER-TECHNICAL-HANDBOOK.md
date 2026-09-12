@@ -1114,6 +1114,17 @@ This is critical for talking to OEM engineers and technical customers. **The MQT
 
 The adapter layer is a genuine, clean **framework** — `read()` is the single seam a real driver would override — but **there is no real PLC connectivity in the product today**; the "6 protocols supported" surface is backed by simulators pending OEM edge-agent work (`docs/sales/REAL-OEM-INPUT-REQUIRED.md`). Say: *"MQTT/HTTP telemetry is live; direct PLC protocols are simulated behind a ready adapter interface."*
 
+### Who may be simulated (the rule that keeps that honest)
+
+Knowing the protocols are simulated is not enough on its own. Until #582, `tick_industrial` advanced **every** device whose status was `Online`, and `IndustrialDeviceCreate.status` defaulted to `"Online"` — so registering a real compressor PLC at a real IP produced, within one 45-second tick, `random.randint()` pressure and temperature values stamped `quality="Good"` and tagged with that device's real protocol. **Fabricated data presented as measurement, from a machine AMP had never contacted.** That is the one thing a plant system must never do, and it is worse than showing nothing.
+
+The rule now, pinned by `backend/test_no_invented_plc_readings.py`:
+
+- **Only AMP's own demo fleet may be simulated.** The six seeded devices are listed once in `backend/industrial_demo.py`; `DEMO_DEVICE_CODES` is *derived* from that list, and both the seeder and `tick_industrial` read it — so the two cannot drift.
+- **A registered device is `"Registered"`, not `"Online"`.** Online is a claim about a connection AMP has never made. The screen paints it neutral grey — green would say connected, red would say down, and neither is founded.
+- **The API says which devices are simulated.** `IndustrialDeviceResponse.simulated` comes from an ORM *property*, not a column, so it cannot be set or migrated into being true for a customer's device. The screen renders simulated readings in amber with a "Simulated demo device" badge — attached to the number, not to a disclaimer elsewhere on the page.
+- **`IndustrialSignal.quality` was deliberately left alone.** In OT, quality is the *device's* word for whether a reading is trustworthy (Good/Bad/Uncertain). Overloading it with "simulated" would give one word two meanings across `ai/connectivity._is_good` — the exact defect class this codebase keeps paying for. Simulated-ness belongs to the device.
+
 ### If you want to change ingest
 Payload shape/guards → `mqtt_service.on_message`. Topic/identity rules → `mqtt_identity.py`. A **real** protocol driver → implement `read()` on a new adapter in `industrial_adapters.py` and register it in `get_adapter()` (this is the OEM edge-agent work).
 

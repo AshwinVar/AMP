@@ -26,7 +26,10 @@ type OeeSummary = {
   // `partial` marks the oldest bar when the rolling window opens mid-day, so
   // the series covers the eight calendar dates a 7x24h window touches and
   // pools back to the headline. See backend test_oee_bars_explain_headline.py.
-  daily: { date: string; oee: number; partial?: boolean }[];
+  // `oee` is null for a day the plant did not run. A day with no production
+  // has NO OEE -- it is not a day of 0% OEE, and drawing it as one made an
+  // idle Sunday a full-height red bar (backend test_oee_idle_is_not_zero.py).
+  daily: { date: string; oee: number | null; partial?: boolean }[];
   by_line: { line: string; oee: number; availability: number; performance: number; quality: number; has_data: boolean }[];
   worst: MachineOee | null;
   best: MachineOee | null;
@@ -40,7 +43,9 @@ function oeeColor(v: number) {
   return "text-red-400";
 }
 
-function barColor(v: number) {
+function barColor(v: number | null) {
+  // A day with no production gets no colour band: it is not a bad day.
+  if (v == null) return "bg-slate-700";
   if (v >= 85) return "bg-emerald-500";
   if (v >= 60) return "bg-yellow-500";
   if (v >= 40) return "bg-orange-500";
@@ -161,19 +166,21 @@ export default function OeeSnapshot() {
           ))}
         </div>
       )}
-      {s.daily.some((d) => d.oee > 0) && (
+      {s.daily.some((d) => d.oee != null) && (
         <div className="mt-6">
           <p className="text-xs text-slate-500 mb-2">7-day OEE trend</p>
           <div className="flex items-end gap-2 h-16">
             {s.daily.map((d) => {
-              const h = Math.max(4, Math.round((d.oee / 100) * 56));
+              // An idle day draws a 2px stub, not a 4px floor on a red bar:
+              // the row still shows the day existed without asserting a score.
+              const h = d.oee == null ? 2 : Math.max(4, Math.round((d.oee / 100) * 56));
               return (
                 <div
                   key={d.date}
                   className="flex-1 flex flex-col items-center justify-end gap-1"
-                  title={`${d.oee}% on ${d.date}${d.partial ? " (partial day — the 7-day window opens part-way through it)" : ""}`}
+                  title={`${d.oee == null ? "no production" : `${d.oee}%`} on ${d.date}${d.partial ? " (partial day — the 7-day window opens part-way through it)" : ""}`}
                 >
-                  <span className="text-[10px] text-slate-400">{d.oee || ""}</span>
+                  <span className="text-[10px] text-slate-400">{d.oee ?? ""}</span>
                   <div
                     className={`w-full rounded-t ${barColor(d.oee)} ${d.partial ? "opacity-50" : ""}`}
                     style={{ height: `${h}px` }}

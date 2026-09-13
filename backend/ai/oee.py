@@ -59,8 +59,15 @@ def _daily_oee(records, window) -> list:
     for r in records:
         if r.created_at:
             by_day.setdefault(r.created_at.date(), []).append(r)
+    # A DAY WITH NO PRODUCTION HAS NO OEE -- it is not a day of 0% OEE.
+    #
+    # OEE is an intensive ratio; with no runtime and no counts there is nothing
+    # to divide. Publishing 0 drew an idle Sunday as a full-height red bar beside
+    # a good Monday, so a plant that runs five days a week rendered as a plant
+    # failing twice a week. Same rule as the scorecard KPIs in #585: zero means
+    # "measured, and it was zero"; None means "nothing to measure".
     return [{"date": d.isoformat(),
-             "oee": _oee_from_records(by_day[d])["oee"] if d in by_day else 0,
+             "oee": _oee_from_records(by_day[d])["oee"] if d in by_day else None,
              **({"partial": True} if (i == 0 and opens_mid_day) else {})}
             for i, d in enumerate(span)]
 
@@ -185,18 +192,35 @@ def build_oee_trend(db, tenant: str) -> dict:
     worst_comp = min(components, key=lambda x: x["delta"]) if (has_cur and has_prior) else None
     biggest_drag = biggest_lever(current) if has_cur else None
 
-    # Per-machine OEE each half, pooled from that half's own records, so a machine
-    # that stopped running this week reads 0 rather than carrying last week's number.
+    # Per-machine OEE each half, pooled from that half's own records. A half with
+    # NO records has no OEE -- None, not 0 -- and a machine missing a half has no
+    # delta, so it cannot be ranked as a mover.
+    #
+    # It used to read 0, and the consequence was a RANKING, not just a number: a
+    # machine that ran at 80% last week and did not run at all this week scored
+    # delta = -80 and topped `declining_machines` as the plant's worst decliner,
+    # for not running. A machine commissioned this week scored prior 0 and
+    # delta = +85, topping `improving_machines` with an improvement that never
+    # happened. Those two lists are what a manager reads to decide where to walk
+    # first.
+    #
+    # The plant-level branches below already got this right ("No production
+    # recorded this week (OEE was N% last week)"); this applies the same rule per
+    # machine. See test_oee_idle_is_not_zero.py.
     cur_bm, pri_bm = _by_machine(cur_recs), _by_machine(pri_recs)
     machines = []
     for mid in set(cur_bm) | set(pri_bm):
-        c_oee = _oee_from_records(cur_bm[mid])["oee"] if mid in cur_bm else 0
-        p_oee = _oee_from_records(pri_bm[mid])["oee"] if mid in pri_bm else 0
-        machines.append({"machine_id": mid, "name": names.get(mid, f"#{mid}"),
-                         "oee": c_oee, "prior_oee": p_oee, "delta": c_oee - p_oee})
-    improving_machines = sorted((m for m in machines if m["delta"] >= OEE_TREND_DEAD_BAND),
+        c_oee = _oee_from_records(cur_bm[mid])["oee"] if mid in cur_bm else None
+        p_oee = _oee_from_records(pri_bm[mid])["oee"] if mid in pri_bm else None
+        machines.append({
+            "machine_id": mid, "name": names.get(mid, f"#{mid}"),
+            "oee": c_oee, "prior_oee": p_oee,
+            "delta": (c_oee - p_oee) if (c_oee is not None and p_oee is not None) else None,
+        })
+    movers = [m for m in machines if m["delta"] is not None]
+    improving_machines = sorted((m for m in movers if m["delta"] >= OEE_TREND_DEAD_BAND),
                                 key=lambda m: m["delta"], reverse=True)[:TOP_N]
-    declining_machines = sorted((m for m in machines if m["delta"] <= -OEE_TREND_DEAD_BAND),
+    declining_machines = sorted((m for m in movers if m["delta"] <= -OEE_TREND_DEAD_BAND),
                                 key=lambda m: m["delta"])[:TOP_N]
 
     now = current["oee"]

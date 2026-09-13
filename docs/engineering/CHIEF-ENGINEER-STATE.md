@@ -118,7 +118,21 @@ seven. This PR closes the worst face of it; the rest are listed below.
 | **The scorecard's "Plant OEE" arrow and the recovery card's improving/worsening badge compared a week against itself.** Both hand-rolled "last week" as `[midnight(today-13), midnight(today-6))` against a rolling current window, overlapping it by `24h - (time since midnight)` — ~10h at 14:00 UTC, a **full 24h at midnight**. A plant whose only run was on the boundary day published a confident green *"OEE improved N points week on week"* when there was no prior week at all, and the same data gave a **different delta depending on the hour the dashboard was opened** | P1 | fixed #584, 7/7 mutations red |
 | `oee_contract` already documented the mechanism — *"an explicit `now=` — what a caller passes to build adjacent windows — is used verbatim"*. It now exposes `prior_window(current)`, and one anchor is threaded through the request so `prior.end is current.start` exactly | P1 | 26 checks |
 
-**All window findings are now closed (#584, #586, #587, #589, #590, #591).** One item stays open by choice: **the daily series still reads `oee: 0` for a day with no production**, so an idle day draws as a catastrophic one — the #585 fabricated-zero rule applied to a typed frontend series, and its own change.
+**All window findings are now closed (#584, #586, #587, #589, #590, #591), and the last recorded follow-up with them (#592).** The audit is fully worked through.
+
+### 2026-09-14 — an idle day is not a catastrophic day (#592)
+
+The last recorded item from the window audit, and the second face turned out to
+be worse than the one that was recorded.
+
+| Task | Priority | Status |
+|---|---|---|
+| **A day with no production read `oee: 0`**, so an idle Sunday drew as a full-height RED bar beside a good Monday. Reproduced: a plant that ran one good day at 41% published **seven of eight bars at zero** — a plant that runs five days a week renders as a plant failing twice a week | P2 | fixed #592, 7/7 mutations red |
+| **The same zero produced a RANKING, which is worse than a chart.** A machine that ran at 80% last week and did not run at all this week scored `delta = -80` and topped `declining_machines` — the plant's worst decliner, **for not running**. A machine commissioned this week scored `prior_oee = 0` and topped `improving_machines` with an improvement that never happened. Those two lists are what a manager reads to decide where to walk first | P1 | fixed #592 |
+| **The convention already existed ten lines below**, at plant level: *"No production recorded this week (OEE was N% last week)"* — precisely the case the per-machine code turned into a -80 point decline. Same shape as #585 | P2 | applied per machine |
+| **The siblings are NOT affected, and that was checked rather than assumed.** `ai/cost.py` and `ai/downtime.py` build the same improving/worsening lists from the same halves and are RIGHT to use zero: cost and downtime minutes are **extensive**, so a machine that did not run genuinely incurred no loss and no downtime. Only the **intensive ratio** has no value when its denominator is absent — which is why this touched one file | P3 | scope justified |
+
+**Recorded, not invented:** the trend payload exposes only the two ranked lists, so excluding a stopped machine removes it from the trend entirely. That is strictly better than showing it as a -80 point decline, but *"which machines stopped"* is real information with nowhere to go. A `stopped_machines` surface would need a consumer first.
 
 ### 2026-09-13 — three OEE rollups measured all time (#591) — window audit CLOSED
 

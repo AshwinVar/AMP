@@ -42,7 +42,9 @@ def test_empty_plant_reports_no_data():
     touched = len({(window.start + timedelta(hours=h)).date()
                    for h in range(0, oee.WINDOW_DAYS * 24 + 1)})
     assert len(s["daily"]) == touched, (len(s["daily"]), touched)
-    assert all(d["oee"] == 0 for d in s["daily"])                            # flat-zero trend
+    # An empty plant's trend is all None, not all zero: a day with no production
+    # has NO OEE, and drawing it as 0% made an idle day look catastrophic (#592).
+    assert all(d["oee"] is None for d in s["daily"]), [d["oee"] for d in s["daily"]]
 
 
 def test_plant_oee_pools_machines_and_ranks_worst_first():
@@ -72,14 +74,15 @@ def test_plant_oee_pools_machines_and_ranks_worst_first():
     assert s["machines"][-1]["machine_id"] == s["best"]["machine_id"]
     # The trend spans the calendar dates the rolling window touches (see the
     # note in test_empty_plant_reports_no_data). Production is all today, so the
-    # last day equals the plant OEE and the earlier (empty) days read 0 — the
-    # part that actually matters here, and the part a fixed length was obscuring.
+    # last day equals the plant OEE and the earlier days — which had no
+    # production at all — have no OEE to report.
     window = oee_contract.OeeWindow(oee.WINDOW_DAYS)
     touched = len({(window.start + timedelta(hours=h)).date()
                    for h in range(0, oee.WINDOW_DAYS * 24 + 1)})
     assert len(s["daily"]) == touched, (len(s["daily"]), touched)
     assert s["daily"][-1]["oee"] == s["plant"]["oee"]
-    assert s["daily"][0]["oee"] == 0
+    # The earlier days had no production at all, so they have no OEE.
+    assert s["daily"][0]["oee"] is None, s["daily"][0]
     # per-line OEE: SMT (PRESS-01, quality 90/100) and IC (CNC-02, quality 380/400)
     by_line = {l["line"]: l for l in s["by_line"]}
     assert set(by_line) == {"SMT", "IC"}

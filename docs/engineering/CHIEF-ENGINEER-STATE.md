@@ -3,12 +3,12 @@
 > Handover file. A new session should be able to read only this and continue.
 > Keep it short. Update it at the end of every completed task.
 
-**Updated:** 2026-09-12 (the honesty line — what AMP published that was not
-measured: #580–#587)
-**Master SHA:** `dee05de` (#586)
-**Production SHA:** `dee05de` — verified live, not assumed:
-`{"status":"ok","database":"ok","schema":"ok","version":"dee05de"}` from
-`https://flowmes-production.up.railway.app/health`, read at 12:32 UTC.
+**Updated:** 2026-09-13 (the honesty line — what AMP published that was not
+measured: #580–#591, incl. the whole window audit)
+**Master SHA:** `df968a0` (#590)
+**Production SHA:** `df968a0` — verified live, not assumed:
+`{"status":"ok","database":"ok","schema":"ok","version":"df968a0"}` from
+`https://flowmes-production.up.railway.app/health`, read at 00:47 UTC.
 Master and production are in step. Railway auto-deploys master, so prod tracks
 HEAD; re-check `/health` rather than trusting this line's age.
 
@@ -118,7 +118,19 @@ seven. This PR closes the worst face of it; the rest are listed below.
 | **The scorecard's "Plant OEE" arrow and the recovery card's improving/worsening badge compared a week against itself.** Both hand-rolled "last week" as `[midnight(today-13), midnight(today-6))` against a rolling current window, overlapping it by `24h - (time since midnight)` — ~10h at 14:00 UTC, a **full 24h at midnight**. A plant whose only run was on the boundary day published a confident green *"OEE improved N points week on week"* when there was no prior week at all, and the same data gave a **different delta depending on the hour the dashboard was opened** | P1 | fixed #584, 7/7 mutations red |
 | `oee_contract` already documented the mechanism — *"an explicit `now=` — what a caller passes to build adjacent windows — is used verbatim"*. It now exposes `prior_window(current)`, and one anchor is threaded through the request so `prior.end is current.start` exactly | P1 | 26 checks |
 
-**Still open, same root cause, each needing its own measurement because they move published figures:** `exec-oee-lifetime-vs-twin-7day` (the Executive ranking shows a machine's OEE over its LIFETIME while the cockpit shows seven days). **The daily series still reads `oee: 0` for a day with no production**, so an idle day draws as a catastrophic one — the #585 fabricated-zero rule applied to a typed frontend series, and its own change.
+**All window findings are now closed (#584, #586, #587, #589, #590, #591).** One item stays open by choice: **the daily series still reads `oee: 0` for a day with no production**, so an idle day draws as a catastrophic one — the #585 fabricated-zero rule applied to a typed frontend series, and its own change.
+
+### 2026-09-13 — three OEE rollups measured all time (#591) — window audit CLOSED
+
+| Task | Priority | Status |
+|---|---|---|
+| **`analytics_summary`, `/analytics/management` and `/analytics/executive-oee` pooled `production_records` with NO date filter**, publishing a LIFETIME plant OEE under the same name every other surface uses for seven days. Measured: **35% on the Executive ranking against 83% in the cockpit** — 48 points, same machine, two screens a user clicks between | P1 | fixed #591, 6/6 mutations red |
+| **The endpoint's own comment claimed the opposite** — *"the single standardised OEE definition … so /analytics/executive-oee agrees with /oee-summary and every other surface"*. It cannot, while measuring a different span: the standard had been applied to the FORMULA and not to the WINDOW | P1 | fixed #591 |
+| The same file had already made this exact argument once, 300 lines earlier, bounding `shift_data` to the most recent 50 *"so the two per-shift attainment surfaces reconcile on ONE basis instead of disagreeing"*. Right reasoning, applied to one column of one endpoint | P2 | now applied to all three |
+| **What moves:** these three published figures describe the last seven days rather than all history. A real change to a flagship number, hence its own PR and its own measurement — the #583 rule | P1 | measured before shipping |
+| **Mutation testing found three gaps in my own fixtures:** no test here had created a `DowntimeLog` or a `QualityInspection` at all, so bounding production alone left the downtime and quality windows unguarded. A year-old inspection could hand a machine that has not run a fabricated OEE through the no-production fallback | P2 | fixtures added |
+
+**The 60-agent window audit is now closed.** 17 raw findings → one root cause → #584, #586, #587, #589, #590, #591. What remains recorded and deliberately unfixed: the daily OEE series still reads `oee: 0` for a day with no production (the #585 rule on a typed frontend series).
 
 ### 2026-09-13 — the machine cockpit measured one machine over three weeks (#590)
 

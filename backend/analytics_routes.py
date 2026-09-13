@@ -57,7 +57,17 @@ def _get_db():
 
 def analytics_summary(db: Session = Depends(_get_db), current_user: dict = Depends(get_current_user)):
     machines = db.query(models.Machine).all()
-    downtime = downtime_aggregates(db)
+    # THE CANONICAL WINDOW, not all of history.
+    #
+    # oee_contract.OeeWindow is THE window every other OEE surface pools:
+    # /oee-summary, the machine cockpit, the scorecard, the recovery and cost
+    # cards. This rollup had NO date filter, so it published a LIFETIME figure
+    # under the same name -- 35% against the cockpit's 83% on a machine that ran
+    # badly a year ago and well this week. The standard had been applied to the
+    # FORMULA (pooled_oee_from_sums) and not to the SPAN. See
+    # test_oee_rollups_one_window.py.
+    _oee_window = oee_contract.OeeWindow(oee_contract.DEFAULT_WINDOW_DAYS)
+    downtime = downtime_aggregates(db, _oee_window.start, _oee_window.end)
 
     # Plant OEE is a pure ratio of sums (pooled_oee), so the growing
     # production_records table belongs in SQL — not hydrated whole into Python just
@@ -85,7 +95,8 @@ def analytics_summary(db: Session = Depends(_get_db), current_user: dict = Depen
             0,
         ),
         func.count(models.ProductionRecord.id),
-    ).one()
+    ).filter(models.ProductionRecord.created_at >= _oee_window.start,
+             models.ProductionRecord.created_at < _oee_window.end).one()
 
     running = len([m for m in machines if m.status == "Running"])
     idle = len([m for m in machines if m.status == "Idle"])
@@ -352,11 +363,21 @@ def get_shift_kpis(db: Session = Depends(_get_db), current_user: dict = Depends(
 @router.get("/analytics/management")
 def get_management_dashboard(db: Session = Depends(_get_db), current_user: dict = Depends(require_roles(["Admin", "Supervisor"]))):
     machines = db.query(models.Machine).all()
+    # THE CANONICAL WINDOW, not all of history.
+    #
+    # oee_contract.OeeWindow is THE window every other OEE surface pools:
+    # /oee-summary, the machine cockpit, the scorecard, the recovery and cost
+    # cards. This rollup had NO date filter, so it published a LIFETIME figure
+    # under the same name -- 35% against the cockpit's 83% on a machine that ran
+    # badly a year ago and well this week. The standard had been applied to the
+    # FORMULA (pooled_oee_from_sums) and not to the SPAN. See
+    # test_oee_rollups_one_window.py.
+    _oee_window = oee_contract.OeeWindow(oee_contract.DEFAULT_WINDOW_DAYS)
     # Aggregated in SQL rather than hydrated: downtime_logs grows with how long
     # the factory has run, not with its size (see analytics_engine.
     # downtime_aggregates). build_management_summary takes the tally directly,
     # the same way it already takes production_sums and shift_sums.
-    downtime = downtime_aggregates(db)
+    downtime = downtime_aggregates(db, _oee_window.start, _oee_window.end)
 
     # Pool plant OEE and shift attainment straight out of SQL rather than hydrating
     # the whole (growing) production_records and shift_data tables into Python just to
@@ -378,7 +399,8 @@ def get_management_dashboard(db: Session = Depends(_get_db), current_user: dict 
             * models.ProductionRecord.total_count
         ), 0),
         func.count(models.ProductionRecord.id),
-    ).one()
+    ).filter(models.ProductionRecord.created_at >= _oee_window.start,
+             models.ProductionRecord.created_at < _oee_window.end).one()
     shift_sums = db.query(
         func.coalesce(func.sum(models.ShiftData.target_output), 0),
         func.coalesce(func.sum(models.ShiftData.actual_output), 0),
@@ -739,7 +761,17 @@ def get_executive_oee(
     # collapses the table to distinct (machine, reason, duration) triples and
     # parses each distinct string once. Identical arithmetic, and 822.0 ms
     # becomes ~15 ms once the log reaches 75,000 rows.
-    downtime = downtime_aggregates(db)
+    # THE CANONICAL WINDOW, not all of history.
+    #
+    # oee_contract.OeeWindow is THE window every other OEE surface pools:
+    # /oee-summary, the machine cockpit, the scorecard, the recovery and cost
+    # cards. This rollup had NO date filter, so it published a LIFETIME figure
+    # under the same name -- 35% against the cockpit's 83% on a machine that ran
+    # badly a year ago and well this week. The standard had been applied to the
+    # FORMULA (pooled_oee_from_sums) and not to the SPAN. See
+    # test_oee_rollups_one_window.py.
+    _oee_window = oee_contract.OeeWindow(oee_contract.DEFAULT_WINDOW_DAYS)
+    downtime = downtime_aggregates(db, _oee_window.start, _oee_window.end)
 
     machine_map = {machine.id: machine.name for machine in machines}
 
@@ -773,6 +805,8 @@ def get_executive_oee(
             func.coalesce(func.sum(models.ProductionRecord.good_count), 0),
             func.coalesce(func.sum(models.ProductionRecord.rejected_count), 0),
         )
+        .filter(models.ProductionRecord.created_at >= _oee_window.start,
+                models.ProductionRecord.created_at < _oee_window.end)
         .group_by(models.ProductionRecord.machine_id)
         .all()
     )
@@ -794,7 +828,9 @@ def get_executive_oee(
             func.coalesce(func.sum(models.QualityInspection.inspected_quantity), 0),
             func.coalesce(func.sum(models.QualityInspection.passed_quantity), 0),
         )
-        .filter(models.QualityInspection.machine_id.isnot(None))
+        .filter(models.QualityInspection.machine_id.isnot(None),
+                models.QualityInspection.created_at >= _oee_window.start,
+                models.QualityInspection.created_at < _oee_window.end)
         .group_by(models.QualityInspection.machine_id)
         .all()
     }

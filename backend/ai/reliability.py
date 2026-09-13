@@ -32,6 +32,7 @@ import models
 # call sites below read unchanged. A local leading-digit regex used to live here and
 # read every hour-format stoppage as minutes, which understated MTTR ~60x and
 # inverted the least-reliable ranking.
+import oee_contract
 from duration import parse_duration_to_minutes as _duration_minutes
 from ai.maintenance import OPEN_STATUSES, PRIORITY_ORDER
 
@@ -144,8 +145,18 @@ def build_reliability_summary(db, tenant: str) -> dict:
     a per-machine breakdown (least reliable first), the reliability bottleneck,
     and the failure-mode Pareto by repair time. downtime_logs and machines are
     auto-scoped (ADR-0002). Empty-safe: zeros, no divide-by-zero."""
-    now = datetime.utcnow()
-    start = now - timedelta(days=WINDOW_DAYS)
+    # THE CANONICAL WINDOW, so the exclusive end is the next representable
+    # instant and not this one.
+    #
+    # Passing a bare utcnow() as the upper bound reintroduces #550: utcnow() has
+    # ~15.6 ms granularity on Windows, so a stoppage logged in the SAME CLOCK
+    # TICK as the query carries exactly the bound and `created_at < end` drops it
+    # from its own window. It showed up here as a test that returned 5 failures
+    # from 6 rows, intermittently -- which is precisely how #550 presented.
+    # OeeWindow already solves it (`end = _now() + _TICK`), so use it rather than
+    # hand-rolling the bound a second time.
+    window = oee_contract.OeeWindow(WINDOW_DAYS)
+    now, start = window.end, window.start
 
     logs = _window_logs(db, start, now)
     # _rank_rows already loads the machines (one row per machine), so len(rows) is
@@ -179,9 +190,19 @@ def build_machine_reliability(db, tenant: str, machine_id: int) -> dict:
     "and here is what's booked to fix it". Composes downtime_logs + machines +
     maintenance_tasks (auto-scoped, ADR-0002); adds no storage. Returns
     ``found: False`` with a zeroed shape when the machine isn't in the tenant."""
-    now = datetime.utcnow()
-    start = now - timedelta(days=WINDOW_DAYS)
-    today = now.date()
+    # THE CANONICAL WINDOW, so the exclusive end is the next representable
+    # instant and not this one.
+    #
+    # Passing a bare utcnow() as the upper bound reintroduces #550: utcnow() has
+    # ~15.6 ms granularity on Windows, so a stoppage logged in the SAME CLOCK
+    # TICK as the query carries exactly the bound and `created_at < end` drops it
+    # from its own window. It showed up here as a test that returned 5 failures
+    # from 6 rows, intermittently -- which is precisely how #550 presented.
+    # OeeWindow already solves it (`end = _now() + _TICK`), so use it rather than
+    # hand-rolling the bound a second time.
+    window = oee_contract.OeeWindow(WINDOW_DAYS)
+    now, start = window.end, window.start
+    today = datetime.utcnow().date()
 
     machine = db.query(models.Machine).filter(models.Machine.id == machine_id).first()
     logs = _window_logs(db, start, now)

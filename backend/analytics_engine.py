@@ -15,7 +15,7 @@ WORLD_CLASS_OEE = 85
 WORLD_CLASS_COMPONENTS = {"availability": 90, "performance": 95, "quality": 99}
 
 
-def downtime_aggregates(db: Session):
+def downtime_aggregates(db: Session, start=None, end=None):
     """Downtime totals WITHOUT hydrating the downtime log into Python.
 
     THE PROBLEM THIS SOLVES
@@ -54,13 +54,23 @@ def downtime_aggregates(db: Session):
     `analytics_summary` tallies reasons by EVENT COUNT while `executive-oee`
     tallies them by MINUTES, and conflating the two would change both payloads.
     """
+    # OPTIONAL WINDOW. Callers that publish an OEE figure pass the canonical
+    # window, so their downtime is the same seven days as their production; the
+    # callers that want a lifetime tally pass nothing and are unchanged. A bound
+    # here only ever makes the GROUP BY read FEWER rows, so it cannot undo the
+    # scan this function was written to remove (#405).
+    q = db.query(
+        models.DowntimeLog.machine_id,
+        models.DowntimeLog.reason,
+        models.DowntimeLog.duration,
+        func.count(),
+    )
+    if start is not None:
+        q = q.filter(models.DowntimeLog.created_at >= start)
+    if end is not None:
+        q = q.filter(models.DowntimeLog.created_at < end)
     rows = (
-        db.query(
-            models.DowntimeLog.machine_id,
-            models.DowntimeLog.reason,
-            models.DowntimeLog.duration,
-            func.count(),
-        )
+        q
         .group_by(
             models.DowntimeLog.machine_id,
             models.DowntimeLog.reason,

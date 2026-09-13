@@ -168,6 +168,14 @@ def main():
           f"({bars} bars vs {detail['failures']} headline)",
           bars == detail["failures"] == 6, f"bars={bars} headline={detail['failures']}")
     db.close()
+    # The `days_ago=0` row above is the one that matters, and it is why this
+    # assertion is a hard 6 rather than "bars == headline". A stoppage logged in
+    # the SAME CLOCK TICK as the query carries exactly the window's exclusive end
+    # -- utcnow() has ~15.6 ms granularity on Windows -- so a hand-rolled
+    # `end = utcnow()` drops it from its own window. This suite caught exactly
+    # that, intermittently, at 5 of 6; `oee_contract.OeeWindow` already solves it
+    # with `end = _now() + _TICK`, and reliability now uses it. Same defect as
+    # #550, re-found because the bound was hand-rolled a second time.
     # The buckets must be HALF-OPEN, or a stoppage landing exactly on an edge is
     # in two bars. No fixture can reach that: the edges are derived from a
     # `utcnow()` taken inside the read-model, and a row's `created_at` comes from

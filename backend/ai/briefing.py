@@ -39,7 +39,13 @@ def _trend(daily: list) -> str:
     """Direction of OEE across the window: compare the last third of the days that
     actually ran to the first third. Flat when there's too little to tell (need a
     few producing days) or the move is under 2 points."""
-    vals = [d["oee"] for d in daily if d["oee"] > 0]
+    # "Days that actually ran" is now stated directly: a day with no production
+    # publishes `oee: None` rather than 0 (#592). This used to filter `> 0`,
+    # which was a workaround for the fabricated zero AND was slightly wrong on
+    # its own terms — it also discarded a genuinely measured 0% day, a day the
+    # plant ran and made nothing good, which is exactly the kind of day a trend
+    # should notice.
+    vals = [d["oee"] for d in daily if d["oee"] is not None]
     if len(vals) < 4:
         return "flat"
     n = max(1, len(vals) // 3)

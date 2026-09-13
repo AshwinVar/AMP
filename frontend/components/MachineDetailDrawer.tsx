@@ -36,8 +36,17 @@ type Detail = {
   risk_level: string;
   oee: { oee: number; availability: number; performance: number; quality: number; has_data: boolean };
   risk_factors: string[];
-  downtime_7d: { date: string; count: number }[];
-  production_7d: { good: number; total: number; good_rate: number; daily: { date: string; count: number }[] };
+  // Every series on this card spans the calendar dates the shared rolling
+  // window touches — eight when it opens mid-day — with the oldest flagged
+  // `partial`. Before #590 three panels each narrowed the window their own
+  // way, so one card measured the same machine over three different weeks.
+  downtime_7d: { date: string; count: number; partial?: boolean }[];
+  production_7d: {
+    good: number;
+    total: number;
+    good_rate: number;
+    daily: { date: string; count: number; partial?: boolean }[];
+  };
   quality: { inspections: number; inspected: number; passed: number; failed: number; fail_rate: number; top_defects: { category: string; count: number }[] };
   open_actions: OpenAction[];
   timeline: TimelineEvent[];

@@ -13,6 +13,7 @@ from datetime import datetime, timedelta
 from sqlalchemy import func
 
 import models
+import oee_contract
 from ai.maintenance import OPEN_STATUSES
 import tenancy
 # Pooled OEE (ratio of sums) is the single source of truth in analytics_engine,
@@ -283,38 +284,60 @@ def _open_actions(db, machine_id, tenant):
              "severity": a.severity, "created_at": _iso(a.created_at)} for a in rows]
 
 
-def _downtime_trend(db, machine_id, days: int = 7):
-    """A calendar day-by-day count of this machine's downtime over the last week
-    (oldest -> newest), so the cockpit can draw a downtime sparkline. Windowed in
-    SQL — downtime_logs grows continuously, so loading a machine's whole history
-    to draw a 7-day sparkline would get slower every week. The window_set check
-    stays to drop any future-dated rows the lower bound can't."""
-    today = datetime.utcnow().date()
-    window = [today - timedelta(days=i) for i in range(days - 1, -1, -1)]
-    window_set = set(window)
-    cutoff = datetime.combine(window[0], datetime.min.time())
+def _window_span(window):
+    """The calendar dates `window` touches, oldest first, with the oldest flagged
+    partial when the window opens mid-day.
+
+    ONE definition for every series on the cockpit. A rolling 7x24h window that
+    opens part-way through a day touches EIGHT calendar dates; a series drawn
+    over seven of them cannot account for the panel above it, and three panels
+    each narrowing the window their own way is how one card came to measure the
+    same machine over three different weeks (#590). Same shape as the OEE and
+    cost trends (#586, #587)."""
+    start_date = window.start.date()
+    end_date = (window.end - timedelta(microseconds=1)).date()
+    days = [start_date + timedelta(days=i)
+            for i in range((end_date - start_date).days + 1)]
+    opens_mid_day = window.start.time() != datetime.min.time()
+    return days, opens_mid_day
+
+
+def _downtime_trend(db, machine_id, days: int = 7, now=None):
+    """A day-by-day count of this machine's downtime across the cockpit's window
+    (oldest -> newest), so the card can draw a downtime sparkline.
+
+    Bounded in SQL at BOTH ends — downtime_logs grows continuously, and an
+    unbounded upper end admits future-dated rows. The span comes from the shared
+    window, not a day count, so this series covers the same week as every other
+    panel on the card."""
+    window = oee_contract.OeeWindow(days, now=now)
+    span, opens_mid_day = _window_span(window)
     counts = Counter(
         d.created_at.date()
         for d in db.query(models.DowntimeLog)
                    .filter(models.DowntimeLog.machine_id == machine_id,
-                           models.DowntimeLog.created_at >= cutoff).all()
-        if d.created_at and d.created_at.date() in window_set
+                           models.DowntimeLog.created_at >= window.start,
+                           models.DowntimeLog.created_at < window.end).all()
+        if d.created_at
     )
-    return [{"date": dd.isoformat(), "count": counts.get(dd, 0)} for dd in window]
+    return [{"date": dd.isoformat(), "count": counts.get(dd, 0),
+             **({"partial": True} if (i == 0 and opens_mid_day) else {})}
+            for i, dd in enumerate(span)]
 
 
-def _machine_production(db, machine_id, days: int = 7):
-    """This machine's throughput over the last week: good/total, good rate, and a
-    daily good-count series (oldest -> newest). Bounded in SQL via the shared
-    _recent_production helper (production_records grows continuously); the
-    window_set check then drops any future-dated rows."""
-    today = datetime.utcnow().date()
-    window = [today - timedelta(days=i) for i in range(days - 1, -1, -1)]
-    window_set = set(window)
-    recs = [
-        r for r in _recent_production(db, machine_id, days)
-        if r.created_at and r.created_at.date() in window_set
-    ]
+def _machine_production(db, machine_id, days: int = 7, now=None):
+    """This machine's throughput over the cockpit's window: good/total, good rate,
+    and a daily good-count series (oldest -> newest).
+
+    THE SAME WINDOW AS THE OEE PANEL. This used to narrow the rolling window to
+    seven calendar dates, while the OEE panel beside it pooled all eight the
+    window touches -- so `good_rate` here and the OEE Quality bar there, which
+    are the SAME RATIO, could differ by forty-five points on one card. Bounded in
+    SQL by _recent_production (production_records grows continuously); the window
+    is half-open, so it needs no second filter to drop future-dated rows."""
+    window = oee_contract.OeeWindow(days, now=now)
+    span, opens_mid_day = _window_span(window)
+    recs = _recent_production(db, machine_id, days, now=window.end)
     good = sum(r.good_count or 0 for r in recs)
     total = sum(r.total_count or 0 for r in recs)
     per_day: dict = {}
@@ -324,11 +347,13 @@ def _machine_production(db, machine_id, days: int = 7):
         "good": good,
         "total": total,
         "good_rate": round(good / total * 100) if total else 0,
-        "daily": [{"date": d.isoformat(), "count": per_day.get(d, 0)} for d in window],
+        "daily": [{"date": d.isoformat(), "count": per_day.get(d, 0),
+                   **({"partial": True} if (i == 0 and opens_mid_day) else {})}
+                  for i, d in enumerate(span)],
     }
 
 
-def _machine_quality(db, machine_id, days: int = 7):
+def _machine_quality(db, machine_id, days: int = 7, now=None):
     """This machine's quality over the SAME window as the rest of the cockpit:
     yield, fail rate and top defects for the last `days`.
 
@@ -339,10 +364,11 @@ def _machine_quality(db, machine_id, days: int = 7):
     cockpit panel — downtime_7d, production_7d — is the same 7 days, so one basis
     for the whole card. And it bounds the query: quality_inspections grows, and
     created_at is indexed."""
-    cutoff = datetime.combine(datetime.utcnow().date() - timedelta(days=days - 1), datetime.min.time())
+    window = oee_contract.OeeWindow(days, now=now)
     insp = (db.query(models.QualityInspection)
             .filter(models.QualityInspection.machine_id == machine_id,
-                    models.QualityInspection.created_at >= cutoff).all())
+                    models.QualityInspection.created_at >= window.start,
+                    models.QualityInspection.created_at < window.end).all())
     inspected = sum(i.inspected_quantity or 0 for i in insp)
     failed = sum(i.failed_quantity or 0 for i in insp)
     defects: Counter = Counter()
@@ -368,18 +394,24 @@ def build_machine_detail(db, tenant: str, machine_id: int):
     if not machine:
         return None
     risk = prediction.risk_for_machine(db, machine_id)
+    # ONE anchor for the whole card. Every panel below is labelled "last 7 days",
+    # and they used to be three different weeks: the OEE panel on the rolling
+    # window, production and downtime narrowed to seven calendar dates, and
+    # quality on seven dates plus everything in the future. See
+    # test_twin_cockpit_one_window.py.
+    window = oee_contract.OeeWindow(7)
     # ONE machine, so the batched gatherers are called for this id only — the
     # drill-down keeps the same shape as the fleet view without paying for it.
     detail = _machine_twin(
         machine, risk,
-        _oee_from_records(_recent_production(db, machine_id)),
+        _oee_from_records(_recent_production(db, machine_id, now=window.end)),
         _downtime_by_machine(db).get(machine_id),
         _open_task_counts(db).get(machine_id, 0),
         _pending_action_counts(db, tenant).get(machine_id, 0))
     detail["risk_factors"] = list(risk["reasons"]) if risk and risk.get("reasons") else []
-    detail["downtime_7d"] = _downtime_trend(db, machine_id)
-    detail["production_7d"] = _machine_production(db, machine_id)
-    detail["quality"] = _machine_quality(db, machine_id)
+    detail["downtime_7d"] = _downtime_trend(db, machine_id, now=window.end)
+    detail["production_7d"] = _machine_production(db, machine_id, now=window.end)
+    detail["quality"] = _machine_quality(db, machine_id, now=window.end)
     detail["timeline"] = _timeline(db, machine_id, tenant)
     detail["open_actions"] = _open_actions(db, machine_id, tenant)
     return detail

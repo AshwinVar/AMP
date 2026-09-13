@@ -11,6 +11,7 @@ from sqlalchemy import create_engine, event
 from sqlalchemy.orm import sessionmaker
 
 import models
+import oee_contract
 from database import Base
 from ai import twin
 
@@ -65,8 +66,13 @@ def test_cockpit_drilldowns_are_windowed_in_sql_not_loaded_whole():
 
     # correctness: the 400-day-old rows are excluded from the 7-day view
     assert prod["good"] == 90 and prod["total"] == 100 and prod["good_rate"] == 90   # ancient 999s not counted
-    assert len(prod["daily"]) == 7
-    assert sum(d["count"] for d in dt) == 1 and len(dt) == 7                          # only today's downtime
+    # The series span the calendar dates the rolling window touches, derived from
+    # the contract rather than fixed at 7 (see the note in the cockpit test).
+    window = oee_contract.OeeWindow(7)
+    touched = len({(window.start + timedelta(hours=h)).date()
+                   for h in range(0, 7 * 24 + 1)})
+    assert len(prod["daily"]) == touched, len(prod["daily"])
+    assert sum(d["count"] for d in dt) == 1 and len(dt) == touched                    # only today's downtime
 
     # the fix: each drill-down SELECT carries a created_at lower bound (bounded in
     # SQL), so the ancient rows are never loaded. Without the bound this fails.
@@ -132,8 +138,18 @@ def test_machine_detail_composes_cockpit_and_scopes_actions():
     detail = twin.build_machine_detail(db, "DEFAULT", 1)
     assert detail["machine_id"] == 1 and detail["health_band"] == "Critical"
     assert detail["risk_factors"]                                     # non-empty risk breakdown
-    assert len(detail["downtime_7d"]) == 7 and detail["downtime_7d"][-1]["count"] == 1  # today's downtime
-    assert len(detail["production_7d"]["daily"]) == 7                 # per-machine throughput series
+    # Every series on the cockpit spans the calendar dates the shared rolling
+    # window TOUCHES — eight when it opens mid-day, seven exactly at midnight.
+    # Asserting a fixed 7 was pinning the defect: three panels each narrowed the
+    # window their own way, so one card measured the same machine over three
+    # different weeks (#590). Derived from the contract, so it also cannot go
+    # stale at midnight UTC.
+    window = oee_contract.OeeWindow(7)
+    touched = len({(window.start + timedelta(hours=h)).date()
+                   for h in range(0, 7 * 24 + 1)})
+    assert len(detail["downtime_7d"]) == touched, len(detail["downtime_7d"])
+    assert detail["downtime_7d"][-1]["count"] == 1                    # today's downtime
+    assert len(detail["production_7d"]["daily"]) == touched           # per-machine throughput series
     assert detail["production_7d"]["good"] == 90 and detail["production_7d"]["good_rate"] == 90
     assert detail["quality"]["inspections"] == 1 and detail["quality"]["fail_rate"] == 10
     assert detail["quality"]["top_defects"][0]["category"] == "surface"

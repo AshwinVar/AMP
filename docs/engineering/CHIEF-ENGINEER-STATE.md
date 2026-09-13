@@ -118,7 +118,16 @@ seven. This PR closes the worst face of it; the rest are listed below.
 | **The scorecard's "Plant OEE" arrow and the recovery card's improving/worsening badge compared a week against itself.** Both hand-rolled "last week" as `[midnight(today-13), midnight(today-6))` against a rolling current window, overlapping it by `24h - (time since midnight)` — ~10h at 14:00 UTC, a **full 24h at midnight**. A plant whose only run was on the boundary day published a confident green *"OEE improved N points week on week"* when there was no prior week at all, and the same data gave a **different delta depending on the hour the dashboard was opened** | P1 | fixed #584, 7/7 mutations red |
 | `oee_contract` already documented the mechanism — *"an explicit `now=` — what a caller passes to build adjacent windows — is used verbatim"*. It now exposes `prior_window(current)`, and one anchor is threaded through the request so `prior.end is current.start` exactly | P1 | 26 checks |
 
-**Still open, same root cause, each needing its own measurement because they move published figures:** `twin-cockpit-oee-panel-mixed-basis`, `exec-oee-lifetime-vs-twin-7day`. **The daily series still reads `oee: 0` for a day with no production**, so an idle day draws as a catastrophic one — the #585 fabricated-zero rule applied to a typed frontend series, and its own change.
+**Still open, same root cause, each needing its own measurement because they move published figures:** `exec-oee-lifetime-vs-twin-7day` (the Executive ranking shows a machine's OEE over its LIFETIME while the cockpit shows seven days). **The daily series still reads `oee: 0` for a day with no production**, so an idle day draws as a catastrophic one — the #585 fabricated-zero rule applied to a typed frontend series, and its own change.
+
+### 2026-09-13 — the machine cockpit measured one machine over three weeks (#590)
+
+| Task | Priority | Status |
+|---|---|---|
+| **One card, every panel labelled "last 7 days", three different bases.** The OEE panel on the rolling `OeeWindow` (eight calendar dates); `production_7d` and `downtime_7d` narrowed to seven; `quality` on seven **plus everything dated in the future**. Measured: the **OEE Quality bar 55% beside a Production good rate of 100%** — the same ratio, good over total, forty-five points apart on one card | P1 | fixed #590, 8/8 mutations red |
+| `_machine_quality`'s own docstring claimed the opposite — *"Every other cockpit panel is the same 7 days, so one basis for the whole card"* — while its query had no upper bound at all. A fail rate of 34% was being driven by 500 failures **dated two days in the future** | P1 | fixed #590 |
+| The OEE panel does **not** move: same choice and same reason as #586 — the canonical window is the contract, and the panels that disagreed with it are the ones that changed. Pinned by a control, and a mutation implementing the reverse is caught | P2 | 22 checks |
+| **Mutation testing found a reachable gap the fixtures missed:** an unbounded downtime query admits a stoppage timestamped LATER TODAY, which carries today's date and so lands in today's bar. Unlike the other upper-bound cases this one needs no clock skew — just a row written a few hours ahead | P2 | fixture added |
 
 ### 2026-09-13 — the failure sparkline covered 28 of the 30 days it sat under (#589)
 

@@ -1666,7 +1666,8 @@ Exactly how your code becomes `app.marx8.com`, and the env vars and safety nets 
 | `GIT_COMMIT_SHA` / `RAILWAY_GIT_COMMIT_SHA` | build version shown on `/health` |
 | `NEXT_PUBLIC_API_URL` | frontend → backend address |
 | `ANTHROPIC_API_KEY` / `GEMINI_API_KEY` | enable the LLM copilot (optional) |
-| `MQTT_BROKER` / `MQTT_PORT` / `MQTT_TOPIC_PREFIX` | machine ingest |
+| `MQTT_BROKER` / `MQTT_PORT` / `MQTT_TOPIC_PREFIX` | machine ingest. `MQTT_TOPIC_PREFIX` replaced the older `MQTT_TOPIC`; a deployment still setting `MQTT_TOPIC` has its prefix read from it, but **must** also set `MQTT_LEGACY_TENANT` or nothing subscribes to that untenanted topic (the listener warns at startup — it will not guess an owner). ADR-0011 |
+| `MQTT_LEGACY_TENANT` / `MQTT_LEGACY_SITE` | who owns `{prefix}/machines`, for pre-multi-tenant deployments only |
 | `GMATS_ADMIN_USERNAME` / `_PASSWORD`, `RESEED_FACTORY`, `TRIAL_DAYS`, `SENTRY_DSN` | seeding, trials, error monitoring |
 
 ### Health, backup, restore, retention

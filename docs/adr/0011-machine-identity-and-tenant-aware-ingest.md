@@ -94,6 +94,16 @@ and any message on it is refused. This is a breaking change for existing
 single-tenant deployments, and deliberately a loud one — the alternative is
 defaulting it to `DEFAULT`, which is exactly the bug this ADR exists to remove.
 
+**Correction (2026-09):** "loud" was the intention, not the behaviour. A
+deployment carrying the pre-upgrade `MQTT_TOPIC` variable was never told
+anything, because being unsubscribed means the broker delivers nothing and there
+is no message to log a rejection for — the refusal path below only runs on a
+message that arrives. `mqtt_service.resolve_subscription` now closes that gap:
+it reads the prefix out of `MQTT_TOPIC` when `MQTT_TOPIC_PREFIX` is unset, still
+refuses to invent the tenant, and logs at WARNING on startup naming the topic
+nobody is listening to and the variable that fixes it. Silence is no longer one
+of the outcomes. See `backend/test_mqtt_topic_config_is_honoured.py`.
+
 ## Consequences
 
 **Breaking:** publishers must move to the tenant-addressed topic, or the

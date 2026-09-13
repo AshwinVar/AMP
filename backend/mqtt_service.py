@@ -37,13 +37,77 @@ except Exception:
 MQTT_BROKER = os.environ.get("MQTT_BROKER", "127.0.0.1")
 MQTT_PORT = int(os.environ.get("MQTT_PORT", "1883"))
 
-# The prefix, not the whole topic: the tenant and site are segments of it now
-# (see mqtt_identity). MQTT_TOPIC is still read so an existing deployment that
-# set it to a custom single-tenant topic keeps that topic working via the legacy
-# path below rather than silently going deaf after this upgrade.
-TOPIC_PREFIX = os.environ.get("MQTT_TOPIC_PREFIX", "flowmes")
-LEGACY_TENANT = os.environ.get("MQTT_LEGACY_TENANT", "").strip()
-LEGACY_SITE = os.environ.get("MQTT_LEGACY_SITE", "").strip()
+DEFAULT_TOPIC_PREFIX = "flowmes"
+_LEGACY_TOPIC_SUFFIX = "/machines"
+
+
+def resolve_subscription(env=None):
+    """What this process subscribes to, and what the operator must be told.
+
+    Returns `(prefix, legacy_tenant, legacy_site, warnings)`.
+
+    MQTT_TOPIC is the PRE-MULTI-TENANT variable: it named one whole topic, back
+    when one deployment meant one customer. The tenant and site are segments of
+    the topic now (see mqtt_identity), so the variable that replaced it names a
+    PREFIX. The comment that used to sit here claimed MQTT_TOPIC "is still read
+    so an existing deployment ... keeps that topic working ... rather than
+    silently going deaf after this upgrade". It was read nowhere. A deployment
+    that set it went exactly as deaf as the comment promised it would not: the
+    process subscribed to `flowmes/+/+/machines`, the gateway published to
+    `flowmes/machines`, and MQTT delivered nothing — so not one line was logged,
+    by this module or any other. Being unsubscribed is silent in a way being
+    rejected is not: the refusal path in on_message only runs on a message that
+    actually arrives.
+
+    The half of MQTT_TOPIC that can be honoured is honoured: the prefix. Reading
+    a variable the operator explicitly set is not guessing.
+
+    The half that cannot be is NOT invented. `flowmes/machines` says who to
+    listen to and nothing at all about who owns what arrives, and attributing it
+    to some default tenant is the one unrecoverable mistake in this subsystem
+    (mqtt_identity's whole preamble). That message stays dropped.
+
+    What was missing was neither of those — it was SAYING SO. An operator whose
+    telemetry is going nowhere gets a warning that names the topic nobody is
+    listening to and the variable that fixes it. Only when something is really
+    not doing what it looks like it is doing: a deployment that is correctly
+    configured, or has configured nothing, is told nothing (test_mqtt_boot's
+    first lesson — a boot warning everyone sees is a boot warning nobody reads).
+    """
+    env = os.environ if env is None else env
+    prefix = (env.get("MQTT_TOPIC_PREFIX") or "").strip()
+    legacy_topic = (env.get("MQTT_TOPIC") or "").strip()
+    legacy_tenant = (env.get("MQTT_LEGACY_TENANT") or "").strip()
+    legacy_site = (env.get("MQTT_LEGACY_SITE") or "").strip()
+    warnings = []
+
+    if legacy_topic and not prefix:
+        derived = (legacy_topic[: -len(_LEGACY_TOPIC_SUFFIX)]
+                   if legacy_topic.endswith(_LEGACY_TOPIC_SUFFIX) else "")
+        if derived:
+            prefix = derived
+        else:
+            warnings.append(
+                f"MQTT_TOPIC={legacy_topic!r} is not a '{{prefix}}"
+                f"{_LEGACY_TOPIC_SUFFIX}' topic, so no prefix could be read from "
+                f"it; subscribing under MQTT_TOPIC_PREFIX={DEFAULT_TOPIC_PREFIX!r} "
+                f"instead. Set MQTT_TOPIC_PREFIX explicitly.")
+
+    prefix = prefix or DEFAULT_TOPIC_PREFIX
+
+    if legacy_topic and not legacy_tenant:
+        warnings.append(
+            f"MQTT_TOPIC={legacy_topic!r} is set but MQTT_LEGACY_TENANT is not. "
+            f"That single-tenant topic carries no owner, so nothing subscribes "
+            f"to it and any telemetry published there is NOT received "
+            f"(subscribing to {mqtt_identity.topic_filters(prefix, '')!r}). Set "
+            f"MQTT_LEGACY_TENANT to the tenant code that owns it, or repoint the "
+            f"gateway at '{prefix}/{{tenant}}/{{site}}/machines'.")
+
+    return prefix, legacy_tenant, legacy_site, warnings
+
+
+TOPIC_PREFIX, LEGACY_TENANT, LEGACY_SITE, TOPIC_WARNINGS = resolve_subscription()
 
 
 def _non_negative_int(value):
@@ -573,6 +637,18 @@ def start_mqtt_service(client_factory=None, sleep=time.sleep, run_inline=False):
                  "Telemetry over HTTP (POST /iot/telemetry, POST /industrial/signals) "
                  "is unaffected.")
         return None
+
+    # Re-resolve here rather than trusting the import-time constants, and write
+    # the result back, for the same reason mqtt_is_configured() reads the raw
+    # environment: the listener starts after the app has loaded its config, and
+    # what is subscribed to (on_connect) must be exactly what is parsed
+    # (on_message). Refreshing BOTH from one call keeps them from ever drifting
+    # into a state where a message is delivered and then rejected as "outside
+    # prefix" by this same process.
+    global TOPIC_PREFIX, LEGACY_TENANT, LEGACY_SITE, TOPIC_WARNINGS
+    TOPIC_PREFIX, LEGACY_TENANT, LEGACY_SITE, TOPIC_WARNINGS = resolve_subscription()
+    for problem in TOPIC_WARNINGS:
+        log.warning("MQTT topic configuration: %s", problem)
 
     host = (os.environ.get("MQTT_BROKER") or "").strip() or MQTT_BROKER
     try:

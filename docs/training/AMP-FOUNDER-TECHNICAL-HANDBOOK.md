@@ -130,7 +130,7 @@ AMP has **two completely separate kinds of user**, living in **two separate iden
 | **OEM_SERVICE_MANAGER** | read_fleet, manage_service, manage_installations |
 | **OEM_ADMIN** | read_fleet, manage_models, manage_installations, manage_users, manage_branding, manage_service, commission |
 
-**C. The founder (you).** You sign in on the special `DEFAULT` tenant, which can *preview* any customer's workspace (via an `X-Tenant` header honoured **only** for DEFAULT tokens) — the demo/control-plane seat. Covered in Chapters 17 & 19.
+**C. The founder (you).** You sign in on the special `DEFAULT` tenant, which can *preview* any customer's workspace (via an `X-Tenant` header honoured **only** for a DEFAULT token whose role is **Admin**) — the demo/control-plane seat. Staff you add to your own workspace below Admin (an Operator demo login, a Supervisor) stay in `DEFAULT`: they are not offered the company switcher and cannot reach a customer. Covered in Chapters 17 & 19.
 
 > **Why two identity systems?** A factory user and an OEM user must **never** be able to reach each other's data. AMP enforces this at the token level: a factory route rejects an OEM token (`backend/auth.py:135`), and an OEM route rejects a factory token (`require_oem`). We prove this in Chapters 18–19.
 
@@ -1214,6 +1214,7 @@ flowchart TD
 
 ### "Fail closed" — the deliberate safety choices
 - The founder **preview** (`X-Tenant` header) is honoured **only** when the token's own tenant is `DEFAULT` **and** its role is `Admin`. No role claim ⇒ not Admin ⇒ no preview. (This fixed a class where any DEFAULT user could set `X-Tenant` and read/write any tenant.)
+- **One rule, everywhere it's asked.** The GMATS inventory module takes its tenant from a `?tenant=` parameter instead of the header, and it used to keep its *own* copy of this rule — which sent every non-Admin DEFAULT login to one named customer (GMATS) rather than keeping it home. Its tables are outside `SCOPED_MODELS`, so no ORM hook caught it. It now calls `tenancy.effective_tenant` directly, and the dashboard's switcher uses the same rule (`lib/modules.ts` `canSwitchCompany`). The lesson for any new module whose tables are *not* auto-scoped: never write a tenant rule, call the one that exists — a test asserts the two agree.
 - The 7 **fail-safe** audit/enterprise tables got `tenant_code` as **nullable with no backfill** — legacy rows stay `NULL`, which matches *no* tenant, so they're **hidden** until an approved backfill assigns them. Absence hides, never leaks.
 - An **OEM** request binds a **sentinel tenant `OEM:<code>`** that no factory can hold — so every factory table returns **zero rows** for an OEM *by construction* (Chapter 19). Binding `None` there would disable the filter and expose everyone — so the OEM branch is terminal and returns the sentinel, never `None`. The `:`-containing namespace is **reserved** (any tenant code with `:` is refused at creation).
 

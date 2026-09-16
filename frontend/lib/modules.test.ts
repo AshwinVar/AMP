@@ -1,3 +1,6 @@
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+
 import { describe, expect, it } from "vitest";
 
 import {
@@ -6,6 +9,7 @@ import {
   NAV_ITEMS,
   PLAN_MODULES,
   canRoleSeeView,
+  canSwitchCompany,
   catalogFromPacks,
   enabledModulesFromPacks,
   getEnabledModules,
@@ -151,6 +155,46 @@ describe("role gating", () => {
   it("does not let founder status override the Operator restriction", () => {
     // isFounder is about cross-tenant reach, not seniority.
     expect(canRoleSeeView("costing", "Operator", true)).toBe(false);
+  });
+});
+
+describe("canSwitchCompany - who the company switcher is offered to", () => {
+  // The backend honours a company switch (X-Tenant, and /gmats ?tenant=) only for
+  // a founder-workspace ADMIN — tenancy.effective_tenant. The dashboard used to
+  // offer the switcher to ANY DEFAULT login, so a founder-workspace Operator could
+  // pick "GMATS Compressors": the header then named a customer while every screen
+  // showed the founder's own data (and, until the backend fix, the /gmats screens
+  // showed the customer's real stock). The UI must offer exactly what the API grants.
+  it("offers it to a founder-workspace Admin", () => {
+    expect(canSwitchCompany("DEFAULT", "Admin")).toBe(true);
+  });
+
+  it("does not offer it to founder-workspace staff below Admin", () => {
+    expect(canSwitchCompany("DEFAULT", "Supervisor")).toBe(false);
+    expect(canSwitchCompany("DEFAULT", "Operator")).toBe(false);
+  });
+
+  it("fails closed on a token with no role", () => {
+    expect(canSwitchCompany("DEFAULT", "")).toBe(false);
+  });
+
+  it("never offers it to a client workspace, even its Admin", () => {
+    expect(canSwitchCompany("GMATS", "Admin")).toBe(false);
+    expect(canSwitchCompany("ACME", "Admin")).toBe(false);
+  });
+
+  it("is what the dashboard actually uses to offer and honour the switch", () => {
+    // The dashboard is not unit-rendered, so reverting its wiring to `isFounder`
+    // would leave every test above green while the header lied again. Pin the
+    // three sites by what they MUST say, not by what they must not.
+    const page = readFileSync(join(__dirname, "..", "app", "dashboard", "page.tsx"), "utf8");
+    expect(page).toMatch(/const mayPreviewCompany = canSwitchCompany\(homeTenant, role\)/);
+    // the select is rendered only for it
+    expect(page).toMatch(/\{mayPreviewCompany \? \(\s*<select/);
+    // switchCompany refuses for everyone else
+    expect(page).toMatch(/function switchCompany\([^)]*\) \{\s*if \(!mayPreviewCompany\) return;/);
+    // and a stored company is not restored for them on load
+    expect(page).toMatch(/if \(!mayPreviewCompany\) \{\s*(?:\/\/[^\n]*\s*)*setCompany\(homeTenant\)/);
   });
 });
 

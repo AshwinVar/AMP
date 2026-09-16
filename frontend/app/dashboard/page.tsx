@@ -131,6 +131,7 @@ import {
   getEnabledModules,
   withAlwaysOpen,
   canRoleSeeView,
+  canSwitchCompany,
   navItemsFromPacks,
   catalogFromPacks,
   isViewEnabledIn,
@@ -430,22 +431,27 @@ export default function DashboardPage() {
 
   const [plan, setPlan] = useState<PlanName>("demo");
   const homeTenant = getUserTenant();          // the tenant baked into the login token
-  const isFounder = homeTenant === "DEFAULT";  // only the internal/founder account may switch companies
+  const isFounder = homeTenant === "DEFAULT";  // the founder WORKSPACE, any role: founder-only views. Switching company is mayPreviewCompany.
   const [company, setCompany] = useState(homeTenant);
   const role = getUserRole();
   const userName = getUserName();
   const isAdmin = role === "Admin";
+  // Narrower than isFounder: only a founder-workspace ADMIN's company choice is
+  // honoured by the API, so only it is offered the switcher (lib/modules).
+  const mayPreviewCompany = canSwitchCompany(homeTenant, role);
   const isSupervisor = role === "Supervisor";
   const isAdminOrSupervisor = isAdmin || isSupervisor;
 
   useEffect(() => {
     const stored = localStorage.getItem("plan") as PlanName | null;
     if (stored && stored in PLAN_MODULES) setPlan(stored);
-    if (!isFounder) {
-      // Client login: locked to its own company, cannot switch.
+    if (!mayPreviewCompany) {
+      // Locked to its own company, cannot switch. That includes founder-workspace
+      // staff below Admin: a stale "company" left in localStorage would otherwise
+      // put a customer's name in the header over the founder's own data.
       setCompany(homeTenant);
       localStorage.setItem("company", homeTenant);
-      setActiveView("inventory");
+      if (!isFounder) setActiveView("inventory");
       return;
     }
     const storedCompany = localStorage.getItem("company");
@@ -457,7 +463,7 @@ export default function DashboardPage() {
   }, []);
 
   function switchCompany(code: string) {
-    if (!isFounder) return;   // clients cannot switch companies
+    if (!mayPreviewCompany) return;   // only a founder-workspace Admin may switch
     localStorage.setItem("company", code);
     // Full reload so every widget refetches under the new tenant scope — the
     // X-Tenant preview header is derived from localStorage in lib/api.
@@ -1962,7 +1968,7 @@ export default function DashboardPage() {
         </div>
       )}
     </div>
-    {isFounder ? (
+    {mayPreviewCompany ? (
       <select
         className="phase29-pill"
         style={{ cursor: "pointer", appearance: "auto", color: company === "GMATS" ? "#a5b4fc" : undefined }}

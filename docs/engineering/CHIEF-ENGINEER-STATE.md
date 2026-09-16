@@ -3,12 +3,12 @@
 > Handover file. A new session should be able to read only this and continue.
 > Keep it short. Update it at the end of every completed task.
 
-**Updated:** 2026-09-14 (configuration the code promises and does not keep:
-#593, after the honesty line #580–#592 and the whole window audit)
-**Master SHA:** `f8551ef` (#593)
-**Production SHA:** `f8551ef` — verified live, not assumed:
-`{"status":"ok","database":"ok","schema":"ok","version":"f8551ef"}` from
-`https://flowmes-production.up.railway.app/health`, read at 00:12 UTC.
+**Updated:** 2026-09-16 (promises the code does not keep: #593, #594, then a
+43-agent sweep of the whole family — 11 verified defects queued, #595 first)
+**Master SHA:** `29c0cf8` (#594)
+**Production SHA:** `29c0cf8` — verified live, not assumed:
+`{"status":"ok","database":"ok","schema":"ok","version":"29c0cf8"}` from
+`https://flowmes-production.up.railway.app/health`, read at 22:06 UTC.
 Master and production are in step. Railway auto-deploys master, so prod tracks
 HEAD; re-check `/health` rather than trusting this line's age.
 
@@ -119,6 +119,55 @@ seven. This PR closes the worst face of it; the rest are listed below.
 | `oee_contract` already documented the mechanism — *"an explicit `now=` — what a caller passes to build adjacent windows — is used verbatim"*. It now exposes `prior_window(current)`, and one anchor is threaded through the request so `prior.end is current.start` exactly | P1 | 26 checks |
 
 **All window findings are now closed (#584, #586, #587, #589, #590, #591), and the last recorded follow-up with them (#592).** The audit is fully worked through.
+
+### 2026-09-16 — the sweep, and the first thing it found (#595)
+
+**The sweep.** Rather than pick off the next known item, a read-only Workflow
+searched the whole repo for this family from six angles (env vars; claims about
+OTHER code; accepted-but-inert inputs; a rule at N call sites with one missing;
+UI copy promising an effect; docs guarantees). 67 raw → 57 deduped; each of the
+top 18 was attacked by TWO distinct-lens verifiers (reproduce/find-the-missing-
+implementation, and does-it-matter), surviving only if neither refuted. **13
+confirmed (11 distinct), 5 refuted, 39 NOT verified** (cap — they are candidates,
+not facts). Full result: session scratchpad `tasks/sweep_result.json` (not in git).
+
+**Verified queue, in order** (security/tenancy, then published figures):
+
+| # | Defect | Sev | Status |
+|---|---|---|---|
+| 1 | **Founder-workspace non-Admins locked to GMATS, not their own tenant** — read GMATS's stock/rates/customers; Supervisor could write it | P2 (cross-tenant WRITE) | **fixed #595** |
+| 2 | Agent approval gate bypassed by generic PATCH — an Operator opens/cancels a Proposed maintenance task from the CMMS dropdown; AgentAction stays Proposed, a later decision contradicts reality (`approvals.py:1`, ADR-0005) | P2 | queued |
+| 3 | `/analytics/executive-oee` ranks machines with **fabricated** OEE (utilization, 90/60, 95) when they produced nothing; `lib/oee.ts readMachineOee` marks every ranking row `measured: true`, so the dashboard shows "OEE 68%" not "Estimated". PRODUCTION-READINESS-FINAL claims closed | **P1 (both lenses)** | queued |
+| 4 | Inventory CSV import omits `X-Tenant` — founder previewing a client imports into DEFAULT (`EnterpriseInventory.tsx:706`) | P2 | queued |
+| 5 | Tenant purge fails on PostgreSQL for tenants with GMATS proformas/MINs — `gmats_proforma_lines`/`gmats_min_lines` have no `tenant_code`, and the registry row is already deleted (`offboard_tenant.py:5`, ADR-0008) | P2 | queued |
+| 6 | Seven escalation generators dedup on `status != "Resolved"` — a Cancelled escalation blocks that alert forever; #565 fixed only smart alerts (`ai/escalations.py:68`) | P2 | queued |
+| 7 | Admin role changes and password resets are not audit-logged (`users_routes.py:7`) | P2 | queued |
+| 8 | GMATS corrections and voids leave no audit trail ("full audit trail" promise) | P2 | queued |
+| 9 | Plan bundles defined twice: `modules.json` vs `PLAN_MODULE_TIERS` (tenant create/plan change) — one rule, two implementations | P3 | queued |
+| 10 | Branding colour/logo saved and re-shown, never applied | P3 | queued |
+| 11 | DOCKER.md says a fresh stack seeds `gmats`; the seed needs `GMATS_PASSWORD`, compose never sets it | P3 | queued |
+
+Also still open, lower: `IndustrialDevice.topic` (P3 — the registration form never
+sends it; API-only). Refuted by the verifiers (do NOT re-raise without new
+evidence): `is_active` unchecked at login/refresh; agent-policy PUT unaudited;
+SaaS registry writes unaudited; login rate limit keyed on spoofable XFF; enterprise
+CSV `int_cell` bound.
+
+**#595 — the fix.** `gmats_inventory_routes._effective_tenant` returned `"GMATS"` for
+every non-Admin DEFAULT login: #500 closed "any customer" by hard-coding one. The
+`Gmats*` tables are outside `SCOPED_MODELS`, so this function is their only
+boundary. Reproduced: founder Operator/Supervisor/no-role → GMATS's item master;
+Supervisor stock-in to GMATS **allowed (40 → 47)** while its OWN item got **403**.
+Fix: delegate to `tenancy.effective_tenant` (no private rule); dashboard switcher
+now `canSwitchCompany` (DEFAULT **and** Admin), not `isFounder`. 21 backend checks
+incl. a workspace×role×request agreement matrix and an every-route-passes-the-
+boundary guard; 5 frontend tests incl. a structural guard on the three dashboard
+sites. **13/13 mutations red — and B1 (the defect itself) was caught ONLY by the
+new suite**: the existing GMATS, tenancy and isolation suites all passed with it.
+An OEM-token path looked open in a direct handler call but is NOT reachable —
+`auth.get_current_user` 403s `principal=oem` first; kept as a defence-in-depth check.
+Browser verification not done: it needs a founder non-Admin login, and Claude does
+not enter credentials.
 
 ### 2026-09-14 — configuration the code promises and does not keep (#593, #594)
 

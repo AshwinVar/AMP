@@ -1675,7 +1675,7 @@ Exactly how your code becomes `app.marx8.com`, and the env vars and safety nets 
 - **Backup** (`backup.yml`, daily 02:17 UTC): `pg_dump` → gzip → 30-day artifact, with assertions that it's a *real* dump (min size, ≥40 `CREATE TABLE`), then a **restore-drill job** restores it into a throwaway Postgres — *"a backup you've never restored is not a backup."*
 - **`restore_drill.py`** measures **RTO** (dump → new DB → restore → migrate → boot → real login → verify data + 3-tenant isolation). RPO = 24h (the backup cadence).
 - **Retention** (`retention.yml`, weekly): dry-run on schedule, apply only on a manual dispatch with `apply=true`.
-- **Single worker on purpose:** the backend owns in-memory state (the 45 s sim loop, the MQTT subscriber thread, rate-limit counters, licence cache) — **do not** add `--workers`/`WEB_CONCURRENCY`.
+- **Single worker on purpose:** the backend owns in-memory state (the 45 s sim loop, the MQTT subscriber thread, rate-limit counters, licence cache) — **do not** add `--workers`/`WEB_CONCURRENCY`. The licence cache makes this load-bearing rather than tidy: `commit_tenant_config` drops the entry *in this process*, so a second worker would keep enforcing a revoked licence until its own 60 s TTL expired. Multiple workers would need the invalidation to become a broadcast, not a dict `pop`.
 
 ### Quick recap
 Merge → Vercel builds the frontend (`app.marx8.com`), Railway builds the backend (NIXPACKS), migrations run **before** serving, and `/readiness` gates traffic. `SECRET_KEY`/`DATABASE_URL` are mandatory; backups are taken daily *and restore-tested*; the backend runs as a single worker because it holds live state.

@@ -55,6 +55,35 @@ PLAN_MODULE_TIERS = {
 }
 
 
+def commit_tenant_config(db, tenant_code):
+    """Commit a TenantConfig change and drop the plan-gate's cached licence.
+
+    The gate caches each tenant's packs for ~60s (plan_gate._CACHE_TTL_SECONDS)
+    so it does not read the database on every request, which means a licence
+    change is not actually in force until that entry is dropped. Revocation is
+    the direction that matters: continuing to serve a module after the licence
+    for it was withdrawn is the gate failing at the only job it has.
+
+    That rule used to be written out at each call site. Three got it right and
+    `PATCH /tenant-config` did not — and the comment on a neighbouring handler
+    then described it as "the self-service update_tenant_config already does
+    this", so reading the code carefully was enough to conclude, wrongly, that
+    there was nothing to add. It is not a rule to remember any more; it is the
+    only way to commit one of these.
+
+    Invalidating on EVERY tenant-config write, a branding-only one included, is
+    deliberate. "Only when a licence field changed" needs a correct list of
+    which fields are licence fields, and a wrong list is this same defect
+    wearing a hat. One dropped entry costs one query on the next request.
+
+    plan_gate is imported inside the function because plan_gate imports
+    get_or_create_config from this module — the cycle is real, not stylistic.
+    """
+    db.commit()
+    import plan_gate
+    plan_gate.invalidate(tenant_code)
+
+
 def apply_plan_tier(db, tenant_code, plan_name):
     """Sync a tenant's licence to its SaaS plan. Called when the founder creates
     a tenant or changes its plan; unknown plan names fail open to enterprise."""
@@ -63,10 +92,7 @@ def apply_plan_tier(db, tenant_code, plan_name):
     c = get_or_create_config(db, tenant_code)
     c.plan = tier
     c.enabled_modules = modules
-    db.commit()
-    # The API gate caches licences briefly — a plan change applies immediately.
-    import plan_gate
-    plan_gate.invalidate(tenant_code)
+    commit_tenant_config(db, tenant_code)
     return c
 
 
@@ -294,7 +320,7 @@ def update_tenant_config(payload: dict, db: Session = Depends(get_db),
         if "enabled_modules" in payload:
             mods = payload["enabled_modules"]
             c.enabled_modules = ",".join(mods) if isinstance(mods, list) else mods
-    db.commit()
+    commit_tenant_config(db, tenant)
     log_audit(db, current_user.get("sub"), "update_tenant_config", "tenant", None, tenant)
     return _config_dict(c)
 
@@ -321,12 +347,7 @@ def update_any_tenant(tenant_code: str, payload: dict, db: Session = Depends(get
     if "enabled_modules" in payload:
         mods = payload["enabled_modules"]
         c.enabled_modules = ",".join(mods) if isinstance(mods, list) else mods
-    db.commit()
-    # A licence change must take effect at once — the plan-gate caches each
-    # tenant's packs for ~60s, so drop the stale entry (the self-service
-    # update_tenant_config already does this; this cross-tenant path didn't).
-    import plan_gate
-    plan_gate.invalidate(tenant_code)
+    commit_tenant_config(db, tenant_code)
     log_audit(db, current_user.get("sub"), "update_tenant_license", "tenant", None, tenant_code)
     return _config_dict(c)
 
@@ -342,7 +363,6 @@ def apply_plan(tenant_code: str, payload: dict, db: Session = Depends(get_db),
     if current_user.get("tenant", "DEFAULT") != "DEFAULT":
         raise HTTPException(status_code=403, detail="Platform owner only")
     import module_manifest
-    import plan_gate
     plan = (payload.get("plan") or "").strip().lower()
     bundles = module_manifest.plan_bundles()
     if plan not in bundles:
@@ -351,8 +371,7 @@ def apply_plan(tenant_code: str, payload: dict, db: Session = Depends(get_db),
     c = get_or_create_config(db, tenant_code)
     c.plan = plan
     c.enabled_modules = ",".join(bundles[plan])
-    db.commit()
-    plan_gate.invalidate(tenant_code)
+    commit_tenant_config(db, tenant_code)
     log_audit(db, current_user.get("sub"), "apply_plan", "tenant", None, f"{tenant_code}:{plan}")
     return _config_dict(c)
 

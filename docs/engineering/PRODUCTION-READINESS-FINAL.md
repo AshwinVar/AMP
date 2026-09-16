@@ -115,12 +115,28 @@ Both shipped with failing-test-first, mutation verification, and full gates.
 | Request correlation | **PASS** — `x-request-id` echoed |
 | `/system-health` gating | **PASS** — 401 unauthenticated, no body leak |
 | **X-Tenant role gate** | **WAS BROKEN → FIXED** (#500) |
-| **GMATS tenant override** | **WAS BROKEN → FIXED** (#500) |
+| **GMATS tenant override** | **WAS BROKEN → HALF-FIXED** (#500) **→ FIXED** (#595) — see correction below |
 | WebSocket auth | **FAIL** — `/ws/live` accepts unlimited unauthenticated connections |
 | Prompt injection | **FAIL** — user-controlled strings reach prompts unescaped |
 
 Not tested: password brute-force and rate-limit behaviour against production
 (deliberately — exercising a lockout on a live deployment is destructive).
+
+**Correction (2026-09) — the GMATS override was half-fixed.** #500 removed the
+free `?tenant=` choice for founder-workspace logins below Admin, but replaced it
+with a hard-coded answer: every such login was locked to `"GMATS"` — the paying
+pilot, by name — instead of to its own `DEFAULT` workspace. So a founder-workspace
+Operator still read GMATS's item master, rates and customers with no parameter at
+all, a Supervisor could still stock in, reserve, invoice and issue against it
+(reproduced: GMATS stock 40 → 47), and the caller's *own* DEFAULT records were the
+ones refused. The dashboard offered the company switcher to those same logins.
+It survived because the `Gmats*` tables are outside `tenancy.SCOPED_MODELS`, so no
+ORM hook backstops them, and because the module kept a private copy of the tenant
+rule that disagreed with `tenancy.effective_tenant`. #595 deletes that copy (the
+module delegates to the platform rule), gates the switcher on the same rule, and
+adds `backend/test_gmats_founder_staff_stay_home.py` — which asserts the two rules
+agree across a workspace × role × request matrix, and that every `/gmats` route
+still passes through the boundary.
 
 ---
 

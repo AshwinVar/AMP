@@ -199,6 +199,17 @@ export function canRoleSeeView(viewKey: string, role: string, isFounder: boolean
   return true; // Admin (and the founder super-admin)
 }
 
+// Who the top-bar company switcher is offered to. Mirrors the backend rule in
+// tenancy.effective_tenant exactly: only a founder-workspace ADMIN's company
+// choice (the X-Tenant header, and /gmats ?tenant=) is honoured; for every other
+// login it is ignored. This is deliberately NOT `isFounder` — that is about which
+// VIEWS a founder-workspace login may see, for any role. Offering the switcher to
+// a founder-workspace Operator put a customer's name in the header while every
+// screen showed the founder's own data. Fail-closed: no role is not an Admin.
+export function canSwitchCompany(homeTenant: string, role: string): boolean {
+  return homeTenant === "DEFAULT" && role === "Admin";
+}
+
 // ── Manifest-driven nav (the plug-and-play plugin system) ─────────
 // The backend serves the SAME module definitions from modules.json at
 // GET /modules, annotated with each pack's `enabled` flag for the calling

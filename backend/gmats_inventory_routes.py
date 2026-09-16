@@ -11,7 +11,9 @@ Implements the client's exact spec:
 - Reorder alerts (min stock -> Purchase Required)
 
 Every record carries a tenant_code so the same rig serves any future client.
-The frontend company switcher supplies the tenant; defaults to "GMATS".
+The frontend company switcher supplies the tenant, and only a founder-workspace
+Admin's choice is honoured (see _effective_tenant); every other login acts in
+its own tenant whatever it asks for.
 """
 import csv as csv_lib
 import io
@@ -29,6 +31,7 @@ from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from sqlalchemy.orm import Session
 
 import models
+import tenancy
 from payload_fields import int_cell, int_field, str_field
 from csv_safe import read_upload_text
 from auth import get_current_user, require_roles
@@ -47,13 +50,25 @@ def _effective_tenant(current_user, requested):
     one-word query parameter. Same class as the X-Tenant header hole in
     tenancy.effective_tenant and the registry leak in saas_routes (#438).
 
+    #500 then closed "any customer" by hard-coding ONE customer: every non-Admin
+    DEFAULT login was sent to "GMATS" — the paying pilot, by name — so it read
+    that customer's item master, rates and customers with no parameter at all,
+    a Supervisor could stock in, reserve, invoice and issue against it, and the
+    caller's OWN DEFAULT rows were the ones _guard_record refused. The docstring
+    above said "locked to their own tenant"; their own tenant is DEFAULT.
+
+    So this no longer has a rule of its own. tenancy.effective_tenant already
+    states it — founder-workspace Admin may preview, everyone else stays home,
+    an OEM principal binds its sentinel — and a private copy is how the two came
+    to disagree. It matters more here than anywhere: the Gmats* models are not in
+    tenancy.SCOPED_MODELS, so the ADR-0002 hook never backstops these tables and
+    this function is the only boundary they have. `requested` plays the role the
+    X-Tenant header plays everywhere else.
+
     Fail-closed: a token with no role claim is not an Admin."""
-    jwt_tenant = (current_user.get("tenant") or "DEFAULT")
-    if jwt_tenant == "DEFAULT" and current_user.get("role") == "Admin":
-        return requested or "GMATS"
-    if jwt_tenant == "DEFAULT":
-        return "GMATS"
-    return jwt_tenant
+    return tenancy.effective_tenant(current_user.get("tenant") or tenancy.DEFAULT_TENANT,
+                                    requested, current_user.get("role"),
+                                    claims=current_user)
 
 
 def _guard_record(current_user, record_tenant):

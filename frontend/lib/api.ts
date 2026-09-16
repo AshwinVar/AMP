@@ -18,8 +18,10 @@ export function getUserRole(): string {
 
 // Founder company-switcher preview: when the platform workspace has switched
 // to a customer tenant (localStorage "company"), every request carries an
-// X-Tenant header. The backend honours it only for DEFAULT-claim tokens
-// (tenancy.effective_tenant) — for everyone else it's inert.
+// X-Tenant header. The backend honours it only for a DEFAULT-claim token whose
+// role is Admin (tenancy.effective_tenant) — for everyone else, founder-workspace
+// staff included, it's inert. The dashboard offers the switcher on the same rule
+// (lib/modules canSwitchCompany).
 function getPreviewTenant(): string {
   if (typeof window === "undefined") return "";
   const company = localStorage.getItem("company") || "";

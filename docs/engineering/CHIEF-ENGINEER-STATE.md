@@ -3,12 +3,12 @@
 > Handover file. A new session should be able to read only this and continue.
 > Keep it short. Update it at the end of every completed task.
 
-**Updated:** 2026-09-13 (the honesty line — what AMP published that was not
-measured: #580–#591, incl. the whole window audit)
-**Master SHA:** `df968a0` (#590)
-**Production SHA:** `df968a0` — verified live, not assumed:
-`{"status":"ok","database":"ok","schema":"ok","version":"df968a0"}` from
-`https://flowmes-production.up.railway.app/health`, read at 00:47 UTC.
+**Updated:** 2026-09-14 (configuration the code promises and does not keep:
+#593, after the honesty line #580–#592 and the whole window audit)
+**Master SHA:** `f8551ef` (#593)
+**Production SHA:** `f8551ef` — verified live, not assumed:
+`{"status":"ok","database":"ok","schema":"ok","version":"f8551ef"}` from
+`https://flowmes-production.up.railway.app/health`, read at 00:12 UTC.
 Master and production are in step. Railway auto-deploys master, so prod tracks
 HEAD; re-check `/health` rather than trusting this line's age.
 
@@ -119,6 +119,33 @@ seven. This PR closes the worst face of it; the rest are listed below.
 | `oee_contract` already documented the mechanism — *"an explicit `now=` — what a caller passes to build adjacent windows — is used verbatim"*. It now exposes `prior_window(current)`, and one anchor is threaded through the request so `prior.end is current.start` exactly | P1 | 26 checks |
 
 **All window findings are now closed (#584, #586, #587, #589, #590, #591), and the last recorded follow-up with them (#592).** The audit is fully worked through.
+
+### 2026-09-14 — configuration the code promises and does not keep (#593, #594)
+
+A new family, opened after the honesty line closed. The honesty line was about
+numbers AMP published that it had not measured. This one is about **behaviour a
+comment promises that the code does not implement** — which is worse to read,
+because a careful engineer checks the comment and stops looking.
+
+| Task | Priority | Status |
+|---|---|---|
+| **`MQTT_TOPIC` was read nowhere.** The comment above the topic constants said it "is still read so an existing deployment … keeps that topic working … rather than **silently going deaf**". Exactly one hit across the backend: the comment. A deployment carrying the pre-upgrade variable subscribed to `flowmes/+/+/machines` while its gateway published to `flowmes/machines`, and **not one line was logged** — being unsubscribed is silent in a way being rejected is not, because `on_message`'s refusal path only runs on a message that arrives. ADR-0011 called this breaking change "deliberately a loud one"; it was silent | P1 | fixed #593, 10/10 mutations red |
+| The fix splits the variable: the **prefix** is honoured (reading a variable the operator set is not guessing), the **tenant** is still never invented (`mqtt_identity`'s whole preamble), and the part that was actually missing — **saying so** — logs at WARNING naming the unheard topic and the variable that repairs it, only when something really is not doing what it looks like | P1 | 19 checks |
+| **Two mutation survivors were real test weaknesses, not weak mutations.** Asserting on the topic string could not tell the two warnings apart (both quote `MQTT_TOPIC`); and `load_dotenv()` at import meant the local `.env` had already populated the warnings, so a mutation logging the **stale** import-time list passed locally while it would have failed on CI, where there is no `.env` | P2 | both fixed first |
+| **Revoking a module left it usable for up to another minute.** `plan_gate` caches licences 60 s; four handlers write one and three dropped the entry. `PATCH /tenant-config` did not — while the comment on `update_any_tenant` said *"the self-service update_tenant_config already does this"*. Reproduced: after withdrawing `intelligence`, the gate still returned it. It also hid from grep — that handler sets `plan` via `setattr` over a tuple, so `grep "\.plan ="` found the three right ones only. ADR-0008 had it as a known limitation | P1 | fixed #594, 8/8 mutations red |
+| **Not a fourth copy of the rule.** `commit_tenant_config` commits and invalidates together, on every tenant-config write (branding too — "only licence fields" needs a correct field list, and a wrong one is this bug again). An AST guard fails for a fifth handler that commits on its own, and probes itself: emptying its field set turns it red rather than all-clear | P1 | 11 checks |
+
+**For the user, not code:** `backend/.env` on this machine still reads
+`MQTT_TOPIC=flowmes/machines` with no `MQTT_LEGACY_TENANT`. Untouched — it is
+untracked local config. Local MQTT ingest now *says* it is deaf instead of
+pretending; set `MQTT_LEGACY_TENANT=DEFAULT` or repoint the simulator at
+`flowmes/DEFAULT/-/machines` to actually receive.
+
+**Still open in this family** (verified, not yet shipped): `IndustrialDevice.topic`
+is settable on create and rendered in the connection drawer beside the device,
+but nothing subscribes to it or routes by it — routing is per-(tenant, site) by
+design, so a free-text per-device topic cannot route without breaking the
+tenant-in-topic security model. Same shape as #582's "Online" default.
 
 ### 2026-09-14 — an idle day is not a catastrophic day (#592)
 

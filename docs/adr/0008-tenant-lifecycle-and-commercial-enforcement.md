@@ -38,7 +38,8 @@ requests must pass through, never in per-endpoint code that can be forgotten.
   block sign-in with honest messages. Plan tiers map to module packs
   (`apply_plan_tier`), padlocked in the UI and enforced by
   `PlanGateMiddleware` — a path→pack table gating by effective tenant, with a
-  briefly-cached licence (invalidated on plan change) that **fails open**:
+  briefly-cached licence (dropped by `commit_tenant_config`, the one way a
+  tenant config is written, so a revocation bites at once) that **fails open**:
   availability beats enforcement for a plan gate. `core` and `admin` packs are
   never gated, so no tenant is locked out of basics or account management.
 - **Background work is allowlisted per tenant.** The simulator animates only
@@ -69,8 +70,14 @@ requests must pass through, never in per-endpoint code that can be forgotten.
   by up to its 4-hour lifetime.
 - The plan gate's path table is deliberately conservative; endpoints woven
   into the core Overview stay open even when they also serve premium views.
-- The licence cache can serve a stale allowlist for up to 60 s after an edit
-  made outside `apply_plan_tier`.
+- ~~The licence cache can serve a stale allowlist for up to 60 s after an edit
+  made outside `apply_plan_tier`.~~ **Closed (2026-09).** It was not a property
+  of the cache but of where the rule lived: three handlers dropped the entry and
+  `PATCH /tenant-config` did not, while a comment on a neighbouring handler
+  described it as already doing so. `platform_routes.commit_tenant_config` now
+  commits and invalidates together, so every tenant-config write takes effect at
+  once and a fifth handler cannot forget — an AST guard in
+  `backend/test_licence_change_is_immediate.py` fails if one commits on its own.
 
 **Lessons encoded in tests**
 - SQLite does not enforce foreign keys by default: offboarding tests run with

@@ -182,9 +182,18 @@ The first allocation seeds from the highest number already on file, so existing
 data needs no migration. A void leaves a gap, and the void's audit row
 (`gmats_void_invoice`, `gmats_void_min`) names the number that was voided.
 
-`test_gmats_document_numbers_never_reused.py` also finds every f-string in any
-`*_routes.py` that adds to a row count, so a new `count() + 1` number in a request
-handler fails CI. `mutate_doc_numbers.py` gained the GMATS wiring mutations.
+The simulator had the same defect in `tick_quality` (`QI-`) and `tick_operator`
+(`EXE-`). Those tables are unique per tenant and have Admin delete routes. After
+one deleted inspection, every later quality tick hit the constraint, and because
+`main._simulation_loop` runs a tenant's ticks in one try block, it rolled back that
+tick's shift entry, operator job and utilization drift too. The count never grew,
+so the failure never cleared. Both ticks now allocate from the ticked tenant's
+sequence.
+
+`test_document_numbers_one_rule.py` reads every backend module (171 at the time)
+and fails on any `*_no` field whose f-string adds to a row count. A count in a
+display label ("Breakdown Alert #3") is not flagged. `mutate_doc_numbers.py`
+gained the GMATS, simulator and guard mutations.
 
 **Still open:** no constraint makes a GMATS number unique in the database. Adding
 one needs a migration, and that migration would fail on any production tenant

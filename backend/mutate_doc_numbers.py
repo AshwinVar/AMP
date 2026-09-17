@@ -11,7 +11,8 @@ import subprocess
 import sys
 
 SUITES = ["test_tenant_document_numbers.py", "test_migrate.py",
-          "test_unscoped_model_reads.py", "test_gmats_document_numbers_never_reused.py"]
+          "test_unscoped_model_reads.py", "test_gmats_document_numbers_never_reused.py",
+          "test_sim_numbers_never_reused.py", "test_document_numbers_one_rule.py"]
 
 MUTATIONS = [
     # --- the constraint itself -------------------------------------------
@@ -112,9 +113,29 @@ MUTATIONS = [
       '        _heal_stock(item)\n'
       '        if qty > item.physical_stock:',
       '        min_no=early_no,']),
-    ("the count guard stops looking inside additions", "test_gmats_document_numbers_never_reused.py",
-     "                if not (isinstance(add, ast.BinOp) and isinstance(add.op, ast.Add)):",
-     "                if not isinstance(add, ast.Constant):"),
+    ("simulator inspections go back to count()+1", "factory_simulator.py",
+     '        inspection_no=_next_number(db, "QI", models.QualityInspection, "inspection_no", 7000),',
+     '        inspection_no=f"QI-{7000 + db.query(models.QualityInspection).count() + 1}",'),
+    ("simulator operator jobs go back to count()+1", "factory_simulator.py",
+     '                execution_no=_next_number(db, "EXE", models.OperatorJobExecution, "execution_no", 9000),',
+     '                execution_no=f"EXE-{9000 + db.query(models.OperatorJobExecution).count() + 1}",'),
+    ("simulator numbers drawn from DEFAULT, not the ticked tenant", "factory_simulator.py",
+     '    return doc_numbers.allocate(db, tenancy.current_tenant() or "DEFAULT", prefix, model, column,',
+     '    return doc_numbers.allocate(db, "DEFAULT", prefix, model, column,'),
+
+    # --- the repo-wide guard ------------------------------------------------
+    ("the count guard stops looking inside additions", "test_document_numbers_one_rule.py",
+     "            if not (isinstance(add, ast.BinOp) and isinstance(add.op, ast.Add)):",
+     "            if not isinstance(add, ast.Constant):"),
+    ("the count guard ignores `x_no = ...` assignments", "test_document_numbers_one_rule.py",
+     "            if any(n.endswith(\"_no\") for n in names) and _adds_to_a_count(node.value):",
+     "            if False:"),
+    ("the count guard only reads route modules", "test_document_numbers_one_rule.py",
+     '    for pattern in ("*.py", "ai/*.py", "amp_ai/*.py", "amp_ai/**/*.py"):',
+     '    for pattern in ("*_routes.py",):'),
+    ("the count guard flags every f-string, labels included", "test_document_numbers_one_rule.py",
+     '        if isinstance(node, ast.keyword) and (node.arg or "").endswith("_no"):',
+     '        if isinstance(node, ast.keyword):'),
 
     # --- the migration guard ---------------------------------------------
     ("a revision id longer than VARCHAR(32) is accepted",

@@ -948,6 +948,18 @@ def tick_shift_entry(db):
     log.debug("tick: shift log %s actual %s/%s", shift, actual, target)
 
 
+def _next_number(db, prefix, model, column, start):
+    """The next document number for the tenant being ticked (main._simulation_loop
+    binds it), from doc_numbers.allocate like every request handler.
+
+    Imported here, not at the top: tenancy pulls in auth, and this module is also
+    run standalone by the simulator scripts, whose import surface stays as it was."""
+    import doc_numbers
+    import tenancy
+    return doc_numbers.allocate(db, tenancy.current_tenant() or "DEFAULT", prefix, model, column,
+                                prefix, start=start)
+
+
 def tick_quality(db):
     """Add a quality inspection for an active work order."""
     wos      = db.query(models.WorkOrder).filter(models.WorkOrder.status == "In Progress").all()
@@ -959,9 +971,12 @@ def tick_quality(db):
     inspected = random.randint(20, 100)
     failed    = random.randint(0, max(1, int(inspected * 0.07)))
     passed    = inspected - failed
-    count     = db.query(models.QualityInspection).count()
     db.add(models.QualityInspection(
-        inspection_no=f"QI-{7000 + count + 1}",
+        # The shared per-tenant sequence, not count()+1: an Admin can delete an
+        # inspection, after which count()+1 rebuilt a number still on a live row
+        # and every later tick hit UNIQUE(tenant, inspection_no), rolling back the
+        # rest of that tenant's tick for good. test_sim_numbers_never_reused.
+        inspection_no=_next_number(db, "QI", models.QualityInspection, "inspection_no", 7000),
         work_order_id=wo.id, machine_id=machine.id,
         inspector=random.choice(INSPECTORS),
         inspected_quantity=inspected, passed_quantity=passed, failed_quantity=failed,
@@ -995,9 +1010,8 @@ def tick_operator(db):
         machines = db.query(models.Machine).filter(models.Machine.status == "Running").all()
         wos      = db.query(models.WorkOrder).filter(models.WorkOrder.status == "In Progress").all()
         if machines and wos:
-            count = db.query(models.OperatorJobExecution).count()
             db.add(models.OperatorJobExecution(
-                execution_no=f"EXE-{9000 + count + 1}",
+                execution_no=_next_number(db, "EXE", models.OperatorJobExecution, "execution_no", 9000),
                 operator_name=random.choice(OPERATORS),
                 machine_id=random.choice(machines).id,
                 work_order_id=random.choice(wos).id,

@@ -156,9 +156,18 @@ reproduces all of it (34 failures on master).
    tenant* and is still in its pending status (`approvals.PENDING`: task
    `Proposed`, PO `Draft`, escalation `Proposed`). It runs after the actor check,
    so an outsider still gets 404 and a non-approver 403. The row is read
-   `FOR UPDATE`, so a concurrent decision waits and then sees the item moved.
-   `apply_decision` is unchanged: its transitions now always move the item in the
-   same transaction as the decision.
+   `FOR UPDATE` and re-read into the session (`populate_existing`), so a
+   concurrent decision waits and then sees the item moved -- even when its
+   session already held the item. `apply_decision` is unchanged: its transitions
+   now always move the item in the same transaction as the decision.
+   *Where that is proven:* only PostgreSQL can hold a row lock, so the race is
+   exercised only there. `test_agent_item_lock.py` section 11 overlaps approve
+   and reject (and a double approve with the item already loaded) with barriers
+   inside the item check; with `FOR UPDATE` removed every race answered 200 twice
+   and the later commit overwrote the first decision. On SQLite that section
+   prints SKIP; `verify_pg_approvals.py` runs it on a local scratch PostgreSQL
+   and requires it not to skip. The re-read is also pinned sequentially on both
+   engines (section 7).
 2. **The route withdraws what can no longer take effect.** On
    `ProposalWithdrawn` the decide route rolls back and runs a compare-and-set
    (`UPDATE agent_actions SET status='Cancelled', decided_by='system-withdrawn'
@@ -192,12 +201,38 @@ reproduces all of it (34 failures on master).
    database-verified Admin/Supervisor of the tenant, it is recorded with their
    name, and it moves the item to `Cancelled` rather than into effect. Approving
    an expired proposal, by a human or by policy, stays 409 -- acting on stale
-   evidence is what check 3 exists to stop. `expire_stale` is unchanged.
+   evidence is what check 3 exists to stop. `expire_stale` is unchanged. The 409
+   says the proposal "can only be rejected, which releases the item it holds":
+   the old "ask the agent to re-evaluate" pointed nowhere, because no agent can
+   propose again while the item is held (every agent dedup counts the pending
+   status as open). Each action in `GET /agent-actions` carries `expired`
+   (undecided and past expiry), and the Approvals inbox shows the same sentence
+   and does not offer Approve on it.
 6. **Contract.** No schema change or migration. The task, PO and escalation
    responses (lists and PATCH) gain an additive
    `awaiting_approval: {agent_action_id, agent, expired} | null`. The screens read
    only that flag -- never status strings -- to disable controls, hide Delete and
    say who decides.
+7. **Only an agent puts an item into its pending status** (verifier round 1).
+   Lazy withdrawal leaves orphans: an item moved while its action stayed
+   `Proposed`. Measured through `main.app`: an Operator PATCHed such an item's
+   content (200, not held), then PATCHed `{status: <pending>}` (200, now held),
+   and a Supervisor's approval recorded `Approved` under the agent's name for
+   content the agent never proposed. `approvals.refuse_manual_pending_status`
+   now answers 400 to a PATCH that moves a row *into* its pending status and to
+   a POST that creates one there, in the three PATCH and three create handlers
+   (after the lock, so a held item still answers 409). Re-sending the status a
+   row already has is not a move and passes, so human look-alikes stay
+   editable. It applies on every plan: the value is `systemOnly` in
+   `status-vocab.json` for everyone, and the lock's licence clause is about who
+   can *decide*, not who may write agent statuses.
+8. **The Approvals list pages.** With the lock, the list is the only way out
+   for a held item, and it answered one capped page (300, newest first):
+   measured, a held Draft PO older than 300 newer proposals was in no response
+   while its PATCH answered "decide it in Approvals". `GET /agent-actions` now
+   takes `limit` (1-300) and `offset` (>= 0), breaks `created_at` ties by id so
+   pages neither repeat nor skip, and the inbox and the activity log load older
+   pages on request (`frontend/lib/agent-actions.ts`).
 
 ### Guards
 
@@ -206,11 +241,21 @@ under the three URL families must call the lock; the six known handlers must be
 found by name), AST-scans the route modules for any write to a loaded
 task/PO/escalation not preceded by the lock, checks the `PENDING` table against
 what agents propose and what `apply_decision` moves, and probes itself by
-removing and moving the real call in memory. `mutate_approval_gate.py` grows to
-46 mutations across five suites, every one caught, including: the item check
-removed or moved before the actor, the compare-and-set losing its status
-predicate, the reject exemption flipped either way, the lock ignoring status,
-decided actions, kind, tenant or licence, and the lock removed from a handler.
+removing and moving the real call in memory; it also requires
+`refuse_manual_pending_status` in every PATCH/PUT of the three families and in
+the three create handlers, with its own in-memory probe.
+`mutate_approval_gate.py` grows to 64 mutations across five suites, including:
+the item check removed or moved before the actor, the compare-and-set losing its
+status predicate, the reject exemption flipped either way, the lock ignoring
+status, decided actions, kind, tenant or licence, the lock removed from a
+handler, the pending-status rule dropped or removed from any of its six
+handlers, the list ignoring its offset or cap or tie order, the `expired` flag
+wrong either way, and the row lock removed three ways (`lock=False`,
+`FOR UPDATE` dropped, re-read dropped). Two of them only PostgreSQL can judge
+(`FOR UPDATE` dropped; a negative offset reaching the database, which SQLite
+reads as 0): on SQLite the harness reports them `pg-only`, never `caught`, and
+`--postgresql` runs them with the other row-lock mutations against PostgreSQL,
+where `verify_pg_approvals.py` requires all four caught.
 
 ### Not addressed (open founder questions)
 

@@ -212,11 +212,24 @@ def _require_factory_read_binding(contract):
 
 # ── terms and period ────────────────────────────────────────────────────────
 
-def _accepted_versions(db, contract):
+def accepted_versions(db, contract_id):
+    """A contract's ACCEPTED term versions, lowest version first."""
     TV = models.ServiceContractTermVersion
     return (db.query(TV)
-              .filter(TV.contract_id == contract.id, TV.status == TERMS_ACCEPTED)
+              .filter(TV.contract_id == contract_id, TV.status == TERMS_ACCEPTED)
               .order_by(TV.version.asc()).all())
+
+
+def governing_version(versions, instant):
+    """The ACCEPTED version with the highest number whose effective_from <= instant.
+
+    The one rule for which terms govern a period (effective_from is a period
+    boundary, so a version governs whole periods). None when none does."""
+    best = None
+    for v in versions:
+        if v.status == TERMS_ACCEPTED and v.effective_from <= instant                 and (best is None or v.version > best.version):
+            best = v
+    return best
 
 
 def _parse_version(version):
@@ -250,11 +263,10 @@ def resolve_period(db, contract, period_start):
             "the factory has not accepted this contract; no statement exists before it does")
     if type(period_start) is not datetime or period_start.tzinfo is not None:
         raise NoTermsForPeriod("period_start must be a naive UTC datetime")
-    versions = _accepted_versions(db, contract)
-    applicable = [v for v in versions if v.effective_from <= period_start]
-    if not applicable:
+    versions = accepted_versions(db, contract.id)
+    version = governing_version(versions, period_start)
+    if version is None:
         raise NoTermsForPeriod(f"no accepted terms are in force at {period_start}")
-    version = applicable[-1]
     terms = _parse_version(version)
     if _grid(terms) != _grid(_parse_version(versions[0])):
         raise ContractIntegrityError(
@@ -514,7 +526,7 @@ def preview_statement(db, contract, now):
     now = _now(now)
     if not _contract_accepted(contract):
         return None
-    versions = _accepted_versions(db, contract)
+    versions = accepted_versions(db, contract.id)
     if not versions:
         return None
     try:

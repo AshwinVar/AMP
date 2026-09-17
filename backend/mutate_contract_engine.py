@@ -311,11 +311,17 @@ MUTATIONS = [
         "    return (contract.status in ACCEPTED_CONTRACT_STATUSES\n"
         "            and contract.factory_accepted_at is not None)",
         "    return True")),
-    ("proposed term versions govern periods", _one(STATEMENTS,
-        "              .filter(TV.contract_id == contract.id, TV.status == TERMS_ACCEPTED)",
-        "              .filter(TV.contract_id == contract.id)")),
+    ("proposed term versions govern periods", [
+        (STATEMENTS, "              .filter(TV.contract_id == contract_id, TV.status == TERMS_ACCEPTED)",
+         "              .filter(TV.contract_id == contract_id)"),
+        (STATEMENTS, "        if v.status == TERMS_ACCEPTED and v.effective_from <= instant",
+         "        if v.effective_from <= instant")]),
     ("the lowest applicable version governs", _one(STATEMENTS,
-        "    version = applicable[-1]", "    version = applicable[0]")),
+        "                and (best is None or v.version > best.version):",
+        "                and best is None:")),
+    ("a version effective after the period start governs it", _one(STATEMENTS,
+        "        if v.status == TERMS_ACCEPTED and v.effective_from <= instant",
+        "        if v.status == TERMS_ACCEPTED")),
     ("the parties' accepted hashes are not checked", _one(STATEMENTS,
         "    if not (digest == version.terms_hash == version.oem_accepted_hash\n"
         "            == version.factory_accepted_hash):",

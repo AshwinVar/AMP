@@ -15,10 +15,15 @@ What this proves, on PostgreSQL 18.3:
   3. the NOT NULL constraint is real (the database refuses a NULL is_active);
   4. agent_actions.expires_at is genuinely nullable;
   5. the gate itself refuses every bypass against this engine, and the
-     held-item lock (test_agent_item_lock.py: SELECT ... FOR UPDATE, the batched
-     awaiting_approval query, the compare-and-set withdraw and the double-decide
-     race) holds on it too;
-  6. downgrade() reverses both columns.
+     held-item lock holds on it too: test_agent_item_lock.py runs here in full,
+     including section 11, which SQLite skips -- approve and reject (and a
+     double approve) truly overlapping, held apart only by SELECT ... FOR UPDATE
+     on the item row: exactly one is accepted, the other gets 400 "Already
+     <decision>", and the record names the winner;
+  6. the row lock is load-bearing: mutate_approval_gate.py --postgresql
+     removes the lock three ways (lock=False, FOR UPDATE dropped, re-read
+     dropped), and every one must turn that suite red on PostgreSQL;
+  7. downgrade() reverses both columns.
 
 It only ever talks to a DISPOSABLE database on a LOCAL server: pg_scratch
 drops and recreates scratch databases, so this refuses any host that is not
@@ -154,11 +159,28 @@ def main():
     # recreates its tables). FOR UPDATE and the compare-and-set are exactly the
     # parts SQLite cannot exercise.
     r = subprocess.run([sys.executable, "test_agent_item_lock.py"], cwd=here,
-                       env={**os.environ, "DATABASE_URL": gate_url},
+                       env={**os.environ, "DATABASE_URL": gate_url, "PYTHONIOENCODING": "utf-8"},
                        capture_output=True, text=True, errors="replace")
     passed = r.stdout.count("PASS  ")
     check(f"test_agent_item_lock.py green on PostgreSQL ({passed} assertions)",
           r.returncode == 0, r.stdout[-800:] + r.stderr[-400:])
+    # A green run that skipped the overlapping race proves nothing about the lock.
+    race = r.stdout.split("11. TWO DECISIONS AT THE SAME INSTANT", 1)[-1].split("\n12. ", 1)[0]
+    race_passes = race.count("PASS  ")
+    check(f"...including the overlapping-decision race, not skipped ({race_passes} assertions)",
+          "11. TWO DECISIONS AT THE SAME INSTANT" in r.stdout and "SKIP  " not in race
+          and race_passes >= 20, race[:600])
+
+    print("\n3b. THE ROW LOCK IS LOAD-BEARING (MUTATIONS, ON POSTGRESQL)")
+    mut_url = pg_scratch.scratch_url(port, DB + "_mut")
+    pg_scratch.ensure(port, DB + "_mut")
+    r = subprocess.run([sys.executable, "mutate_approval_gate.py", "--postgresql"], cwd=here,
+                       env={**os.environ, "DATABASE_URL": mut_url, "PYTHONIOENCODING": "utf-8"},
+                       capture_output=True, text=True, errors="replace")
+    caught = r.stdout.count(" caught ")
+    check(f"every row-lock mutation is caught on PostgreSQL ({caught} of 3)",
+          r.returncode == 0 and caught == 3 and "all 3 mutations caught" in r.stdout
+          and "engine: PostgreSQL" in r.stdout, r.stdout[-900:] + r.stderr[-400:])
 
     # --- 6. downgrade ---------------------------------------------------------
     print("\n4. THE MIGRATION REVERSES")

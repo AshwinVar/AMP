@@ -6,7 +6,18 @@ refusal is equally produced by the guard under test, by a different guard, or by
 a broken fixture. Removing each guard one at a time is the only way to tell
 which one is actually holding.
 
+SOME MUTATIONS NEED POSTGRESQL. Two approvers deciding the same proposal at
+the same instant are kept apart by ``SELECT ... FOR UPDATE`` on the item row,
+and SQLite has no row locks: the race that proves the lock
+(test_agent_item_lock.py section 11) only runs on PostgreSQL. So a mutation that
+removes just the lock cannot be caught on SQLite; it is listed in PG_ONLY and
+reported as ``pg-only`` there, never as caught. ``--postgresql`` runs the
+PG_ONLY mutations and the other row-lock mutations; against PostgreSQL every one
+must be caught (verify_pg_approvals.py runs it there, on a local scratch
+database).
+
 Run: DATABASE_URL="sqlite:///./ci.db" python backend/mutate_approval_gate.py
+     DATABASE_URL=<local scratch postgresql> python backend/mutate_approval_gate.py --postgresql
 """
 import io
 import os
@@ -15,6 +26,11 @@ import sys
 
 SUITES = ["test_approval_gate.py", "test_agents.py", "test_agent_decide.py",
           "test_agent_item_lock.py", "test_agent_item_lock_guard.py"]
+
+# The --postgresql mutations touch approvals._check_item / locate_pending_item,
+# all exercised by test_agent_item_lock.py.
+# Running fewer suites can only turn a catch into a survivor, never the reverse.
+POSTGRESQL_SUITES = ["test_agent_item_lock.py"]
 
 MUTATIONS = [
     # --- who is asking -----------------------------------------------------
@@ -200,7 +216,34 @@ MUTATIONS = [
     ("the reorder agent stops stamping its tenant on the PO", "ai/agents.py",
      "        tenant_code=event.tenant_code,   # explicit: see _propose_task\n",
      ""),
+
+    # --- the item row lock: two decisions at once -----------------------------
+    ("the item check reads without the lock (lock=True -> lock=False)", "approvals.py",
+     "    item, reason = locate_pending_item(db, action, lock=True)",
+     "    item, reason = locate_pending_item(db, action, lock=False)"),
+    ("the item row is not locked (FOR UPDATE dropped, re-read kept)", "approvals.py",
+     "        query = query.populate_existing().with_for_update()",
+     "        query = query.populate_existing()"),
+    ("the lock trusts the copy a session already holds (no re-read)", "approvals.py",
+     "        query = query.populate_existing().with_for_update()",
+     "        query = query.with_for_update()"),
 ]
+
+# Mutations SQLite cannot judge. On SQLite a survivor here is reported as
+# `pg-only`, not SURVIVED; on PostgreSQL it must be caught like any other.
+PG_ONLY = {
+    "the item row is not locked (FOR UPDATE dropped, re-read kept)":
+        "SQLite has no row locks; the PostgreSQL race (verify_pg_approvals.py) catches it",
+}
+# What --postgresql runs: every PG_ONLY mutation plus the rest of the row lock.
+POSTGRESQL_RUN = set(PG_ONLY) | {
+    "the item check reads without the lock (lock=True -> lock=False)",
+    "the lock trusts the copy a session already holds (no re-read)",
+}
+
+
+def on_postgresql():
+    return os.environ.get("DATABASE_URL", "").startswith("postgresql")
 
 
 def run_suites():
@@ -219,14 +262,29 @@ def run_suites():
 EXPECTED_SURVIVORS = {}
 
 
-def main():
+def main(argv=None):
+    global SUITES
+    argv = sys.argv[1:] if argv is None else argv
     here = os.path.dirname(os.path.abspath(__file__))
+    mutations = MUTATIONS
+    if "--postgresql" in argv:
+        if not on_postgresql():
+            print("ABORT: --postgresql needs DATABASE_URL on a local scratch PostgreSQL")
+            return 2
+        mutations = [m for m in MUTATIONS if m[0] in POSTGRESQL_RUN]
+        SUITES = POSTGRESQL_SUITES
+        if len(mutations) != len(POSTGRESQL_RUN):
+            print(f"ABORT: POSTGRESQL_RUN names {len(POSTGRESQL_RUN)} mutations, "
+                  f"{len(mutations)} exist")
+            return 2
+    print(f"engine: {'PostgreSQL' if on_postgresql() else 'SQLite'}; "
+          f"{len(mutations)} mutations; suites: {', '.join(SUITES)}")
     # Read and write byte-faithfully (newline=""). The files are CRLF in a
     # Windows checkout; reading with universal newlines and writing "\n" used to
     # leave every mutated file converted to LF after a run, even though the
     # "restored" check (which compared normalised text) said yes.
     originals = {}
-    for _, path, _, _ in MUTATIONS:
+    for _, path, _, _ in mutations:
         if path not in originals:
             originals[path] = io.open(os.path.join(here, path),
                                       encoding="utf-8", newline="").read()
@@ -240,7 +298,8 @@ def main():
     print("-" * 104)
 
     survived = []
-    for label, path, old, new in MUTATIONS:
+    pg_only = 0
+    for label, path, old, new in mutations:
         source = originals[path]
         if "\r\n" in source:
             old, new = old.replace("\n", "\r\n"), new.replace("\n", "\r\n")
@@ -260,6 +319,9 @@ def main():
                 s.replace("test_", "").replace(".py", "")[:20] for s in failing)
         elif label in EXPECTED_SURVIVORS:
             verdict, note = "shadowed", EXPECTED_SURVIVORS[label]
+        elif label in PG_ONLY and not on_postgresql():
+            verdict, note = "pg-only", PG_ONLY[label]
+            pg_only += 1
         else:
             verdict, note = "SURVIVED", "-- nothing --"
         print(f"{label:<62} {verdict:<10} {note}")
@@ -277,7 +339,11 @@ def main():
         for s in survived:
             print("   *", s)
         return 1
-    print(f"all {len(MUTATIONS)} mutations caught")
+    if pg_only:
+        print(f"{len(mutations) - pg_only} of {len(mutations)} mutations caught; {pg_only} "
+              "pg-only (run --postgresql against PostgreSQL: verify_pg_approvals.py)")
+        return 0
+    print(f"all {len(mutations)} mutations caught")
     return 0
 
 

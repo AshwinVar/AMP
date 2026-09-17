@@ -26,13 +26,18 @@ WHAT THIS SUITE PINS
      the recorded exit;
   6. lists and PATCH responses carry awaiting_approval from the same predicate,
      and a list with nothing pending costs zero agent_actions queries;
-  7. the double-decide race: a stale second decision cannot overwrite the first;
+  7. the double-decide race, sequentially: a stale second decision -- even one
+     whose session already holds the item -- cannot overwrite the first;
   8. withdraw_orphaned (a tested function, deliberately NOT wired to boot);
   9. auto-approval still works with no tenant bound (items are tenant-stamped);
  10. the invariant: an item is held exactly when the gate would let it be
-     decided (for a licensed tenant, ignoring expiry).
+     decided (for a licensed tenant, ignoring expiry);
+ 11. the same race with the two decisions truly overlapping, which only
+     PostgreSQL can hold (SELECT ... FOR UPDATE). On SQLite it prints SKIP;
+     verify_pg_approvals.py runs it on a local scratch PostgreSQL.
 
 Run: DATABASE_URL="sqlite:///./ci.db" python test_agent_item_lock.py
+     DATABASE_URL=<local scratch postgresql> python test_agent_item_lock.py
 """
 import os
 import sys
@@ -702,6 +707,35 @@ def test_double_decision_race():
           and item_row(db1, "purchase_order", iid).status == "Approved",
           f"{act.status}/{act.decided_by}/{item_row(db1, 'purchase_order', iid).status}")
 
+    # The slower request holds the ITEM too (a caller that loaded the PO before
+    # deciding). The lock must re-read the row rather than trust the copy in that
+    # session's identity map, or it approves a Draft that is already decided.
+    aid_s, iid_s = propose(db1, "purchase_order")
+    db3 = sessionmaker(bind=eng, expire_on_commit=False)()
+    with bound(A):
+        stale_action = db3.query(models.AgentAction).filter(models.AgentAction.id == aid_s).first()
+        stale_po = db3.query(models.PurchaseOrder).filter(models.PurchaseOrder.id == iid_s).first()
+        check("setup: the slower request holds the action Proposed AND the PO Draft",
+              stale_action.status == "Proposed" and stale_po.status == "Draft",
+              f"{stale_action.status}/{stale_po.status}")
+    db3.commit()  # end the read; both stale objects stay in its identity map
+    ok, code, out = decide(db1, aid_s, "approve")
+    check("the first request approves it", ok and out["status"] == "Approved", f"{code} {out}")
+    with bound(A):
+        try:
+            agent_routes.reject_agent_action(aid_s, db=db3, current_user=SUP)
+            check("the stale reject (item held in its session) is refused", False, "ACCEPTED")
+        except HTTPException as e:
+            check("the stale reject (item held in its session) is refused with 400 'Already approved'",
+                  e.status_code == 400 and e.detail == "Already approved",
+                  f"{e.status_code} {e.detail}")
+    db3.close()
+    act = action_row(db1, aid_s)
+    check("...and the record is still the first approver's, matching the PO",
+          act.status == "Approved" and act.decided_by == "a-admin"
+          and item_row(db1, "purchase_order", iid_s).status == "Approved",
+          f"{act.status}/{act.decided_by}/{item_row(db1, 'purchase_order', iid_s).status}")
+
     # withdraw() itself is a compare-and-set.
     aid2, _ = propose(db1, "purchase_order")
     decide(db1, aid2, "reject")
@@ -863,6 +897,116 @@ def test_held_exactly_when_decidable():
     check(f"all {cases} combinations agree (held == decidable and licensed)", not bad, str(bad[:5]))
 
 
+RACE_HOLD_SECONDS = 1.5
+
+
+def test_simultaneous_decisions_on_postgresql():
+    banner("11. TWO DECISIONS AT THE SAME INSTANT: THE ITEM ROW LOCK SERIALISES THEM")
+    # Section 7 is a SEQUENTIAL race: the second request starts after the first
+    # committed. This one overlaps them for real. Both requests pass the route's
+    # status check and the gate's state and actor checks before either reads the
+    # item, so the only thing left between them is SELECT ... FOR UPDATE on the
+    # item row. Measured with that lock removed, on PostgreSQL 18: 45 of 45 races
+    # answered 200 to BOTH approve and reject, and whichever committed last
+    # silently overwrote the other's decision.
+    if not _URL.startswith("postgresql"):
+        print("  SKIP  needs PostgreSQL: SQLite has no row locks, so it cannot hold this race "
+              "(verify_pg_approvals.py runs this section on PostgreSQL)")
+        return
+    import threading
+
+    real_check_item = approvals._check_item
+    gates = {}
+
+    def gated_check_item(db, action):
+        gate = gates.get(action.id)
+        if gate is None:
+            return real_check_item(db, action)
+        # Barrier 1: both requests are inside the item check before either reads.
+        try:
+            gate["enter"].wait(timeout=20)
+        except threading.BrokenBarrierError:
+            gate["enter_broken"] = True
+        real_check_item(db, action)
+        # Barrier 2: wait for the OTHER request to have read the item as well.
+        # With the row lock it cannot until this transaction ends, so the wait
+        # times out and this request commits first. Without the lock both read
+        # the row as pending, both get past here, and both decide.
+        try:
+            gate["read"].wait(timeout=RACE_HOLD_SECONDS)
+            gate["both_read"] = True
+        except threading.BrokenBarrierError:
+            pass
+
+    def request(results, key, aid, decision, actor, preload):
+        tok = tenancy.set_current_tenant(A)
+        session = SessionLocal()
+        try:
+            # A caller that already has the item on screen (loaded in its session).
+            held = [session.query(MODEL[k]).filter(MODEL[k].id == i).first()
+                    for k, i in preload]
+            fn = (agent_routes.approve_agent_action if decision == "approve"
+                  else agent_routes.reject_agent_action)
+            results[key] = (200, fn(aid, db=session, current_user=actor)["status"])
+            del held
+        except HTTPException as e:
+            results[key] = (e.status_code, e.detail)
+        except Exception as e:  # a deadlock or a stale-data error is a failure too
+            results[key] = ("error", f"{type(e).__name__}: {e}")
+            session.rollback()
+        finally:
+            session.close()
+            tenancy.reset_current_tenant(tok)
+
+    races = [(kind, ("approve", SUP), ("reject", ADMIN), False) for kind in KINDS]
+    # A double click on Approve from a screen that already holds the PO.
+    races.append(("purchase_order", ("approve", SUP), ("approve", ADMIN), True))
+    approvals._check_item = gated_check_item
+    try:
+        for kind, first, second, preload in races:
+            db = fresh_db()
+            aid, iid = propose(db, kind)
+            db.close()
+            label = f"{kind}: {first[0]} ({first[1]['role']}) vs {second[0]} ({second[1]['role']})" \
+                    + (", item already loaded" if preload else "")
+            gate = gates[aid] = {"enter": threading.Barrier(2), "read": threading.Barrier(2)}
+            results = {}
+            spec = {"first": first, "second": second}
+            threads = [threading.Thread(target=request,
+                                        args=(results, key, aid, decision, actor,
+                                              [(kind, iid)] if preload else []))
+                       for key, (decision, actor) in spec.items()]
+            for t in threads:
+                t.start()
+            for t in threads:
+                t.join(timeout=60)
+            check(f"{label}: both requests reached the item check together",
+                  not gate.get("enter_broken") and len(results) == 2, str(results))
+            winners = [k for k, r in results.items() if r[0] == 200]
+            losers = [k for k, r in results.items() if r[0] != 200]
+            check(f"{label}: exactly one decision is accepted",
+                  len(winners) == 1 and len(losers) == 1, str(results))
+            check(f"{label}: the second request could not read the item until the first committed",
+                  not gate.get("both_read"), "both requests read the row as pending")
+            act, item = action_row(db, aid), item_row(db, kind, iid)
+            if len(winners) == 1 and len(losers) == 1:
+                decision, actor = spec[winners[0]]
+                recorded = "Approved" if decision == "approve" else "Rejected"
+                check(f"{label}: the refused one gets 400 'Already {recorded.lower()}'",
+                      results[losers[0]] == (400, f"Already {recorded.lower()}"),
+                      str(results[losers[0]]))
+                check(f"{label}: the record is the winner's and matches the item",
+                      act.status == recorded and act.decided_by == actor["sub"]
+                      and item.status == (APPROVED[kind] if decision == "approve" else "Cancelled"),
+                      f"{act.status}/{act.decided_by}/{item.status}")
+    finally:
+        approvals._check_item = real_check_item
+        for s in list(_open):
+            s.close()
+        _open.clear()
+
+
+
 if __name__ == "__main__":
     test_every_bypass_is_refused()
     test_a_decision_never_contradicts_the_item()
@@ -874,6 +1018,7 @@ if __name__ == "__main__":
     test_withdraw_orphaned()
     test_auto_approval_with_no_tenant_bound()
     test_held_exactly_when_decidable()
+    test_simultaneous_decisions_on_postgresql()
     print()
     print("=" * 74)
     if failures:

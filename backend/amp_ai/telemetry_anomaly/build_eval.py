@@ -510,6 +510,10 @@ def build(*, created_at, prior_ledger, seed=SEED, split=TEST_SPLIT, config=MAIN_
             "inputs": "every numeric telemetry signal stored for the machine: iot_telemetry rows (iot:<name>) and "
                       "industrial_signals rows with quality Good (plc:<name>)",
             "bucket": f"{SR.BUCKET_SECONDS // 60}-minute median per signal",
+            # OUT OF DATE (review round 1): the method also has a Transition state for a bucket whose state
+            # changes inside it (series.bucket_states, parameters.states). Left unchanged so the committed, pinned
+            # v1 evaluation still reproduces byte for byte; the model card says so. Correct it in the next
+            # evaluation build (which needs a fresh test set anyway).
             "state": "machine state at each bucket's start from MachineEvent: Running / NotRunning / Unknown",
             "score_window": "[now - 1 h, now)",
             "baseline_window": f"[now - {SR.BASELINE_DAYS} d, now - 1 h); oldest 70% fit, newest 30% calibrate",

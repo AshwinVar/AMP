@@ -47,6 +47,10 @@ export type ModelCard = {
   reason: string | null;
   reasons: string[];
   headline: HeadlineRow[];
+  /** Known weaknesses a reader must see before quoting a number (registry.py builds them from the evaluation). */
+  limitations?: string[];
+  /** The same comparison on deliberately misspecified synthetic data (stress tests). */
+  misspecification_rows?: HeadlineRow[];
   sha256_pinned: string;
   version?: string | null;
   model_name?: string | null;
@@ -92,7 +96,15 @@ export type AnomalyResult = {
   have?: Record<string, number>;
   simulated_source?: boolean | null;
   deviating?: { signal: string; direction?: string; z?: number }[];
-  evaluation?: { adopted: boolean; experimental: boolean; caveat: string };
+  evaluation?: {
+    adopted: boolean;
+    experimental: boolean;
+    caveat: string;
+    /** The score at or above which the evaluation counted an alarm. */
+    alarm_score?: number | null;
+    /** How often clean held-out (synthetic) hours reached alarm_score: measured, not nominal. */
+    clean_false_alarm_rate?: { estimate: number | null; lo: number | null; hi: number | null } | null;
+  };
 };
 
 // ── Numbers ──────────────────────────────────────────────────────────────────
@@ -183,7 +195,25 @@ export function verdictBadge(card: Pick<ModelCard, "available" | "adopted">): Ve
   return { label: "Experimental · not adopted", tone: "experimental" };
 }
 
-export const SYNTHETIC_ONLY_LABEL = "Trained and evaluated on synthetic data only";
+/**
+ * What a model was trained and evaluated on, per model, because it differs. The
+ * anomaly check trains nothing ahead of time: its EVALUATION is synthetic, but
+ * every request fits a baseline from the machine's own telemetry (with consent),
+ * so "trained on synthetic data only" would be false for it. A model this
+ * function does not know gets no claim at all.
+ */
+export function dataLabel(card: Pick<ModelCard, "name">): string {
+  switch (card.name) {
+    case "failure_risk":
+      return "Trained and evaluated on synthetic data only";
+    case "telemetry_anomaly":
+      return "Evaluated on synthetic data only · each check fits a baseline from this machine's own telemetry, with consent";
+    case "copilot_intent":
+      return "Trained and evaluated on AMP-authored questions only";
+    default:
+      return "See Provenance for what this model was trained and evaluated on";
+  }
+}
 
 /** "failure_risk@v1 · sha256 ad30970f…" — what a support conversation needs to identify a model. */
 export function modelIdentity(card: Pick<ModelCard, "model_name" | "version" | "sha256" | "sha256_pinned">): string {
@@ -204,11 +234,18 @@ export type CopilotTurnSource = {
 
 export type CopilotBadge = { text: string; tone: "llm" | "native" | "rules" };
 
-/** Which engine answered: an LLM, AMP's own intent model (with its confidence), or the keyword rules. */
+/**
+ * Which engine answered: an LLM, AMP's own intent model, or the keyword rules.
+ *
+ * The model's confidence is NOT shown as a percentage: it is a raw softmax value,
+ * not calibrated, and its routing threshold was set so that confident answers were
+ * right about 90% of the time on validation - a "59%" badge would understate that
+ * and a "91%" one would claim a calibration nobody measured.
+ */
 export function copilotBadge(turn: CopilotTurnSource): CopilotBadge {
   if (turn.source === "llm") return { text: `✦ AI · ${turn.model || "model"}`, tone: "llm" };
   if (turn.route_source === "model" && finite(turn.confidence)) {
-    return { text: `AMP native · ${Math.round(turn.confidence * 100)}%`, tone: "native" };
+    return { text: "AMP native · model-routed", tone: "native" };
   }
   return { text: "instant · rules", tone: "rules" };
 }
@@ -314,12 +351,21 @@ export function describeAnomaly(result: AnomalyResult): AnomalyView {
   const experimental = result.evaluation?.adopted !== true;
   const signals = (result.deviating || []).map((d) => d.signal);
   const simulated = result.simulated_source === true ? " The telemetry source is a simulator." : "";
+  // The score is a mid-rank against this machine's own recent hours (baseline.py), not a probability and
+  // not a mark out of 100; the only honest reading of a high one is the false-alarm rate MEASURED at the alarm level.
+  const alarm = result.evaluation?.alarm_score;
+  const rate = result.evaluation?.clean_false_alarm_rate?.estimate;
+  const measured =
+    finite(alarm) && finite(rate)
+      ? `In its synthetic evaluation, ${(rate * 100).toFixed(1)}% of clean hours were rarer than ${Math.round(alarm * 100)}% of their machine's recent hours (false alarms at that level).`
+      : null;
+  const parts = [signals.length ? `Furthest from normal: ${signals.join(", ")}` : null, measured].filter(Boolean);
   return {
     kind: "scored",
     alert: false,
     text:
-      `${experimental ? "Experimental score" : "Score"} ${(result.score * 100).toFixed(0)} / 100 for the last hour` +
-      ` against this machine's own previous 14 days.${simulated}`,
-    detail: signals.length ? `Furthest from normal: ${signals.join(", ")}` : null,
+      `${experimental ? "Experimental: the" : "The"} last hour is rarer than ${Math.floor(result.score * 100)}% of` +
+      ` this machine's recent hours (its own previous 14 days). A rank, not a probability of a fault.${simulated}`,
+    detail: parts.length ? parts.join(" ") : null,
   };
 }

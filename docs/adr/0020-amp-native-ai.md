@@ -44,25 +44,94 @@ imported from an artifact.
 ### 2. Synthetic training only, from independent generators
 
 Each model is trained or evaluated only on data from a documented generator
-committed BEFORE the feature code (`failure_risk/synthetic.py`,
-`telemetry_anomaly/synthetic.py`, the AMP-authored copilot corpus). No generator
-imports or is labelled by the rule scorer. Each generator's SHA-256 is recorded in
-the artifact. Every surface carries the caveat **"Evaluated on synthetic machines
-only; not evidence of accuracy on real plants."**
+(`failure_risk/synthetic.py`, `telemetry_anomaly/synthetic.py`, the AMP-authored
+copilot corpus). No generator imports or is labelled by the rule scorer (a purity
+test checks the imports). Each generator's SHA-256 is recorded in the artifact.
+Commit order is **not** evidence of independence and is not claimed as such: the
+failure-risk generator (6c2151a, 06:43:33) was committed under three minutes
+before its feature code (acda4b7, 06:46:25); the anomaly generator (09e1b3e)
+hours before its scorer and harness (0ea0b1c); and the copilot corpus was added in
+the same commit as its classifier and build (ca38bfd), after the hashing featuriser
+(1241ec8). The same authors wrote generator and model, which is exactly why the
+misspecification suites and the post-hoc diagnostics below exist.
+
+What each surface says about data differs per model, because it is different: the
+failure-risk model is trained and evaluated on synthetic machines; the copilot
+model on AMP-authored questions; the anomaly check trains nothing ahead of time,
+is **evaluated** on synthetic telemetry and, on each request, fits a baseline from
+the machine's own telemetry with the company's consent. Every surface also carries
+the caveat **"Evaluated on synthetic machines only; not evidence of accuracy on
+real plants."**
 
 ### 3. Measure before claiming: gates and a test-set ledger
 
 Every figure comes from a runnable build with a fixed seed (20260917), compared
 with the existing baseline on the SAME held-out rows, with 95% cluster-bootstrap
-intervals. Each build has an adoption gate. The artifact's ledger counts runs per
-test set, and adoption requires the first run, so a model cannot be tuned against
-its test set until it passes.
+intervals. Each build has an adoption gate.
+
+**The ledger is an audit trail, not an enforcement.** Each artifact's ledger counts
+the evaluations of each test set that were COMMITTED, and a gate fails if the
+committed ledger shows an earlier run (`test_set_reused`). It cannot see runs nobody
+commits: anyone can re-score a test set by building into another folder
+(`--out`), by calling `build()` in-process with an empty prior ledger, or by
+reading the data directly, and the reproduce suites
+(`test_amp_ai_failure_risk_reproduce.py`, `test_amp_ai_failure_risk_diagnostics.py`)
+re-score the committed test sets on every CI run by design. So "the first run"
+means the first committed run; whether a model was tuned against its test set
+before that is a matter of review and of the development notes each evaluation
+records, not something the ledger can prove.
 
 | Model | Baseline (same data) | Verdict |
 |---|---|---|
-| `failure_risk` (logistic, 7-day breakdown start) | rule scorer | **Adopted** (on synthetic data). PR-AUC 0.194 vs 0.094; paired difference +0.099 [0.029, 0.175]; ROC-AUC 0.698 vs 0.612; Brier 0.0491 below base rate 0.0524; ECE 0.006 |
-| `telemetry_anomaly` (robust median/MAD + Mahalanobis) | mean/std z-score, static range checks | **Not adopted.** Beats static ranges (PR-AUC +0.225 [0.150, 0.304]) but loses to mean/std (−0.103 [−0.158, −0.047]) |
+| `failure_risk` (logistic, 7-day breakdown start) | rule scorer | **Adopted** (on synthetic data). PR-AUC 0.194 vs 0.094; paired difference +0.099 [0.029, 0.175]; ROC-AUC 0.698 vs 0.612; Brier 0.0491 below base rate 0.0524; ECE 0.006, dominated by the 0–10% bin (1172 of 1298 rows): only 22 rows are predicted at 20% or more, and there calibration is not established (20–30%: 13 rows, predicted 0.24, observed 0.15; 30–40%: 4 rows, 0.36 vs 0.00). **But see the caveats below: the rule is a weak baseline on this data and one raw input ties the model.** |
+| `telemetry_anomaly` (robust median/MAD + Mahalanobis) | mean/std z-score, static range checks | **Not adopted.** Beats static ranges (PR-AUC +0.225 [0.150, 0.304]) but loses to mean/std (−0.103 [−0.158, −0.047]). At the 0.99 alarm level clean hours false-alarm 1.55% [1.14%, 2.05%], not the nominal 1% (2.40% under `regime_switching`). Evaluated only on windows that start with the machine running |
 | `copilot_intent` (multinomial, hashed n-grams) | keyword router | **Not adopted.** External pool of 64 questions: 38 vs 36 correct (+3.1 points, McNemar p = 0.625); the gate needs +5 points and p < 0.05 |
+
+**Failure risk: what "adopted" does and does not show.** A post-hoc diagnostic,
+`python -m amp_ai.failure_risk.diagnose` (output pinned in
+`artifacts/failure_risk_v1.diagnostics.json`, reproduced by
+`test_amp_ai_failure_risk_diagnostics.py`), was run after v1 was adopted. It changes
+no verdict, and what it found is shown on the model card:
+
+- On the 1298 test machine-weeks the rule scorer has little to work with. "High
+  accumulated downtime" and "frequent downtime events" fire on **every** row (the
+  generator logs a short stoppage roughly every eight running hours as a
+  DowntimeLog row). Five of its eleven components **never** fire: currently in
+  breakdown (those rows are excluded), currently in maintenance (every PM finishes
+  before the 10:00 snapshot), utilisation below 40% (the lowest is 43), moderate
+  downtime (shadowed by "high"), and work-order load (histories carry no work
+  orders). The rule separates machines on four yes/no signals, and 68% of rows share
+  one score (40). Beating it is a low bar.
+- **One raw input ties the model.** `reject_rate_drift` alone, its direction set on
+  training rows and chosen by validation PR-AUC, scores test PR-AUC 0.171 against
+  the model's 0.194: model minus it +0.023 [−0.034, +0.078]. That single input
+  would itself pass the gate's first criterion against the rule (paired PR-AUC lower
+  bound +0.012). `reject_rate_7d`, which a reviewer picked after scanning all 18
+  inputs on the test set (so a warning, not a fair baseline), scores 0.191; model
+  minus it +0.003 [−0.034, +0.048].
+- Every training, validation and test row is a **Tuesday 10:00** snapshot;
+  `GET /ai/native/failure-risk` scores at whatever moment it is called and says so
+  in its `evaluation_scope` field. Off-shift, the rule score beside the model can
+  pick up components that never fired in the evaluation.
+- Under the `shock_driven` stress test the model's Brier 0.0529 is not below the
+  base-rate Brier 0.0524, and on `novel_archetype` machines its ROC-AUC is 0.563.
+
+The next failure-risk build (on a fresh seed) must add the best single feature
+chosen on validation as a baseline in its gate, and report the rule's per-component
+firing rates inside the evaluation itself.
+
+**Anomaly evaluation file.** Its `features.state` text describes machine state as
+Running / NotRunning / Unknown; the evaluated method (its `parameters.states`) also
+has Transition, for buckets whose state changes inside them. The text is left as
+committed so the pinned file still reproduces, the card says it is out of date, and
+the next evaluation build corrects it.
+
+**Copilot pool.** The 64 pool questions are in this repository's evaluation files,
+and the training corpus was decontaminated against them only down to a character
+4-gram Jaccard of 0.6, so near paraphrases can remain in training; a gain on them is,
+if anything, optimistic. The card labels the pool that way. A future gate needs a
+fresh question set written by someone who has not read the corpus or the router,
+kept out of decontamination.
 
 "Adopted" for failure risk does **not** change any existing screen. It lets
 `GET /ai/native/failure-risk` show the model's probability first, with the rule
@@ -96,7 +165,13 @@ else, including an exception. The pillar runs with the request's tenant. The
 model never sees a session, a tenant or a role.
 
 A model card name is looked up in the fixed `registry.MODELS`; it is never used
-to build a path. Cards carry metadata and metrics, never `parameters`.
+to build a path. Cards carry metadata and metrics, never `parameters`, plus the
+stress-test rows and a `limitations` list (built from the pinned artifact and, for
+failure risk, the pinned diagnostics; if those cannot be verified the card says so).
+Numbers the UI shows are not dressed up as calibrated: the copilot badge says
+"model-routed" without the raw softmax percentage, and the anomaly score is shown
+as "rarer than N% of this machine's recent hours", with the false-alarm rate the
+evaluation measured at the alarm level, never as "N / 100".
 
 ### 5. Inference is not learning; learning needs stored, audited, revocable consent
 

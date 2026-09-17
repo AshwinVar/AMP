@@ -3,8 +3,8 @@
 import { useCallback, useEffect, useState, type ReactNode } from "react";
 
 import {
-  SYNTHETIC_ONLY_LABEL,
   compareToBaseline,
+  dataLabel,
   describeAnomaly,
   describeAnomalyError,
   formatDifference,
@@ -14,6 +14,7 @@ import {
   verdictBadge,
   type AnomalyResult,
   type AnomalyView,
+  type HeadlineRow,
   type ModelCard,
   type ModelCardsResponse,
 } from "../lib/aiModels";
@@ -27,8 +28,10 @@ import { LoadError, useLoadError } from "../lib/useLoadError";
  * (Adopted / Experimental / Unavailable), that the numbers come from SYNTHETIC
  * data, and every headline metric next to the baseline it was measured against
  * on the same held-out data, with the 95% interval where there is one. The
- * reasons a model was not adopted are shown, not hidden. The wording is decided
- * in lib/aiModels.ts, where it is tested.
+ * reasons a model was not adopted are shown, not hidden, and so are its known
+ * limitations and its stress-test rows: a card that showed only the rows a model
+ * does well on would say more than its evaluation did. The wording is decided in
+ * lib/aiModels.ts and backend/amp_ai/registry.py, where it is tested.
  */
 
 const BADGE_STYLE = {
@@ -44,8 +47,57 @@ const VERDICT_STYLE = {
   equal: "text-slate-400",
 } as const;
 
+function MetricTable({ rows, label }: { rows: HeadlineRow[]; label: string }) {
+  return (
+    <div className="mt-3 overflow-x-auto">
+      <table className="w-full text-xs" aria-label={label}>
+        <thead>
+          <tr className="text-slate-500 text-left">
+            <th className="font-normal py-1 pr-3">Metric</th>
+            <th className="font-normal py-1 pr-3">Model</th>
+            <th className="font-normal py-1 pr-3">Baseline</th>
+            <th className="font-normal py-1 pr-3">Difference</th>
+            <th className="font-normal py-1">Reading</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((row, i) => {
+            const unit = row.unit ?? "score";
+            const cmp = compareToBaseline(row);
+            return (
+              <tr key={`${row.metric}-${row.dataset}-${i}`} className="border-t border-slate-800 align-top">
+                <td className="py-1.5 pr-3 text-slate-300">
+                  {row.metric}
+                  <span className="block text-[10px] text-slate-500">{row.dataset}</span>
+                </td>
+                <td className="py-1.5 pr-3 text-slate-200 whitespace-nowrap">
+                  {formatMetricValue(row.model, unit)}
+                  <span className="block text-[10px] text-slate-500">{formatInterval(row.model_lo, row.model_hi, unit)}</span>
+                </td>
+                <td className="py-1.5 pr-3 text-slate-300 whitespace-nowrap">
+                  {formatMetricValue(row.baseline, unit)}
+                  <span className="block text-[10px] text-slate-500">{row.baseline_name}</span>
+                </td>
+                <td className="py-1.5 pr-3 text-slate-300 whitespace-nowrap">
+                  {formatDifference(row.difference, unit)}
+                  <span className="block text-[10px] text-slate-500">
+                    {formatInterval(row.difference_lo, row.difference_hi, unit, true)}
+                  </span>
+                </td>
+                <td className={`py-1.5 ${VERDICT_STYLE[cmp.verdict]}`}>{cmp.text}</td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
 export function AIModelCard({ card, children }: { card: ModelCard; children?: ReactNode }) {
   const badge = verdictBadge(card);
+  const limitations = card.limitations ?? [];
+  const stress = card.misspecification_rows ?? [];
   return (
     <div className="rounded-xl border border-slate-800 bg-slate-900 p-4">
       <div className="flex items-start justify-between gap-3 flex-wrap">
@@ -55,7 +107,7 @@ export function AIModelCard({ card, children }: { card: ModelCard; children?: Re
         </div>
         <span className={`rounded-full px-2.5 py-0.5 text-[11px] border ${BADGE_STYLE[badge.tone]}`}>{badge.label}</span>
       </div>
-      <p className="text-[11px] uppercase tracking-wide text-amber-300/80 mt-2">{SYNTHETIC_ONLY_LABEL}</p>
+      <p className="text-[11px] uppercase tracking-wide text-amber-300/80 mt-2">{dataLabel(card)}</p>
       <p className="text-xs text-slate-400 mt-2">{card.purpose}</p>
       <p className="text-xs text-slate-500 mt-1">{card.default_behaviour}</p>
 
@@ -65,50 +117,7 @@ export function AIModelCard({ card, children }: { card: ModelCard; children?: Re
         </p>
       )}
 
-      {card.available && card.headline.length > 0 && (
-        <div className="mt-3 overflow-x-auto">
-          <table className="w-full text-xs">
-            <thead>
-              <tr className="text-slate-500 text-left">
-                <th className="font-normal py-1 pr-3">Metric</th>
-                <th className="font-normal py-1 pr-3">Model</th>
-                <th className="font-normal py-1 pr-3">Baseline</th>
-                <th className="font-normal py-1 pr-3">Difference</th>
-                <th className="font-normal py-1">Reading</th>
-              </tr>
-            </thead>
-            <tbody>
-              {card.headline.map((row, i) => {
-                const unit = row.unit ?? "score";
-                const cmp = compareToBaseline(row);
-                return (
-                  <tr key={`${row.metric}-${i}`} className="border-t border-slate-800 align-top">
-                    <td className="py-1.5 pr-3 text-slate-300">
-                      {row.metric}
-                      <span className="block text-[10px] text-slate-500">{row.dataset}</span>
-                    </td>
-                    <td className="py-1.5 pr-3 text-slate-200 whitespace-nowrap">
-                      {formatMetricValue(row.model, unit)}
-                      <span className="block text-[10px] text-slate-500">{formatInterval(row.model_lo, row.model_hi, unit)}</span>
-                    </td>
-                    <td className="py-1.5 pr-3 text-slate-300 whitespace-nowrap">
-                      {formatMetricValue(row.baseline, unit)}
-                      <span className="block text-[10px] text-slate-500">{row.baseline_name}</span>
-                    </td>
-                    <td className="py-1.5 pr-3 text-slate-300 whitespace-nowrap">
-                      {formatDifference(row.difference, unit)}
-                      <span className="block text-[10px] text-slate-500">
-                        {formatInterval(row.difference_lo, row.difference_hi, unit, true)}
-                      </span>
-                    </td>
-                    <td className={`py-1.5 ${VERDICT_STYLE[cmp.verdict]}`}>{cmp.text}</td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
-      )}
+      {card.available && card.headline.length > 0 && <MetricTable rows={card.headline} label="Held-out results" />}
 
       {card.available && card.adopted !== true && card.reasons.length > 0 && (
         <div className="mt-3">
@@ -118,6 +127,24 @@ export function AIModelCard({ card, children }: { card: ModelCard; children?: Re
               <li key={r}>{r}</li>
             ))}
           </ul>
+        </div>
+      )}
+
+      {card.available && limitations.length > 0 && (
+        <div className="mt-3">
+          <p className="text-[11px] text-slate-500">Known limitations</p>
+          <ul className="list-disc pl-4 text-xs text-slate-400 mt-1 space-y-0.5">
+            {limitations.map((text) => (
+              <li key={text}>{text}</li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      {card.available && stress.length > 0 && (
+        <div className="mt-3">
+          <p className="text-[11px] text-slate-500">Stress tests: the same comparison on deliberately misspecified synthetic data</p>
+          <MetricTable rows={stress} label="Stress tests" />
         </div>
       )}
 
@@ -227,8 +254,8 @@ export default function AINativeModelsPanel() {
     <div className="rounded-2xl border border-slate-800 bg-slate-900/60 p-6">
       <h3 className="text-xs font-semibold uppercase tracking-wide text-slate-300">AMP-native models</h3>
       <p className="text-slate-400 text-sm mt-1">
-        Built into AMP, no external AI service. Each is shown against the rule it would replace, on the same held-out
-        data. {data.caveat}
+        Built into AMP, no external AI service. Each is shown against its baseline on the same held-out data, with its
+        known limitations. {data.caveat}
       </p>
       <div className="mt-4 space-y-3">
         {data.models.map((card) => (

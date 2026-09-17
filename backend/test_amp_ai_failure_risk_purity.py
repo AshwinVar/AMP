@@ -14,7 +14,7 @@ imports transitively) rather than trusted to review:
                    imports no database layer, no session, no tenancy and not
                    the database loader: the model is handed histories that the
                    AMP data layer fetched, it never fetches them
-  3  BUILD OFFLINE build.py imports no database session, loader or tenancy
+  3  BUILD OFFLINE build.py and diagnose.py import no database session, loader or tenancy
                    (it imports the rule scorer, which pulls the ORM models in,
                    but test_amp_ai_failure_risk_build.py proves no connection
                    is ever opened)
@@ -33,7 +33,7 @@ BACKEND = os.path.dirname(os.path.abspath(__file__))
 PKG = os.path.join(BACKEND, "amp_ai", "failure_risk")
 
 EXPECTED_MODULES = {"__init__", "history", "features", "synthetic", "baseline_rule", "build",
-                    "db_history", "predict"}
+                    "db_history", "predict", "diagnose"}
 
 failures = []
 
@@ -99,6 +99,9 @@ def section_build_offline():
     forbidden = {"sqlalchemy", "database", "tenancy", "amp_ai.failure_risk.db_history", "oee_contract"}
     err = violation(P.assert_no_forbidden_imports, [module("build")], forbidden, min_files=1, transitive=False)
     check("build.py imports no session, engine, tenancy or database loader", err is None, str(err))
+    # diagnose.py re-scores the committed test set offline, like build.py, and is imported by the model registry.
+    err = violation(P.assert_no_forbidden_imports, [module("diagnose")], forbidden, min_files=1, transitive=False)
+    check("diagnose.py imports no session, engine, tenancy or database loader", err is None, str(err))
 
 
 # --------------------------------------------------------------------------- 4

@@ -465,6 +465,13 @@
     "The misspecification variants reuse the fitted model and the test machines and dates; they are reported, never gated.",
     "Design changes made while building, all before the full configuration's test set was first evaluated, and prompted by --small builds (seed 20260918, a different fleet): the L2 grid gained 1000 after a --small build chose 100, the plan grid's edge; the class-weighted path rejects a Platt calibrator whose slope is not positive after --small data produced a = -0.248."
   ],
+  "post_hoc_notes": [
+    "Added by hand on 2026-09-17 after an adversarial review, NOT produced by build.py; nothing above this key was changed and v1's verdict stands as recorded. The numbers behind these notes come from amp_ai/failure_risk/diagnose.py and are pinned in failure_risk_v1.diagnostics.json.",
+    "The rule baseline has little to work with on this generator: on the 1298 test machine-weeks 'high accumulated downtime' and 'frequent downtime events' fire on every row, five of its eleven components never fire (breakdown and maintenance status, low utilisation, moderate downtime, work-order load), and 68% of rows share one score (40). It separates machines on four yes/no signals. 'Beats the rule' is a low bar here.",
+    "One raw input ties the model: reject_rate_drift alone (direction from training rows, chosen by validation PR-AUC) scores test PR-AUC 0.171 vs the model's 0.194; model minus it +0.023, 95% interval -0.034 to +0.078. It also beats the rule by the gate's own first criterion (paired PR-AUC lower bound +0.012). reject_rate_7d, picked by the reviewer after scanning the test set, scores 0.191 (model minus it +0.003, -0.034 to +0.048).",
+    "Every row is a Tuesday 10:00 snapshot; the serving endpoint scores at any time.",
+    "For the next build on a fresh seed: add the best single feature chosen on validation to the adoption gate, and report the rule's per-component firing rates in the evaluation itself."
+  ],
   "python": "3.11.0",
   "report": "amp_ai.failure_risk evaluation",
   "seed": 20260917,

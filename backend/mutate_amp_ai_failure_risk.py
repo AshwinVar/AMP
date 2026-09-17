@@ -30,9 +30,11 @@ FEATURES = "test_amp_ai_failure_risk_features.py"
 DB = "test_amp_ai_failure_risk_db_parity.py"
 RULE = "test_amp_ai_failure_risk_rule_parity.py"
 GENERATOR = "test_amp_ai_failure_risk_generator.py"
+DIAG = "test_amp_ai_failure_risk_diagnostics.py"
 
 B = "amp_ai/failure_risk/build.py"
 P = "amp_ai/failure_risk/predict.py"
+D = "amp_ai/failure_risk/diagnose.py"
 
 # (label, file, old, new, suite that must go red)
 MUTATIONS = [
@@ -136,6 +138,23 @@ MUTATIONS = [
      "+ sum(1 for e in events if e[2] == BREAKDOWN)),", "+ 0),", RULE),
     ("the generator imports the rule scorer", "amp_ai/failure_risk/synthetic.py",
      "from ..core.rng import make_rng", "from ..core.rng import make_rng\nimport predictive_engine", GENERATOR),
+
+    # --- post-hoc diagnostics (review round 1): pinned, reproducible, honest about selection -----
+    ("diagnostics: the pinned hash is not checked", D,
+     '    if not hmac.compare_digest(doc["sha256"], expected):', "    if False:", DIAG),
+    ("diagnostics: the embedded hash is not checked", D,
+     '    if not hmac.compare_digest(recomputed, doc["sha256"]):', "    if False:", DIAG),
+    ("diagnostics: another model's diagnostics are accepted", D,
+     '    if doc.get("artifact_sha256") != predict.ARTIFACT_SHA256:', "    if False:", DIAG),
+    ("diagnostics: the single input is chosen on the TEST rows", D,
+     "        val_pr = None if sign is None else M.pr_auc(y_val, _feature_scores(val, name, sign, median))",
+     '        val_pr = None if sign is None else M.pr_auc([s["label"] for s in test], '
+     "_feature_scores(test, name, sign, median))", DIAG),
+    ("diagnostics: the rule-component scan matches nothing", D,
+     'node.func.attr == "append"', 'node.func.attr == "extend"', DIAG),
+    ("diagnose.py reaches for the database loader", D,
+     "from . import baseline_rule, build, predict, synthetic",
+     "from . import baseline_rule, build, db_history, predict, synthetic", PURITY),
 ]
 
 

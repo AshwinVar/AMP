@@ -116,6 +116,7 @@ def native_failure_risk(db: Session = Depends(_get_db),
             "as_of": as_of.isoformat(), "machines": _rule_only(histories, as_of),
         }
     result["rule_basis"] = RULE_BASIS
+    result["evaluation_scope"] = registry.failure_risk_evaluation_scope()
     return result
 
 

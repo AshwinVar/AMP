@@ -17,6 +17,16 @@ hash and starts a new count.
 The ledger lives inside each eval JSON and artifact (``eval_ledger``), so it is
 committed, reviewed and covered by the artifact's pinned hash.
 
+WHAT IT CANNOT DO
+-----------------
+It is an AUDIT TRAIL of committed evaluations, not an enforcement. It counts
+only runs that read a committed ledger and were themselves committed. Building
+into another folder, calling a build function in-process with an empty prior
+ledger, or reading the generated data directly re-scores a test set without
+leaving a trace, and the reproduce suites do exactly that on every CI run, by
+design. "The first recorded evaluation" therefore means the first COMMITTED one
+(ADR-0020 section 3).
+
 SHAPE
 -----
     {"ledger_version": 1, "test_runs": {data_hash: {test_set: count}}}

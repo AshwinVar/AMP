@@ -69,6 +69,7 @@ def evaluation_card(path=None, expected_sha256=None) -> dict:
         return {"available": False,
                 "reason": "the evaluated method parameters differ from the method this code runs"}
     adoption = artifact["adoption"]
+    rate = artifact.get("metrics", {}).get("clean_false_alarm_rate") or {}
     return {
         "available": True,
         "adopted": adoption["adopted"],
@@ -77,6 +78,10 @@ def evaluation_card(path=None, expected_sha256=None) -> dict:
         "version": artifact["version"],
         "sha256": artifact["sha256"],
         "caveat": CAVEAT,
+        # What a score means in practice, measured: the alarm level and how often clean held-out (synthetic)
+        # hours reached it. A score is a rank against the machine's own recent hours, not a probability.
+        "alarm_score": artifact.get("gate", {}).get("alarm_score"),
+        "clean_false_alarm_rate": {k: rate.get(k) for k in ("estimate", "lo", "hi")} if rate else None,
     }
 
 
@@ -125,6 +130,7 @@ def score_machine(db, tenant, machine_id, *, gate, now=None) -> dict:
         "truncated": data.truncated,
         "simulated_source": data.simulated_source,
         "model_version": MODEL_VERSION,
-        "evaluation": {k: card[k] for k in ("adopted", "experimental", "reasons", "version", "caveat")},
+        "evaluation": {k: card[k] for k in ("adopted", "experimental", "reasons", "version", "caveat",
+                                            "alarm_score", "clean_false_alarm_rate")},
     })
     return result

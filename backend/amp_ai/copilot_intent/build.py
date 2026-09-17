@@ -28,8 +28,10 @@ WHAT IT DOES, IN ORDER
    design), 1c, and the odd-index held-out halves of both holdout files. The
    POOL is holdout1_odd + holdout2_odd + section1c.
 6. Records every test-set evaluation in the ledger (read from the previous eval
-   JSON in the output directory, so re-running counts), applies the adoption
-   gate (``evaluate_gate``) and writes both files.
+   JSON in the output directory, so re-running INTO THE SAME DIRECTORY counts;
+   a build into another directory starts from that directory's ledger and is
+   not seen - the ledger is an audit trail of committed runs, not a lock),
+   applies the adoption gate (``evaluate_gate``) and writes both files.
 
 HOW TO READ THE CORPUS TEST NUMBERS
 -----------------------------------

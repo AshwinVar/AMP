@@ -31,6 +31,7 @@ COPILOT = "test_amp_ai_integration_copilot.py"
 ISOLATION = "test_amp_ai_integration_isolation.py"
 STRUCTURAL = "test_amp_ai_integration_structural.py"
 MIGRATION = "test_amp_ai_integration_migration.py"
+DIAG = "test_amp_ai_failure_risk_diagnostics.py"
 
 GATE = "amp_ai/consent.py"
 ROUTE = "native_ai_routes.py"
@@ -112,8 +113,12 @@ MUTATIONS = [
     ("route: Operators may run the models", ROUTE,
      'ANALYST_ROLES = ["Admin", "Supervisor"]', 'ANALYST_ROLES = ["Admin", "Supervisor", "Operator"]', ROUTES),
     ("route: a consent refusal is answered 200", ROUTE,
-     "        return JSONResponse(status_code=403, content={", "        return JSONResponse(status_code=200, content={",
+     '        return JSONResponse(status_code=403, content={\n            "code": "learning_consent_required",',
+     '        return JSONResponse(status_code=200, content={\n            "code": "learning_consent_required",',
      ROUTES),
+    ("route: the preview refusal is answered 200", ROUTE,
+     '        return JSONResponse(status_code=403, content={"code": "learning_not_from_preview",',
+     '        return JSONResponse(status_code=200, content={"code": "learning_not_from_preview",', ROUTES),
     ("route: the gate reaches score_machine through a variable (not DbConsentGate(...))", ROUTE,
      "        return service.score_machine(db, tenant, machine_id, gate=consent.DbConsentGate())",
      "        gate = consent.DbConsentGate()\n        return service.score_machine(db, tenant, machine_id, gate=gate)",
@@ -134,6 +139,39 @@ MUTATIONS = [
     ("registry: the failure-risk card reads the file without the pinned hash", REG,
      "    artifact, _model = predict.load_model()",
      '    import json\n    artifact = json.load(open(predict.ARTIFACT_PATH, encoding="utf-8"))', ROUTES),
+    # --- cards say what the evaluation did NOT show (review round 1) -----------------------------
+    ("registry: the failure-risk card drops its known limitations", REG,
+     "limitations=_limitations_failure_risk,", "limitations=lambda a: [],", ROUTES),
+    ("registry: unverifiable diagnostics silently drop the caveats", REG,
+     '    if doc is None:\n        out.append("The post-hoc diagnostics',
+     '    if doc is None:\n        return out\n        out.append("The post-hoc diagnostics', DIAG),
+    ("registry: no headline row against the single raw input", REG,
+     "    if doc is not None:\n        # The trivial baseline", "    if False:\n        # The trivial baseline", DIAG),
+    ("registry: a tie with one input is called a difference", REG,
+     '    return d["lo"] is not None and d["hi"] is not None and d["lo"] <= 0.0 <= d["hi"]', "    return False", DIAG),
+    ("registry: the sparse high-probability calibration note is dropped", REG,
+     "    if total and high:", "    if False:", ROUTES),
+    ("registry: a stress-test Brier at or above the base rate is not mentioned", REG,
+     "brier is not None and base is not None and brier >= base:",
+     "brier is not None and base is not None and brier >= base + 1.0:", ROUTES),
+    ("registry: the anomaly card drops its running-hours-only scope", REG,
+     '    out.append("Evaluated only on one-hour windows that start with the machine running. The check scores any hour, "',
+     '    ("Evaluated only on one-hour windows that start with the machine running. The check scores any hour, "', ROUTES),
+    ("registry: the out-of-date Transition description is not flagged", REG,
+     '    if "Transition" in states and "Transition" not in described:', "    if False:", ROUTES),
+    ("registry: stress-test rows stay in the JSON block only", REG,
+     '        "misspecification_rows": entry.misspecification_rows(artifact),', '        "misspecification_rows": [],',
+     ROUTES),
+    ("registry: the copilot pool is again labelled as not written by the model's author", REG,
+     "    pool = (f\"repo evaluation questions{f' ({n:g})' if n is not None else ''}; training corpus decontaminated \"",
+     "    pool = (f\"held-out questions not written by the model's author{f' ({n:g})' if n is not None else ''}; \"",
+     ROUTES),
+    ("route: failure risk no longer says when it was evaluated", ROUTE,
+     '    result["evaluation_scope"] = registry.failure_risk_evaluation_scope()\n', "", ROUTES),
+    ("service: the anomaly answer omits the measured false-alarm rate", SVC,
+     '"caveat",\n                                            "alarm_score", "clean_false_alarm_rate")},',
+     '"caveat")},', ROUTES),
+
     ("registry: the consent read in consent_view loses its tenant filter", GATE,
      "    rows = {r.capability: r for r in db.query(models.AiLearningConsent)\n"
      "            .filter(models.AiLearningConsent.tenant_code == tenant).all()}",

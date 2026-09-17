@@ -4,6 +4,7 @@ import {
   compareToBaseline,
   consentStateText,
   copilotBadge,
+  dataLabel,
   describeAnomaly,
   describeAnomalyError,
   formatDifference,
@@ -167,17 +168,32 @@ describe("copilotBadge", () => {
     expect(copilotBadge({ source: "llm" }).text).toBe("✦ AI · model");
   });
 
-  it("shows AMP's own model with its confidence only when it chose the route", () => {
-    expect(copilotBadge({ source: "rules", route_source: "model", confidence: 0.912 })).toEqual({
-      text: "AMP native · 91%",
-      tone: "native",
-    });
+  it("shows AMP's own model only when it chose the route, without an uncalibrated percentage", () => {
+    const badge = copilotBadge({ source: "rules", route_source: "model", confidence: 0.912 });
+    expect(badge).toEqual({ text: "AMP native · model-routed", tone: "native" });
+    expect(badge.text).not.toMatch(/\d/);
+    expect(copilotBadge({ source: "rules", route_source: "model", confidence: 0.59 }).text).not.toMatch(/%/);
     expect(copilotBadge({ source: "rules", route_source: "model", confidence: null }).tone).toBe("rules");
   });
 
   it("labels everything else as the rules", () => {
     expect(copilotBadge({ source: "rules", route_source: "keywords" })).toEqual({ text: "instant · rules", tone: "rules" });
     expect(copilotBadge({}).tone).toBe("rules");
+  });
+});
+
+describe("dataLabel", () => {
+  it("says what each model was trained and evaluated on, in its own words", () => {
+    expect(dataLabel({ name: "failure_risk" })).toBe("Trained and evaluated on synthetic data only");
+    expect(dataLabel({ name: "copilot_intent" })).toBe("Trained and evaluated on AMP-authored questions only");
+    const anomaly = dataLabel({ name: "telemetry_anomaly" });
+    expect(anomaly).toMatch(/^Evaluated on synthetic data only/);
+    expect(anomaly).toMatch(/own telemetry/);
+    expect(anomaly).not.toMatch(/^Trained/);
+  });
+
+  it("claims nothing for a model it does not know", () => {
+    expect(dataLabel({ name: "something_new" })).not.toMatch(/synthetic/);
   });
 });
 
@@ -274,7 +290,7 @@ describe("describeAnomaly", () => {
       deviating: [{ signal: "iot:bearing_temp_c" }],
       evaluation: { adopted: false, experimental: true, caveat: "c" },
     });
-    expect(experimental.text).toMatch(/^Experimental score 100 \/ 100/);
+    expect(experimental.text).toMatch(/^Experimental:/);
     expect(experimental.text).toMatch(/simulator/);
     expect(experimental.detail).toBe("Furthest from normal: iot:bearing_temp_c");
     expect(experimental.alert).toBe(false);
@@ -283,8 +299,38 @@ describe("describeAnomaly", () => {
       score: 0.42,
       evaluation: { adopted: true, experimental: false, caveat: "c" },
     });
-    expect(adopted.text).toMatch(/^Score 42 \/ 100/);
+    expect(adopted.text).not.toMatch(/Experimental/);
     expect(adopted.detail).toBeNull();
     expect(adopted.alert).toBe(false);
+  });
+
+  it("describes a score as a rank against the machine's own recent hours, never as NN / 100", () => {
+    const v = describeAnomaly({
+      status: "ok",
+      score: 0.7117,
+      evaluation: { adopted: false, experimental: true, caveat: "c" },
+    });
+    expect(v.text).toMatch(/rarer than 71% of this machine's recent hours/);
+    expect(v.text).not.toMatch(/\/ 100/);
+    expect(v.text).toMatch(/not a probability/i);
+  });
+
+  it("cites the MEASURED false-alarm rate at the alarm level when the evaluation reports it", () => {
+    const v = describeAnomaly({
+      status: "ok",
+      score: 0.99,
+      deviating: [{ signal: "iot:vibration_mm_s" }],
+      evaluation: {
+        adopted: false,
+        experimental: true,
+        caveat: "c",
+        alarm_score: 0.99,
+        clean_false_alarm_rate: { estimate: 0.0155, lo: 0.0114, hi: 0.0205 },
+      },
+    });
+    expect(v.detail).toContain("Furthest from normal: iot:vibration_mm_s");
+    expect(v.detail).toMatch(/1\.6% of clean hours/);
+    expect(v.detail).toMatch(/99%/);
+    expect(v.detail).toMatch(/synthetic/);
   });
 });

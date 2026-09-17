@@ -284,6 +284,10 @@ def section_failure_risk(ids):
     check("the adopted flag is the committed verdict", body.get("adopted") is True, str(body.get("adopted")))
     check("the response explains the rule number's basis", isinstance(body.get("rule_basis"), str)
           and body.get("rule_basis"), str(body.get("rule_basis")))
+    scope = body.get("evaluation_scope") or {}
+    check("the response says when the model was evaluated (Tuesday 10:00 snapshots only) and that now may differ",
+          scope.get("as_of_weekdays") == ["Tuesday"] and scope.get("as_of_times") == ["10:00"]
+          and "whatever moment" in str(scope.get("note", "")), str(scope)[:300])
     code, body_b = call("GET", "/ai/native/failure-risk", token("tb-sup", "Supervisor", "TB"))
     check("TB sees only TB's machine", code == 200
           and [m.get("name") for m in body_b.get("machines", [])] == ["TB-LATHE-1"], str(body_b)[:200])
@@ -364,6 +368,10 @@ def section_anomaly(ids):
     check("...labelled experimental, because the committed evaluation was not adopted",
           ev.get("experimental") is True and ev.get("adopted") is False, str(ev))
     check("...with the synthetic-only caveat", ev.get("caveat") == service.CAVEAT, str(ev.get("caveat")))
+    fa = ev.get("clean_false_alarm_rate") or {}
+    check("...and what a score means in practice: the alarm level and its MEASURED clean false-alarm rate",
+          ev.get("alarm_score") == 0.99 and all(isinstance(fa.get(k), float) for k in ("estimate", "lo", "hi"))
+          and fa["lo"] <= fa["estimate"] <= fa["hi"], str(ev)[:300])
     check("...and the telemetry source flag", "simulated_source" in body, str(sorted(body))[:200])
     db = SessionLocal()
     check("scoring persisted nothing", db.query(models.IoTTelemetry).count() == n)
@@ -492,6 +500,43 @@ def section_cards():
             check(f"{name}: the not-adopted reasons are shown", c.get("reasons"), str(c.get("reasons")))
     check("telemetry_anomaly's card carries its misspecification results",
           bool(cards.get("telemetry_anomaly", {}).get("misspecification")))
+
+    # Known weaknesses travel with every card (review round 1): a card that shows only the rows a model
+    # does well on says more than its evaluation did.
+    for name in expected:
+        c = cards.get(name, {})
+        check(f"{name}: carries a non-empty list of known limitations",
+              isinstance(c.get("limitations"), list) and c["limitations"]
+              and all(isinstance(x, str) and x.strip() for x in c["limitations"]), str(c.get("limitations"))[:200])
+        rows = c.get("misspecification_rows")
+        check(f"{name}: stress-test rows (if any) use the headline shape",
+              isinstance(rows, list) and all(isinstance(r.get("model"), (int, float))
+                                             and isinstance(r.get("baseline"), (int, float))
+                                             and r.get("unit") in ("percent", "score") for r in rows), str(rows)[:200])
+    for name in ("failure_risk", "telemetry_anomaly"):
+        check(f"{name}: shows its stress-test rows, not only the JSON block",
+              len(cards.get(name, {}).get("misspecification_rows") or []) >= 2)
+    fr = " ".join(cards.get("failure_risk", {}).get("limitations") or [])
+    check("failure_risk: says the rule is weak on this data and one input ties the model",
+          "never fire" in fr and "includes zero" in fr, fr[:300])
+    check("failure_risk: says it was evaluated at Tuesday 10:00 snapshots only", "Tuesday" in fr and "10:00" in fr)
+    check("failure_risk: shows the sparse high-probability calibration and the failed stress-test Brier",
+          "20% or more" in fr and "shock_driven" in fr, fr[-400:])
+    ta = " ".join(cards.get("telemetry_anomaly", {}).get("limitations") or [])
+    check("telemetry_anomaly: states the running-hours-only scope and the measured false-alarm rate",
+          "start with the machine running" in ta and "false-alarm rate" in ta and "not a probability" in ta, ta[:300])
+    check("telemetry_anomaly: says its evaluation file's state description is out of date (Transition)",
+          "Transition" in ta, ta[:300])
+    check("telemetry_anomaly: says it fits a baseline from the machine's own telemetry (not synthetic-only)",
+          "own telemetry" in ta, ta[:300])
+    ci = cards.get("copilot_intent", {})
+    pool_labels = {h.get("dataset") for h in ci.get("headline", []) if "Jaccard" in str(h.get("dataset"))}
+    check("copilot_intent: the pool is labelled as repo questions the corpus was decontaminated against",
+          len(pool_labels) == 1 and all("not written by the model's author" not in str(h.get("dataset"))
+                                        for h in ci.get("headline", [])), str([h.get("dataset") for h in
+                                                                                ci.get("headline", [])]))
+    check("copilot_intent: its limitations say the decontamination threshold leaves near paraphrases",
+          "paraphrases" in " ".join(ci.get("limitations") or []))
     code, one = call("GET", "/ai/models/copilot_intent", op)
     check("GET /ai/models/copilot_intent -> the same card", code == 200
           and one.get("sha256") == classifier.ARTIFACT_SHA256 and not keys_anywhere(one, "parameters"),

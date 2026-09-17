@@ -131,9 +131,15 @@ def update_user_role(
     if user.username == current_user.get("sub") and payload.role != "Admin":
         raise HTTPException(status_code=400, detail="You cannot remove your own Admin role")
 
+    previous_role = user.role
     user.role = payload.role
     db.commit()
     db.refresh(user)
+    # The module promises "mutations are audit-logged", and a role change is the
+    # mutation that matters most: promoting an account to Admin grants user
+    # management, licensing and branding. It used to leave no audit line at all.
+    log_audit(db, current_user.get("sub"), "update_user_role", "user", user_id,
+              f"{user.username}: {previous_role} -> {user.role}")
 
     return user
 
@@ -182,4 +188,8 @@ def reset_user_password(
 
     user.password = hash_password(new_password)
     db.commit()
+    # Audited, and the details name WHOSE password was reset -- never the password.
+    # An admin reset is how an account is taken over; it used to leave no trail.
+    log_audit(db, current_user.get("sub"), "reset_user_password", "user", user_id,
+              f"password reset for {user.username}")
     return {"message": "Password reset successfully"}

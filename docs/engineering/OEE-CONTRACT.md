@@ -133,6 +133,30 @@ ai_copilot LLM context                        last 10 records        10%
 A customer asking the assistant "how is the plant doing?" got an answer **90
 points** from the screen in front of them. Both now answer 100%.
 
+### Per-machine rows on `/analytics/executive-oee` (2026-09)
+
+This surface kept a private copy of the formula for its `machine_ranking`, and
+where a machine produced nothing it filled the gaps with constants — utilization
+for availability, `90 if Running else 60` for performance, 95 for quality — and
+ranked the product among measurements. Measured before the fix: an idle machine
+**topped** the ranking at an invented 68%, above a machine that had run at 59%,
+and `lib/oee.ts` labelled that 68% as measured on the dashboard card.
+
+The rows are now computed by `oee_from_sums` + `as_percentages`, exactly as
+`machine_oee` computes the machine's cockpit, so the two screens agree
+(`backend/test_executive_oee_no_invented_machine_figures.py` asserts it for every
+row). An undefined component is `None`; OEE is `None` whenever any component is;
+a measured zero component is still shown. Each row states `measured`, the ranking
+lists measured machines first, and the chart plots only those. Quality measured
+from inspections is displayed when a machine has no production counts, but never
+feeds OEE — the contract's quality is production quality.
+
+One consequence worth knowing when reading the ranking: a machine that was
+**scheduled but never ran** shows availability 0% and **no OEE**, because its
+performance is undefined and a product needs all three (§3). If the business
+would rather read that machine as OEE 0%, that is a change to §3, and it must be
+made in the contract so every surface changes with it — not re-introduced here.
+
 ---
 
 ## 6. Known limitations

@@ -2,10 +2,14 @@ export type ExecutiveMachineOee = {
   machine_id: number;
   machine_name: string;
   status: string;
-  availability: number;
-  performance: number;
-  quality: number;
-  oee: number;
+  /** null = not measured in the window (no planned time, no run, no counts). */
+  availability: number | null;
+  performance: number | null;
+  quality: number | null;
+  oee: number | null;
+  /** The backend's own statement. false: the machine produced nothing, so it has
+   *  no OEE — the row is here so the machine is listed, not so it is ranked. */
+  measured: boolean;
   downtime_minutes: number;
   total_count: number;
   good_count: number;

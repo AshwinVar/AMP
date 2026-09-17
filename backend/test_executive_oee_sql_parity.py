@@ -16,6 +16,20 @@ machine, and an empty database.
 
 Same approach as #380, where the pre-fix implementation was kept as the oracle
 for the GRN/cycle-count paging rewrite.
+
+ONE DELIBERATE CHANGE TO THE ORACLE. The no-production branches used to invent
+components — utilization for availability, `90 if Running else 60` for
+performance, 95 for quality — and multiply them into an OEE the ranking printed
+beside measured ones (an idle machine topped it at 68%). The per-machine figures
+are now computed by the contract itself (oee_contract.oee_from_sums +
+as_percentages, the same functions the machine cockpit uses): an undefined
+component is None, OEE is None whenever any component is, and each row states
+`measured`. That is a change of MEANING made on purpose
+(test_executive_oee_no_invented_machine_figures.py pins it with hand-derived
+values and checks agreement with machine_oee), so the oracle follows it. The
+SQL-versus-Python AGGREGATION this file exists to protect is unchanged, and the
+every-branch fixture still reaches every branch — including the no-production
+one, now asserted as None rather than 60.
 """
 import os
 os.environ.setdefault("DATABASE_URL", "sqlite:///./ci.db")
@@ -23,6 +37,7 @@ os.environ.setdefault("DATABASE_URL", "sqlite:///./ci.db")
 from duration import parse_duration_to_minutes
 from analytics_engine import pooled_oee
 import models
+import oee_contract
 
 
 def reference_executive_oee(db):
@@ -77,53 +92,43 @@ def reference_executive_oee(db):
         good_count = sum(record.good_count for record in records)
         rejected_count = sum(record.rejected_count for record in records)
 
-        if planned_minutes > 0:
-            # Cap at 100% like pooled_oee / calculate_oee_from_record cap every
-            # component: the HTTP ingest (machines_routes.create_production_record)
-            # rejects negatives and enforces good+rejected==total, but it does NOT
-            # require runtime_minutes <= planned_minutes, so a machine that ran past
-            # its planned window (runtime > planned) computed availability > 100%.
-            # An availability the data can't support (>100%) then inflated THIS
-            # machine's OEE above the physical bound and disagreed with the capped
-            # pooled plant rollup below — the exact honesty/reconciliation rule the
-            # shared OEE definition already follows (performance is clamped the same
-            # way three lines down). min(ratio, 1) before rounding matches pooled_oee.
-            availability = round(min(runtime_minutes / planned_minutes, 1) * 100)
-        else:
-            # No production for this machine — fall back to its utilization as a
-            # rough availability. utilization is nullable, so treat an unset reading
-            # as 0 (max() also floors any stray negative), never `max(None, 0)`.
-            availability = max(machine.utilization or 0, 0)
+        # THE CONTRACT, not a private copy of it. This block used to carry its own
+        # OEE formula, and where a machine produced nothing it filled the gaps with
+        # constants — utilization for availability, `90 if Running else 60` for
+        # performance, 95 for quality — and ranked the product beside real
+        # measurements. Measured before the fix: an idle machine topped this ranking
+        # at an invented 68%, above a machine that had actually run
+        # (test_executive_oee_no_invented_machine_figures.py).
+        #
+        # oee_contract.oee_from_sums is "the one place the formula lives" and is what
+        # the machine cockpit (oee_contract.machine_oee) already uses, so the same
+        # machine now reads the same on both screens. Its rules, which this row
+        # inherits rather than restates:
+        #  * a component with no denominator (no planned time, no runtime, no
+        #    counts) is None — undefined, not 0;
+        #  * OEE is a product and needs all three, so it is None whenever any
+        #    component is. A machine scheduled but never run shows availability 0%
+        #    and no OEE; that measured zero is still on the row, not hidden;
+        #  * every component is clamped to [0, 1] symmetrically, which covers the
+        #    runtime-past-plan, good>total and negative raw-SQL rows the old
+        #    hand-written min/max handled (#414).
+        contract = oee_contract.as_percentages(oee_contract.oee_from_sums(
+            planned_minutes, runtime_minutes, total_count, good_count, ideal_cycle_total))
+        availability = contract["availability"]
+        performance = contract["performance"]
+        quality = contract["quality"]
+        oee = contract["oee"]
 
-        runtime_seconds = runtime_minutes * 60
-        if runtime_seconds > 0:
-            performance = round(min((ideal_cycle_total / runtime_seconds), 1) * 100)
-        else:
-            performance = 90 if machine.status == "Running" else 60
-
-        if total_count > 0:
-            # Clamp to 100% too (same shared OEE definition): the main write paths
-            # enforce good <= total, but a data-entry slip / raw-SQL write can store
-            # good_count > total_count, and an uncapped good/total would print a
-            # quality above 100% — a figure the data can't support. min(ratio, 1)
-            # keeps every normal record unchanged (good <= total -> ratio <= 1).
-            quality = round(min(good_count / total_count, 1) * 100)
-        else:
+        if quality is None:
+            # Display only. With no production counts, a machine's inspections are
+            # still a genuine quality measurement, so the column shows them. They
+            # never feed OEE: the contract's quality is good/total from production,
+            # and a machine that produced nothing cannot acquire an OEE from its
+            # inspections. passed can be NULL (coalesced above) or out of range on a
+            # raw-SQL row, hence the same symmetric clamp.
             q = quality_by_machine.get(machine.id)
             if q and q["inspected"] > 0:
-                quality = round((q["passed"] / q["inspected"]) * 100)
-            else:
-                quality = 95
-
-        # FLOOR every component at 0 as well as capping at 100 — mirror of the real
-        # endpoint's symmetric clamp (kept verbatim so this stays a faithful oracle).
-        # A no-op on every well-formed machine; only a negative-count legacy/raw-SQL
-        # row (SUM goes negative) or an over-100 inspection fallback is affected.
-        availability = max(0, min(100, availability))
-        performance = max(0, min(100, performance))
-        quality = max(0, min(100, quality))
-
-        oee = round((availability / 100) * (performance / 100) * (quality / 100) * 100)
+                quality = max(0, min(100, round((q["passed"] / q["inspected"]) * 100)))
 
         machine_rows.append(
             {
@@ -134,6 +139,7 @@ def reference_executive_oee(db):
                 "performance": performance,
                 "quality": quality,
                 "oee": oee,
+                "measured": oee is not None,
                 "downtime_minutes": downtime_by_machine.get(machine.id, 0),
                 "total_count": total_count,
                 "good_count": good_count,
@@ -142,7 +148,11 @@ def reference_executive_oee(db):
             }
         )
 
-    machine_rows.sort(key=lambda row: row["oee"], reverse=True)
+    machine_rows.sort(key=lambda row: (
+        row["oee"] is None,
+        -row["oee"] if row["oee"] is not None else 0,
+        (row["machine_name"] or "") if row["oee"] is None else "",
+    ))
 
     # Plant rollup is POOLED (ratio of sums) — the single standardised OEE
     # definition (analytics_engine.pooled_oee), so /analytics/executive-oee agrees
@@ -329,7 +339,10 @@ def test_matches_reference_on_every_branch():
     ranking = {row["machine_name"]: row for row in out["machine_ranking"]}
     assert ranking["RanPastPlan"]["availability"] == 100, "fixture no longer hits the availability clamp"
     assert ranking["DataEntrySlip"]["quality"] == 100, "fixture no longer hits the quality clamp"
-    assert ranking["NoProductionIdle"]["performance"] == 60, "fixture no longer hits the status fallback"
+    assert (ranking["NoProductionIdle"]["performance"] is None
+            and ranking["NoProductionIdle"]["oee"] is None
+            and ranking["NoProductionIdle"]["measured"] is False), \
+        "fixture no longer hits the no-production branch"
     assert ranking["QualityOnly"]["quality"] == 50, "fixture no longer hits the inspection fallback"
     tied = [row["defect"] for row in out["quality_trend"] if row["failed_quantity"] == 30]
     assert tied == ["Burr", "Warp"], f"fixture no longer exercises a defect-trend tie: {out['quality_trend']}"
@@ -413,8 +426,10 @@ def test_per_machine_components_floor_at_zero():
             rejected_count=rejected, tenant_code="DEFAULT"))
 
     # Negative runtime: availability = round(min(-50/480, 1)*100) = -10 -> floored to 0.
-    #   runtime<=0 -> performance falls back to the Running constant 90.
+    #   runtime<=0 -> performance was not measured -> None (it was the constant 90).
     #   quality = round(min(90/100, 1)*100) = 90.
+    #   availability is a measured 0 but performance is undefined -> by the
+    #   contract (a product needs all three) there is no OEE.
     prod(neg_runtime, 480, -50, 30, 100, 90, 10)
 
     # Positive runtime but a negative ideal_cycle and negative good_count:
@@ -439,15 +454,18 @@ def test_per_machine_components_floor_at_zero():
     rows = {row["machine_name"]: row for row in out["machine_ranking"]}
 
     # No per-machine component or OEE may fall outside the bound the data supports.
+    # None (not measured) is not a number and has no bound to break; every number
+    # present must be in range.
     for name, row in rows.items():
         for field in ("availability", "performance", "quality", "oee"):
-            assert 0 <= row[field] <= 100, f"{name}.{field} = {row[field]} out of [0,100]"
+            if row[field] is not None:
+                assert 0 <= row[field] <= 100, f"{name}.{field} = {row[field]} out of [0,100]"
 
     # Independently-derived exact values (see the fixture comments above).
     assert rows["NegRuntime"]["availability"] == 0, rows["NegRuntime"]
-    assert rows["NegRuntime"]["performance"] == 90, rows["NegRuntime"]
+    assert rows["NegRuntime"]["performance"] is None, rows["NegRuntime"]
     assert rows["NegRuntime"]["quality"] == 90, rows["NegRuntime"]
-    assert rows["NegRuntime"]["oee"] == 0, rows["NegRuntime"]
+    assert rows["NegRuntime"]["oee"] is None, rows["NegRuntime"]
 
     assert rows["NegCounts"]["availability"] == 83, rows["NegCounts"]
     assert rows["NegCounts"]["performance"] == 0, rows["NegCounts"]

@@ -42,7 +42,15 @@ function pooled(data: ExecutiveOee | null, value: number | undefined): string {
   return `${value ?? 0}%`;
 }
 
-function oeeStyle(value: number) {
+// A machine that produced nothing in the window has no OEE and no components.
+// It is listed so the machine is not silently missing, but it is shown as what it
+// is — never as a number, and never coloured as a result.
+function pct(value: number | null) {
+  return value === null || value === undefined ? "—" : `${value}%`;
+}
+
+function oeeStyle(value: number | null) {
+  if (value === null || value === undefined) return "border-slate-600/40 bg-slate-800/40 text-slate-400";
   if (value >= 85) return "border-green-500/40 bg-green-500/10 text-green-300";
   if (value >= 65) return "border-yellow-500/40 bg-yellow-500/10 text-yellow-300";
   return "border-red-500/40 bg-red-500/10 text-red-300";
@@ -86,7 +94,8 @@ export default function ExecutiveOeeSection({ data }: { data: ExecutiveOee | nul
       <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
         <ChartCard title="Machine OEE Ranking">
           <ResponsiveContainer width="100%" height="100%">
-            <BarChart data={machineRows}>
+            {/* A ranking of measurements: a machine with no OEE has no bar. */}
+            <BarChart data={machineRows.filter((row) => row.measured === true)}>
               <XAxis dataKey="machine_name" stroke="#94a3b8" />
               <YAxis stroke="#94a3b8" />
               <Tooltip
@@ -177,12 +186,12 @@ export default function ExecutiveOeeSection({ data }: { data: ExecutiveOee | nul
                 <tr key={row.machine_id} className="border-b border-slate-800">
                   <td className="py-3 px-4 font-semibold">{row.machine_name}</td>
                   <td className="py-3 px-4">{row.status}</td>
-                  <td className="py-3 px-4">{row.availability}%</td>
-                  <td className="py-3 px-4">{row.performance}%</td>
-                  <td className="py-3 px-4">{row.quality}%</td>
+                  <td className="py-3 px-4">{pct(row.availability)}</td>
+                  <td className="py-3 px-4">{pct(row.performance)}</td>
+                  <td className="py-3 px-4">{pct(row.quality)}</td>
                   <td className="py-3 px-4">
                     <span className={`rounded-full px-3 py-1 text-xs border ${oeeStyle(row.oee)}`}>
-                      {row.oee}%
+                      {row.oee === null || row.oee === undefined ? "No production" : `${row.oee}%`}
                     </span>
                   </td>
                   <td className="py-3 px-4">{row.downtime_minutes}m</td>

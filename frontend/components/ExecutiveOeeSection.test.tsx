@@ -55,6 +55,39 @@ function payload(over: Partial<ExecutiveOee> = {}): ExecutiveOee {
   };
 }
 
+describe("ExecutiveOeeSection — a machine that produced nothing", () => {
+  // The per-machine rows used to be filled with constants when a machine had no
+  // production (utilization, 90-if-Running, 95), and rendered as `${row.oee}%`.
+  // The backend now sends null and `measured: false` for such a row; the table
+  // must say so rather than print "null%" or colour it as a result.
+  const machine = (over: Record<string, unknown>) => ({
+    machine_id: 1, machine_name: "M", status: "Running", availability: 83, performance: 75,
+    quality: 95, oee: 59, measured: true, downtime_minutes: 0, total_count: 600,
+    good_count: 570, rejected_count: 30, utilization: 90, ...over,
+  });
+
+  it("shows 'No production' and dashes, never an invented or null figure", () => {
+    const { container } = render(<ExecutiveOeeSection data={payload({
+      machine_ranking: [
+        machine({ machine_id: 1, machine_name: "A-MEASURED" }),
+        machine({ machine_id: 2, machine_name: "B-IDLE", availability: null, performance: null,
+          quality: null, oee: null, measured: false, total_count: 0, good_count: 0,
+          rejected_count: 0, utilization: 80 }),
+      ] as ExecutiveOee["machine_ranking"],
+    })} />);
+    const idleRow = Array.from(container.querySelectorAll("tr"))
+      .find((tr) => tr.textContent?.includes("B-IDLE"));
+    expect(idleRow?.textContent).toContain("No production");
+    expect(idleRow?.textContent).toContain("—");
+    expect(container.textContent).not.toContain("null%");
+    expect(idleRow?.textContent).not.toMatch(/\b68%/);
+
+    const measuredRow = Array.from(container.querySelectorAll("tr"))
+      .find((tr) => tr.textContent?.includes("A-MEASURED"));
+    expect(measuredRow?.textContent).toContain("59%");
+  });
+});
+
 describe("ExecutiveOeeSection — an unrun week", () => {
   it("does not report 0% OEE for a week with nothing to measure", () => {
     render(<ExecutiveOeeSection data={payload({ has_data: false })} />);

@@ -37,6 +37,7 @@ const row = (over: Partial<ExecutiveMachineOee> = {}): ExecutiveMachineOee => ({
   good_count: 540,
   rejected_count: 60,
   utilization: 80,
+  measured: true,
   ...over,
 });
 
@@ -82,6 +83,26 @@ describe("readMachineOee", () => {
     expect(readMachineOee(1, [], null)).toBeNull();
     expect(readMachineOee(1, [], undefined)).toBeNull();
     expect(readMachineOee(1, [], Number.NaN)).toBeNull();
+  });
+
+  it("does not pass off a row the backend says was NOT measured as a measurement", () => {
+    // The defect: the backend lists every machine, and used to fill a machine that
+    // produced nothing with utilization / 90 / 95 -> 68%. This reader accepted
+    // any row it found, so that invented 68% reached the card labelled measured.
+    // The backend now states `measured: false` with a null OEE; the card must
+    // take the labelled estimate instead.
+    const idle = row({ availability: null, performance: null, quality: null, oee: null,
+      measured: false, total_count: 0, good_count: 0, rejected_count: 0 });
+    expect(readMachineOee(1, [idle], 80)).toEqual({ oee: 68, measured: false });
+  });
+
+  it("does not trust a number on a row that does not say it was measured", () => {
+    // A payload without the flag (e.g. an older backend during a deploy) is not
+    // evidence of a measurement: fail toward the labelled estimate.
+    const unflagged = { ...row({ oee: 68 }) } as Partial<ExecutiveMachineOee>;
+    delete unflagged.measured;
+    expect(readMachineOee(1, [unflagged as ExecutiveMachineOee], 40))
+      .toEqual({ oee: 34, measured: false });
   });
 
   it("still reports a measured zero, which is a real reading", () => {

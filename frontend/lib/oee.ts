@@ -37,7 +37,13 @@ export function readMachineOee(
   utilization: number | null | undefined,
 ): MachineOeeReading | null {
   const measured = ranking?.find((row) => row.machine_id === machineId);
-  if (measured && typeof measured.oee === "number") {
+  // Only a row the backend STATES was measured. This used to accept any row in
+  // the ranking, and the backend returns a row for every machine — including
+  // ones it filled with constants (utilization, 90/60, 95) when they produced
+  // nothing — so an idle machine's invented 68% reached this card labelled as a
+  // measurement, and the honest estimate below never ran. `=== true` rather than
+  // `!== false`: a payload without the field is not evidence of a measurement.
+  if (measured && measured.measured === true && typeof measured.oee === "number") {
     // A measured 0 is a real reading (a dead machine), not missing data.
     return { oee: measured.oee, measured: true };
   }

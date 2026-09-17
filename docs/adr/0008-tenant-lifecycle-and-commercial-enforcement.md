@@ -53,6 +53,18 @@ requests must pass through, never in per-endpoint code that can be forgotten.
   covered automatically, no list to forget — via multi-pass savepoint deletes
   (FK-safe on Postgres, no hardcoded order). `DEFAULT` and blank codes are
   never purgeable; `EventLog`/`AuditLog` are kept as immutable history.
+  *Correction (2026-09): "by construction" covered only tables WITH a
+  `tenant_code`. A tenant-less child of a tenant table is invisible to the sweep
+  and blocks its parent on PostgreSQL — `gmats_proforma_lines` and
+  `gmats_min_lines` did exactly that ("purge blocked by constraints on:
+  gmats_proformas, gmats_items, gmats_min", reproduced on PostgreSQL 18.3), so no
+  tenant that had used GMATS could be offboarded. Each such child now has a
+  DECLARED fate in `offboard_tenant.TENANTLESS_CHILDREN` (delete with parent, or
+  unlink for OEM-owned installations), and `test_offboarding` enumerates the real
+  model registry so an undeclared one fails. A line belonging to another tenant
+  that references a purged item is detached, never deleted. The SaaS delete now
+  purges BEFORE removing the registry row, so a failed purge leaves the company
+  listed and retryable instead of gone from SaaS Admin with its data intact.*
 
 ## Consequences
 

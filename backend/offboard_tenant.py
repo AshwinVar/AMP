@@ -14,12 +14,35 @@ Deliberately paranoid:
 """
 from datetime import datetime
 
+from sqlalchemy import select
+
 import models
 from tenancy import DEFAULT_TENANT
 
 # Immutable history stays after offboarding: the event log records WHAT
 # happened on the platform, including that this tenant existed and left.
 _KEEP_HISTORY = {"EventLog", "AuditLog"}
+
+# Tenant-less children of tenant-stamped tables, and what the purge does to each.
+#
+# The sweep below sees only models with a `tenant_code`. A model WITHOUT one that
+# holds a foreign key into a tenant table is invisible to it — and on PostgreSQL
+# its rows then BLOCK the delete of their parents. GmatsProformaLine and
+# GmatsMINLine were exactly that: measured "purge blocked by constraints on:
+# gmats_items, gmats_proformas, gmats_min", so any tenant that had ever raised a
+# proforma or issued a MIN could not be offboarded at all.
+#
+# "Delete every child" is not the answer: MachineInstallation is such a child too,
+# and it belongs to the OEM that built the machine (see _unlink_oem_installations).
+# So each one's fate is DECLARED here, and test_offboarding enumerates the real
+# model registry and fails for any tenant-less child that is not listed — the next
+# one cannot be forgotten.
+TENANTLESS_CHILDREN = {
+    "GmatsProformaLine": "deleted with its parent proforma (_purge_gmats_lines)",
+    "GmatsMINLine": "deleted with its parent MIN (_purge_gmats_lines)",
+    "MachineInstallation": "unlinked, never deleted: it is the OEM's record "
+                           "(_unlink_oem_installations)",
+}
 
 
 def purge_tenant_data(db, tenant_code: str) -> dict:
@@ -53,6 +76,9 @@ def purge_tenant_data(db, tenant_code: str) -> dict:
         # failed outright. SQLite does not enforce foreign keys by default and
         # showed nothing.
         counts.update(_unlink_oem_installations(db, code))
+        # Also BEFORE the sweep: the GMATS line tables have no tenant_code, so the
+        # sweep cannot delete them, and they block their parents and items.
+        counts.update(_purge_gmats_lines(db, code))
         for _ in range(len(targets) + 1):
             if not remaining:
                 break
@@ -80,6 +106,46 @@ def purge_tenant_data(db, tenant_code: str) -> dict:
     except Exception:
         db.rollback()
         raise
+    return counts
+
+
+def _purge_gmats_lines(db, code: str) -> dict:
+    """Delete the departing tenant's GMATS lines; detach anyone else's.
+
+    A line belongs to its parent, so the tenant's lines are the lines of the
+    tenant's proformas and MINs — found through the parent, the only thing that
+    records ownership.
+
+    A line can ALSO reference an item that belongs to a different tenant: the
+    GMATS create path resolved items by unscoped id while locking the parent's
+    tenant. Such a line is another company's record and is never deleted here.
+    Its pointer at an item that is about to be destroyed is set to NULL instead
+    (item_id is nullable), which is what lets the item be deleted, and the count
+    is reported so the audit entry says it happened.
+    """
+    counts = {}
+    tenant_proformas = select(models.GmatsProforma.id).where(models.GmatsProforma.tenant_code == code)
+    tenant_mins = select(models.GmatsMIN.id).where(models.GmatsMIN.tenant_code == code)
+    tenant_items = select(models.GmatsItem.id).where(models.GmatsItem.tenant_code == code)
+
+    n = (db.query(models.GmatsProformaLine)
+           .filter(models.GmatsProformaLine.proforma_id.in_(tenant_proformas))
+           .delete(synchronize_session=False))
+    if n:
+        counts["gmats_proforma_lines"] = n
+    n = (db.query(models.GmatsMINLine)
+           .filter(models.GmatsMINLine.min_id.in_(tenant_mins))
+           .delete(synchronize_session=False))
+    if n:
+        counts["gmats_min_lines"] = n
+
+    detached = 0
+    for line in (models.GmatsProformaLine, models.GmatsMINLine):
+        detached += (db.query(line)
+                       .filter(line.item_id.in_(tenant_items))
+                       .update({line.item_id: None}, synchronize_session=False))
+    if detached:
+        counts["gmats_line_foreign_items_detached"] = detached
     return counts
 
 

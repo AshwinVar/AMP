@@ -38,6 +38,31 @@ def path_packs():
     return out
 
 
+def pack_for_path(path, prefixes=None):
+    """The gated module pack a request path belongs to, or None if ungated.
+    Longest matching prefix wins. The plan gate (plan_gate.pack_for_path) and the
+    approval lock (approvals.decision_api_pack) both resolve through here, so a
+    path belongs to the same pack wherever the question is asked."""
+    best = None
+    for prefix, pack in (path_packs() if prefixes is None else prefixes):
+        if path == prefix or path.startswith(prefix + "/") or path.startswith(prefix + "?"):
+            if best is None or len(prefix) > len(best[0]):
+                best = (prefix, pack)
+    return best[1] if best else None
+
+
+def enabled_pack_ids(enabled_modules):
+    """The pack ids in a TenantConfig.enabled_modules CSV, as a frozenset."""
+    return frozenset(m for m in (enabled_modules or "").split(",") if m)
+
+
+def pack_licensed(pack, packs):
+    """THE plan-gate rule: may a tenant licensed for ``packs`` use ``pack``?
+    An ungated path (pack None) and the always-open packs (core, admin) are
+    usable by everyone; anything else needs its pack in the licence."""
+    return pack is None or pack in always_open_packs() or pack in packs
+
+
 def pack_labels():
     """pack id -> human label (used in the plan-gate's 403 message)."""
     return {p["id"]: p["label"] for p in PACKS}

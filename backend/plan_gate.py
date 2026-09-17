@@ -30,7 +30,6 @@ from tenancy import DEFAULT_TENANT, effective_tenant, tenant_from_token
 # (endpoints woven into the core experience — briefing, escalations, search,
 # scorecard — are simply not listed under any gated pack).
 PATH_PACKS = module_manifest.path_packs()
-_ALWAYS_OPEN_PACKS = module_manifest.always_open_packs()   # core + admin (gated=false)
 _PACK_LABELS = module_manifest.pack_labels()
 
 _CACHE_TTL_SECONDS = 60
@@ -39,12 +38,7 @@ _licence_cache = {}   # tenant_code -> (frozenset(packs), expires_at)
 
 def pack_for_path(path):
     """The module pack a request path belongs to, or None if ungated."""
-    best = None
-    for prefix, pack in PATH_PACKS:
-        if path == prefix or path.startswith(prefix + "/") or path.startswith(prefix + "?"):
-            if best is None or len(prefix) > len(best[0]):
-                best = (prefix, pack)
-    return best[1] if best else None
+    return module_manifest.pack_for_path(path, PATH_PACKS)
 
 
 def invalidate(tenant_code):
@@ -63,7 +57,7 @@ def licensed_packs(tenant_code):
         db = SessionLocal()
         try:
             cfg = get_or_create_config(db, tenant_code)
-            packs = frozenset(m for m in (cfg.enabled_modules or "").split(",") if m)
+            packs = module_manifest.enabled_pack_ids(cfg.enabled_modules)
         finally:
             db.close()
     except Exception:
@@ -84,7 +78,8 @@ class PlanGateMiddleware:
             await self.app(scope, receive, send)
             return
         pack = pack_for_path(scope.get("path", ""))
-        if pack is None or pack in _ALWAYS_OPEN_PACKS:
+        # Licensed with NO packs = open to everyone: ungated paths, core, admin.
+        if module_manifest.pack_licensed(pack, frozenset()):
             await self.app(scope, receive, send)
             return
 
@@ -109,7 +104,7 @@ class PlanGateMiddleware:
 
         tenant = effective_tenant(claim, header_tenant, claims.get("role")) or DEFAULT_TENANT
         packs = licensed_packs(tenant)
-        if packs is None or pack in packs:
+        if packs is None or module_manifest.pack_licensed(pack, packs):
             await self.app(scope, receive, send)
             return
 

@@ -96,12 +96,20 @@ def apply_plan_tier(db, tenant_code, plan_name):
     return c
 
 
-def log_audit(db, actor, action, entity_type=None, entity_id=None, details=None):
-    """Append an audit record. Safe to call anywhere — never raises."""
+def log_audit(db, actor, action, entity_type=None, entity_id=None, details=None, tenant_code=None):
+    """Append an audit record. Safe to call anywhere — never raises.
+
+    tenant_code: the company the audited record belongs to, when that can differ
+    from the request's tenant. Left None, the row is stamped with the request
+    tenant (tenancy.before_flush). A founder correcting a customer's records from
+    the DEFAULT workspace must pass the record's tenant, or the row is filed under
+    DEFAULT and the customer's (tenant-scoped) audit log never shows it. Callers
+    pass a tenant only after the record's own tenant guard has admitted them."""
     try:
         db.add(models.AuditLog(
             actor=actor or "system", action=action,
             entity_type=entity_type, entity_id=entity_id, details=details,
+            tenant_code=tenant_code,
         ))
         db.commit()
     except Exception:

@@ -1,6 +1,6 @@
 "use client";
 import React, { useEffect, useState } from "react";
-import { apiGet, apiPost, apiPatch, apiDelete, API_URL } from "../lib/api";
+import { apiGet, apiPost, apiPatch, apiDelete, API_URL, getDownloadHeaders } from "../lib/api";
 import { LoadError, useLoadError } from "../lib/useLoadError";
 import { parseApiDate } from "../lib/apiDate";
 
@@ -742,7 +742,8 @@ function ImportTab({ tenant, reload, isAdmin }: { tenant: string; reload: () => 
     try {
       const res = await fetch(`${API_URL}/gmats/import-csv?tenant=${tenant}`, {
         method: "POST",
-        headers: { Authorization: `Bearer ${localStorage.getItem("token")}` },
+        // Identity headers come from lib/api only (lib/auth-headers.test.ts).
+        headers: getDownloadHeaders(),
         body: fd,
       });
       const data = await res.json();

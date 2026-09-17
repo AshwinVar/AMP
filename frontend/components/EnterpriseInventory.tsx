@@ -1,6 +1,6 @@
 "use client";
 import React, { useEffect, useState, useRef } from "react";
-import { apiGet, apiPost, apiPatch, API_URL, getAuthHeaders } from "../lib/api";
+import { apiGet, apiPost, apiPatch, API_URL, getAuthHeaders, getDownloadHeaders } from "../lib/api";
 import { LoadError, useLoadError } from "../lib/useLoadError";
 
 // How many history rows to fetch at a time. The GRN and cycle-count endpoints
@@ -688,7 +688,11 @@ function ImportCSVTab() {
     try {
       const res = await fetch(`${API_URL}/inventory/import-csv`, {
         method: "POST",
-        headers: { Authorization: `Bearer ${localStorage.getItem("token")}` },
+        // getDownloadHeaders: auth AND the founder's X-Tenant preview, with no
+        // Content-Type so the browser writes the multipart boundary. A hand-built
+        // Authorization header here dropped the preview and imported a customer's
+        // stock into the founder's own workspace (EnterpriseInventory.import.test).
+        headers: getDownloadHeaders(),
         body: fd,
       });
       const data = await res.json();

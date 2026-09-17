@@ -20,7 +20,6 @@ which is auditable (the void's audit row names the number). A reuse is not.
 Run:  python backend/test_gmats_document_numbers_never_reused.py     (exit 0 = pass)
 """
 import ast
-import glob
 import os
 
 from fastapi import HTTPException
@@ -149,41 +148,7 @@ def test_a_refused_document_does_not_burn_a_number():
     print("PASS a refused MIN or proforma leaves no gap in the series")
 
 
-# ── Structure: no route numbers a document from a row count ────────────────
-
-
-def _count_derived_numbers(source):
-    """Line numbers of f-strings whose value adds to a count (`count + 1`, `.count() + 1`)."""
-    hits = []
-    for node in ast.walk(ast.parse(source)):
-        if not isinstance(node, ast.JoinedStr):
-            continue
-        for part in node.values:
-            if not isinstance(part, ast.FormattedValue):
-                continue
-            for add in ast.walk(part.value):
-                if not (isinstance(add, ast.BinOp) and isinstance(add.op, ast.Add)):
-                    continue
-                for sub in ast.walk(add):
-                    if ((isinstance(sub, ast.Name) and sub.id == "count")
-                            or (isinstance(sub, ast.Call) and isinstance(sub.func, ast.Attribute)
-                                and sub.func.attr == "count")):
-                        hits.append(node.lineno)
-    return sorted(set(hits))
-
-
-def test_no_route_numbers_a_document_from_a_row_count():
-    modules = sorted(glob.glob(os.path.join(BACKEND, "*_routes.py")))
-    assert len(modules) >= 20, f"found only {len(modules)} route modules"
-    offenders = {}
-    for path in modules:
-        with open(path, encoding="utf-8") as fh:
-            hits = _count_derived_numbers(fh.read())
-        if hits:
-            offenders[os.path.basename(path)] = hits
-    assert not offenders, ("document numbers derived from a row count (use doc_numbers.allocate): "
-                           f"{offenders}")
-    print(f"PASS none of {len(modules)} route modules numbers a document from a row count")
+# ── Structure (the repo-wide rule lives in test_document_numbers_one_rule) ─
 
 
 def test_gmats_documents_draw_from_the_shared_sequence():
@@ -205,28 +170,11 @@ def test_gmats_documents_draw_from_the_shared_sequence():
     print("PASS proforma, invoice and MIN numbers come from doc_numbers.allocate")
 
 
-def test_the_count_guard_catches_what_it_claims_to():
-    probe = '''
-def a(db, count):
-    no = f"INV-{7000 + count + 1}"
-def b(db, M):
-    no = f"MIN-{4000 + db.query(M).count() + 1}"
-def c(db):
-    no = f"PI-{n + 1}"
-def d(db, rows, count):
-    label = f"{len(rows)} rows, {count} imported"
-'''
-    assert _count_derived_numbers(probe) == [3, 5], _count_derived_numbers(probe)
-    print("PASS the guard flags count + 1 and .count() + 1, and ignores a count merely printed")
-
-
 if __name__ == "__main__":
     test_a_voided_invoice_never_hands_its_count_to_a_live_number()
     test_a_voided_min_never_hands_its_count_to_a_live_number()
     test_numbering_continues_above_numbers_already_issued()
     test_each_company_keeps_its_own_series()
     test_a_refused_document_does_not_burn_a_number()
-    test_no_route_numbers_a_document_from_a_row_count()
     test_gmats_documents_draw_from_the_shared_sequence()
-    test_the_count_guard_catches_what_it_claims_to()
     print("ALL GMATS DOCUMENT-NUMBER TESTS PASSED")

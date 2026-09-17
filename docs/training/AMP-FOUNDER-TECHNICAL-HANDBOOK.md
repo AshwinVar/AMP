@@ -1257,7 +1257,7 @@ OEM roles are **capability-based** (`oem_auth.py`): `OEM_VIEWER` (read_fleet) �
 | **Rate limiting** | in-process sliding window: `/login` etc. 10/60s, `/ai/ask` etc. 20/60s → 429 + `Retry-After`, generic body (no username oracle) | `http_security.RateLimitMiddleware` |
 | **Security headers** | CSP, `X-Frame-Options: DENY`, `nosniff`, `Referrer-Policy`, COOP, `Permissions-Policy`; **HSTS only over TLS** | `http_security.SecurityHeadersMiddleware` |
 | **CORS** | `allow_credentials=False` + an origin allow-list | `main.py` |
-| **Audit log** | best-effort `AuditLog` rows; `actor` stamped from the JWT, not the body (no forged provenance); Admin-only to read | `platform_routes.log_audit` |
+| **Audit log** | best-effort `AuditLog` rows; `actor` stamped from the JWT, not the body (no forged provenance); Admin-only to read. Every `/users` write is audited — create, delete, **role change (old → new role)** and **admin password reset (whose, never the password)**; the last two were silent until 2026-09, and `test_users_routes` now fails for any new users write handler that does not call `log_audit`. "Best-effort" is literal: `log_audit` commits separately and swallows its own failure, so an audit write that fails does not undo the change it describes | `platform_routes.log_audit` |
 | **Refresh** | sliding session; refresh **re-derives claims from the DB** (a demoted Admin loses Admin, a deleted user's session ends) | `core_routes.py:138` |
 | **Approval gate** | `authorise()` re-checks the actor against the DB before any agent action (Chapter 13) | `approvals.py` |
 | **Cross-principal isolation** | factory routes reject OEM tokens; OEM routes reject factory tokens | `auth.py:135`, `oem_auth.require_oem` |

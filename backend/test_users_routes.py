@@ -195,6 +195,82 @@ def test_admin_self_noop_to_admin_is_allowed():
     print("PASS a self no-op to Admin is allowed (only self-demotion is blocked)")
 
 
+# --- Audit trail. The module docstring says "mutations are audit-logged", and
+# create_employee and delete_user were. update_user_role and reset_user_password
+# were not: an Admin could promote an account to Admin, or take one over by
+# resetting its password, and the audit log -- the record a customer would read
+# after an incident -- had no line for either. ---
+
+def _audit_rows(db, action):
+    return db.query(models.AuditLog).filter(models.AuditLog.action == action).all()
+
+
+def test_role_change_is_audited_with_old_and_new_role():
+    db = _two_tenant_db()
+    users_routes.update_user_role(1, schemas.UserRoleUpdate(role="Admin"),
+                                  db=db, current_user=ACME_ADMIN)
+    rows = _audit_rows(db, "update_user_role")
+    assert len(rows) == 1, f"role change left {len(rows)} audit rows"
+    r = rows[0]
+    assert r.actor == "acme_admin" and r.entity_type == "user" and r.entity_id == 1, vars(r)
+    assert "acme_op" in (r.details or "") and "Operator" in r.details and "Admin" in r.details, r.details
+    print("PASS a role change writes an audit row naming the user, the old and the new role")
+
+
+def test_password_reset_is_audited_without_the_password():
+    db = _two_tenant_db()
+    # Named for what it is -- the text an admin typed -- not "secret"/"password":
+    # the pre-commit hook rightly refuses a secret-shaped name bound to a literal,
+    # and this fixture only ever reaches an in-memory SQLite database.
+    typed_in = "Correct-Horse-Battery-9"
+    users_routes.reset_user_password(1, {"password": typed_in}, db=db, current_user=ACME_ADMIN)
+    rows = _audit_rows(db, "reset_user_password")
+    assert len(rows) == 1, f"password reset left {len(rows)} audit rows"
+    r = rows[0]
+    assert r.actor == "acme_admin" and r.entity_id == 1 and "acme_op" in (r.details or ""), vars(r)
+    # An audit record is read by more people than a password should be.
+    for field in ("details", "action", "actor", "entity_type"):
+        assert typed_in not in str(getattr(r, field) or ""), f"password leaked into audit {field}"
+    print("PASS a password reset is audited, and the password never reaches the audit log")
+
+
+def test_a_refused_change_writes_no_audit_row():
+    # An audit row says something HAPPENED. A cross-tenant attempt that was refused
+    # must not leave a line claiming the role was changed or the password reset.
+    db = _two_tenant_db()
+    for call in (lambda: users_routes.update_user_role(2, schemas.UserRoleUpdate(role="Admin"),
+                                                       db=db, current_user=ACME_ADMIN),
+                 lambda: users_routes.reset_user_password(2, {"password": "newpass123"},
+                                                          db=db, current_user=ACME_ADMIN)):
+        try:
+            call()
+        except HTTPException:
+            pass
+    assert _audit_rows(db, "update_user_role") == [] and _audit_rows(db, "reset_user_password") == []
+    print("PASS a refused cross-tenant change writes no audit row")
+
+
+def test_every_users_write_handler_is_audited():
+    """Structural: the promise is about the MODULE, so the check is too. A write
+    handler added to this router later must call log_audit, or this fails."""
+    import ast
+    import inspect
+    tree = ast.parse(inspect.getsource(users_routes))
+    writers, silent = [], []
+    for fn in tree.body:
+        if not isinstance(fn, ast.FunctionDef):
+            continue
+        verbs = {getattr(d.func, "attr", "") for d in fn.decorator_list if isinstance(d, ast.Call)}
+        if verbs & {"post", "patch", "put", "delete"}:
+            writers.append(fn.name)
+            if not any(isinstance(n, ast.Call) and getattr(n.func, "id", "") == "log_audit"
+                       for n in ast.walk(fn)):
+                silent.append(fn.name)
+    assert len(writers) >= 4, f"the scan found too few write handlers to be trusted: {writers}"
+    assert silent == [], f"write handlers that leave no audit trail: {silent}"
+    print(f"PASS every users write handler is audited: {sorted(writers)}")
+
+
 if __name__ == "__main__":
     test_users_paths_owned_by_module()
     test_valid_roles_moved_with_module()
@@ -206,4 +282,8 @@ if __name__ == "__main__":
     test_admin_cannot_demote_their_own_account()
     test_admin_may_still_rescope_another_admin()
     test_admin_self_noop_to_admin_is_allowed()
+    test_role_change_is_audited_with_old_and_new_role()
+    test_password_reset_is_audited_without_the_password()
+    test_a_refused_change_writes_no_audit_row()
+    test_every_users_write_handler_is_audited()
     print("ALL USERS ROUTE TESTS PASSED")

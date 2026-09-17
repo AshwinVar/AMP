@@ -53,6 +53,12 @@ _EXPECTED_VIEWS = {
     # a gated pack would leave Starter tenants with equipment they cannot see
     # the sharing position of — so the pin is the thing that would catch it.
     "connected": "core",
+    # CORE too (ADR-0020). Service contracts are where a factory reviews what a
+    # manufacturer proposes, grants SHARE_DOWNTIME by accepting, and disputes a
+    # statement. Like consent itself, the right to refuse or dispute terms that
+    # bind you cannot sit behind a paywall. /service-contracts is not in any
+    # gated pack's routes, so the plan gate never blocks it (pinned below).
+    "contracts": "core",
     "workorders": "operations", "planning": "operations", "scheduling": "operations",
     "operator": "operations", "orders": "operations",
     "maintenance_ai": "factory", "cmms": "factory", "quality": "factory",
@@ -82,7 +88,8 @@ def test_pack_for_path_routes_unchanged():
     for path, pack in [("/copilot", "intelligence"), ("/ai/ask", "intelligence"),
                        ("/work-orders", "operations"), ("/analytics/production-schedules", "operations"),
                        ("/maintenance/tasks", "factory"), ("/machines", None),
-                       ("/overview", None), ("/tenant-config", None)]:
+                       ("/overview", None), ("/tenant-config", None),
+                       ("/service-contracts", None), ("/service-contracts/7/accept", None)]:
         assert plan_gate.pack_for_path(path) == pack, (path, plan_gate.pack_for_path(path))
     print("PASS pack_for_path resolves the same packs from the manifest")
 

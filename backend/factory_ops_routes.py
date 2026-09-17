@@ -342,10 +342,11 @@ def generate_document_review_escalations(
             db.query(models.Escalation)
             .filter(
                 models.Escalation.title == title,
-                or_(
-                    models.Escalation.status.is_(None),
-                    models.Escalation.status != "Resolved",
-                ),
+                # Open = not terminal, by the one rule (ai.escalations.open_clause).
+                # `!= "Resolved"` counted a CANCELLED escalation as open, so withdrawing
+                # one silenced this alert permanently (test_open_escalation_one_rule, s.7).
+                # NULL stays open, as #295/#403 required: open_clause COALESCEs it.
+                ai.escalations.open_clause(),
             )
             .first()
         )
@@ -476,10 +477,11 @@ def generate_maintenance_overdue_escalations(
             db.query(models.Escalation)
             .filter(
                 models.Escalation.title == title,
-                or_(
-                    models.Escalation.status.is_(None),
-                    models.Escalation.status != "Resolved",
-                ),
+                # Open = not terminal, by the one rule (ai.escalations.open_clause).
+                # `!= "Resolved"` counted a CANCELLED escalation as open, so withdrawing
+                # one silenced this alert permanently (test_open_escalation_one_rule, s.7).
+                # NULL stays open, as #295/#403 required: open_clause COALESCEs it.
+                ai.escalations.open_clause(),
             )
             .first()
         )
@@ -537,10 +539,11 @@ def generate_oee_recovery_escalation(
         db.query(models.Escalation)
         .filter(
             models.Escalation.title == title,
-            or_(
-                models.Escalation.status.is_(None),
-                models.Escalation.status != "Resolved",
-            ),
+            # Open = not terminal, by the one rule (ai.escalations.open_clause).
+            # `!= "Resolved"` counted a CANCELLED escalation as open, so withdrawing
+            # one silenced this alert permanently (test_open_escalation_one_rule, s.7).
+            # NULL stays open, as #295/#403 required: open_clause COALESCEs it.
+            ai.escalations.open_clause(),
         )
         .first()
     )

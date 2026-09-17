@@ -90,6 +90,29 @@ MUTATIONS = [
      '                                .filter(models.Escalation.status.notin_(\n'
      '                                    ("Resolved", "Cancelled", "Closed"))).count())'),
 
+    # ── The seven generator dedups (test section 7) ───────────────
+    # Single-line anchors on purpose: the harness replaces the FIRST occurrence,
+    # and these files are CRLF. Each uses a DIFFERENT reverted spelling, because
+    # the regex in section 7 only bans `!= "Resolved"`; the AST rule (every dedup
+    # filter must call open_clause) is what catches the other two.
+    ("low-stock generator: back to or_(IS NULL, != 'Resolved') — a cancelled "
+     "escalation silences the alert",
+     "inventory_routes.py",
+     "ai.escalations.open_clause(),",
+     'or_(models.Escalation.status.is_(None), models.Escalation.status != "Resolved"),'),
+    ("document-review generator: a spelling the regex cannot see (notin_)",
+     "factory_ops_routes.py",
+     "ai.escalations.open_clause(),",
+     'models.Escalation.status.notin_(("Resolved",)),'),
+    ("late-order generator: another unseen spelling (~(== 'Resolved'))",
+     "orders_routes.py",
+     "ai.escalations.open_clause(),",
+     '~(models.Escalation.status == "Resolved"),'),
+    ("defect generator: back to or_(IS NULL, != 'Resolved')",
+     "quality_routes.py",
+     "ai.escalations.open_clause(),",
+     'or_(models.Escalation.status.is_(None), models.Escalation.status != "Resolved"),'),
+
     # ── The handover, which was already right and must stay pinned ──
     ("handover: back to a hand-rolled whitelist",
      "ai/handover.py",
@@ -123,14 +146,24 @@ def main():
         # ending in the file — the restore is no longer byte-identical, and the
         # next `git status` shows a file this harness claims not to have changed.
         original = io.open(path, encoding="utf-8", newline="").read()
-        if find not in original:
+        # Match on LF-normalised text, write back in the file's own line endings.
+        # The anchors are written with "\n", and these files are CRLF, so every
+        # MULTI-LINE anchor silently failed to apply: four of the original #565
+        # mutations reported "PATTERN DID NOT APPLY" — the shared predicate's
+        # COALESCE and whitelist mutations, the command centre and system health —
+        # which means those guards had not actually been measured since the files
+        # became CRLF. The restore still writes `original`, byte for byte.
+        crlf = "\r\n" in original
+        flat = original.replace("\r\n", "\n")
+        if find not in flat:
             survived.append(f"{label}  [PATTERN DID NOT APPLY — the mutation is "
                             f"disabled, which means this guard is unmeasured]")
             print(f"{i:2}. SURVIVED (pattern missing)  {label}")
             continue
         try:
+            mutated = flat.replace(find, repl, 1)
             io.open(path, "w", encoding="utf-8", newline="").write(
-                original.replace(find, repl, 1))
+                mutated.replace("\n", "\r\n") if crlf else mutated)
             rc, out = run_test()
         finally:
             io.open(path, "w", encoding="utf-8", newline="").write(original)

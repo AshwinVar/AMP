@@ -111,14 +111,23 @@ def _stand_in_telemetry_coverage():
 
 
 def _install_module(name, factory):
+    label = f"module {name} (not present; plan-signature stand-in)"
+    present = sys.modules.get(name)
+    if present is not None and getattr(present, "__stand_in__", False):
+        # Installed by an earlier suite in the same process (pytest runs every
+        # suite in one). find_spec would raise on it: a bare module has no spec.
+        if label not in STAND_INS:
+            STAND_INS.append(label)
+        return
     if _module_missing(name):
         sys.modules[name] = factory()
-        STAND_INS.append(f"module {name} (not present; plan-signature stand-in)")
+        STAND_INS.append(label)
     else:
         importlib.import_module(name)
 
 
 _ORIGINALS = {}
+_INSTALLED = [False]
 
 
 def install():
@@ -127,8 +136,12 @@ def install():
     import oem_sharing
     import platform_routes
 
-    if STAND_INS:
+    # Idempotent on a FLAG, not on STAND_INS being non-empty: uninstall keeps the
+    # module entries, and under one pytest process the next suite's install()
+    # must still put the helper stand-ins back.
+    if _INSTALLED[0]:
         return
+    _INSTALLED[0] = True
     _install_module("telemetry_coverage", _stand_in_telemetry_coverage)
 
     import retention
@@ -235,6 +248,7 @@ def uninstall():
         if any(name in s for s in STAND_INS) and hasattr(oem_sharing, name):
             delattr(oem_sharing, name)
     STAND_INS[:] = [s for s in STAND_INS if s.startswith("module ")]
+    _INSTALLED[0] = False
 
 
 def stand_in_banner():

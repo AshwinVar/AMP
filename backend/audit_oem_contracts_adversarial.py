@@ -61,6 +61,14 @@ def _rows(model, **filters):
         return db.query(model).filter_by(**filters).count()
 
 
+def _set_active(model, active, **key):
+    """Flip one row's is_active through the ORM (one row, loaded by its key)."""
+    with H.unscoped() as db:
+        row = db.query(model).filter_by(**key).one()
+        row.is_active = active
+        db.commit()
+
+
 def setup():
     section("SETUP: ALPHA HAS A LIVE CONTRACT AT FACTORY_A WITH A STATEMENT")
     cid = H.active_contract(serials=("SN-A1",), start_offset=-4)
@@ -108,28 +116,18 @@ def attack_identity():
                            auth.SECRET_KEY, algorithm=H.ALGO)
     refused("an expired OEM token", POST(path, expired, body).status == 401)
 
-    with H.unscoped() as db:
-        db.query(models.OemUser).filter_by(username="alpha_admin").update({"is_active": False})
-        db.commit()
+    _set_active(models.OemUser, False, username="alpha_admin")
     try:
         r = GET(f"/oem/contracts/{cid}", TOKENS["alpha"])
         refused("a disabled OEM admin, on the very next request", r.status == 403, r)
     finally:
-        with H.unscoped() as db:
-            db.query(models.OemUser).filter_by(username="alpha_admin").update({"is_active": True})
-            db.commit()
-    with H.unscoped() as db:
-        db.query(models.OemOrganization).filter_by(oem_code="OEM_ALPHA").update(
-            {"is_active": False})
-        db.commit()
+        _set_active(models.OemUser, True, username="alpha_admin")
+    _set_active(models.OemOrganization, False, oem_code="OEM_ALPHA")
     try:
         r = GET(f"/oem/contracts/{cid}", TOKENS["alpha"])
         refused("a suspended manufacturer, on the very next request", r.status == 403, r)
     finally:
-        with H.unscoped() as db:
-            db.query(models.OemOrganization).filter_by(oem_code="OEM_ALPHA").update(
-                {"is_active": True})
-            db.commit()
+        _set_active(models.OemOrganization, True, oem_code="OEM_ALPHA")
     r = GET(f"/service-contracts/{cid}", TOKENS["fb"], headers={"X-Tenant": "FACTORY_A"})
     refused("a customer Admin's X-Tenant header aimed at another factory", r.status == 404, r)
     control("CONTROL: the rightful OEM admin still reads it",
@@ -249,8 +247,9 @@ def attack_races():
         if cur.get("agreed"):
             break
         with H.unscoped() as db:
-            db.query(models.ContractStatementAcceptance).filter_by(
-                statement_id=s1["id"], party="OEM").delete()
+            for row in (db.query(models.ContractStatementAcceptance)
+                          .filter_by(statement_id=s1["id"], party="OEM").all()):
+                db.delete(row)
             db.commit()
         out = []
         if H.ON_POSTGRES:

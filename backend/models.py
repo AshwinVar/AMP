@@ -1,7 +1,7 @@
 import os
 from datetime import datetime
-from sqlalchemy import (Boolean, Column, Integer, String, ForeignKey, DateTime, Date,
-                        Text, Float, UniqueConstraint)
+from sqlalchemy import (BigInteger, Boolean, Column, Integer, String, ForeignKey, DateTime,
+                        Date, Index, Text, Float, UniqueConstraint)
 from sqlalchemy import false as sa_false
 from sqlalchemy import true as sa_true
 from sqlalchemy.orm import relationship
@@ -1278,3 +1278,318 @@ class AiLearningConsent(Base):
     revoked_by = Column(String, nullable=True)
     revoked_at = Column(DateTime, nullable=True)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+# ── Agreed downtime attribution for service contracts (ADR-0020) ──────
+#
+# WHAT THIS IS. An SME machine maker (the OEM) and its factory customer already
+# sign annual maintenance contracts, warranties and uptime clauses. These tables
+# hold such a contract, a monthly or quarterly STATEMENT that puts every covered
+# downtime minute into one bucket (AVAILABLE, OEM, FACTORY, DISPUTED, UNMEASURED)
+# with its evidence, and each party's ACCEPTANCE of an exact statement revision.
+# Attribution from the factory's own MES reasons is the differentiator.
+#
+# WHAT THIS IS NOT. Not a usage-billing meter, not a ledger, not a blockchain and
+# not a hash chain: metering, pay-per-use and shared usage ledgers
+# already exist (SteamChain, PayperChain, Linxfour; Rockwell US10747201B2), and
+# nothing here claims novelty for them. Integrity is one SHA-256 per statement
+# revision (canonical.py) plus the audit log; nothing links one row's hash to
+# another's. AMP computes figures and never moves money. A freedom-to-operate
+# review is needed before commercial launch.
+#
+# SHARED CONVENTIONS
+#   * The contract tables carry `oem_code` and `factory_tenant_code`, NEVER a
+#     column named `tenant_code`, and are NOT in tenancy.SCOPED_MODELS — the
+#     MachineInstallation precedent. offboard_tenant.purge_tenant_data
+#     hard-deletes every mapper with a `tenant_code` attribute, and a contract
+#     is the OEM's record as much as the factory's. Every read filters by party
+#     explicitly.
+#   * Timestamps are naive UTC truncated to whole seconds (canonical.utc_seconds)
+#     and are set by the caller with its own `now`; no column here defaults to
+#     datetime.utcnow, which carries microseconds.
+#   * Money and percentages never get a column: they live as decimal TEXT inside
+#     terms_json and canonical_json, parsed only by contract_money. Never
+#     Numeric or Float — SQLite stores NUMERIC as REAL.
+#   * Hashes are VARCHAR(64): lowercase hex SHA-256, canonical.is_sha256_hex.
+
+
+class ServiceContract(Base):
+    """A service contract between one OEM and one factory (AMC, warranty, uptime clause).
+
+    STORED status: draft | proposed | accepted | rejected | withdrawn | terminated.
+    "Active" and "ended" are DERIVED at read time from `starts_at` and the
+    effective end, min(ends_at, termination_effective_at) — there is no sweeper
+    to forget to run. `starts_at`, `ends_at` and `termination_effective_at` all
+    fall on period boundaries, so every statement period is a whole period.
+
+    Only the factory's acceptance (`factory_accepted_*`) makes a contract
+    binding; no metering or statement exists before it.
+    """
+
+    __tablename__ = "service_contracts"
+    __table_args__ = (
+        UniqueConstraint("oem_code", "contract_ref", name="uq_service_contract_ref"),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    oem_code = Column(String, index=True, nullable=False)
+    # The counterparty factory. `factory_tenant_code`, not `tenant_code`: see the
+    # section note above — the generic offboarding sweep must not see this row.
+    factory_tenant_code = Column(String, index=True, nullable=False)
+    contract_ref = Column(String, nullable=False)
+    title = Column(String, nullable=False)
+    contract_type = Column(String, nullable=False)      # AMC | WARRANTY | UPTIME_CLAUSE
+    status = Column(String, nullable=False, default="draft", server_default="draft")
+    starts_at = Column(DateTime, nullable=False)
+    ends_at = Column(DateTime, nullable=False)
+    created_by = Column(String, nullable=False)
+    created_at = Column(DateTime, nullable=False)
+    proposed_at = Column(DateTime, nullable=True)
+    factory_accepted_by = Column(String, nullable=True)
+    factory_accepted_at = Column(DateTime, nullable=True)
+    # Always a period boundary; NULL = not terminated.
+    termination_effective_at = Column(DateTime, nullable=True)
+    terminated_by_party = Column(String, nullable=True)  # OEM | FACTORY
+    terminated_by = Column(String, nullable=True)
+    termination_reason = Column(String, nullable=True)
+    updated_at = Column(DateTime, nullable=True)
+
+
+class ServiceContractTermVersion(Base):
+    """One version of a contract's terms. Changes need BOTH parties.
+
+    `terms_json` is the canonical terms document and `terms_hash` its SHA-256.
+    A version becomes accepted only when BOTH `oem_accepted_hash` and
+    `factory_accepted_hash` equal `terms_hash`, so neither party can be held to
+    terms it did not see. The terms governing a period are the accepted version
+    with the highest `version` whose `effective_from` <= the period start.
+    """
+
+    __tablename__ = "service_contract_term_versions"
+    __table_args__ = (
+        UniqueConstraint("contract_id", "version", name="uq_contract_term_version"),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    contract_id = Column(Integer, ForeignKey("service_contracts.id"), index=True,
+                         nullable=False)
+    version = Column(Integer, nullable=False)
+    terms_json = Column(Text, nullable=False)
+    terms_hash = Column(String(64), nullable=False)
+    effective_from = Column(DateTime, nullable=False)    # a period boundary
+    # draft | proposed | accepted | rejected | withdrawn
+    status = Column(String, nullable=False, default="draft", server_default="draft")
+    proposed_by_party = Column(String, nullable=True)    # OEM | FACTORY
+    proposed_by = Column(String, nullable=True)
+    proposed_at = Column(DateTime, nullable=True)
+    oem_accepted_by = Column(String, nullable=True)
+    oem_accepted_at = Column(DateTime, nullable=True)
+    oem_accepted_hash = Column(String(64), nullable=True)
+    factory_accepted_by = Column(String, nullable=True)
+    factory_accepted_at = Column(DateTime, nullable=True)
+    factory_accepted_hash = Column(String(64), nullable=True)
+    decision_note = Column(String, nullable=True)
+
+
+class ServiceContractMachine(Base):
+    """Which installations a term version covers, snapshotted at acceptance.
+
+    `machine_id_at_acceptance` and `factory_tenant_at_acceptance` record what the
+    installation was linked to when both parties agreed. They are deliberately
+    NOT foreign keys: offboarding deletes the factory's Machine row, and the
+    record of what was covered must survive that.
+
+    `coverage_ended_at` is set ONLY by the linkage listener (contract_linkage),
+    when the installation's machine or factory changes. Covered time from that
+    instant on is UNMEASURED, cause `installation_unlinked` — never silently
+    attributed to whatever the installation now points at.
+    """
+
+    __tablename__ = "service_contract_machines"
+    __table_args__ = (
+        UniqueConstraint("term_version_id", "installation_id",
+                         name="uq_contract_machine_coverage"),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    term_version_id = Column(Integer, ForeignKey("service_contract_term_versions.id"),
+                             index=True, nullable=False)
+    installation_id = Column(Integer, ForeignKey("machine_installations.id"),
+                             index=True, nullable=False)
+    machine_id_at_acceptance = Column(Integer, nullable=False)
+    factory_tenant_at_acceptance = Column(String, nullable=False)
+    serial_number = Column(String, nullable=False)
+    coverage_ended_at = Column(DateTime, nullable=True)
+    coverage_end_reason = Column(String, nullable=True)
+
+
+class ContractStatement(Base):
+    """The downtime attribution statement for one contract period.
+
+    ONE ROW PER (contract, period), revised in place: each change to the content
+    bumps `revision` and replaces `content_hash` and `canonical_json` through a
+    conditional UPDATE on the old hash and revision, so a concurrent recompute
+    loses rather than overwrites.
+
+    There are NO summary columns. Every figure is inside `canonical_json`, whose
+    exact UTF-8 bytes hash to `content_hash`; a second copy of a total in a
+    column is a second number that can disagree with the one the parties
+    accepted. `canonical_json` is NULL only after the factory is offboarded; the
+    hash and the acceptances are kept.
+    """
+
+    __tablename__ = "contract_statements"
+    __table_args__ = (
+        UniqueConstraint("contract_id", "period_start",
+                         name="uq_contract_statement_period"),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    contract_id = Column(Integer, ForeignKey("service_contracts.id"), index=True,
+                         nullable=False)
+    term_version_id = Column(Integer, ForeignKey("service_contract_term_versions.id"),
+                             index=True, nullable=False)
+    period_start = Column(DateTime, nullable=False)      # half-open [start, end)
+    period_end = Column(DateTime, nullable=False)
+    revision = Column(Integer, nullable=False, default=1, server_default="1")
+    content_hash = Column(String(64), index=True, nullable=False)
+    canonical_json = Column(Text, nullable=True)
+    computed_at = Column(DateTime, nullable=False)
+    computed_by_party = Column(String, nullable=False)   # OEM | FACTORY
+    computed_by = Column(String, nullable=False)
+    updated_at = Column(DateTime, nullable=True)
+
+
+class ContractAttributionRecord(Base):
+    """One attributed interval of a statement, in statement order.
+
+    A queryable projection of the intervals inside `canonical_json`, replaced in
+    the same transaction whenever the statement's revision changes, so the two
+    can be checked against each other (verify: `records_diverged`).
+    `installation_id` is a snapshot, not a foreign key, like the statement it
+    belongs to.
+    """
+
+    __tablename__ = "contract_attribution_records"
+    __table_args__ = (
+        UniqueConstraint("statement_id", "seq", name="uq_attribution_record_seq"),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    statement_id = Column(Integer, ForeignKey("contract_statements.id"), index=True,
+                          nullable=False)
+    seq = Column(Integer, nullable=False)
+    installation_id = Column(Integer, nullable=False)
+    start_at = Column(DateTime, nullable=False)          # half-open [start_at, end_at)
+    end_at = Column(DateTime, nullable=False)
+    # BIGINT: a year of covered time across a fleet is past 2**31 seconds.
+    seconds = Column(BigInteger, nullable=False)
+    bucket = Column(String, nullable=False)   # AVAILABLE | OEM | FACTORY | DISPUTED | UNMEASURED
+    cause = Column(String, nullable=False)
+    evidence_json = Column(Text, nullable=False)
+
+
+class ContractStatementAcceptance(Base):
+    """One party's acceptance of one statement revision. APPEND-ONLY.
+
+    Records who, when, and exactly what: the content hash AND the revision.
+    Validity is decided by canonical.acceptance_is_valid and nowhere else — an
+    acceptance counts only while the statement still has this hash at this
+    revision. The key includes `revision` because a party legitimately accepts
+    revision 1 and, after a dispute changes and restores the content, revision 3.
+    """
+
+    __tablename__ = "contract_statement_acceptances"
+    __table_args__ = (
+        UniqueConstraint("statement_id", "party", "revision",
+                         name="uq_statement_acceptance"),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    statement_id = Column(Integer, ForeignKey("contract_statements.id"), index=True,
+                          nullable=False)
+    party = Column(String, nullable=False)               # OEM | FACTORY
+    actor = Column(String, nullable=False)
+    accepted_at = Column(DateTime, nullable=False)
+    content_hash = Column(String(64), nullable=False)
+    revision = Column(Integer, nullable=False)
+
+
+class ContractDispute(Base):
+    """A party's challenge to the attribution of one window on one installation.
+
+    open -> resolution_proposed -> resolved, or withdrawn by the raising party.
+    Proposed and resolution buckets are AVAILABLE | OEM | FACTORY | UNMEASURED —
+    never DISPUTED, since a resolution must settle the window. The other party
+    must accept a resolution. Raising or withdrawing one recomputes the
+    statement, which bumps its revision and so cancels every acceptance.
+    """
+
+    __tablename__ = "contract_disputes"
+
+    id = Column(Integer, primary_key=True, index=True)
+    contract_id = Column(Integer, ForeignKey("service_contracts.id"), index=True,
+                         nullable=False)
+    statement_id = Column(Integer, ForeignKey("contract_statements.id"), index=True,
+                          nullable=False)
+    installation_id = Column(Integer, nullable=False)
+    window_start = Column(DateTime, nullable=False)      # half-open [start, end)
+    window_end = Column(DateTime, nullable=False)
+    raised_by_party = Column(String, nullable=False)     # OEM | FACTORY
+    raised_by = Column(String, nullable=False)
+    raised_at = Column(DateTime, nullable=False)
+    reason = Column(String(1000), nullable=False)
+    proposed_bucket = Column(String, nullable=False)
+    status = Column(String, nullable=False, default="open", server_default="open")
+    resolution_bucket = Column(String, nullable=True)
+    resolution_note = Column(String(1000), nullable=True)
+    resolution_proposed_by_party = Column(String, nullable=True)
+    resolution_proposed_by = Column(String, nullable=True)
+    resolution_proposed_at = Column(DateTime, nullable=True)
+    resolution_accepted_by = Column(String, nullable=True)
+    resolution_accepted_at = Column(DateTime, nullable=True)
+    closed_at = Column(DateTime, nullable=True)
+
+
+class MachineTelemetrySpan(Base):
+    """A factory machine's status history, PER SOURCE, as runs of one status.
+
+    WHY NOT MachineEvent (critic finding C2). Every writer creates a MachineEvent
+    only when the status differs from the shared `Machine.status`. MQTT reports
+    Running, a manual PATCH sets Breakdown, MQTT reports Breakdown: the second
+    MQTT report writes nothing, and a timeline filtered to MQTT shows Running
+    throughout — downtime silently counted as uptime. MachineEvent is also
+    pruned at 180 days. A span is written from EVERY message of its source,
+    independently of Machine.status.
+
+    A span means "`source` reported `status` from span_start to span_end", with
+    both bounds the server's RECEIVE time, never a device timestamp. A gap in
+    spans is a gap in data: it is UNMEASURED, never uptime or downtime.
+
+    Statuses from these sources are provisioned or posted by the FACTORY; they
+    are not authenticated as the OEM's. That is an honest limitation (ADR-0020),
+    and disputes are the remedy.
+
+    Tenant-owned and in tenancy.SCOPED_MODELS. `tenant_code` has NO default: a
+    span written without its tenant is a bug to surface, not a row to hand to
+    the founder workspace.
+    """
+
+    __tablename__ = "machine_telemetry_spans"
+    __table_args__ = (
+        # The engine's only access path: one machine, its trusted sources, a
+        # bounded time range.
+        Index("ix_machine_telemetry_spans_lookup",
+              "tenant_code", "machine_id", "source", "span_start"),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    tenant_code = Column(String, index=True, nullable=False)
+    machine_id = Column(Integer, ForeignKey("machines.id"), index=True, nullable=False)
+    source = Column(String, nullable=False)              # mqtt | iot | industrial_gateway | simulator
+    # The canonical status, or the raw value when unrecognised, cut to 32 chars.
+    status = Column(String(32), nullable=False)
+    span_start = Column(DateTime, nullable=False)
+    # Indexed for retention, which prunes by span_end across all tenants.
+    span_end = Column(DateTime, index=True, nullable=False)
+    message_count = Column(Integer, nullable=False, default=1, server_default="1")

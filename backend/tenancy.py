@@ -82,6 +82,10 @@ CORE_TENANT_TABLES = [
     # nothing — they are listed to keep SCOPED_MODELS and this list in lockstep,
     # which is what test_tenancy asserts.
     "bills_of_materials", "bom_components",
+    # ADR-0020. Also created WITH tenant_code, by migration 0009. The contract
+    # tables of that ADR are deliberately NOT here: they carry oem_code and
+    # factory_tenant_code, never tenant_code (see models.ServiceContract).
+    "machine_telemetry_spans",
 ]
 
 # Tables that gain tenant_code but must NOT be blind-backfilled to DEFAULT: the
@@ -201,6 +205,10 @@ SCOPED_MODELS = (
     # stock a completion consumes, so it is the last place to rely on an ambient
     # binding — but the hook belongs on them like every other tenant-owned table.
     models.BillOfMaterials, models.BomComponent,
+    # ADR-0020: the per-source status history the downtime attribution engine
+    # reads. A factory's own data; the engine ALSO filters by tenant explicitly,
+    # because an OEM-triggered compute runs outside any factory binding.
+    models.MachineTelemetrySpan,
 )
 
 

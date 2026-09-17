@@ -244,6 +244,17 @@ jobs:
         working-directory: backend
         run: python verify_pg_deploy.py 5432
 
+      # 2b. ADR-0020's eight tables (0009), migrated from a POPULATED previous
+      #     revision built from the frozen snapshot: every row survives, the
+      #     schema matches models.py, PostgreSQL itself refuses a second
+      #     statement per period and a second acceptance per revision, the
+      #     downgrade/upgrade round trip is clean, and offboarding a factory is
+      #     not blocked by the span foreign key. SQLite cannot show any of the
+      #     length, NOT NULL-without-default or foreign-key behaviour.
+      - name: Agreed-downtime-attribution tables (0009) on PostgreSQL
+        working-directory: backend
+        run: python verify_pg_outcome_contracts.py 5432
+
       # 3. The suites that specifically guard this area, on PostgreSQL rather
       #    than SQLite — SQLite hid a foreign-key failure in the OEM work and
       #    would hide these too.

@@ -88,12 +88,20 @@ def test_automatic_scoping_filters_reads_and_stamps_writes():
 
 def test_scoped_models_and_migration_tables_stay_in_lockstep():
     from tenancy import SCOPED_MODELS, CORE_TENANT_TABLES, FAIL_SAFE_TENANT_TABLES
-    # Every scoped model has a migration entry: 30 core (28 backfilled to
-    # DEFAULT, plus the two ADR-0013 bill-of-materials tables which are created
-    # WITH the column) + 7 fail-safe (audit + enterprise inventory, added NULL,
-    # not backfilled).
-    assert len(SCOPED_MODELS) == len(CORE_TENANT_TABLES) + len(FAIL_SAFE_TENANT_TABLES) == 37
+    # Every scoped model has a migration entry: 31 core (28 backfilled to
+    # DEFAULT, plus the two ADR-0013 bill-of-materials tables and the ADR-0020
+    # machine_telemetry_spans table, which are created WITH the column) + 7
+    # fail-safe (audit + enterprise inventory, added NULL, not backfilled).
+    assert len(SCOPED_MODELS) == len(CORE_TENANT_TABLES) + len(FAIL_SAFE_TENANT_TABLES) == 38
     assert len(FAIL_SAFE_TENANT_TABLES) == 7
+    # Lockstep by NAME, not only by count: two lists of the right length can
+    # still disagree about which tables they mean.
+    assert ({m.__tablename__ for m in SCOPED_MODELS}
+            == set(CORE_TENANT_TABLES) | set(FAIL_SAFE_TENANT_TABLES))
+    # ADR-0020: the per-source status history is a factory's own data. The
+    # contract tables are NOT here — they carry factory_tenant_code and oem_code
+    # and are filtered explicitly by party.
+    assert models.MachineTelemetrySpan in SCOPED_MODELS
     # the fail-safe (audit + enterprise-inventory) models are scoped
     for m in (models.AuditLog, models.Remnant, models.MaterialIssueSlip,
               models.GoodsReceiptNote, models.GRNItem, models.CycleCount, models.CycleCountItem):

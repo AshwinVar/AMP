@@ -112,6 +112,11 @@ def apply_decision(db, action, decision, decided_by=None, actor=None,
     `require_actor=False` is the auto-approval path (AgentPolicy): a human made
     the decision in advance, in writing, so there is no actor to verify — but
     tenant, state and freshness are still checked.
+
+    authorise also guarantees the item is still pending in the action's tenant
+    (its last check), so the transitions below always move the item in the same
+    transaction as the decision; the `if item and ...` tests are now belt and
+    braces, not the only thing between a decision and a contradicting record.
     """
     approvals.authorise(db, action, actor, decision, require_actor=require_actor)
     approve = decision == "approve"
@@ -177,8 +182,12 @@ def _open_auto_task_exists(db, machine_id, task_type) -> bool:
 
 def _propose_task(db, tenant, agent, task_no, machine_id, task_type, priority, summary, notes, severity):
     now = datetime.utcnow()
+    # tenant_code stamped explicitly, like the escalation agent: with no tenant
+    # bound the column default ("DEFAULT") would otherwise land the task in a
+    # different tenant from its AgentAction, and the gate's item check would
+    # (rightly) refuse to decide it.
     task = models.MaintenanceTask(
-        task_no=task_no, machine_id=machine_id, task_type=task_type, priority=priority,
+        tenant_code=tenant, task_no=task_no, machine_id=machine_id, task_type=task_type, priority=priority,
         assigned_to="Maintenance team", planned_date=now.date(), status="Proposed", notes=notes,
     )
     db.add(task)
@@ -256,6 +265,7 @@ def draft_reorder_on_inventory_low(event: InventoryLow, db) -> None:
     order_qty = max(2 * event.reorder_level - event.current_stock, 1)  # refill to ~2x reorder level
     now = datetime.utcnow()
     po = models.PurchaseOrder(
+        tenant_code=event.tenant_code,   # explicit: see _propose_task
         po_no=f"{AUTO_PO_PREFIX}-{event.item_id}-{int(now.timestamp())}",
         supplier_id=None, item_id=event.item_id, item_name=event.item_name,
         order_quantity=order_qty, unit=unit,

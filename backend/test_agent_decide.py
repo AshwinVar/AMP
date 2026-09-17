@@ -17,6 +17,8 @@ so a row written by raw SQL / a migration / a legacy path can hold NULL, and
 
 Run:  DATABASE_URL="sqlite:///./ci.db" python backend/test_agent_decide.py
 """
+from datetime import datetime
+
 from fastapi import HTTPException
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker
@@ -42,12 +44,25 @@ def _fresh_session():
     return db
 
 
-def _action(status, agent="maintenance", decided_by=None, tenant="DEFAULT"):
+def _action(status, agent="maintenance", decided_by=None, tenant="DEFAULT", ref_id=None):
     return models.AgentAction(
         tenant_code=tenant, agent=agent, action_type="open_task",
-        summary="x", ref_kind="maintenance_task", ref_id=None,
+        summary="x", ref_kind="maintenance_task", ref_id=ref_id,
         status=status, decided_by=decided_by,
     )
+
+
+def _proposed_task(db, task_no, tenant="DEFAULT"):
+    """The real item a maintenance proposal would move. A decision is only ever
+    recorded together with its item moving (approvals._check_item), so a
+    'Proposed action' with nothing behind it is not a decidable fixture."""
+    task = models.MaintenanceTask(
+        tenant_code=tenant, task_no=task_no, machine_id=1, task_type="Predictive (auto)",
+        priority="Critical", assigned_to="Maintenance team",
+        planned_date=datetime.utcnow().date(), status="Proposed")
+    db.add(task)
+    db.flush()
+    return task.id
 
 
 def _user(tenant="DEFAULT"):
@@ -102,7 +117,8 @@ def test_already_decided_names_its_state():
 
 def test_proposed_action_is_decided():
     db = _fresh_session()
-    db.add_all([_action("Proposed"), _action("Proposed")])
+    task_a, task_b = _proposed_task(db, "AUTO-MAINT-A"), _proposed_task(db, "AUTO-MAINT-B")
+    db.add_all([_action("Proposed", ref_id=task_a), _action("Proposed", ref_id=task_b)])
     db.commit()
     a, b = db.query(models.AgentAction).order_by(models.AgentAction.id).all()
 
@@ -110,11 +126,33 @@ def test_proposed_action_is_decided():
     assert out["status"] == "Approved", out
     assert out["decided_by"] == "alice", out
     assert db.get(models.AgentAction, a.id).status == "Approved"
+    assert db.get(models.MaintenanceTask, task_a).status == "Open"
 
     out = _decide_agent_action(b.id, "reject", db, _user())
     assert out["status"] == "Rejected", out
     assert db.get(models.AgentAction, b.id).status == "Rejected"
-    print("PASS a Proposed action is approved/rejected and stamped")
+    assert db.get(models.MaintenanceTask, task_b).status == "Cancelled"
+    print("PASS a Proposed action is approved/rejected and stamped, and its item moves")
+
+
+def test_action_without_an_item_is_withdrawn_not_decided():
+    # Before ADR-0015's item check this recorded "Approved" against nothing.
+    db = _fresh_session()
+    db.add(_action("Proposed"))
+    db.commit()
+    action_id = db.query(models.AgentAction).one().id
+    try:
+        _decide_agent_action(action_id, "approve", db, _user())
+        raise AssertionError("an action with no item was decided")
+    except HTTPException as e:
+        assert e.status_code == 409, (e.status_code, e.detail)
+        assert e.detail.startswith("Nothing was decided"), e.detail
+    row = db.get(models.AgentAction, action_id)
+    db.refresh(row)
+    assert row.status == "Cancelled" and row.decided_by == "system-withdrawn", (row.status, row.decided_by)
+    _expect_http(lambda: _decide_agent_action(action_id, "approve", db, _user()),
+                 400, "Already cancelled")
+    print("PASS an action with no item is 409 and withdrawn, never recorded as Approved")
 
 
 def test_missing_and_cross_tenant_are_404():
@@ -137,5 +175,6 @@ if __name__ == "__main__":
     test_null_status_is_400_not_500()
     test_already_decided_names_its_state()
     test_proposed_action_is_decided()
+    test_action_without_an_item_is_withdrawn_not_decided()
     test_missing_and_cross_tenant_are_404()
     print("ALL AGENT DECIDE TESTS PASSED")

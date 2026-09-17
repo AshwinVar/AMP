@@ -11,6 +11,7 @@ from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 import ai
+import approvals
 import models
 import schemas
 from auth import get_current_user, require_roles
@@ -56,13 +57,31 @@ def _decide_agent_action(action_id, decision, db, current_user):
         # NULL-status hardening the stats endpoint above and the maintenance-overdue
         # query (factory_ops_routes) already apply.
         raise HTTPException(status_code=400, detail=f"Already {(action.status or 'decided').lower()}")
-    ai.agents.apply_decision(
-        db, action, decision,
-        decided_by=current_user.get("sub") or current_user.get("username"),
-        # The actor is re-verified against the DATABASE here: the JWT alone
-        # cannot say whether the approver still exists, is still active, is
-        # still in this tenant, or still holds an approving role.
-        actor={**current_user, "tenant": tenant})
+    try:
+        ai.agents.apply_decision(
+            db, action, decision,
+            decided_by=current_user.get("sub") or current_user.get("username"),
+            # The actor is re-verified against the DATABASE here: the JWT alone
+            # cannot say whether the approver still exists, is still active, is
+            # still in this tenant, or still holds an approving role.
+            actor={**current_user, "tenant": tenant})
+    except approvals.ProposalWithdrawn as refusal:
+        # The item this proposal would move is gone, moved, or elsewhere, so no
+        # decision may be recorded against it. Withdraw it instead -- with a
+        # compare-and-set, so a decision a concurrent request already recorded
+        # is never overwritten (ADR-0015 addendum). Orphans are withdrawn here,
+        # lazily, rather than by a boot-time sweep.
+        db.rollback()
+        withdrawn = approvals.withdraw(db, action_id, tenant)
+        db.commit()
+        if not withdrawn:
+            current = db.query(models.AgentAction.status).filter(
+                models.AgentAction.id == action_id,
+                models.AgentAction.tenant_code == tenant).scalar()
+            raise HTTPException(status_code=400,
+                                detail=f"Already {(current or 'decided').lower()}")
+        raise HTTPException(status_code=409,
+                            detail=f"{refusal.detail} It has been withdrawn.")
     db.commit()
     db.refresh(action)
     return _agent_action_dict(action)

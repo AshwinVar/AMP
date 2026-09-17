@@ -18,6 +18,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 import ai.supply
+import approvals
 import models
 from csv_safe import import_row_error, read_upload_text
 import schemas
@@ -475,7 +476,8 @@ def get_purchase_orders(
     db: Session = Depends(_get_db),
     current_user: dict = Depends(get_current_user),
 ):
-    return db.query(models.PurchaseOrder).order_by(models.PurchaseOrder.id.desc()).limit(500).all()
+    rows = db.query(models.PurchaseOrder).order_by(models.PurchaseOrder.id.desc()).limit(500).all()
+    return approvals.annotate_awaiting_decision(db, models.PurchaseOrder, rows)
 
 
 @router.post("/purchase-orders", response_model=schemas.PurchaseOrderResponse)
@@ -539,6 +541,10 @@ def update_purchase_order(
     po = db.query(models.PurchaseOrder).filter(models.PurchaseOrder.id == po_id).first()
     if not po:
         raise HTTPException(status_code=404, detail="Purchase order not found")
+
+    # An agent proposal holds this PO until it is decided (ADR-0015): no status
+    # change, and no receipt booking stock against a draft nobody approved.
+    approvals.refuse_if_awaiting_decision(db, po)
 
     # received_quantity is Column(Integer, default=0) WITHOUT nullable=False, so a
     # row written by raw SQL / a migration / a cleared update can hold a true NULL,
@@ -619,7 +625,7 @@ def update_purchase_order(
 
     db.commit()
     db.refresh(po)
-    return po
+    return approvals.annotate_awaiting_decision(db, models.PurchaseOrder, [po])[0]
 
 
 @router.delete("/purchase-orders/{po_id}")
@@ -631,6 +637,8 @@ def delete_purchase_order(
     po = db.query(models.PurchaseOrder).filter(models.PurchaseOrder.id == po_id).first()
     if not po:
         raise HTTPException(status_code=404, detail="Purchase order not found")
+
+    approvals.refuse_if_awaiting_decision(db, po)
 
     db.delete(po)
     db.commit()

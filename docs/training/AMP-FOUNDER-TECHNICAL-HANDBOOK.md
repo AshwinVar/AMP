@@ -963,7 +963,7 @@ AMP's intelligence is **three distinct things**, and it matters not to blur them
 
 1. **Rule-based / deterministic — ~95% of "AI" in AMP.** Hand-written thresholds and SQL aggregations. Example: the "predictive maintenance" score (`predictive_engine.calculate_predictive_risk`) is a sum of fixed weights — `Breakdown +35`, `utilization<40 +20`, `reject≥8% +20`, … capped at 100, banded Critical/High/Medium/Low. **The constants are hand-tuned, not learned.** All ~40 read-models are deterministic arithmetic.
 2. **LLM-backed — exactly ONE feature, off by default.** `backend/ai_copilot.py` (wrapped by `ai/copilot.py`) is the *only* code that calls an external Large Language Model. It POSTs to Anthropic's API (or Google Gemini as a demo-only alternative) over plain `urllib`. It's enabled **only** when `ANTHROPIC_API_KEY` (or `GEMINI_API_KEY`) is set; default model `claude-haiku-4-5`. It reasons over a text context **built from the same rule-based read-models**, is never on a write path, and **falls back to the rule-based assistant** (labelled `"source":"rules"`) if the key is absent or the call fails. Surfaces at only 3 endpoints: `/ai/status`, `/ai/ask`, `/ai/report`.
-3. **Trained machine-learning models — NONE.** > **AMP currently has no trained ML models.** Verified: no `sklearn`/`numpy`/`torch`/`tensorflow`/model artifacts anywhere in `backend/`. What's marketed as "predictive" is the deterministic threshold scorer in (1). The architecture is *designed* so a scorer could become an ML model later without callers changing (ADR-0003) — but that has not happened.
+3. **Trained models — THREE small AMP-native models, all trained or evaluated on SYNTHETIC data only (ADR-0020).** Written in pure Python (no `sklearn`/`numpy`/`torch`), shipped as hash-pinned JSON files in `backend/amp_ai/artifacts/`. Only one passed its gate against the existing rule (failure risk), and even that one replaces nothing on an existing screen. None has been trained on, or evaluated against, a real plant. Read **AMP-native AI** below before you describe any of it to a customer. The rule scorer in (1) is still what Machine Health, the briefing and the agents use.
 
 > **Naming trap:** `ai/copilot.py` (the LLM) and `ai/assistant.py` (rule-based keyword router) are **both** called "copilot" in the UI. `/ai/ask` = LLM with rules-fallback; `/ai/copilot/ask` = rules only. The rule-based one is what demos with zero cost and zero dependency.
 
@@ -1000,15 +1000,36 @@ flowchart LR
 `/agent-actions` (log + queue), `/agent-actions/stats`, `/agent-roster` (per-agent cockpit), `/agent-policy` (autonomy), plus the Mission Control `insights` feed and each machine cockpit's `open_actions`. Frontend: `MissionControlSection.tsx`, `AgentActivitySection.tsx`, `ApprovalsInbox.tsx`, `AgentPolicyPanel.tsx`. All three decision screens (Mission Control, Agent Activity, the Approvals inbox) grey out Approve on an expired proposal and reload after a refused decision.
 
 ### Common confusion
-- **"AMP uses machine learning to predict failures."** No — it uses a **deterministic risk score** (hand-tuned thresholds). Say "rule-based predictive scoring," not "ML."
+- **"AMP uses machine learning to predict failures."** Not on any existing screen — Machine Health, the briefing and the agents use the **deterministic risk score** (hand-tuned thresholds). Say "rule-based predictive scoring". AMP also ships an AMP-native failure-risk model (below), shown only on its own view beside the rule and evaluated on **synthetic** machines only. Never quote its numbers as accuracy on a real plant.
 - **"Agents act on their own."** Only Reorder is auto-approved by default, and even then it produces a **Draft** PO, never a placed order. All others wait for a human.
 - **"The copilot needs an API key."** The *LLM* copilot does; the *rule-based* assistant (which powers most of the chat experience) does not.
 
 ### If you want to change/add an agent
 Add a handler in `ai/agents.py`, register it on the relevant event in `ai/agents.register()`, route its proposal through `_propose()` + `AgentAction`, and it inherits the whole approval/oversight machinery for free. Tune a threshold = edit the constant at the top of `ai/agents.py`.
 
+### AMP-native AI (ADR-0020) — what it is, honestly
+
+**What:** three models that run inside AMP (`backend/amp_ai/`), standard library only, no network call, no new dependency. Each is a JSON artifact whose SHA-256 is **pinned in code**, so an edited file (even one with a recomputed embedded hash) is refused and reported as unavailable. Changing a model means changing that pinned line in review.
+
+| Model | What it answers | Trained / evaluated on | Baseline, same held-out data | Verdict |
+|---|---|---|---|---|
+| `failure_risk` | Chance each machine STARTS a breakdown in the next 7 days | Synthetic fleet (`failure_risk/synthetic.py`, seed 20260917) | Rule scorer: PR-AUC 0.094 vs model 0.194 (paired +0.099, 95% [0.029, 0.175]); ROC-AUC 0.612 vs 0.698 | **Adopted, on synthetic data.** Shown only at `GET /ai/native/failure-risk`, with the rule score beside it. Replaces nothing. |
+| `telemetry_anomaly` | How unusual one machine's last hour of telemetry is against its own previous 14 days | Evaluated on synthetic telemetry (`telemetry_anomaly/synthetic.py`); fits a per-request baseline from the tenant's own telemetry **only with consent** | Mean/std z-score: PR-AUC 0.462 vs model 0.359 (paired −0.103, [−0.158, −0.047]); static range 0.134 | **Not adopted.** Scores are labelled experimental and never shown as alerts. |
+| `copilot_intent` | Which of the copilot's 15 fixed answers a question needs | AMP-authored question families | Keyword router on 64 held-out questions: 36 correct vs 38 for model-then-keywords (+3.1 points, McNemar p = 0.625) | **Not adopted.** The keyword router stays in charge; `/ai/status` reports `engine: rules`. |
+
+**The chain it respects:** USER → AUTHENTICATION → RBAC → TENANT/CONSENT → AMP TOOL → DATA → MODEL. Routes live in `native_ai_routes.py`. Failure risk and the anomaly check: Admin + Supervisor. Model cards: any signed-in user (Intelligence Pack). Reading consent: Admin + Supervisor. Changing consent: Admin only, and **never from a founder preview**. The copilot model can only propose a pillar name from the allowlist; AMP runs that pillar with the request's own tenant. No model builds a query, picks a tenant or sees a role.
+
+**Inference vs learning.** Scoring a tenant's records with a synthetic-trained model learns nothing (tested: the artifact and loaded model are unchanged after scoring, and tenant B's result does not depend on tenant A). Fitting anything to a tenant's own data is learning. The only such capability, `telemetry_baseline`, runs only after that tenant's Admin turns it on under **Agent Activity → AI learning consent**. The decision is stored in `ai_learning_consents` (migration `0009_native_ai_consent`), committed in the SAME transaction as its audit row (if the audit fails, nothing changes), checked on every request with no cache, and revocable. No row means no. Nothing learned is stored.
+
+**Rebuild or re-check** (from `backend/`, with `DATABASE_URL` set; the builds never open a database connection):
+- Smoke builds, always into a scratch location (the failure-risk and anomaly smoke builds refuse the shipped files; the copilot smoke build does NOT, and would overwrite the pinned artifact, which then reports unavailable): `python -m amp_ai.failure_risk.build --small --out <scratch dir>`, `python -m amp_ai.telemetry_anomaly.build_eval --small --out <scratch file>`, `python -m amp_ai.copilot_intent.build --small --out <scratch dir>`.
+- A full build re-runs the committed test set; the ledger then records a second run and the gate fails as `test_set_reused`, by design. A new verdict needs a fresh test set (a new seed or question set) and the new hash pinned in code.
+- Suites: `test_amp_ai_core_*`, `test_amp_ai_failure_risk_*`, `test_amp_ai_anomaly_*`, `test_amp_ai_intent_*`, `test_amp_ai_integration_*`. Guards are mutation-tested by `mutate_amp_ai_*.py`; PostgreSQL by `verify_pg_native_ai.py`.
+
+**Say it like this:** "AMP has its own small models that run inside AMP. We built and tested them on simulated plants, next to our existing rules, and we only switch one on where it beat the rule. None of them learns from your data unless your Admin turns that on, and you can turn it off at any time."
+
 ### Quick recap
-AMP's "AI" = mostly **deterministic rules** + read-models, **one optional LLM** feature (off without a key, always with a rules fallback), and **no trained ML**. Five agents observe events and **propose** actions into a pending state, logged as `AgentAction` rows that are simultaneously audit trail and approval queue; the `approvals.py` gate (re-checking the DB, not the token) makes a human the authority. Only Reorder auto-approves, and only into a Draft.
+AMP's "AI" = mostly **deterministic rules** + read-models, **one optional LLM** feature (off without a key, always with a rules fallback), and **three small AMP-native models** trained or evaluated on synthetic data only: one adopted (failure risk, beside the rule on its own view) and two not (ADR-0020). Five agents observe events and **propose** actions into a pending state, logged as `AgentAction` rows that are simultaneously audit trail and approval queue; the `approvals.py` gate (re-checking the DB, not the token) makes a human the authority. Only Reorder auto-approves, and only into a Draft.
 
 ---
 

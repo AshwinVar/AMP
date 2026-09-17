@@ -9,8 +9,8 @@ stops that, and the reasoning behind each number.
 
 | Table | Timestamp | Keep | Why this number |
 |---|---|---|---|
-| `iot_telemetry` | `created_at` | **14 days** | Fastest-growing table in the schema. The connectivity read-model only looks at a 15-minute freshness window; nothing reads older telemetry. |
-| `industrial_signals` | `created_at` | **14 days** | Same shape, same reasoning — per-tick signal rows with no long-horizon consumer. |
+| `iot_telemetry` | `created_at` | **14 days** | Fastest-growing table in the schema. The connectivity read-model only looks at a 15-minute freshness window. The longest reader is the AMP-native anomaly check (ADR-0020), which fits a machine's baseline from the last 14 days, so this number caps its history (see the note below). |
+| `industrial_signals` | `created_at` | **14 days** | Same shape, same reasoning — per-tick signal rows; the anomaly check reads the same 14 days. |
 | `machine_events` | `created_at` | **180 days** | The closest thing to a machine's service record. `/analytics/machine-state-summary` tallies status counts over the whole history, so this is not pure noise. Six months keeps a seasonal comparison. |
 | `notifications` | `created_at` | **90 days** | The UI lists the newest 500 and the only aggregate is an unread count. A notification nobody opened in a quarter will not be opened. |
 | `ai_recommendations` | `created_at` | **365 days** | The AI advice log. A year lets you answer "did the maintenance agent warn us before that failure?" — the first question anyone asks after an incident, and unanswerable if you pruned the evidence. |
@@ -19,6 +19,23 @@ stops that, and the reasoning behind each number.
 | `inventory_transactions` | `created_at` | **1095 days** | The stock ledger. Not log noise: `ai/trace` reconstructs a work order's material history from it with no time filter, and it carries financial and traceability weight. Three years. **If a tenant needs longer, raise this — do not shorten it to make the numbers look better.** |
 | `audit_logs` | — | **forever** | The security audit trail. It exists to answer "who did that, and when". An audit trail you prune on a timer is not an audit trail. |
 | `event_log` | — | **forever** | The append-only domain event history (ADR-0001). It is the substrate a projection could be rebuilt from; deleting it destroys the ability to reconstruct anything. |
+
+## Note: telemetry retention caps the anomaly check's baseline (ADR-0020)
+
+`GET /ai/native/anomaly/machines/{id}` fits a machine's normal range from that
+machine's own telemetry in `[now − 14 days, now − 1 hour)` and scores the last
+hour against it, only with the tenant's `telemetry_baseline` learning consent.
+The 14-day window was chosen to match the retention above, so:
+
+- **Shortening telemetry retention shortens every baseline.** With under 3 days
+  of history, or under 288 five-minute buckets in the machine's current state,
+  the check answers `insufficient_history` with a null score. Change the
+  retention and `amp_ai/telemetry_anomaly/series.BASELINE_DAYS` together, on purpose.
+- **Lengthening retention does not lengthen the baseline** until `BASELINE_DAYS`
+  changes, and changing that changes the evaluated method: the pinned evaluation
+  no longer matches and the check reports itself unavailable until re-evaluated.
+- Baselines see no seasonality longer than two weeks.
+- Nothing the check fits is stored, so there is no derived table to prune.
 
 ## Three rules the module enforces
 

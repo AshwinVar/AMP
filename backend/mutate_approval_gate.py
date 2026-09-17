@@ -13,7 +13,8 @@ import os
 import subprocess
 import sys
 
-SUITES = ["test_approval_gate.py", "test_agents.py", "test_agent_decide.py"]
+SUITES = ["test_approval_gate.py", "test_agents.py", "test_agent_decide.py",
+          "test_agent_item_lock.py", "test_agent_item_lock_guard.py"]
 
 MUTATIONS = [
     # --- who is asking -----------------------------------------------------
@@ -31,8 +32,12 @@ MUTATIONS = [
     # behavioural difference today, because the column cannot hold NULL. That
     # makes the column definition the guard, so the column definition is what
     # gets mutated: make it nullable and an unknown is_active becomes reachable.
+    # Anchored on the comment above User.is_active: the bare column line also
+    # appears on two OEM models, and a pattern that hits 3x SKIPs.
     ("users.is_active becomes nullable (an unknown active state)", "models.py",
+     "    # rejecting an agent action, which moves money and material.\n"
      "    is_active = Column(Boolean, nullable=False, default=True, server_default=sa_true())",
+     "    # rejecting an agent action, which moves money and material.\n"
      "    is_active = Column(Boolean, default=True)"),
     ("the role is read from the TOKEN, not the database", "approvals.py",
      "    if user.role not in APPROVER_ROLES:",
@@ -54,13 +59,12 @@ MUTATIONS = [
     ("the tenant check runs AFTER state and freshness (leaks the state)",
      "approvals.py",
      "        _check_tenant(action, (actor or {}).get(\"tenant\"))\n"
-     "    _check_state(action)\n"
-     "    _check_freshness(action, now)",
+     "    _check_state(action)\n",
      "        pass\n"
      "    _check_state(action)\n"
      "    _check_freshness(action, now)\n"
      "    if require_actor:\n"
-     "        _check_tenant(action, (actor or {}).get(\"tenant\"))"),
+     "        _check_tenant(action, (actor or {}).get(\"tenant\"))\n"),
     ("a cross-tenant probe is told the action exists (403 not 404)",
      "approvals.py",
      '        # 404 rather than 403: a cross-tenant probe must not learn that the id\n'
@@ -125,8 +129,77 @@ MUTATIONS = [
      "def apply_decision(db, action, decision, decided_by=None, actor=None,\n"
      "                   require_actor=False) -> None:"),
     ("the route stops passing the actor through", "agent_routes.py",
-     "        actor={**current_user, \"tenant\": tenant})",
-     "        actor=None, require_actor=False)"),
+     "            actor={**current_user, \"tenant\": tenant})",
+     "            actor=None, require_actor=False)"),
+
+    # --- no decision without its item (ADR-0015 addendum) -------------------
+    ("the item check is removed (a decision on a moved item is recorded)",
+     "approvals.py",
+     "    _check_item(db, action)\n    return user",
+     "    return user"),
+    ("the item check runs BEFORE the actor (a non-approver withdraws)",
+     "approvals.py",
+     "    user = _check_actor(db, action, actor) if require_actor else None\n"
+     "    _check_item(db, action)\n",
+     "    _check_item(db, action)\n"
+     "    user = _check_actor(db, action, actor) if require_actor else None\n"),
+    ("the item may be in any status (pending test dropped)", "approvals.py",
+     "    if item.status != pending:",
+     "    if False:"),
+    ("the item may belong to another tenant", "approvals.py",
+     "    query = db.query(model).filter(model.id == action.ref_id,\n"
+     "                                   model.tenant_code == action.tenant_code)",
+     "    query = db.query(model).filter(model.id == action.ref_id)"),
+    ("reject is refused when expired (reject exemption lost)", "approvals.py",
+     '    if decision == "approve":\n        _check_freshness(action, now)',
+     '    if True:\n        _check_freshness(action, now)'),
+    ("freshness gates reject instead of approve", "approvals.py",
+     '    if decision == "approve":\n        _check_freshness(action, now)',
+     '    if decision == "reject":\n        _check_freshness(action, now)'),
+    ("withdraw loses its compare-and-set (overwrites a decision)", "approvals.py",
+     "        models.AgentAction.status.in_(DECIDABLE),\n    ).update(",
+     "    ).update("),
+    ("the route records nothing instead of withdrawing", "agent_routes.py",
+     "        withdrawn = approvals.withdraw(db, action_id, tenant)",
+     "        withdrawn = 1"),
+    ("the orphan sweep withdraws live proposals too", "approvals.py",
+     "        if locate_pending_item(db, proposal)[0] is None:",
+     "        if True:"),
+    ("the orphan sweep ignores its tenant scope", "approvals.py",
+     "    if tenant is not None:\n        query = query.filter(",
+     "    if False:\n        query = query.filter("),
+
+    # --- the lock -------------------------------------------------------------
+    ("the lock ignores item status (holds moved rows)", "approvals.py",
+     "    candidates = [r for r in rows if r.status == pending and r.id is not None]",
+     "    candidates = [r for r in rows if r.id is not None]"),
+    ("the lock counts decided actions (holds look-alikes)", "approvals.py",
+     "        models.AgentAction.status.in_(DECIDABLE),\n    ).order_by(",
+     "    ).order_by("),
+    ("the lock ignores the action's kind", "approvals.py",
+     "        models.AgentAction.ref_kind == kind,\n",
+     ""),
+    ("the lock ignores the action's tenant", "approvals.py",
+     "                         if p.tenant_code == row.tenant_code), None)",
+     "                         if True), None)"),
+    ("the lock ignores the licence clause", "approvals.py",
+     "        if licensed[row.tenant_code]:",
+     "        if True:"),
+    ("a missing TenantConfig fails OPEN (nothing held)", "approvals.py",
+     "    if config is None:\n        return True",
+     "    if config is None:\n        return False"),
+    ("the lock is removed from update_purchase_order", "orders_routes.py",
+     "    approvals.refuse_if_awaiting_decision(db, po)\n\n    # received_quantity",
+     "\n    # received_quantity"),
+    ("the lock is removed from delete_maintenance_task", "factory_ops_routes.py",
+     "    approvals.refuse_if_awaiting_decision(db, task)\n\n    db.delete(task)",
+     "\n    db.delete(task)"),
+    ("the purchase-order list loses its awaiting_approval flag", "orders_routes.py",
+     "    return approvals.annotate_awaiting_decision(db, models.PurchaseOrder, rows)",
+     "    return rows"),
+    ("the reorder agent stops stamping its tenant on the PO", "ai/agents.py",
+     "        tenant_code=event.tenant_code,   # explicit: see _propose_task\n",
+     ""),
 ]
 
 
@@ -148,11 +221,15 @@ EXPECTED_SURVIVORS = {}
 
 def main():
     here = os.path.dirname(os.path.abspath(__file__))
+    # Read and write byte-faithfully (newline=""). The files are CRLF in a
+    # Windows checkout; reading with universal newlines and writing "\n" used to
+    # leave every mutated file converted to LF after a run, even though the
+    # "restored" check (which compared normalised text) said yes.
     originals = {}
     for _, path, _, _ in MUTATIONS:
         if path not in originals:
             originals[path] = io.open(os.path.join(here, path),
-                                      encoding="utf-8").read()
+                                      encoding="utf-8", newline="").read()
 
     baseline = run_suites()
     if baseline:
@@ -165,17 +242,19 @@ def main():
     survived = []
     for label, path, old, new in MUTATIONS:
         source = originals[path]
+        if "\r\n" in source:
+            old, new = old.replace("\n", "\r\n"), new.replace("\n", "\r\n")
         if source.count(old) != 1:
             print(f"{label:<62} {'SKIP':<10} pattern hits {source.count(old)}x in {path}")
             survived.append(f"{label} (pattern did not apply)")
             continue
         io.open(os.path.join(here, path), "w", encoding="utf-8",
-                newline="\n").write(source.replace(old, new, 1))
+                newline="").write(source.replace(old, new, 1))
         try:
             failing = run_suites()
         finally:
             io.open(os.path.join(here, path), "w", encoding="utf-8",
-                    newline="\n").write(source)
+                    newline="").write(source)
         if failing:
             verdict, note = "caught", ", ".join(
                 s.replace("test_", "").replace(".py", "")[:20] for s in failing)
@@ -188,7 +267,7 @@ def main():
             survived.append(label)
 
     dirty = [p for p, original in originals.items()
-             if io.open(os.path.join(here, p), encoding="utf-8").read() != original]
+             if io.open(os.path.join(here, p), encoding="utf-8", newline="").read() != original]
     print()
     print(f"source files restored: {'yes' if not dirty else 'NO - DIRTY: ' + str(dirty)}")
     if dirty:

@@ -25,6 +25,7 @@ from pydantic import BaseModel
 from sqlalchemy import case
 from sqlalchemy.orm import Session
 
+import contract_linkage
 import models
 import oem_claims
 import oem_events
@@ -305,28 +306,19 @@ def accept_claim(code: str, payload: ClaimAcceptance,
     # box at claim time adds; nothing at claim time changes nothing. Withdrawal
     # stays where it has always been: the deliberate, audited, Admin-only control
     # under Connected Equipment.
-    policy = (db.query(models.OemDataSharingPolicy)
-                .filter(models.OemDataSharingPolicy.oem_code == claim.oem_code,
-                        models.OemDataSharingPolicy.tenant_code == tenant).first())
-    before = policy.grants if policy else "(no policy)"
-    existing = oem_sharing.parse_grants(policy.grants) if policy else set()
-    if policy is None:
-        policy = models.OemDataSharingPolicy(oem_code=claim.oem_code,
-                                             tenant_code=tenant)
-        db.add(policy)
-    policy.grants = ",".join(sorted(existing | set(payload.grants)))
-    policy.updated_by = actor
-
-    db.commit()
-    db.refresh(inst)
-
+    #
+    # The union is oem_sharing.widen_grants, the one implementation that
+    # accepting a service contract also uses (ADR-0020). The claim, the widened
+    # policy and both audit rows now commit together: an audit row can no longer
+    # be lost after the claim it records was committed.
     log_audit(db, actor, "claim_accepted", "machine_installation", inst.id,
               f"oem={claim.oem_code} serial={inst.serial_number} "
-              f"hint={claim.code_hint} Manufactured -> Assigned tenant={tenant}")
-    log_audit(db, actor, "oem_sharing_changed", "oem_data_sharing_policy",
-              policy.id, f"oem={claim.oem_code} before={before!r} "
-                         f"after={policy.grants!r} (at claim)")
+              f"hint={claim.code_hint} Manufactured -> Assigned tenant={tenant}",
+              tenant_code=tenant, commit=False)
+    policy = oem_sharing.widen_grants(db, claim.oem_code, tenant, payload.grants,
+                                      actor, context="at claim")
     db.commit()
+    db.refresh(inst)
 
     model = (db.query(models.MachineModel)
                .filter(models.MachineModel.id == inst.model_id).first())
@@ -501,6 +493,10 @@ def release_installation(installation_id: int, db: Session = Depends(_get_db),
                           synchronize_session=False))
     if released != 1:
         raise HTTPException(status_code=404, detail="Equipment not found")
+    # A bulk UPDATE never reaches the before_flush linkage listener, so a
+    # service contract covering this machine is told here, in the same
+    # transaction (ADR-0020): covered time from now on is "no data".
+    contract_linkage.end_coverage(db, inst.id, contract_linkage.INSTALLATION_RELEASED)
 
     log_audit(db, actor, "installation_released", "machine_installation", inst.id,
               f"oem={inst.oem_code} serial={inst.serial_number} "

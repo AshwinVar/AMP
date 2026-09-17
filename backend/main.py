@@ -347,6 +347,8 @@ tenancy.ensure_tenant_columns(engine)  # ADR-0002: tenant_code on core tables
 # them — never silently handed to DEFAULT. (backfill_enterprise_tenants.py)
 tenancy.ensure_tenant_columns(engine, tenancy.FAIL_SAFE_TENANT_TABLES, backfill=False)
 tenancy.install_scoping()              # ADR-0002: auto-enforce tenant scoping
+import contract_linkage  # noqa: E402
+contract_linkage.install()             # ADR-0020: a changed installation link ends contract coverage
 
 # Optional error monitoring — active only when SENTRY_DSN is set in the env.
 _SENTRY_DSN = os.environ.get("SENTRY_DSN")
@@ -480,6 +482,7 @@ async def _simulation_loop():
         tick_inventory,
         tick_production,
         tick_machine_status,
+        tick_status_heartbeat,
         drift_utilization,
         MACHINES,
     )
@@ -518,6 +521,9 @@ async def _simulation_loop():
                         # `None + int` here, rolling back this whole tenant's tick.
                         m.utilization = drift_utilization(m.utilization, random.randint(-5, 5))
                     db.commit()
+                    # Last, so it reports the statuses this tick settled on:
+                    # the simulated plant's status telemetry (ADR-0020).
+                    tick_status_heartbeat(db)
                 except Exception as tick_err:
                     db.rollback()
                     log.info(f"[SIM TICK ERROR] {sim_tenant}: {tick_err}")

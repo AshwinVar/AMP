@@ -25,6 +25,9 @@ meaningless if they broke:
   7  INDEPENDENCE  the generator imports nothing from the rule-based scorer,
                    the AI platform or the database layer, so its labels
                    cannot be produced by the rules the model is compared with
+  8  NOT THE RULE  the existing rule scorer does not already separate the
+                   labels almost perfectly (ROC-AUC < 0.99): if it did, the
+                   generator would be encoding the rule
 
 Run: DATABASE_URL="sqlite:///./ci.db" python backend/test_amp_ai_failure_risk_generator.py
 """
@@ -32,7 +35,7 @@ import hashlib
 import os
 import time
 
-from amp_ai.core import purity
+from amp_ai.core import metrics, purity
 from amp_ai.failure_risk import history as H
 from amp_ai.failure_risk import synthetic as S
 from duration import parse_duration_to_minutes
@@ -325,6 +328,25 @@ def section_independence():
           and "calculate_predictive_risk" not in text)
 
 
+# --------------------------------------------------------------------------- 8
+def section_not_the_rule(fleet):
+    print("\n8. The rule scorer does not already separate the labels")
+    from amp_ai.failure_risk import baseline_rule   # imports predictive_engine: kept out of the generator's closure
+
+    labels, scores = [], []
+    for mh in fleet.histories:
+        for day in range(H.LOOKBACK_DAYS, fleet.days - H.HORIZON_DAYS + 1, 7):
+            as_of = S.as_of_for_day(day)
+            view = H.truncate(mh, as_of)
+            if H.in_breakdown_at(view, as_of):
+                continue
+            labels.append(H.breakdown_in_horizon(mh, as_of))
+            scores.append(baseline_rule.rule_score(view, as_of))
+    auc = metrics.roc_auc(labels, scores)
+    print(f"     rule ROC-AUC on {len(labels)} machine-weeks: {auc:.4f}")
+    check("the rule's ROC-AUC against the generator's labels is below 0.99", auc is not None and auc < 0.99, f"{auc}")
+
+
 def main():
     print("=" * 74)
     print("AMP-native AI failure risk: the synthetic fleet generator")
@@ -339,6 +361,7 @@ def main():
     section_realism(fleet)
     section_variants()
     section_independence()
+    section_not_the_rule(fleet)
     print()
     print("=" * 74)
     if failures:

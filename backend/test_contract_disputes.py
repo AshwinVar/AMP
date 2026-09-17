@@ -6,9 +6,10 @@ THE PROPERTIES UNDER TEST
     acceptance, and marks exactly the disputed window DISPUTED with the dispute
     named as its cause.
   * A dispute must settle something real: its window lies inside the statement
-    period AND inside the covered hours, on an installation the statement's
-    terms cover, and it may not overlap another live or resolved dispute on the
-    same machine. Its buckets are AVAILABLE, OEM, FACTORY or UNMEASURED, never
+    period AND inside the covered hours AND before the machine's coverage ended
+    (its installation unlinked, C8), on an installation the statement's terms
+    cover, and it may not overlap another live or resolved dispute on the same
+    machine. Its buckets are AVAILABLE, OEM, FACTORY or UNMEASURED, never
     DISPUTED: a resolution to "disputed" would settle nothing.
   * A resolution needs BOTH parties: the party that proposed it cannot accept
     it, and the acceptor names the bucket it saw. Once resolved, the recomputed
@@ -155,6 +156,10 @@ def case_a_dispute_must_settle_something_real():
             _dispute(cid, sid, "SN-A1", we, we + timedelta(hours=1), reason="x" * 1001))
     refused("a blank reason is refused", 422,
             _dispute(cid, sid, "SN-A1", we, we + timedelta(hours=1), reason="   "))
+    for bad in ("stop\x00",):
+        status = H.status_of(lambda: _dispute(cid, sid, "SN-A1", we, we + timedelta(hours=1),
+                                              reason=bad))
+        check(f"a reason carrying {bad[-1]!r} is refused with 422", status == 422, status)
     r = POST(f"/service-contracts/{cid}/statements/{sid}/disputes", TOKENS["fa"],
              {"installation_id": S["inst"]["SN-A1"], "window_start": "2026-01-01 00:00:00",
               "window_end": _t(we), "reason": "x", "proposed_bucket": "OEM"})
@@ -219,6 +224,14 @@ def case_a_resolution_needs_both_parties():
     check("an OEM viewer cannot propose a resolution",
           POST(f"{base}/propose-resolution", TOKENS["alpha_view"],
                {"resolution_bucket": "FACTORY"}).status == 403)
+    for bad in ("agreed\x00",):
+        status = H.status_of(lambda: POST(f"{base}/propose-resolution", TOKENS["alpha_mgr"],
+                                          {"resolution_bucket": "FACTORY", "note": bad}))
+        check(f"a resolution note carrying {bad[-1]!r} is refused with 422",
+              status == 422, status)
+    with H.unscoped() as db:
+        still = db.query(models.ContractDispute).filter_by(id=did).one().status
+    check("...and the dispute is still open", still == "open", still)
     p = POST(f"{base}/propose-resolution", TOKENS["alpha_mgr"],
              {"resolution_bucket": "FACTORY", "note": "agreed: a planned stop"})
     check("an OEM service manager proposes FACTORY", p.status == 200
@@ -327,6 +340,40 @@ def case_withdrawal_restores_under_a_new_revision():
               text[:300])
 
 
+def case_nothing_to_dispute_after_coverage_ends():
+    section("4b. AFTER AN INSTALLATION IS UNLINKED THERE IS NO COVERED TIME TO DISPUTE (C8)")
+    # FACTORY_B's own machine, so this case shares no installation with the rest.
+    fb = TOKENS["fb"]
+    cid = H.active_contract(serials=("SN-AB",), tenant="FACTORY_B", start_offset=-4,
+                            fac_tok=fb)
+    ps = H.periods(cid)
+    c = H.compute(cid, ps[1]["start"], tok=fb, oem=False)
+    check("FACTORY_B's statement for the second period is computed", c.status == 200, c)
+    sid = c.body["statement"]["id"]
+    stamp = H.parse_ts(ps[1]["start"]) + timedelta(days=10)
+    # What the linkage listener records when the installation is re-pointed.
+    with H.unscoped() as db:
+        row = (db.query(models.ServiceContractMachine)
+                 .filter_by(installation_id=S["inst"]["SN-AB"]).one())
+        row.coverage_ended_at = stamp
+        row.coverage_end_reason = "machine_id changed"
+        db.commit()
+    n = _dispute_count()
+
+    def raised(start, end):
+        return _dispute(cid, sid, "SN-AB", start, end, tok=fb)
+
+    r = raised(stamp + timedelta(hours=1), stamp + timedelta(hours=2))
+    check("a window after the machine's coverage ended is refused with 422",
+          r.status == 422 and "coverage" in json.dumps(r.body).lower(), r)
+    r = raised(stamp - timedelta(hours=1), stamp + timedelta(hours=1))
+    check("a window straddling the coverage end is refused with 422", r.status == 422, r)
+    check("...and neither created a dispute", _dispute_count() == n)
+    r = raised(stamp - timedelta(hours=1), stamp)
+    check("CONTROL: a window ending exactly at the coverage end is accepted",
+          r.status == 200, r)
+
+
 def case_expired_evidence():
     section("5. PAST RETENTION: NO NEW DISPUTE, BUT A LIVE ONE CAN BE WITHDRAWN")
     cid, ps = S["cid"], S["ps"]
@@ -361,6 +408,7 @@ def run_all():
     case_a_dispute_must_settle_something_real()
     case_a_resolution_needs_both_parties()
     case_withdrawal_restores_under_a_new_revision()
+    case_nothing_to_dispute_after_coverage_ends()
     case_expired_evidence()
 
 

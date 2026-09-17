@@ -16,6 +16,8 @@ THE PROPERTIES UNDER TEST
     Admin, and a switcher aimed at an OEM sentinel is refused outright.
   * Service contracts are core: the plan gate never blocks them, while it still
     blocks a gated pack for the same tenant.
+  * A party's contract list, past its cap, keeps the NEWEST contracts and says
+    it truncated.
 
 The route lists are read from the routers themselves, and the suite asserts it
 found every route, so a route added later cannot silently escape these checks.
@@ -305,6 +307,40 @@ def case_the_plan_gate_never_blocks_contracts():
         plan_gate.invalidate("FACTORY_A")
 
 
+def case_a_long_list_keeps_the_newest_contracts():
+    section("7. PAST ITS CAP A CONTRACT LIST KEEPS THE NEWEST, AND SAYS SO")
+    import service_contracts
+    cap = service_contracts.MAX_LIST
+    for path, tok in (("/oem/contracts", TOKENS["beta"]), ("/service-contracts", TOKENS["fc"])):
+        r = GET(path, tok)
+        check(f"CONTROL: {path} under the cap says it is not truncated",
+              r.status == 200 and r.body.get("truncated") is False, r)
+    # Planted, because no route makes 500 contracts quickly: OEM_BETA contracts
+    # proposed to FACTORY_C (then withdrawn), so both parties' lists outgrow the
+    # cap. The last one planted is the newest.
+    now = H.now_utc()
+    with H.unscoped() as db:
+        for i in range(cap + 1):
+            db.add(models.ServiceContract(
+                oem_code="OEM_BETA", factory_tenant_code="FACTORY_C",
+                contract_ref="BULK-NEWEST" if i == cap else f"BULK-{i:04d}", title="bulk",
+                contract_type="AMC", status="withdrawn", starts_at=now,
+                ends_at=now + timedelta(days=365), created_by="x", created_at=now,
+                proposed_at=now, updated_at=now))
+        db.commit()
+    for path, tok, who in (("/oem/contracts", TOKENS["beta"], "the manufacturer"),
+                           ("/service-contracts", TOKENS["fc"], "the factory")):
+        r = GET(path, tok)
+        refs = [c["contract_ref"] for c in r.body.get("contracts", [])]
+        check(f"{who}'s list is capped at {cap} and says it truncated",
+              r.status == 200 and len(refs) == cap and r.body.get("truncated") is True,
+              (r.status, len(refs), r.body.get("truncated")))
+        check("...keeping the newest contract and dropping the oldest",
+              "BULK-NEWEST" in refs and "BULK-0000" not in refs, refs[-2:])
+        ids = [c["id"] for c in r.body.get("contracts", [])]
+        check("...in ascending id order", ids == sorted(ids))
+
+
 def run_all():
     H.boot()
     H.seed()
@@ -315,6 +351,7 @@ def run_all():
     case_ids_belong_to_their_contract()
     case_founder_preview()
     case_the_plan_gate_never_blocks_contracts()
+    case_a_long_list_keeps_the_newest_contracts()
 
 
 def test_contract_tenancy():

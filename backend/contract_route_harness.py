@@ -343,6 +343,16 @@ def PUT(path, tok=None, body=None, headers=None):
     return asyncio.run(_call("PUT", path, tok, {} if body is None else body, headers))
 
 
+def status_of(make_request):
+    """The HTTP status of a request, or "500 (<error>)" when the app raised
+    instead of answering. An unhandled error is exactly what a refusal check
+    exists to catch, so it must fail that check rather than abort the suite."""
+    try:
+        return make_request().status
+    except Exception as e:
+        return f"500 ({type(e).__name__}: {str(e)[:120]})"
+
+
 def oem_token(sub, oem, role="OEM_ADMIN"):
     return pyjwt.encode({"sub": sub, "role": role, "principal": "oem", "oem": oem,
                          "exp": datetime.utcnow() + timedelta(hours=1)},

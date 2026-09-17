@@ -10,7 +10,9 @@ THE PROPERTIES UNDER TEST
     number, hash or interval.
   * The CONTRACT is not the factory's data: terms, versions, periods, the
     dispute list and history stay visible to the OEM without the grant, and an
-    OEM may still withdraw its own dispute.
+    OEM may still withdraw its own dispute. The statement rows of that history
+    are listed with their details (content hashes) withheld until the grant is
+    restored.
   * The factory's own access never depends on the grant.
   * Proposing a contract grants nothing; accepting it grants SHARE_DOWNTIME to
     THAT manufacturer only, creating a policy where none existed.
@@ -21,6 +23,7 @@ THE PROPERTIES UNDER TEST
     secrets (a needle scan over every OEM read).
   * History is the caller's own audit trail: its tenant's rows, about this
     contract, since the contract was created; no totals in any audit detail.
+    Past its cap it keeps the NEWEST rows, oldest-first, and says it truncated.
 
 Run: DATABASE_URL="sqlite:///./ci.db" python backend/test_contract_consent.py
 """
@@ -147,11 +150,34 @@ def case_withdrawal_withholds_on_the_next_request():
     check("...and that reply carries no statement content, not even the hash",
           _no_statement_data(w, S["st"])
           and w.body.get("statement", {}).get("content_hash") is None, w.raw[:300])
+    with H.unscoped() as db:
+        revised_hash = db.query(models.ContractStatement).filter_by(id=sid).one().content_hash
+    check("CONTROL: the withdrawal really revised the statement to a new hash",
+          revised_hash != st["content_hash"], revised_hash)
+    oh = GET(f"{base}/history", TOKENS["alpha"])
+    rows = [x for x in oh.body.get("history", []) if x["entity_type"] == "contract_statement"]
+    check("...nor does the OEM's history carry it: the statement rows are listed, their "
+          "details withheld",
+          oh.status == 200 and rows and revised_hash not in oh.raw.decode("utf-8", "replace")
+          and all(x["details"] is None and x.get("details_withheld") is True for x in rows),
+          (oh.status, rows[:2]))
+    other = [x for x in oh.body.get("history", []) if x["entity_type"] != "contract_statement"]
+    check("...while the contract's own rows keep their details",
+          other and all(x["details"] and x.get("details_withheld") is False for x in other),
+          other[:2])
+    fh = GET(f"/service-contracts/{cid}/history", TOKENS["fa"])
+    check("CONTROL: the factory's own history carries the revised hash",
+          revised_hash in fh.raw.decode("utf-8", "replace"))
 
     _set_grants(["SHARE_ALARMS", "SHARE_DOWNTIME"])
     g = GET(f"{base}/statements/{sid}", TOKENS["alpha"])
     check("restoring the grant restores access on the next request",
           g.status == 200 and g.body.get("content") is not None, g)
+    oh = GET(f"{base}/history", TOKENS["alpha"])
+    check("...and the statement details in the OEM's history",
+          revised_hash in oh.raw.decode("utf-8", "replace")
+          and not any(x.get("details_withheld") for x in oh.body.get("history", [])),
+          oh.raw[:300])
 
 
 def case_acceptance_grants_to_that_manufacturer_only():
@@ -282,6 +308,37 @@ def case_history_is_the_callers_own_trail():
                                          "credit", "totals")), details[:300])
     other = GET(f"/service-contracts/{S['cid_b']}/history", TOKENS["fa"])
     check("FACTORY_A cannot read FACTORY_B's contract history", other.status == 404, other)
+    check("CONTROL: a history under the cap says it is not truncated",
+          GET(f"/service-contracts/{cid}/history", TOKENS["fa"]).body.get("truncated") is False)
+
+    # A long contract outgrows the cap. What falls off must be the OLDEST rows:
+    # a trail that silently drops the latest action is a trail that lies.
+    import service_contracts
+    with H.unscoped() as db:
+        for i in range(service_contracts.MAX_HISTORY):
+            db.add(models.AuditLog(tenant_code="FACTORY_A", actor="x", action="planted_bulk",
+                                   entity_type="service_contract", entity_id=cid,
+                                   details=f"bulk {i}", created_at=created))
+        db.commit()
+    t = POST(f"/service-contracts/{cid}/terminate", TOKENS["fa"], {"reason": "closing the site"})
+    check("CONTROL: the factory terminates after the bulk rows (a new audited action)",
+          t.status == 200, t)
+    big = GET(f"/service-contracts/{cid}/history", TOKENS["fa"]).body
+    rows = big.get("history", [])
+    check(f"past {service_contracts.MAX_HISTORY} rows the history is capped and says so",
+          len(rows) == service_contracts.MAX_HISTORY and big.get("truncated") is True,
+          (len(rows), big.get("truncated")))
+    # The bulk rows are stamped at the contract's creation instant, older than
+    # every real row, so they are what the cap must drop.
+    actions = [x["action"] for x in rows]
+    check("...keeping the newest action (the termination) and every real row, dropping "
+          "only the oldest",
+          rows and rows[-1]["action"] == "contract_terminated"
+          and "contract_proposed" in actions
+          and actions.count("planted_bulk") < service_contracts.MAX_HISTORY,
+          (rows[-1:], actions.count("planted_bulk")))
+    check("...still oldest-first within the page",
+          [x["at"] for x in rows] == sorted(x["at"] for x in rows))
 
 
 def run_all():

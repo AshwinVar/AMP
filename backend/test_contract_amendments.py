@@ -50,6 +50,12 @@ def case_an_oem_amendment_needs_the_factory():
           _amend(cid, before).status == 422)
     check("an amendment effective at (or after) the contract's end is refused",
           _amend(cid, ps[-1]["end"]).status == 422)
+    # Far past the end, the boundary walk would run away; the answer must still
+    # be the rule's 422, not a PeriodError surfacing as a 500.
+    for far in ("2300-01-01T00:00:00Z", "9999-12-31T23:59:59Z"):
+        status = H.status_of(lambda: _amend(cid, far))
+        check(f"an amendment effective centuries after the end ({far}) is refused with 422",
+              status == 422, status)
     for field, value in (("period_months", 3), ("timezone", "Europe/London"),
                          ("term_months", 24)):
         r = _amend(cid, p1, **{field: value})
@@ -145,6 +151,11 @@ def case_a_factory_amendment_needs_the_oem():
     check("an OEM service manager cannot accept (sign_contracts)",
           POST(f"/oem/contracts/{cid}/amendments/3/accept", TOKENS["alpha_mgr"],
                {"terms_hash": h3}).status == 403)
+    for bad in ("no\x00",):
+        status = H.status_of(lambda: POST(f"/oem/contracts/{cid}/amendments/3/reject",
+                                          TOKENS["alpha"], {"note": bad}))
+        check(f"a rejection note carrying {bad[-1]!r} is refused with 422",
+              status == 422, status)
     j = POST(f"/oem/contracts/{cid}/amendments/3/reject", TOKENS["alpha"], {"note": "no"})
     check("the OEM rejects it", j.status == 200 and j.body.get("status") == "rejected", j)
     rows = sorted(row[0] for row in H.audit_rows("contract_amendment_rejected") if row[3] == cid)

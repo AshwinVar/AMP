@@ -150,6 +150,30 @@ def case_a_contract_names_only_the_manufacturers_equipment_at_that_factory():
                   "factory_tenant_code": "FACTORY_A", "start_month": bad,
                   "terms": H.terms(("SN-A1",))})
         check(f"start_month {bad!r} is refused", r.status == 422, r)
+    # A month whose term would end past the calendar (year 9999) is a bad
+    # request, not a server error: the refusal must be the rule's 422, never an
+    # unhandled ValueError surfacing as a 500.
+    for far in ("9999-06", "9999-12"):
+        status = H.status_of(lambda: POST(
+            "/oem/contracts", TOKENS["alpha"],
+            {"contract_ref": H.new_ref(), "title": "t", "contract_type": "AMC",
+             "factory_tenant_code": "FACTORY_A", "start_month": far,
+             "terms": H.terms(("SN-A1",))}))
+        check(f"start_month {far!r}, whose term ends past the calendar, is refused with 422",
+              status == 422, status)
+    # Free text a database cannot store (PostgreSQL refuses NUL in text) or that
+    # a one-line label must not carry. A 422 naming the field, never a 500 and
+    # never a stored row. (A lone surrogate never reaches the service: request
+    # validation refuses it as string_unicode.)
+    for field, value in (("contract_ref", "AMC-\x00"), ("contract_ref", "AMC\n2"),
+                         ("contract_ref", "AMC\t2"), ("title", "t\x00"),
+                         ("title", "two\nlines"), ("factory_tenant_code", "FACTORY_A\x00")):
+        body = {"contract_ref": H.new_ref(), "title": "t", "contract_type": "AMC",
+                "factory_tenant_code": "FACTORY_A", "start_month": H.month_label(1),
+                "terms": H.terms(("SN-A1",))}
+        body[field] = value
+        status = H.status_of(lambda: POST("/oem/contracts", TOKENS["alpha"], body))
+        check(f"a {field} of {value!r} is refused with 422", status == 422, status)
 
     r = H.draft(period_months=2)
     check("invalid terms are refused with the field named",
@@ -360,6 +384,12 @@ def case_rejection_and_withdrawal():
     H.propose(cid)
     check("a Supervisor cannot reject",
           POST(f"/service-contracts/{cid}/reject", TOKENS["fa_super"], {"note": "no"}).status == 403)
+    for bad in ("no\x00",):
+        status = H.status_of(lambda: POST(f"/service-contracts/{cid}/reject", TOKENS["fa"],
+                                          {"note": bad}))
+        check(f"a rejection note carrying {bad[-1]!r} is refused with 422", status == 422, status)
+    check("...and the contract is still proposed",
+          H.contract_detail(cid).body.get("status") == "proposed")
     j = POST(f"/service-contracts/{cid}/reject", TOKENS["fa"], {"note": "price too high"})
     check("the factory Admin rejects with a note",
           j.status == 200 and j.body.get("status") == "rejected", j)
@@ -408,6 +438,16 @@ def case_termination_lands_on_a_boundary():
         check("a service manager cannot terminate",
               POST(f"/oem/contracts/{cid}/terminate", TOKENS["alpha_mgr"],
                    {"reason": "x"}).status == 403)
+        blank = POST(f"/service-contracts/{cid}/terminate", TOKENS["fa"], {"reason": "   "})
+        check("a termination whose reason is only whitespace is refused with 422",
+              blank.status == 422, blank)
+        for bad in ("moving\x00",):
+            status = H.status_of(lambda: POST(f"/service-contracts/{cid}/terminate",
+                                              TOKENS["fa"], {"reason": bad}))
+            check(f"a termination reason carrying {bad[-1]!r} is refused with 422",
+                  status == 422, status)
+        check("...and the contract is not terminated",
+              H.contract_detail(cid).body.get("status") == "accepted")
         t = POST(f"/service-contracts/{cid}/terminate", TOKENS["fa"],
                  {"reason": "moving the line"})
         check("the factory Admin terminates", t.status == 200, t)

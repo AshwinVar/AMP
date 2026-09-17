@@ -33,7 +33,12 @@ THE RULES, IN ONE PLACE EACH
     acceptance and dispute actions need SHARE_DOWNTIME for an OEM, read at
     request time through oem_sharing.contract_statement_visible. Terms, versions,
     periods, the dispute list and history stay visible to a party: they are the
-    contract, not the factory's data.
+    contract, not the factory's data. Without the grant, the details of the
+    statement rows in an OEM's history (which carry content hashes) are
+    withheld too.
+  * COVERAGE. A dispute settles covered time only: inside the period, the
+    covered hours, and the machine's own coverage (which stops where its
+    installation was unlinked, C8).
   * EXPLICIT ACCEPTANCE. Nothing is metered before the factory accepts, and it
     accepts with the terms hash it saw AND `grant_downtime_sharing: true`. The
     grant WIDENS the existing policy (oem_sharing.widen_grants); it never
@@ -57,6 +62,7 @@ builds statement content and never decides whether an acceptance is valid.
 """
 import json
 import re
+import unicodedata
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from types import SimpleNamespace
@@ -199,6 +205,29 @@ def parse_ts(text, field):
         return datetime.strptime(text, "%Y-%m-%dT%H:%M:%SZ")
     except ValueError:
         raise Refused(422, {"field": field, "message": "is not a real instant"}) from None
+
+
+def free_text(value, field, *, one_line=False, blank_ok=False):
+    """The one rule for text a party writes (references, titles, notes, reasons).
+
+    Stripped. Refused with a 422 that names the field and never echoes the value
+    when it is blank (unless `blank_ok`, which returns None), carries a NUL
+    (PostgreSQL text cannot store one: a 500 there, and on SQLite a stored row
+    the other database would refuse), or, for a one-line label, any control
+    character. A lone surrogate never gets this far: request validation refuses
+    it (pydantic's string_unicode)."""
+    text = value.strip()
+    if not text:
+        if blank_ok:
+            return None
+        raise Refused(422, {"field": field, "message": "must not be blank"})
+    if "\x00" in text:
+        raise Refused(422, {"field": field,
+                            "message": "contains a NUL character, which cannot be stored"})
+    if one_line and any(unicodedata.category(ch) == "Cc" for ch in text):
+        raise Refused(422, {"field": field,
+                            "message": "must be one line, without control characters"})
+    return text
 
 
 def _parse_terms(raw, status=422):
@@ -378,9 +407,13 @@ def contract_view(db, party, contract, now=None):
 
 def list_contracts(db, party):
     now = utcnow()
+    # The NEWEST contracts when a party outgrows the cap, returned in id order,
+    # with a flag: a list that silently dropped this month's proposal would hide
+    # the one contract that needs a decision.
     rows = (_contract_query(db, party)
-              .order_by(models.ServiceContract.id.asc()).limit(MAX_LIST).all())
-    return {"contracts": [_summary(c, now) for c in rows]}
+              .order_by(models.ServiceContract.id.desc()).limit(MAX_LIST + 1).all())
+    return {"contracts": [_summary(c, now) for c in reversed(rows[:MAX_LIST])],
+            "truncated": len(rows) > MAX_LIST}
 
 
 # ── Coverage ─────────────────────────────────────────────────────────
@@ -528,19 +561,24 @@ def _validated_draft(db, party, body):
     m = _MONTH.match(body.start_month) if type(body.start_month) is str else None
     if m is None or int(m.group(1)) < 2000:
         raise Refused(422, {"field": "start_month", "message": "must be YYYY-MM"})
-    tenant = body.factory_tenant_code.strip()
-    if not tenant or tenancy.is_reserved_tenant_code(tenant):
+    tenant = free_text(body.factory_tenant_code, "factory_tenant_code", one_line=True)
+    if tenancy.is_reserved_tenant_code(tenant):
         raise Refused(422, {"field": "factory_tenant_code",
                             "message": "is not a factory"})
-    ref, title = body.contract_ref.strip(), body.title.strip()
-    if not ref or not title:
-        raise Refused(422, {"field": "contract_ref" if not ref else "title",
-                            "message": "must not be blank"})
+    ref = free_text(body.contract_ref, "contract_ref", one_line=True)
+    title = free_text(body.title, "title", one_line=True)
     terms = _parse_terms(body.terms)
     _check_owned(db, party.oem_code, tenant, terms, 422)
     year, month = int(m.group(1)), int(m.group(2))
-    starts_at = contract_periods.month_start_utc(terms, year, month)
-    ends_at = contract_periods.month_start_utc(terms, year, month + terms.term_months)
+    try:
+        starts_at = contract_periods.month_start_utc(terms, year, month)
+        ends_at = contract_periods.month_start_utc(terms, year, month + terms.term_months)
+    except (ValueError, OverflowError):
+        # The term would end past what a datetime can hold (year 9999). A bad
+        # request, never a 500.
+        raise Refused(422, {"field": "start_month",
+                            "message": "the contract term would end past the calendar"}) \
+            from None
     return ref, title, tenant, terms, starts_at, ends_at
 
 
@@ -701,7 +739,8 @@ GRANT_REQUIRED = {
     "field": "grant_downtime_sharing",
     "message": ("Accepting this contract shares downtime with the manufacturer, so "
                 "it needs grant_downtime_sharing: true. The manufacturer will see, "
-                "for the covered machines only: the per-source machine status "
+                "for the covered machines only and from the contract's start month "
+                "(which may be before today): the per-source machine status "
                 "history inside the covered hours, and the downtime reason text "
                 "your team logs near each down episode. The grant (SHARE_DOWNTIME) "
                 "covers your whole relationship with this manufacturer and can be "
@@ -769,6 +808,7 @@ def accept_contract(db, party, contract_id, terms_hash, grant):
 def reject_contract(db, party, contract_id, note):
     now = utcnow()
     contract = require_contract(db, party, contract_id)
+    note = free_text(note, "note", blank_ok=True)
     if contract.status != PROPOSED:
         raise Refused(409, f"This contract is {contract.status}, not awaiting acceptance")
     rc = db.execute(
@@ -785,7 +825,7 @@ def reject_contract(db, party, contract_id, note):
         .where(models.ServiceContractTermVersion.contract_id == contract.id,
                models.ServiceContractTermVersion.version == 1,
                models.ServiceContractTermVersion.status == PROPOSED)
-        .values(status=REJECTED, decision_note=note or None)
+        .values(status=REJECTED, decision_note=note)
         .execution_options(synchronize_session=False))
     _audit(db, party, contract, "contract_rejected", "service_contract", contract.id,
            f"ref={contract.contract_ref} proposed -> rejected")
@@ -799,6 +839,7 @@ def reject_contract(db, party, contract_id, note):
 def terminate_contract(db, party, contract_id, reason):
     now = utcnow()
     contract = require_contract(db, party, contract_id)
+    reason = free_text(reason, "reason")
     if contract.status != ACCEPTED:
         raise Refused(409, f"A {contract.status} contract cannot be terminated")
     if now >= contract.ends_at:
@@ -822,7 +863,7 @@ def terminate_contract(db, party, contract_id, reason):
                models.ServiceContract.termination_effective_at.is_(None))
         .values(status=TERMINATED, termination_effective_at=effective,
                 terminated_by_party=party.side, terminated_by=party.actor,
-                termination_reason=reason.strip(), updated_at=now)
+                termination_reason=reason, updated_at=now)
         .execution_options(synchronize_session=False)).rowcount
     if rc != 1:
         db.rollback()
@@ -882,8 +923,11 @@ def _agreed_floor(db, contract):
 
 def _check_effective_from(db, contract, grid, effective_from, status):
     end = contract_periods.contract_effective_end(contract)
-    if not contract_periods.is_boundary(grid, contract.starts_at, effective_from) \
-            or effective_from >= end:
+    # The end first: is_boundary walks the grid up to the instant, and an instant
+    # centuries away would run that walk into its guard (a 500) instead of this
+    # refusal. Before the end the walk is at most the term.
+    if effective_from >= end \
+            or not contract_periods.is_boundary(grid, contract.starts_at, effective_from):
         raise Refused(status, {"field": "effective_from",
                                "message": "must be a period boundary of this contract, "
                                           "before its end"})
@@ -1047,6 +1091,7 @@ def reject_amendment(db, party, contract_id, number, note):
     """The other party rejects a proposal; its author withdraws a draft or proposal."""
     contract = require_contract(db, party, contract_id)
     version = _require_version(db, party, contract, number)
+    note = free_text(note, "note", blank_ok=True)
     before = version.status
     authored = version.proposed_by_party == party.side
     if authored and before in (DRAFT, PROPOSED):
@@ -1060,7 +1105,7 @@ def reject_amendment(db, party, contract_id, number, note):
         update(models.ServiceContractTermVersion)
         .where(models.ServiceContractTermVersion.id == version.id,
                models.ServiceContractTermVersion.status == before)
-        .values(status=after, decision_note=note or None)
+        .values(status=after, decision_note=note)
         .execution_options(synchronize_session=False)).rowcount
     if rv != 1:
         db.rollback()
@@ -1351,9 +1396,7 @@ def raise_dispute(db, party, contract_id, statement_id, body):
     contract = require_contract(db, party, contract_id)
     require_statement_access(db, party, contract)
     _bucket(body.proposed_bucket, "proposed_bucket")
-    reason = body.reason.strip()
-    if not reason:
-        raise Refused(422, {"field": "reason", "message": "must not be blank"})
+    reason = free_text(body.reason, "reason")
     window_start = parse_ts(body.window_start, "window_start")
     window_end = parse_ts(body.window_end, "window_end")
     if window_end <= window_start:
@@ -1386,12 +1429,25 @@ def raise_dispute(db, party, contract_id, statement_id, body):
                             "message": "is not covered by the terms of this statement"})
     version = (db.query(models.ServiceContractTermVersion)
                  .filter(models.ServiceContractTermVersion.id == st.term_version_id).one())
-    intervals = contract_periods.covered_intervals(
-        contract_periods.Period(st.period_start, st.period_end), _terms_of(version),
-        st.period_start, st.period_end)
+    period = contract_periods.Period(st.period_start, st.period_end)
+    intervals = contract_periods.covered_intervals(period, _terms_of(version),
+                                                   st.period_start, st.period_end)
     if not any(s <= window_start and window_end <= e for s, e in intervals):
         raise Refused(422, {"field": "window_start",
                             "message": "the window must lie inside the covered hours"})
+    if covered.coverage_ended_at is not None:
+        # C8. Once the installation stopped pointing at the machine accepted,
+        # the machine is no longer covered: that time is UNMEASURED
+        # (installation_unlinked), and there is nothing covered for a dispute to
+        # settle. The engine's own rule says where coverage stops.
+        import attribution_engine
+        stops = attribution_engine.coverage_end(
+            period, canonical.utc_seconds(covered.coverage_ended_at))
+        if window_end > stops:
+            raise Refused(422, {"field": "window_end",
+                                "message": (f"this machine's coverage ended at {_ts(stops)} "
+                                            "(its installation was unlinked); the window "
+                                            "must end by then")})
     overlap = (db.query(models.ContractDispute)
                  .filter(models.ContractDispute.contract_id == contract.id,
                          models.ContractDispute.installation_id == body.installation_id,
@@ -1490,13 +1546,14 @@ def propose_resolution(db, party, contract_id, dispute_id, body):
     contract = require_contract(db, party, contract_id)
     require_statement_access(db, party, contract)
     bucket = _bucket(body.resolution_bucket, "resolution_bucket")
+    note = free_text(body.note, "note", blank_ok=True)
     dispute = require_dispute(db, contract, dispute_id)
     before = dispute.status
     if before not in LIVE_DISPUTE_STATUSES:
         raise Refused(409, f"This dispute is {before}")
     _dispute_transition(db, dispute, before, {
         "status": RESOLUTION_PROPOSED, "resolution_bucket": bucket,
-        "resolution_note": body.note.strip() or None,
+        "resolution_note": note,
         "resolution_proposed_by_party": party.side,
         "resolution_proposed_by": party.actor, "resolution_proposed_at": now})
     return _after_dispute(
@@ -1549,9 +1606,16 @@ def withdraw_dispute(db, party, contract_id, dispute_id):
 # ── History and the reason vocabulary ────────────────────────────────
 
 def history(db, party, contract):
-    """This party's audit rows about this contract, bounded at both ends."""
+    """This party's audit rows about this contract, bounded at both ends.
+
+    CONSENT. History stays visible to a manufacturer without SHARE_DOWNTIME: it
+    is the contract's trail. But a statement row's details carry the statement's
+    content hash, a fingerprint of the factory's data that every statement route
+    withholds; so while the grant is withdrawn those rows are listed with their
+    details withheld, read at request time like every other consent check."""
     now = utcnow()
     tenant = party.audit_tenant()
+    withheld = party.side == OEM and not oem_sharing.contract_statement_visible(db, contract)
     version_ids = [v.id for v in _versions(db, contract.id)]
     statement_ids = [s.id for s in _statements(db, contract.id)]
     dispute_ids = [d.id for d in _disputes(db, contract.id)]
@@ -1569,10 +1633,18 @@ def history(db, party, contract):
                       or_(*entity),
                       models.AuditLog.created_at >= contract.created_at,
                       models.AuditLog.created_at < now + timedelta(seconds=1))
-              .order_by(models.AuditLog.id.asc()).limit(MAX_HISTORY).all())
-    return {"history": [{"at": _ts(r.created_at), "actor": r.actor, "action": r.action,
-                         "entity_type": r.entity_type, "entity_id": r.entity_id,
-                         "details": r.details} for r in rows]}
+              # The NEWEST rows when the trail outgrows the cap: dropping the
+              # latest action instead would make the trail lie by omission.
+              .order_by(models.AuditLog.created_at.desc(), models.AuditLog.id.desc())
+              .limit(MAX_HISTORY + 1).all())
+    truncated = len(rows) > MAX_HISTORY
+    out = []
+    for r in reversed(rows[:MAX_HISTORY]):
+        hidden = withheld and r.entity_type == "contract_statement"
+        out.append({"at": _ts(r.created_at), "actor": r.actor, "action": r.action,
+                    "entity_type": r.entity_type, "entity_id": r.entity_id,
+                    "details": None if hidden else r.details, "details_withheld": hidden})
+    return {"history": out, "truncated": truncated}
 
 
 def reason_vocabulary(db, party, contract):

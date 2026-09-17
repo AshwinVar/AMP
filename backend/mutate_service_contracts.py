@@ -128,8 +128,8 @@ MUTATIONS = [
         "        if not rows or rows[0].serial_number != c.serial_number:",
         "        if not rows:")),
     ("a contract may be addressed to the OEM sentinel", _one(SVC,
-        "    if not tenant or tenancy.is_reserved_tenant_code(tenant):",
-        "    if not tenant:")),
+        "    if tenancy.is_reserved_tenant_code(tenant):",
+        "    if False:")),
 
     # --- propose, withdraw, reject, terminate -----------------------------------
     ("the OEM proposes terms whose hash it did not send", [
@@ -164,6 +164,43 @@ MUTATIONS = [
         "        grid, contract.starts_at, now)")),
     ("a termination at or past the contract's end is recorded", _one(SVC,
         "    if effective >= contract.ends_at:", "    if False:")),
+    ("a termination reason skips the free-text rule (blank or NUL is recorded)", _one(SVC,
+        "    reason = free_text(reason, \"reason\")\n", "    reason = reason.strip()\n")),
+
+    # --- free text a party writes ------------------------------------------------
+    ("free text may carry a NUL", _one(SVC,
+        "    if \"\\x00\" in text:", "    if False:")),
+    ("blank free text passes", _one(SVC,
+        "    if not text:\n        if blank_ok:", "    if False:\n        if blank_ok:")),
+    ("a one-line label may carry control characters", _one(SVC,
+        "    if one_line and any(", "    if False and any(")),
+    ("a contract reference skips the free-text rule", _one(SVC,
+        "    ref = free_text(body.contract_ref, \"contract_ref\", one_line=True)",
+        "    ref = body.contract_ref.strip()")),
+    ("a title skips the free-text rule", _one(SVC,
+        "    title = free_text(body.title, \"title\", one_line=True)",
+        "    title = body.title.strip()")),
+    ("a factory code skips the free-text rule", _one(SVC,
+        "    tenant = free_text(body.factory_tenant_code, \"factory_tenant_code\", one_line=True)",
+        "    tenant = body.factory_tenant_code.strip()")),
+    ("a contract rejection note skips the free-text rule", _one(SVC,
+        "    contract = require_contract(db, party, contract_id)\n"
+        "    note = free_text(note, \"note\", blank_ok=True)\n",
+        "    contract = require_contract(db, party, contract_id)\n")),
+    ("an amendment rejection note skips the free-text rule", _one(SVC,
+        "    version = _require_version(db, party, contract, number)\n"
+        "    note = free_text(note, \"note\", blank_ok=True)\n",
+        "    version = _require_version(db, party, contract, number)\n")),
+    ("a dispute reason skips the free-text rule", _one(SVC,
+        "    reason = free_text(body.reason, \"reason\")", "    reason = body.reason")),
+    ("a resolution note skips the free-text rule", _one(SVC,
+        "    note = free_text(body.note, \"note\", blank_ok=True)",
+        "    note = body.note.strip() or None")),
+    ("a start month whose term ends past the calendar is a 500", _one(SVC,
+        "    except (ValueError, OverflowError):\n"
+        "        # The term would end past what a datetime can hold (year 9999). A bad",
+        "    except ZeroDivisionError:\n"
+        "        # The term would end past what a datetime can hold (year 9999). A bad")),
 
     # --- amendments ------------------------------------------------------------
     ("two amendments may be pending at once", _one(SVC,
@@ -178,9 +215,14 @@ MUTATIONS = [
     ("an amendment changes the period grid", _one(SVC,
         "        if getattr(terms, f) != getattr(grid, f):", "        if False:")),
     ("an amendment takes effect inside a period", _one(SVC,
-        "    if not contract_periods.is_boundary(grid, contract.starts_at, effective_from) \\\n"
-        "            or effective_from >= end:",
+        "    if effective_from >= end \\\n"
+        "            or not contract_periods.is_boundary(grid, contract.starts_at, effective_from):",
         "    if effective_from >= end:")),
+    ("an effective_from centuries away walks the grid before the end check (a 500)", _one(SVC,
+        "    if effective_from >= end \\\n"
+        "            or not contract_periods.is_boundary(grid, contract.starts_at, effective_from):",
+        "    if not contract_periods.is_boundary(grid, contract.starts_at, effective_from) \\\n"
+        "            or effective_from >= end:")),
     ("a machine added by amendment skips the coverage checks", _one(SVC,
         "    installations = _lock_and_check_coverage(\n"
         "        db, contract, terms, version.effective_from,\n"
@@ -244,6 +286,10 @@ MUTATIONS = [
     ("a dispute window may lie outside the covered hours", _one(SVC,
         "    if not any(s <= window_start and window_end <= e for s, e in intervals):",
         "    if False:")),
+    ("a dispute window may reach past the machine's coverage end (C8)", _one(SVC,
+        "        if window_end > stops:", "        if False:")),
+    ("a dispute window only has to START before the coverage end", _one(SVC,
+        "        if window_end > stops:", "        if window_start >= stops:")),
     ("DISPUTED is accepted as a dispute or resolution bucket", _one(SVC,
         "    if value not in contract_terms.RESOLUTION_BUCKETS:",
         "    if value not in contract_terms.BUCKETS:")),
@@ -276,6 +322,33 @@ MUTATIONS = [
         "                      models.AuditLog.entity_type.in_(HISTORY_ENTITY_TYPES),\n"
         "                      or_(*entity),",
         "                      models.AuditLog.entity_id == contract.id,")),
+    ("a contract list past its cap keeps the oldest and drops the newest", _one(SVC,
+        "              .order_by(models.ServiceContract.id.desc()).limit(MAX_LIST + 1).all())",
+        "              .order_by(models.ServiceContract.id.asc()).limit(MAX_LIST + 1).all())")),
+    ("a contract list never says it was truncated", _one(SVC,
+        "            \"truncated\": len(rows) > MAX_LIST}", "            \"truncated\": False}")),
+    ("history past its cap keeps the oldest rows and drops the latest action", [
+        (SVC, "              .order_by(models.AuditLog.created_at.desc(), models.AuditLog.id.desc())",
+         "              .order_by(models.AuditLog.id.asc())"),
+        (SVC, "    for r in reversed(rows[:MAX_HISTORY]):", "    for r in rows[:MAX_HISTORY]:")]),
+    ("history never says it was truncated", _one(SVC,
+        "    truncated = len(rows) > MAX_HISTORY", "    truncated = False")),
+    ("history comes back newest-first", _one(SVC,
+        "    for r in reversed(rows[:MAX_HISTORY]):", "    for r in rows[:MAX_HISTORY]:")),
+    ("history past its cap returns one row too many", _one(SVC,
+        "    for r in reversed(rows[:MAX_HISTORY]):", "    for r in reversed(rows):")),
+    ("the OEM's history shows statement hashes after consent is withdrawn", _one(SVC,
+        "        hidden = withheld and r.entity_type == \"contract_statement\"",
+        "        hidden = False")),
+    ("history withholds the OEM's contract rows too, not only statement rows", _one(SVC,
+        "        hidden = withheld and r.entity_type == \"contract_statement\"",
+        "        hidden = withheld")),
+    ("history is withheld from the factory as well as the OEM", _one(SVC,
+        "    withheld = party.side == OEM and not oem_sharing.contract_statement_visible(db, contract)",
+        "    withheld = not oem_sharing.contract_statement_visible(db, contract)")),
+    ("the OEM's history stays withheld after consent is restored", _one(SVC,
+        "    withheld = party.side == OEM and not oem_sharing.contract_statement_visible(db, contract)",
+        "    withheld = party.side == OEM")),
     ("the reason vocabulary has no lower time bound", _one(SVC,
         "                          models.DowntimeLog.created_at >= since,\n", "")),
     ("the reason vocabulary has no upper time bound", _one(SVC,
@@ -345,6 +418,11 @@ EXPECTED_SURVIVORS = {
         "bound_factory_read(contract.factory_tenant_code), so the ORM filter already "
         "limits Machine to that factory (the planted cross-factory link is still "
         "refused). Kept as the explicit, auditable statement of the rule.",
+    "a factory code skips the free-text rule":
+        "SHADOWED BY THE OWNERSHIP CHECK ON SQLITE. A factory code carrying a NUL or a "
+        "line break names no factory, so installations_for finds nothing and the draft "
+        "is refused 422 anyway; on PostgreSQL the same query would raise on the NUL "
+        "(a 500), which is what the rule prevents. Kept: it refuses before any query.",
     "a contract may be addressed to the OEM sentinel":
         "SHADOWED BY THE OWNERSHIP CHECK. No installation can be at a sentinel "
         "tenant (claims refuse it), so installations_for finds nothing and the draft "

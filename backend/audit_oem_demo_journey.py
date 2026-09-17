@@ -446,6 +446,127 @@ def main():
 
     print()
     print("=" * 74)
+    print("AFTER THE MEETING — a reset clears the demo's service contracts, and only those")
+    print("=" * 74)
+    # A prospect who is shown the downtime attribution contract (ADR-0020) leaves
+    # contract rows behind that REFERENCE the demo's installation and machines.
+    # On PostgreSQL those foreign keys would block the next reset, exactly as
+    # industrial devices once did. Planted directly — the contract steps
+    # themselves belong to the contract suites — beside a rival's contract that
+    # the reset must not touch.
+    from datetime import datetime as _dt
+    now = _dt.utcnow().replace(microsecond=0)
+
+    def plant_contract(db, oem_code, tenant, installation, machine):
+        c = models.ServiceContract(
+            oem_code=oem_code, factory_tenant_code=tenant, contract_ref="AMC-DEMO",
+            title="demo", contract_type="AMC", status="accepted", starts_at=now,
+            ends_at=now + timedelta(days=365), created_by="x", created_at=now,
+            proposed_at=now, factory_accepted_by="x", factory_accepted_at=now)
+        db.add(c)
+        db.flush()
+        v = models.ServiceContractTermVersion(
+            contract_id=c.id, version=1, terms_json="{}", terms_hash="0" * 64,
+            effective_from=now, status="accepted")
+        db.add(v)
+        db.flush()
+        db.add(models.ServiceContractMachine(
+            term_version_id=v.id, installation_id=installation.id,
+            machine_id_at_acceptance=machine.id, factory_tenant_at_acceptance=tenant,
+            serial_number=installation.serial_number))
+        s = models.ContractStatement(
+            contract_id=c.id, term_version_id=v.id, period_start=now,
+            period_end=now + timedelta(days=30), revision=1, content_hash="1" * 64,
+            canonical_json="{}", computed_at=now, computed_by_party="FACTORY",
+            computed_by="x")
+        db.add(s)
+        db.flush()
+        db.add(models.ContractAttributionRecord(
+            statement_id=s.id, seq=1, installation_id=installation.id, start_at=now,
+            end_at=now + timedelta(days=30), seconds=2592000, bucket="UNMEASURED",
+            cause="no_telemetry", evidence_json="{}"))
+        db.add(models.ContractStatementAcceptance(
+            statement_id=s.id, party="OEM", actor="x", accepted_at=now,
+            content_hash="1" * 64, revision=1))
+        db.add(models.ContractDispute(
+            contract_id=c.id, statement_id=s.id, installation_id=installation.id,
+            window_start=now, window_end=now + timedelta(hours=1), raised_by_party="OEM",
+            raised_by="x", raised_at=now, reason="demo", proposed_bucket="OEM"))
+        db.add(models.MachineTelemetrySpan(
+            tenant_code=tenant, machine_id=machine.id, source="mqtt", status="Running",
+            span_start=now, span_end=now + timedelta(minutes=5), message_count=3))
+
+    def counts(db, oem_code, tenant):
+        cids = [c.id for c in db.query(models.ServiceContract).filter(
+            models.ServiceContract.oem_code == oem_code).all()] or [-1]
+        vids = [v.id for v in db.query(models.ServiceContractTermVersion).filter(
+            models.ServiceContractTermVersion.contract_id.in_(cids)).all()] or [-1]
+        sids = [s.id for s in db.query(models.ContractStatement).filter(
+            models.ContractStatement.contract_id.in_(cids)).all()] or [-1]
+        by_parent = (
+            (models.ServiceContractTermVersion, models.ServiceContractTermVersion.contract_id, cids),
+            (models.ServiceContractMachine, models.ServiceContractMachine.term_version_id, vids),
+            (models.ContractStatement, models.ContractStatement.contract_id, cids),
+            (models.ContractAttributionRecord, models.ContractAttributionRecord.statement_id, sids),
+            (models.ContractStatementAcceptance, models.ContractStatementAcceptance.statement_id,
+             sids),
+            (models.ContractDispute, models.ContractDispute.contract_id, cids))
+        return {
+            "contracts": len([c for c in cids if c != -1]),
+            "rows": sum(db.query(M).filter(col.in_(ids)).count() for M, col, ids in by_parent),
+            "spans": db.query(models.MachineTelemetrySpan).filter(
+                models.MachineTelemetrySpan.tenant_code == tenant).count(),
+        }
+
+    db = SessionLocal()
+    tok = tenancy.set_current_tenant(None)
+    try:
+        rival_machine = db.query(models.Machine).filter(
+            models.Machine.tenant_code == "REAL_CUSTOMER").first()
+        rival_model = models.MachineModel(oem_code="RIVAL_OEM", family="Compressor",
+                                          model_code="R-1", name="Rival R-1")
+        db.add(rival_model)
+        db.flush()
+        rival_inst = models.MachineInstallation(
+            oem_code="RIVAL_OEM", serial_number="SN-RIVAL-1", model_id=rival_model.id,
+            factory_tenant_code="REAL_CUSTOMER", machine_id=rival_machine.id,
+            status="Active", site="")
+        db.add(rival_inst)
+        db.flush()
+        demo_inst = db.query(models.MachineInstallation).filter(
+            models.MachineInstallation.id == inst_id).one()
+        demo_machine = db.query(models.Machine).filter(
+            models.Machine.id == machine_id).one()
+        plant_contract(db, "AERON", demo_aeron.DEMO_TENANT, demo_inst, demo_machine)
+        plant_contract(db, "RIVAL_OEM", "REAL_CUSTOMER", rival_inst, rival_machine)
+        db.commit()
+        rival_before = counts(db, "RIVAL_OEM", "REAL_CUSTOMER")
+        step("planted: a demo contract with every child row, and a rival's",
+             counts(db, "AERON", demo_aeron.DEMO_TENANT)["contracts"] == 1
+             and rival_before["contracts"] == 1, str(rival_before))
+        resets = []
+        for _ in range(2):
+            try:
+                demo_aeron.seed(db)
+                resets.append("ok")
+            except Exception as e:          # the failure being guarded against
+                db.rollback()
+                resets.append(f"{type(e).__name__}: {str(e)[:120]}")
+        step("the reset succeeds twice with demo contracts present",
+             resets == ["ok", "ok"], str(resets))
+        demo_after = counts(db, "AERON", demo_aeron.DEMO_TENANT)
+        step("...and removes the demo's contracts and telemetry spans",
+             demo_after == {"contracts": 0, "rows": 0, "spans": 0}, str(demo_after))
+        rival_after = counts(db, "RIVAL_OEM", "REAL_CUSTOMER")
+        step("...leaving the rival's contract, every child row and its spans intact",
+             rival_after == {"contracts": 1, "rows": 6, "spans": 1}
+             and rival_before["contracts"] == 1, f"{rival_before} -> {rival_after}")
+    finally:
+        tenancy.reset_current_tenant(tok)
+        db.close()
+
+    print()
+    print("=" * 74)
     print(f"{STEPS[0]} steps")
     if FAILURES:
         print(f"FAILURES ({len(FAILURES)}):")

@@ -71,7 +71,7 @@ def case_computing_is_bounded_and_idempotent():
     body = _statement(cid, st.get("id"), oem=False).body
     totals = (body.get("content") or {}).get("totals", {})
     check("...and the OEM-triggered compute READ the factory's evidence (time is AVAILABLE,"
-          " not all UNMEASURED)", totals.get("AVAILABLE", 0) > 0, totals)
+          " not all UNMEASURED)", totals.get("available_seconds", 0) > 0, totals)
     again = H.compute(cid, ps[1]["start"], oem=False)
     check("the factory recomputing the same evidence changes nothing",
           again.status == 200 and again.body.get("changed") is False

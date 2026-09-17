@@ -11,19 +11,18 @@ contract through its lifecycle.
 
 STAND-INS FOR CODE THAT HAS NOT LANDED YET, AND HOW THEY ARE KEPT HONEST
 -----------------------------------------------------------------------
-The routes were built in parallel with the attribution engine (contract_terms,
-contract_periods, contract_statements) and before the Phase 1 shared helpers
-(oem_auth contract capabilities, oem_sharing.widen_grants /
-bound_factory_read / contract_statement_visible, log_audit(commit=False,
-tenant_code=...)). The routes call those by their PLANNED signatures. Until
-they exist, `install()` provides stand-ins, under three rules:
+The routes run against the REAL engine (contract_terms, contract_periods,
+contract_statements, attribution_engine), which is imported whole and never
+patched. They were built before the Phase 1 shared pieces landed
+(telemetry_coverage's span constants, retention's span policy, oem_auth
+contract capabilities, oem_sharing.widen_grants / bound_factory_read /
+contract_statement_visible, log_audit(commit=False, tenant_code=...)), and call
+those by their PLANNED names. Until they exist, `install()` provides stand-ins,
+under three rules:
 
-  * A MODULE is stood in only when it cannot be found at all. The moment a real
-    contract_statements.py exists it is used, whole, and never patched: a stub
-    quietly filling a gap in a real module would hide exactly the integration
-    defect a test is for.
-  * A shared HELPER is stood in only while its real module lacks it, and each
-    stand-in implements the plan's text, nothing more.
+  * A MODULE is stood in only when it cannot be found at all.
+  * A shared HELPER or SETTING is stood in only while its real module lacks it,
+    and each stand-in implements the plan's text, nothing more.
   * Every stand-in in use is NAMED on stdout at the end of the run
     (`stand_in_banner`). A green run with stand-ins is not a claim that the
     integrated system works; the banner says so.
@@ -37,12 +36,9 @@ import importlib.util
 import inspect
 import json
 import os
-import re
 import sys
 import types
-import unicodedata
-from collections import namedtuple
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 
 from jose import jwt as pyjwt
 from sqlalchemy import create_engine
@@ -69,11 +65,20 @@ failures = []
 STAND_INS = []
 
 
+FAIL_FAST = os.environ.get("CONTRACT_FAIL_FAST") == "1"
+
+
 def check(label, condition, detail=""):
     print(f"  {'PASS' if condition else 'FAIL'}  {label}"
           + (f"   [{detail}]" if detail and not condition else ""))
     if not condition:
         failures.append(f"{label}: {detail}")
+        if FAIL_FAST:
+            # mutate_service_contracts sets this: the first red check is all a
+            # mutation run needs, and the rest of the suite is minutes.
+            print(f"FAIL-FAST: {label}")
+            sys.stdout.flush()
+            os._exit(1)
     return condition
 
 
@@ -96,504 +101,12 @@ def _module_missing(name):
     return importlib.util.find_spec(name) is None
 
 
-def _stand_in_contract_terms():
-    import analytics_engine
-    import machine_status
-
-    mod = types.ModuleType("contract_terms")
+def _stand_in_telemetry_coverage():
+    mod = types.ModuleType("telemetry_coverage")
     mod.__stand_in__ = True
-    dec = re.compile(r"^\d{1,12}\.\d{2}$")
-    required = ("schema", "currency", "period_months", "period_fee", "timezone",
-                "term_months", "coverage", "sla_target_pct", "credit_tiers",
-                "min_measured_pct", "trusted_sources", "status_defaults",
-                "reason_map", "generic_reasons", "reason_lead_seconds",
-                "termination_notice_days", "covered_installations")
-
-    class TermsError(ValueError):
-        def __init__(self, field, msg):
-            super().__init__(f"{field}: {msg}")
-            self.field = field
-            self.msg = msg
-
-    class Terms:
-        def __init__(self, data):
-            self.data = data
-
-    def reason_key(s):
-        return unicodedata.normalize(
-            "NFC", analytics_engine.normalize_downtime_reason(s)).strip().casefold()
-
-    def down_status_keys():
-        return sorted(set(machine_status.VALID_MACHINE_STATUSES) - {"Running", "Idle"})
-
-    def _int(raw, field, minimum=0):
-        v = raw.get(field)
-        if type(v) is not int or v < minimum:
-            raise TermsError(field, f"must be an integer >= {minimum}")
-        return v
-
-    def _dec(raw, field, pct=False):
-        v = raw.get(field)
-        if type(v) is not str or not dec.match(v):
-            raise TermsError(field, "must be decimal text like 97.00")
-        if pct and float(v.replace(".", "")) > 10000:
-            raise TermsError(field, "must be <= 100.00")
-        return v
-
-    def parse(raw):
-        from zoneinfo import ZoneInfo
-        if type(raw) is not dict:
-            raise TermsError("terms", "must be an object")
-        extra = sorted(set(raw) - set(required))
-        if extra:
-            raise TermsError(extra[0], "unknown field")
-        for f in required:
-            if f not in raw:
-                raise TermsError(f, "is required")
-        if raw["schema"] != 1:
-            raise TermsError("schema", "must be 1")
-        if raw["currency"] != "INR":
-            raise TermsError("currency", "must be INR")
-        pm = _int(raw, "period_months", 1)
-        if pm not in (1, 3):
-            raise TermsError("period_months", "must be 1 or 3")
-        tm = _int(raw, "term_months", 1)
-        if tm % pm:
-            raise TermsError("term_months", "must be a multiple of period_months")
-        _dec(raw, "period_fee")
-        try:
-            ZoneInfo(raw["timezone"])
-        except Exception:
-            raise TermsError("timezone", "unknown timezone")
-        if raw["coverage"] != {"mode": "24x7"} and (
-                type(raw["coverage"]) is not dict or raw["coverage"].get("mode") != "weekly"):
-            raise TermsError("coverage", "mode must be 24x7 or weekly")
-        _dec(raw, "sla_target_pct", pct=True)
-        _dec(raw, "min_measured_pct", pct=True)
-        if type(raw["credit_tiers"]) is not list:
-            raise TermsError("credit_tiers", "must be a list")
-        ts_ = raw["trusted_sources"]
-        if type(ts_) is not list or not ts_ or "manual" in ts_:
-            raise TermsError("trusted_sources", "must be non-empty and exclude manual")
-        sd = raw["status_defaults"]
-        if type(sd) is not dict or sorted(sd) != down_status_keys():
-            raise TermsError("status_defaults", "keys must be exactly the down statuses")
-        if any(v not in ("OEM", "FACTORY", "DISPUTED") for v in sd.values()):
-            raise TermsError("status_defaults", "values must be OEM, FACTORY or DISPUTED")
-        rm = raw["reason_map"]
-        if type(rm) is not dict or any(v not in ("OEM", "FACTORY") for v in rm.values()):
-            raise TermsError("reason_map", "values must be OEM or FACTORY")
-        gr = raw["generic_reasons"]
-        if type(gr) is not list:
-            raise TermsError("generic_reasons", "must be a list")
-        gr = sorted({reason_key(x) for x in gr})
-        if "breakdown" not in gr or "unknown" not in gr:
-            raise TermsError("generic_reasons", "must include breakdown and unknown")
-        _int(raw, "reason_lead_seconds")
-        _int(raw, "termination_notice_days")
-        ci = raw["covered_installations"]
-        if type(ci) is not list or not ci:
-            raise TermsError("covered_installations", "must be a non-empty list")
-        seen = set()
-        for row in ci:
-            if (type(row) is not dict or type(row.get("installation_id")) is not int
-                    or type(row.get("serial_number")) is not str
-                    or set(row) != {"installation_id", "serial_number"}):
-                raise TermsError("covered_installations",
-                                 "each entry is {installation_id, serial_number}")
-            if row["installation_id"] in seen:
-                raise TermsError("covered_installations", "duplicate installation")
-            seen.add(row["installation_id"])
-        data = json.loads(json.dumps(raw))
-        data["reason_map"] = {reason_key(k): v for k, v in rm.items()}
-        data["generic_reasons"] = gr
-        data["covered_installations"] = sorted(ci, key=lambda r: r["installation_id"])
-        return Terms(data)
-
-    def terms_canonical(terms):
-        return json.loads(json.dumps(terms.data))
-
-    def terms_hash(terms):
-        return canonical.content_hash(terms_canonical(terms))
-
-    mod.TermsError = TermsError
-    mod.Terms = Terms
-    mod.parse = parse
-    mod.terms_canonical = terms_canonical
-    mod.terms_hash = terms_hash
-    mod.reason_key = reason_key
-    mod.down_status_keys = down_status_keys
-    return mod
-
-
-def _stand_in_contract_periods():
-    mod = types.ModuleType("contract_periods")
-    mod.__stand_in__ = True
-    Period = namedtuple("Period", "start end")
-
-    def _tz(terms):
-        import contract_terms
-        return contract_terms.terms_canonical(terms)["timezone"]
-
-    def month_start_utc(terms, year, month):
-        from zoneinfo import ZoneInfo
-        y, m = divmod(year * 12 + (month - 1), 12)
-        local = datetime(y, m + 1, 1, tzinfo=ZoneInfo(_tz(terms)))
-        return local.astimezone(timezone.utc).replace(tzinfo=None)
-
-    def periods(terms, starts_at, effective_end):
-        from zoneinfo import ZoneInfo
-        import contract_terms
-        pm = contract_terms.terms_canonical(terms)["period_months"]
-        local = starts_at.replace(tzinfo=timezone.utc).astimezone(ZoneInfo(_tz(terms)))
-        out, i = [], 0
-        while True:
-            start = month_start_utc(terms, local.year, local.month + i * pm)
-            if start >= effective_end:
-                return out
-            out.append(Period(start, month_start_utc(terms, local.year,
-                                                     local.month + (i + 1) * pm)))
-            i += 1
-
-    def period_starting(contract, terms, start):
-        end = contract.ends_at
-        if contract.termination_effective_at is not None:
-            end = min(end, contract.termination_effective_at)
-        for p in periods(terms, contract.starts_at, end):
-            if p.start == start:
-                return p
-        return None
-
-    def covered_intervals(period, terms, active_start, active_end):
-        lo, hi = max(period.start, active_start), min(period.end, active_end)
-        return [(lo, hi)] if lo < hi else []
-
-    mod.Period = Period
-    mod.month_start_utc = month_start_utc
-    mod.periods = periods
-    mod.period_starting = period_starting
-    mod.covered_intervals = covered_intervals
-    return mod
-
-
-def _stand_in_contract_statements():
-    """A small attribution engine: spans -> AVAILABLE/down default, gaps ->
-    UNMEASURED, disputes overlaid. Enough for the ROUTES' behaviour to be
-    exercised; the real engine's rules are tested in its own suites."""
-    from sqlalchemy import update
-
-    import oem_auth
-    import platform_routes
-
-    mod = types.ModuleType("contract_statements")
-    mod.__stand_in__ = True
-    ComputeResult = namedtuple("ComputeResult", "statement changed frozen")
-
-    class PeriodNotClosed(Exception):
-        pass
-
-    class EvidenceExpired(Exception):
-        pass
-
-    class StatementConflict(Exception):
-        pass
-
-    class NoTermsForPeriod(Exception):
-        pass
-
-    def _terms(version):
-        import contract_terms
-        return contract_terms.parse(json.loads(version.terms_json))
-
-    def _version_for(db, contract, at):
-        return (db.query(models.ServiceContractTermVersion)
-                  .filter(models.ServiceContractTermVersion.contract_id == contract.id,
-                          models.ServiceContractTermVersion.status == "accepted",
-                          models.ServiceContractTermVersion.effective_from <= at)
-                  .order_by(models.ServiceContractTermVersion.version.desc()).first())
-
-    def acceptance_state(db, statement):
-        rows = (db.query(models.ContractStatementAcceptance)
-                  .filter(models.ContractStatementAcceptance.statement_id == statement.id)
-                  .order_by(models.ContractStatementAcceptance.id.asc()).all())
-        out = {"FACTORY": None, "OEM": None}
-        for r in rows:
-            if canonical.acceptance_is_valid(r, statement) and r.party in out:
-                out[r.party] = r
-        out["agreed"] = out["FACTORY"] is not None and out["OEM"] is not None
-        return out
-
-    def _segments(db, contract, version, terms_canon, period):
-        machines = (db.query(models.ServiceContractMachine)
-                      .filter(models.ServiceContractMachine.term_version_id == version.id)
-                      .order_by(models.ServiceContractMachine.installation_id.asc()).all())
-        statement = (db.query(models.ContractStatement)
-                       .filter(models.ContractStatement.contract_id == contract.id,
-                               models.ContractStatement.period_start == period.start)
-                       .first())
-        disputes = []
-        if statement is not None:
-            disputes = (db.query(models.ContractDispute)
-                          .filter(models.ContractDispute.statement_id == statement.id,
-                                  models.ContractDispute.status != "withdrawn")
-                          .order_by(models.ContractDispute.id.asc()).all())
-        out = []
-        for m in machines:
-            end = period.end
-            if m.coverage_ended_at is not None:
-                end = min(end, m.coverage_ended_at)
-            spans = (db.query(models.MachineTelemetrySpan)
-                       .filter(models.MachineTelemetrySpan.tenant_code == contract.factory_tenant_code,
-                               models.MachineTelemetrySpan.machine_id == m.machine_id_at_acceptance,
-                               models.MachineTelemetrySpan.source.in_(terms_canon["trusted_sources"]),
-                               models.MachineTelemetrySpan.span_start < end,
-                               models.MachineTelemetrySpan.span_end
-                               >= period.start - timedelta(seconds=SPAN_GAP_STAND_IN))
-                       .order_by(models.MachineTelemetrySpan.span_start.asc(),
-                                 models.MachineTelemetrySpan.id.asc()).all())
-            cuts = {period.start, end, period.end}
-            holds = []
-            for i, s in enumerate(spans):
-                nxt = next((t.span_start for t in spans[i + 1:] if t.source == s.source), None)
-                h_end = s.span_end + timedelta(seconds=SPAN_GAP_STAND_IN)
-                if nxt is not None:
-                    h_end = min(h_end, nxt)
-                holds.append((s, s.span_start, h_end))
-                cuts.update((s.span_start, h_end))
-            for d in disputes:
-                if d.installation_id == m.installation_id:
-                    cuts.update((d.window_start, d.window_end))
-            points = sorted(c for c in cuts if period.start <= c <= period.end)
-            intervals = []
-            for a, b in zip(points, points[1:]):
-                if a >= b:
-                    continue
-                if a >= end:
-                    seg = ("UNMEASURED", "installation_unlinked", {"linkage": {
-                        "coverage_ended_at": canonical.ts(m.coverage_ended_at),
-                        "reason": m.coverage_end_reason}})
-                else:
-                    live = [(s, hs, he) for s, hs, he in holds if hs <= a and b <= he]
-                    statuses = {s.status for s, _, _ in live}
-                    ev = {"telemetry_spans": [{
-                        "id": s.id, "source": s.source, "status": s.status,
-                        "start": canonical.ts(max(s.span_start, period.start)),
-                        "end": canonical.ts(min(s.span_end, period.end))} for s, _, _ in live]}
-                    if not live:
-                        seg = ("UNMEASURED", "no_telemetry", {})
-                    elif len(statuses) > 1:
-                        seg = ("DISPUTED", "conflicting_status", ev)
-                    elif statuses & {"Running", "Idle"}:
-                        seg = ("AVAILABLE", "status", ev)
-                    else:
-                        status = next(iter(statuses))
-                        bucket = terms_canon["status_defaults"].get(status, "DISPUTED")
-                        seg = (bucket, f"default:{status}", ev)
-                for d in disputes:
-                    if (d.installation_id == m.installation_id
-                            and d.window_start <= a and b <= d.window_end):
-                        dev = {"disputes": [{"id": d.id, "status": d.status,
-                                             "resolution_bucket": d.resolution_bucket}]}
-                        if d.status == "resolved":
-                            seg = (d.resolution_bucket, f"agreed_override:#{d.id}", dev)
-                        else:
-                            seg = ("DISPUTED", f"open_dispute:#{d.id}", dev)
-                if intervals and intervals[-1]["end_dt"] == a and (
-                        intervals[-1]["bucket"], intervals[-1]["cause"],
-                        intervals[-1]["evidence"]) == seg:
-                    intervals[-1]["end_dt"] = b
-                else:
-                    intervals.append({"start_dt": a, "end_dt": b, "bucket": seg[0],
-                                      "cause": seg[1], "evidence": seg[2]})
-            out.append((m, intervals))
-        return out
-
-    def _content(db, contract, version, period):
-        import contract_terms
-        tc = contract_terms.terms_canonical(_terms(version))
-        machines, totals = [], {b: 0 for b in BUCKETS}
-        records = []
-        for m, intervals in _segments(db, contract, version, tc, period):
-            mt = {b: 0 for b in BUCKETS}
-            rendered = []
-            for iv in intervals:
-                secs = int((iv["end_dt"] - iv["start_dt"]).total_seconds())
-                mt[iv["bucket"]] += secs
-                totals[iv["bucket"]] += secs
-                rendered.append({"start": canonical.ts(iv["start_dt"]),
-                                 "end": canonical.ts(iv["end_dt"]), "seconds": secs,
-                                 "bucket": iv["bucket"], "cause": iv["cause"],
-                                 "evidence": iv["evidence"]})
-                records.append((m.installation_id, iv, secs))
-            machines.append({"installation_id": m.installation_id,
-                             "serial_number": m.serial_number,
-                             "coverage_end": (canonical.ts(m.coverage_ended_at)
-                                              if m.coverage_ended_at else None),
-                             "totals": mt, "intervals": rendered})
-        covered = sum(totals.values())
-        u, f, o, d = (totals["UNMEASURED"], totals["FACTORY"], totals["OEM"],
-                      totals["DISPUTED"])
-        min_pct = int(tc["min_measured_pct"].replace(".", ""))
-        if covered == 0:
-            state = "not_evaluable"
-        elif (covered - u) * 10000 < min_pct * covered:
-            state = "not_evaluable"
-        elif covered - u - f == 0:
-            state = "not_evaluable"
-        elif d > 0:
-            state = "pending_disputes"
-        else:
-            base = covered - u - f
-            target = int(tc["sla_target_pct"].replace(".", ""))
-            state = "breached" if (base - o) * 10000 < target * base else "met"
-        content = {
-            "schema": "amp.downtime-attribution-statement/1",
-            "contract": {"id": contract.id, "ref": contract.contract_ref,
-                         "oem_code": contract.oem_code,
-                         "factory_tenant_code": contract.factory_tenant_code,
-                         "terms_version": version.version,
-                         "terms_hash": version.terms_hash},
-            "period": {"start": canonical.ts(period.start), "end": canonical.ts(period.end),
-                       "timezone": tc["timezone"]},
-            "machines": machines, "totals": totals,
-            "sla": {"state": state, "target_pct": tc["sla_target_pct"]},
-            "credit": {"currency": tc["currency"], "period_fee": tc["period_fee"],
-                       "amount": None},
-        }
-        return content, records
-
-    def _audit_both(db, contract, party, actor, statement, details):
-        for tenant in (contract.factory_tenant_code,
-                       oem_auth.sentinel_tenant(contract.oem_code)):
-            platform_routes.log_audit(db, actor, "contract_statement_computed",
-                                      "contract_statement", statement.id, details,
-                                      tenant_code=tenant, commit=False)
-
-    def _write_records(db, statement, records):
-        (db.query(models.ContractAttributionRecord)
-           .filter(models.ContractAttributionRecord.statement_id == statement.id)
-           .delete(synchronize_session=False))
-        for seq, (inst_id, iv, secs) in enumerate(records, start=1):
-            db.add(models.ContractAttributionRecord(
-                statement_id=statement.id, seq=seq, installation_id=inst_id,
-                start_at=iv["start_dt"], end_at=iv["end_dt"], seconds=secs,
-                bucket=iv["bucket"], cause=iv["cause"],
-                evidence_json=canonical.canonical_bytes(iv["evidence"]).decode("utf-8")))
-
-    def _period(db, contract, period_start):
-        import contract_periods
-        v1 = (db.query(models.ServiceContractTermVersion)
-                .filter(models.ServiceContractTermVersion.contract_id == contract.id,
-                        models.ServiceContractTermVersion.version == 1).first())
-        if v1 is None:
-            raise NoTermsForPeriod("no terms")
-        p = contract_periods.period_starting(contract, _terms(v1), period_start)
-        if p is None:
-            raise NoTermsForPeriod("not a period of this contract")
-        return p
-
-    def compute_statement(db, contract, period_start, *, party, now):
-        period = _period(db, contract, period_start)
-        if now < period.end + timedelta(seconds=SETTLE_SECONDS_STAND_IN):
-            raise PeriodNotClosed("period not closed")
-        if (period.start - timedelta(seconds=SPAN_GAP_STAND_IN)
-                < now - timedelta(days=SPAN_RETENTION_DAYS_STAND_IN)):
-            raise EvidenceExpired("evidence expired")
-        version = _version_for(db, contract, period.start)
-        if version is None:
-            raise NoTermsForPeriod("no accepted terms")
-        statement = (db.query(models.ContractStatement)
-                       .filter(models.ContractStatement.contract_id == contract.id,
-                               models.ContractStatement.period_start == period.start)
-                       .first())
-        if statement is not None and acceptance_state(db, statement)["agreed"]:
-            return ComputeResult(statement, False, True)
-        content, records = _content(db, contract, version, period)
-        blob = canonical.canonical_bytes(content)
-        new_hash = canonical.sha256_hex(blob)
-        actor = f"{party}"
-        if statement is None:
-            statement = models.ContractStatement(
-                contract_id=contract.id, term_version_id=version.id,
-                period_start=period.start, period_end=period.end, revision=1,
-                content_hash=new_hash, canonical_json=blob.decode("utf-8"),
-                computed_at=now, computed_by_party=party, computed_by=actor,
-                updated_at=now)
-            db.add(statement)
-            db.flush()
-            _write_records(db, statement, records)
-            _audit_both(db, contract, party, actor, statement,
-                        f"revision=1 hash={new_hash}")
-            return ComputeResult(statement, True, False)
-        if statement.content_hash == new_hash:
-            return ComputeResult(statement, False, False)
-        old_hash, old_rev = statement.content_hash, statement.revision
-        rc = db.execute(
-            update(models.ContractStatement)
-            .where(models.ContractStatement.id == statement.id,
-                   models.ContractStatement.content_hash == old_hash,
-                   models.ContractStatement.revision == old_rev)
-            .values(content_hash=new_hash, canonical_json=blob.decode("utf-8"),
-                    revision=old_rev + 1, term_version_id=version.id,
-                    computed_at=now, computed_by_party=party, computed_by=actor,
-                    updated_at=now)
-            .execution_options(synchronize_session=False)).rowcount
-        if rc != 1:
-            raise StatementConflict("statement changed concurrently")
-        db.refresh(statement)
-        _write_records(db, statement, records)
-        _audit_both(db, contract, party, actor, statement,
-                    f"revision={old_rev}->{old_rev + 1} hash={old_hash}->{new_hash}")
-        return ComputeResult(statement, True, False)
-
-    def preview_statement(db, contract, now):
-        import contract_periods
-        v1 = (db.query(models.ServiceContractTermVersion)
-                .filter(models.ServiceContractTermVersion.contract_id == contract.id,
-                        models.ServiceContractTermVersion.version == 1).first())
-        end = contract.ends_at
-        if contract.termination_effective_at is not None:
-            end = min(end, contract.termination_effective_at)
-        for p in contract_periods.periods(_terms(v1), contract.starts_at, end):
-            if p.start <= now < p.end:
-                version = _version_for(db, contract, p.start)
-                if version is None:
-                    return None
-                return {"preview": True, "content": _content(db, contract, version, p)[0]}
-        return None
-
-    def statement_payload(db, statement):
-        state = acceptance_state(db, statement)
-        accs = (db.query(models.ContractStatementAcceptance)
-                  .filter(models.ContractStatementAcceptance.statement_id == statement.id)
-                  .order_by(models.ContractStatementAcceptance.id.asc()).all())
-        return {
-            "id": statement.id, "contract_id": statement.contract_id,
-            "period_start": canonical.ts(statement.period_start),
-            "period_end": canonical.ts(statement.period_end),
-            "revision": statement.revision, "content_hash": statement.content_hash,
-            "content": (json.loads(statement.canonical_json)
-                        if statement.canonical_json is not None else None),
-            "acceptances": [{"party": a.party, "actor": a.actor,
-                             "accepted_at": canonical.ts(a.accepted_at),
-                             "content_hash": a.content_hash, "revision": a.revision,
-                             "valid": canonical.acceptance_is_valid(a, statement)}
-                            for a in accs],
-            "agreed": state["agreed"],
-        }
-
-    def verify_statement(db, statement, now):
-        blob_hash = (canonical.sha256_hex(statement.canonical_json.encode("utf-8"))
-                     if statement.canonical_json is not None else None)
-        return {"stored_hash": statement.content_hash, "blob_hash": blob_hash,
-                "consistency": ("content_purged" if blob_hash is None else
-                                "consistent" if blob_hash == statement.content_hash
-                                else "blob_mismatch"),
-                "agreed": acceptance_state(db, statement)["agreed"]}
-
-    for name, value in list(locals().items()):
-        if not name.startswith("_") and name != "mod":
-            setattr(mod, name, value)
+    mod.SPAN_GAP_SECONDS = SPAN_GAP_STAND_IN
+    mod.SPAN_WRITE_RESOLUTION_SECONDS = 30
+    mod.SETTLE_SECONDS = SETTLE_SECONDS_STAND_IN
     return mod
 
 
@@ -616,9 +129,16 @@ def install():
 
     if STAND_INS:
         return
-    _install_module("contract_terms", _stand_in_contract_terms)
-    _install_module("contract_periods", _stand_in_contract_periods)
-    _install_module("contract_statements", _stand_in_contract_statements)
+    _install_module("telemetry_coverage", _stand_in_telemetry_coverage)
+
+    import retention
+    if not any(p.model is models.MachineTelemetrySpan for p in retention.POLICIES):
+        _ORIGINALS["retention"] = retention.POLICIES
+        retention.POLICIES = retention.POLICIES + (retention.RetentionPolicy(
+            models.MachineTelemetrySpan, "span_end", SPAN_RETENTION_DAYS_STAND_IN,
+            "stand-in for the planned policy (plan section 2, T8)"),)
+        STAND_INS.append("retention policy for machine_telemetry_spans "
+                         "(400 days by span_end)")
 
     if not any("read_contracts" in caps for caps in oem_auth.ROLE_CAPABILITIES.values()):
         _ORIGINALS["caps"] = {k: set(v) for k, v in oem_auth.ROLE_CAPABILITIES.items()}
@@ -708,6 +228,9 @@ def uninstall():
         oem_auth.ROLE_CAPABILITIES.update(_ORIGINALS.pop("caps"))
     if "log_audit" in _ORIGINALS:
         platform_routes.log_audit = _ORIGINALS.pop("log_audit")
+    if "retention" in _ORIGINALS:
+        import retention
+        retention.POLICIES = _ORIGINALS.pop("retention")
     for name in ("contract_statement_visible", "bound_factory_read", "widen_grants"):
         if any(name in s for s in STAND_INS) and hasattr(oem_sharing, name):
             delattr(oem_sharing, name)

@@ -97,6 +97,10 @@ VOCABULARY_LOOKBACK_DAYS = 90
 
 MAX_LIST = 500
 MAX_HISTORY = 1000
+# One contract covers a customer's fleet of one manufacturer's machines, not a
+# catalogue. Each covered installation costs queries at every acceptance, so an
+# unbounded list is a request that can hold row locks for as long as it likes.
+MAX_COVERED_INSTALLATIONS = 200
 
 HISTORY_ENTITY_TYPES = ("service_contract", "contract_term_version",
                         "contract_statement", "contract_dispute")
@@ -442,6 +446,10 @@ def _check_owned(db, oem_code, tenant, terms, status):
     """Every covered installation is THIS manufacturer's, at THAT factory, with
     the serial the terms name. One message for every failure: a competitor's
     installation id must look exactly like one that does not exist."""
+    if len(terms.covered_installations) > MAX_COVERED_INSTALLATIONS:
+        raise Refused(422, {"field": "covered_installations",
+                            "message": f"at most {MAX_COVERED_INSTALLATIONS} "
+                                       "installations per contract"})
     for c in terms.covered_installations:
         rows = oem_sharing.installations_for(db, oem_code, tenant_code=tenant,
                                              installation_id=c.installation_id)
@@ -1098,7 +1106,7 @@ def _run_compute(db, party, contract, period_start, now, *, allow_expired=False)
     try:
         with oem_sharing.bound_factory_read(contract.factory_tenant_code):
             result = engine.compute_statement(db, contract, period_start,
-                                              party=party.side, now=now)
+                                              party=party, now=now)
     except engine.PeriodNotClosed as e:
         db.rollback()
         raise Refused(409, {"message": "This period has not closed yet; statements "
@@ -1119,6 +1127,10 @@ def _run_compute(db, party, contract, period_start, now, *, allow_expired=False)
         db.rollback()
         raise Refused(409, "The statement changed while this request was running; "
                            "reload and try again") from None
+    # The engine may have revised the row with a conditional UPDATE; read back
+    # what is stored rather than trusting a loaded copy.
+    db.flush()
+    db.refresh(result.statement)
     if result.changed:
         _publish(db, oem_events.StatementComputed(
             tenant_code=contract.factory_tenant_code, oem_code=contract.oem_code,
@@ -1425,6 +1437,10 @@ def _dispute_transition(db, dispute, before, values):
     if rc != 1:
         db.rollback()
         raise Refused(409, "The dispute changed before this could be recorded")
+    # A bulk UPDATE does not touch the loaded object. The engine's recompute
+    # reads disputes through this session, and a stale identity-map row would
+    # attribute the window by the status it had BEFORE this transition.
+    db.expire(dispute)
 
 
 def _after_dispute(db, party, contract, dispute, now, action, details, event=None):
@@ -1442,8 +1458,13 @@ def _after_dispute(db, party, contract, dispute, now, action, details, event=Non
         _publish(db, event)
     db.commit()
     db.refresh(dispute)
-    return {"dispute": dispute_view(dispute),
-            "statement": _statement_ref(st) if st is not None else None}
+    ref = _statement_ref(st) if st is not None else None
+    if ref is not None and party.side == OEM             and not oem_sharing.contract_statement_visible(db, contract):
+        # Withdrawing one's own dispute needs no consent; learning the revised
+        # statement's hash does. The revision number is the contract's, the
+        # hash is a fingerprint of the factory's data.
+        ref = {"id": ref["id"], "revision": ref["revision"], "withheld": True}
+    return {"dispute": dispute_view(dispute), "statement": ref}
 
 
 def propose_resolution(db, party, contract_id, dispute_id, body):

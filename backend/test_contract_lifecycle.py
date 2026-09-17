@@ -22,7 +22,6 @@ THE PROPERTIES UNDER TEST
 
 Run: DATABASE_URL="sqlite:///./ci.db" python backend/test_contract_lifecycle.py
 """
-import asyncio
 import threading
 from datetime import timedelta
 

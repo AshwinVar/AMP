@@ -207,7 +207,7 @@ def test_build_management_summary():
                  total_count=700, good_count=690)]
     s = ae.build_management_summary(machines, downtime, shifts, recs)
     assert s["total_downtime_minutes"] == 180                     # 60 + 90 + 30
-    assert s["estimated_loss_value"] == 180 * 8                   # £8/min model
+    assert s["estimated_loss_value"] is None                      # no unit value -> no £ (ADR-0010)
     assert s["top_loss_reason"] == "Tool Change"                 # 60+30=90 > 90 breakdown? tie -> first max
     assert s["worst_machine"] == "CNC-1" and s["worst_machine_downtime"] == 150
     assert s["breakdown_count"] == 1 and s["machine_count"] == 2
@@ -240,12 +240,12 @@ def test_estimated_loss_value_uses_unit_rate_when_given():
     # run-rate = 690 good / 400 min = 1.725 units/min; 120 min downtime -> 207 lost units.
     no_rate = ae.build_management_summary(machines, downtime, shifts, recs)
     assert no_rate["estimated_loss_units"] == 207
-    assert no_rate["estimated_loss_value"] == 120 * 8       # legacy £8/min when no rate
+    assert no_rate["estimated_loss_value"] is None          # no rate -> no £ (was a fabricated 120*8)
     assert no_rate["unit_value_gbp"] is None
 
     priced = ae.build_management_summary(machines, downtime, shifts, recs, unit_value_gbp=4.50)
     assert priced["estimated_loss_units"] == 207
-    assert priced["estimated_loss_value"] == round(207 * 4.50)   # lost units x tenant rate
+    assert priced["estimated_loss_value"] == 932             # 207 lost units x £4.50 = 931.5, half up
     assert priced["unit_value_gbp"] == 4.50
 
     # A configured rate of 0 is a real £0 margin -> £0, NOT the £8/min proxy. Using
@@ -254,7 +254,12 @@ def test_estimated_loss_value_uses_unit_rate_when_given():
     assert zero["estimated_loss_units"] == 207
     assert zero["estimated_loss_value"] == 0                # 207 lost units x £0, not 120*8
     assert zero["unit_value_gbp"] == 0
-    print("PASS estimated_loss_value = lost units x rate; £0 rate -> £0 (not the £8/min proxy)")
+    # Downtime with no run time to convert it is unknown, not 0 units / £0.
+    stopped = [_rec(runtime_minutes=0, planned_minutes=480, ideal_cycle_time_seconds=30,
+                    total_count=0, good_count=0)]
+    unknown = ae.build_management_summary(machines, downtime, shifts, stopped, unit_value_gbp=4.50)
+    assert unknown["estimated_loss_units"] is None and unknown["estimated_loss_value"] is None
+    print("PASS estimated_loss_value = lost units x rate; no rate -> None; £0 rate -> £0; no run time -> unknown")
 
 
 def test_oee_direction_is_one_shared_definition_with_a_dead_band():

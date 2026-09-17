@@ -90,11 +90,21 @@ def _cost(db, tenant):
     c = build_cost_summary(db, tenant)
     if not c["has_data"]:
         return "No production this week, so there are no losses to cost.", "costing"
-    ans = (f"Losses cost about {money(c['loss_cost'])} this week — "
-           f"downtime {money(c['downtime_cost'])}, scrap {money(c['scrap_cost'])}.")
+    if c["lost_units"] is None:
+        return (f"{c['downtime_minutes']:,} min of downtime this week with no run time to convert "
+                f"into lost units, and {c['rejected_units']:,} units scrapped."), "costing"
+    if c["priced"]:
+        ans = (f"Losses cost about {money(c['loss_cost'])} this week — "
+               f"downtime {money(c['downtime_cost'])}, scrap {money(c['scrap_cost'])}.")
+    else:
+        # No £ without the tenant's own unit value (ADR-0010).
+        ans = (f"Losses came to about {c['lost_units']:,} good units this week — "
+               f"downtime {c['downtime_lost_units']:,}, scrap {c['rejected_units']:,}. "
+               "Set a unit value to see that in money.")
     if c["by_machine"]:
         w = c["by_machine"][0]
-        ans += f" Costliest machine: {w['name']} ({money(w['cost'])})."
+        figure = money(w["cost"]) if c["priced"] else f"{w['lost_units']:,} units"
+        ans += f" Biggest loss: {w['name']} ({figure})."
     return ans, "costing"
 
 
@@ -407,8 +417,10 @@ def digest(db, tenant: str) -> dict:
     delivery = build_delivery_summary(db, tenant)
 
     lines = [f"Plant OEE is {b['oee']}% and trending {b['oee_trend']}."]
-    if cost["has_data"]:
+    if cost["has_data"] and cost["priced"] and cost["loss_cost"] is not None:
         lines.append(f"Losses have cost about {money(cost['loss_cost'])} this week.")
+    elif cost["has_data"] and cost["lost_units"] is not None:
+        lines.append(f"Losses came to about {cost['lost_units']:,} good units this week.")
     if delivery["total"]:
         lines.append(f"On the order book, {delivery['fulfillment_rate']}% of units are fulfilled, "
                      f"with {delivery['late']} late and {delivery['at_risk']} at risk.")

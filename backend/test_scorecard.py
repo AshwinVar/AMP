@@ -30,9 +30,13 @@ def test_prior_period_loss_cost_shares_the_per_record_downtime_basis():
                             good_count=100, rejected_count=0, ideal_cycle_time_seconds=30),
             SimpleNamespace(planned_minutes=100, runtime_minutes=50, total_count=50,
                             good_count=50, rejected_count=0, ideal_cycle_time_seconds=30)]
-    k = scorecard._period_kpis(recs)
-    assert k["loss_cost"] == 50 * scorecard.DOWNTIME_COST_PER_MIN                      # 0+50 min -> $600
-    assert k["loss_cost"] != max(0, 200 - 170) * scorecard.DOWNTIME_COST_PER_MIN       # not the old $360
+    # Run rate 150 good / 170 run minutes: 50 min -> 44 units -> £132 at a £3 unit value.
+    k = scorecard._period_kpis(recs, 3)
+    assert k["lost_units"] == 44 and k["loss_cost"] == 132, k
+    assert k["loss_cost"] != 78                    # not the aggregate 30 min -> 26 units -> £78
+    # no unit value -> the same lost units, and no £ (ADR-0010)
+    unpriced = scorecard._period_kpis(recs, None)
+    assert unpriced["lost_units"] == 44 and unpriced["loss_cost"] is None, unpriced
     print("PASS scorecard prior-period loss_cost uses the per-record downtime basis (like-for-like WoW)")
 
 
@@ -40,11 +44,13 @@ def test_scorecard_headlines_one_kpi_per_pillar_with_tone():
     db = _fresh_session()
     now = datetime.utcnow()
     db.add(models.Machine(id=1, name="M1", status="Running", utilization=90, line="SMT"))
-    # current week: good rate 97, loss cost 40min*12 + 3*25 = 555
+    # The tenant's unit value, £45 per good unit: the only source of a £ (ADR-0010).
+    db.add(models.TenantConfig(tenant_code="DEFAULT", plan="Pro", unit_value_gbp=45))
+    # current week: good rate 97; 40 min at 97/440 a minute ≈ 9 units + 3 scrap = 12 units = £540
     db.add(models.ProductionRecord(machine_id=1, planned_minutes=480, runtime_minutes=440,
                                    ideal_cycle_time_seconds=30, total_count=100, good_count=97,
                                    rejected_count=3, created_at=now))
-    # prior week (8 days ago): good rate 90, loss cost 60min*12 + 10*25 = 970
+    # prior week (8 days ago): good rate 90; 60 min at 90/420 ≈ 13 units + 10 scrap = 23 units = £1,035
     db.add(models.ProductionRecord(machine_id=1, planned_minutes=480, runtime_minutes=420,
                                    ideal_cycle_time_seconds=30, total_count=100, good_count=90,
                                    rejected_count=10, created_at=now - timedelta(days=8)))
@@ -70,7 +76,8 @@ def test_scorecard_headlines_one_kpi_per_pillar_with_tone():
     # The unit is the platform currency (currency.CURRENCY), not a literal — four
     # renderers branch on this token to format money as a prefix. See
     # test_currency_single.py.
-    assert kpis["loss_cost"]["unit"] == CURRENCY and kpis["loss_cost"]["value"] > 0
+    assert kpis["loss_cost"]["unit"] == CURRENCY and kpis["loss_cost"]["value"] == 540
+    assert kpis["loss_cost"]["delta"] == 540 - 1035
     # deltas vs the prior week: good rate up 7 pts (good); cost down (good); reliability none
     assert kpis["good_rate"]["delta"] == 7 and kpis["good_rate"]["delta_tone"] == "good"
     assert kpis["loss_cost"]["delta"] < 0 and kpis["loss_cost"]["delta_tone"] == "good"

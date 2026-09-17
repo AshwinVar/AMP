@@ -13,7 +13,7 @@ from analytics_engine import oee_direction
 from ai.oee import build_oee_summary
 from ai.production import build_production_summary
 from ai.delivery import build_delivery_summary
-from ai.cost import build_cost_summary, downtime_minutes, DOWNTIME_COST_PER_MIN, SCRAP_COST_PER_UNIT
+from ai.cost import build_cost_summary, loss_totals
 from currency import CURRENCY
 from ai.twin import _oee_from_records, _recent_production
 import oee_contract
@@ -33,21 +33,21 @@ def _tone(value, good, warn, higher_is_better=True) -> str:
     return "good" if value <= good else "warn" if value <= warn else "bad"
 
 
-def _period_kpis(records) -> dict:
-    """OEE, good rate and loss cost over a set of production records — the three
+def _period_kpis(records, unit_value) -> dict:
+    """OEE, good rate and losses over a set of production records — the three
     windowed KPIs, computed the same way as the live cards so the current and
     prior periods compare like-for-like."""
     total = sum(r.total_count or 0 for r in records)
     good = sum(r.good_count or 0 for r in records)
-    rejected = sum(r.rejected_count or 0 for r in records)
-    # Same per-record downtime basis as the live cost card, so the current period
-    # (from build_cost_summary) and this prior period compare like-for-like.
-    downtime_min = downtime_minutes(records)
+    # ai.cost.loss_totals is the live cost card's own computation, so the current
+    # period (from build_cost_summary) and this prior period compare like-for-like.
+    losses = loss_totals(records, unit_value)
     return {
         "has": bool(records),
         "oee": _oee_from_records(records)["oee"],
         "good_rate": round(good / total * 100) if total else 0,
-        "loss_cost": downtime_min * DOWNTIME_COST_PER_MIN + rejected * SCRAP_COST_PER_UNIT,
+        "loss_cost": losses["loss_cost"],
+        "lost_units": losses["lost_units"],
     }
 
 
@@ -89,7 +89,7 @@ def build_scorecard(db, tenant: str) -> dict:
     prod = build_production_summary(db, tenant)
     delivery = build_delivery_summary(db, tenant)
     cost = build_cost_summary(db, tenant)
-    prior = _period_kpis(_prior_records(db, window))
+    prior = _period_kpis(_prior_records(db, window), cost["unit_value_gbp"])
 
     # Delivery reliability — of the orders that have come due (delivered or late),
     # the share actually delivered. Reuses the delivery read-model's own definition
@@ -107,7 +107,12 @@ def build_scorecard(db, tenant: str) -> dict:
     else:
         oee_d, oee_dt = None, None
     good_d, good_dt = _delta(prod["good_rate"], prior["good_rate"], prior["has"])
-    cost_d, cost_dt = _delta(cost["loss_cost"], prior["loss_cost"], prior["has"], lower_is_better=True)
+    # Losses are £ only with the tenant's own rate (ADR-0010); without it the KPI is
+    # good units not made, on the same basis for this week and last.
+    loss_key = "loss_cost" if cost["priced"] else "lost_units"
+    loss_now, loss_prior = cost[loss_key], prior[loss_key]
+    cost_d, cost_dt = _delta(loss_now, loss_prior, prior["has"] and loss_prior is not None,
+                             lower_is_better=True)
 
     # A KPI WITH NO DATA UNDER IT PUBLISHES None, NOT ZERO.
     #
@@ -151,8 +156,8 @@ def build_scorecard(db, tenant: str) -> dict:
 
     oee_v, oee_tone = _kpi(oee["oee"], measured_oee, 85, 70)
     good_v, good_tone = _kpi(prod["good_rate"], measured_prod, 98, 95)
-    cost_v, cost_tone = _kpi(cost["loss_cost"], measured_cost,
-                             tone=("good" if cost["loss_cost"] == 0 else "warn"))
+    cost_v, cost_tone = _kpi(loss_now, measured_cost and loss_now is not None,
+                             tone=("good" if loss_now == 0 else "warn"))
 
     kpis = [
         {"key": "oee", "label": "Plant OEE", "value": oee_v, "unit": "%",
@@ -167,7 +172,10 @@ def build_scorecard(db, tenant: str) -> dict:
         # formatting: ai/report.py, ai/assistant.py and frontend ScorecardStrip.tsx all
         # test it against the currency symbol. It must come from currency.CURRENCY, not a
         # literal, or the strip silently falls through to suffix formatting ("49740£").
-        {"key": "loss_cost", "label": "Cost of losses", "value": cost_v, "unit": CURRENCY,
+        # Without a rate the same KPI is in good units: " units" is a suffix token, so
+        # every consumer's prefix-vs-suffix branch renders "80 units", never a £.
+        {"key": "loss_cost", "label": "Cost of losses" if cost["priced"] else "Losses (good units)",
+         "value": cost_v, "unit": CURRENCY if cost["priced"] else " units",
          "tone": cost_tone, "delta": cost_d, "delta_tone": cost_dt},
     ]
     return {

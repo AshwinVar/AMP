@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { CURRENCY, money } from "./money";
+import { CURRENCY, lossFigure, money } from "./money";
 
 describe("money", () => {
   it("prefixes the currency symbol", () => {
@@ -32,5 +32,26 @@ describe("money", () => {
     // greps for when it checks the two stacks agree.
     expect(typeof CURRENCY).toBe("string");
     expect(CURRENCY.length).toBeGreaterThan(0);
+  });
+});
+
+describe("lossFigure", () => {
+  // ADR-0010: a loss is money only at the tenant's own unit value. The backend
+  // sends cost = null without one, and both null when downtime had no run time to
+  // convert. These cards used to money() a fixed £12/min + £25/unit tariff.
+  it("shows money when the tenant has a unit value", () => {
+    expect(lossFigure(225, 18)).toBe(money(225));
+    expect(lossFigure(0, 18)).toBe(money(0)); // a £0 rate is a real £0
+  });
+
+  it("shows good units, and never the currency, without one", () => {
+    expect(lossFigure(null, 18)).toBe("18 units");
+    expect(lossFigure(undefined, 1)).toBe("1 unit");
+    expect(lossFigure(null, 18)).not.toContain(CURRENCY);
+    expect(lossFigure(null, 0)).toBe("0 units");
+  });
+
+  it("says nothing it cannot know", () => {
+    expect(lossFigure(null, null)).toBe("—");
   });
 });

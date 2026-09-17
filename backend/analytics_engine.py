@@ -3,6 +3,7 @@ from collections import defaultdict
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
+import loss_value
 import models
 import oee_contract
 # Re-exported so existing `from analytics_engine import parse_duration_to_minutes`
@@ -415,16 +416,15 @@ def build_management_summary(machines, downtime_logs, shifts, production_records
 
     # Value the downtime as lost OUTPUT: at the observed run-rate (good units per
     # minute of run time), the downtime would have produced this many good units.
-    estimated_loss_units = round(total_downtime * (good / runtime)) if runtime else 0
-    if unit_value_gbp is not None:
-        # Money = lost units x the tenant's configured £/good-unit. A configured
-        # rate of 0 is a real £0 margin, so it yields £0 — NOT the legacy proxy
-        # below (`is not None`, not truthiness): fabricating a downtime-loss £ for
-        # a tenant whose rate is explicitly zero is the exact thing ADR-0010 bans.
-        estimated_loss_value = round(estimated_loss_units * unit_value_gbp)
-    else:
-        # No rate configured (None) — fall back to the legacy £8/min downtime proxy.
-        estimated_loss_value = total_downtime * 8
+    # The one conversion (loss_value.py) the cost-of-losses cards use too. Downtime
+    # with no run time to convert it is unknown (None), not 0 units.
+    estimated_loss_units = loss_value.whole(
+        loss_value.downtime_units(total_downtime, loss_value.run_rate(good, runtime)))
+    # Money = lost units x the tenant's configured £/good-unit, and nothing without
+    # it. This used to fall back to £8 a minute when no rate was set: a £ the
+    # customer never gave us, on the one card that says "stays units-only until you
+    # set it" (ADR-0010). A configured rate of 0 is a real £0.
+    estimated_loss_value = loss_value.value(estimated_loss_units, unit_value_gbp)
 
     return {
         "avg_oee": avg_oee,

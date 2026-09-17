@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { apiGet } from "../lib/api";
+import { lossFigure } from "../lib/money";
 import type { FactoryCommandCenter, FactoryLayoutNode } from "../lib/phase16-types";
 
 import { statusHue, type StatusHue } from "../lib/utils";
@@ -38,10 +39,10 @@ function oeeStyle(oee?: number | null) {
   return "border-red-500/60 bg-red-500/20 text-red-300";
 }
 
-// Cost heat: hotter (redder) the more a machine cost this week, relative to the worst.
-function costStyle(cost: number, max: number) {
-  if (!cost) return "border-slate-500/60 bg-slate-500/10 text-slate-300";
-  const r = max ? cost / max : 0;
+// Loss heat: hotter (redder) the more a machine lost this week, relative to the worst.
+function costStyle(loss: number, max: number) {
+  if (!loss) return "border-slate-500/60 bg-slate-500/10 text-slate-300";
+  const r = max ? loss / max : 0;
   if (r > 0.66) return "border-red-500/60 bg-red-500/25 text-red-300";
   if (r > 0.33) return "border-orange-500/60 bg-orange-500/20 text-orange-300";
   return "border-yellow-500/60 bg-yellow-500/15 text-yellow-300";
@@ -101,9 +102,11 @@ export default function DigitalTwinSection({
     return { zone, top, height: bottom - top };
   });
 
-  // Overlay: heat the floor map by machine status, OEE, or cost of losses.
+  // Overlay: heat the floor map by machine status, OEE, or losses. A machine's loss
+  // is money only at the tenant's unit value (`cost` is null without one) and good
+  // units always (ADR-0010); the map heats by units, which rank the same either way.
   const [overlay, setOverlay] = useState<Overlay>("status");
-  const [metrics, setMetrics] = useState<{ machine_id: number; oee: number | null; cost: number }[]>([]);
+  const [metrics, setMetrics] = useState<{ machine_id: number; oee: number | null; cost: number | null; lost_units: number | null }[]>([]);
   const loadMetrics = useCallback(async () => {
     try {
       setMetrics((await apiGet<{ machines: typeof metrics }>("/twin-overlay")).machines);
@@ -117,20 +120,25 @@ export default function DigitalTwinSection({
     return () => clearInterval(id);
   }, [loadMetrics]);
   const oeeMap = new Map(metrics.map((m) => [m.machine_id, m.oee]));
-  const costMap = new Map(metrics.map((m) => [m.machine_id, m.cost]));
-  const maxCost = Math.max(1, ...metrics.map((m) => m.cost));
+  const lossMap = new Map(metrics.map((m) => [m.machine_id, m]));
+  const maxLoss = Math.max(1, ...metrics.map((m) => m.lost_units ?? 0));
+  // A machine with no production in the window has no loss row: "—", not a zero.
+  const lossLabel = (machineId?: number) => {
+    const row = machineId == null ? undefined : lossMap.get(machineId);
+    return row ? lossFigure(row.cost, row.lost_units) : "—";
+  };
 
   function nodeStyle(node: FactoryLayoutNode) {
     const m = machineForNode(node);
     if (overlay === "oee") return oeeStyle(m ? oeeMap.get(m.id) : null);
-    if (overlay === "cost") return costStyle((m && costMap.get(m.id)) || 0, maxCost);
+    if (overlay === "cost") return costStyle((m && lossMap.get(m.id)?.lost_units) || 0, maxLoss);
     return statusStyle(statusForNode(node));
   }
 
   const OVERLAYS: { key: Overlay; label: string }[] = [
     { key: "status", label: "Status" },
     { key: "oee", label: "OEE" },
-    { key: "cost", label: "Cost" },
+    { key: "cost", label: "Losses" },
   ];
 
   return (
@@ -261,7 +269,7 @@ export default function DigitalTwinSection({
                     {overlay === "oee" ? (
                       <p>OEE: {machine ? oeeMap.get(machine.id) ?? "—" : "—"}%</p>
                     ) : overlay === "cost" ? (
-                      <p>Cost: ${(machine ? costMap.get(machine.id) ?? 0 : 0).toLocaleString()}</p>
+                      <p>Lost: {lossLabel(machine?.id)}</p>
                     ) : (
                       <>
                         <p>Status: {status}</p>

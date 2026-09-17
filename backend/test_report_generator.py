@@ -65,12 +65,21 @@ def test_zero_loss_renders_a_real_zero():
     assert "Estimated Downtime Loss: £0" in text, text
 
 
-def test_missing_and_none_loss_coalesce_to_zero_pounds():
-    # A hand-built summary that omits the key, and one that sets it None, must both
-    # render "£0" rather than KeyError / "£None" / a money(None) crash.
-    assert "Estimated Downtime Loss: £0" in build_daily_summary_text({}, [], [])
-    assert "Estimated Downtime Loss: £0" in build_daily_summary_text(
-        {"estimated_loss_value": None}, [], [])
+def test_no_unit_value_prints_units_and_never_a_pound():
+    # No unit value set (ADR-0010): the summary carries lost units and a None value.
+    # This used to print "£0" -- or, before that, £8 a minute the customer never set.
+    text = build_daily_summary_text({"estimated_loss_value": None, "estimated_loss_units": 133}, [], [])
+    assert "Estimated Downtime Loss: 133 good units" in text, text
+    assert "£" not in text.split("Estimated Downtime Loss:")[1].splitlines()[0], text
+
+
+def test_missing_and_unknown_loss_say_unknown_not_zero():
+    # A hand-built summary that omits both keys, or downtime with no run time to
+    # convert (units None), is not a £0 loss. It must not KeyError or print "£None".
+    for summary in ({}, {"estimated_loss_value": None, "estimated_loss_units": None}):
+        text = build_daily_summary_text(summary, [], [])
+        assert "Estimated Downtime Loss: unknown" in text, text
+        assert "£0" not in text and "None" not in text, text
 
 
 def test_empty_summary_uses_honest_defaults():
@@ -129,7 +138,8 @@ if __name__ == "__main__":
     test_large_loss_value_gets_every_thousands_separator()
     test_loss_value_matches_the_shared_money_helper()
     test_zero_loss_renders_a_real_zero()
-    test_missing_and_none_loss_coalesce_to_zero_pounds()
+    test_no_unit_value_prints_units_and_never_a_pound()
+    test_missing_and_unknown_loss_say_unknown_not_zero()
     test_empty_summary_uses_honest_defaults()
     test_empty_shift_kpis_and_alerts_render_placeholders()
     test_shift_kpis_render_each_row()

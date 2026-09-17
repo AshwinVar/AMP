@@ -23,6 +23,8 @@ def _fresh_session():
 def test_weekly_report_composes_a_markdown_page():
     db = _fresh_session()
     now = datetime.utcnow()
+    # A unit value, so the Cost of losses section is in £ (ADR-0010: no rate, no £).
+    db.add(models.TenantConfig(tenant_code="DEFAULT", plan="Pro", unit_value_gbp=45))
     db.add(models.Machine(id=1, name="SMT-Reflow-01", status="Breakdown", utilization=0, line="SMT"))
     db.add(models.ProductionRecord(machine_id=1, planned_minutes=480, runtime_minutes=440,
                                    ideal_cycle_time_seconds=30, total_count=100, good_count=90,

@@ -64,11 +64,19 @@ def check(label, condition, detail=""):
           + (f"   [{detail}]" if detail and not condition else ""))
 
 
+# The tenant's own margin per good unit. Without one there is no £ to reconcile
+# (ADR-0010: units only), so every section below prices at this rate.
+UNIT_VALUE = 2
+
+
 def _session():
     engine = create_engine("sqlite://", connect_args={"check_same_thread": False},
                            poolclass=StaticPool)
     Base.metadata.create_all(engine)
-    return sessionmaker(bind=engine)()
+    db = sessionmaker(bind=engine)()
+    db.add(models.TenantConfig(tenant_code="DEFAULT", plan="Pro", unit_value_gbp=UNIT_VALUE))
+    db.commit()
+    return db
 
 
 def _machine(db):
@@ -165,16 +173,19 @@ def main():
     _run(db, m.id, datetime.utcnow() - timedelta(days=2),
          runtime=480, total=100, good=100)
     summary = build_cost_summary(db, "DEFAULT", now=window.end)
-    # Derived independently from the records, not from the payload.
-    # Rates read from the module, not retyped: a hardcoded rate makes this check
-    # fail (or, worse, pass) for a reason that has nothing to do with windows.
-    from ai.cost import DOWNTIME_COST_PER_MIN, SCRAP_COST_PER_UNIT
-    expected = 0
-    for r in db.query(models.ProductionRecord).all():
-        if window.start <= r.created_at < window.end:
-            expected += (max(0, (r.planned_minutes or 0) - (r.runtime_minutes or 0))
-                         * DOWNTIME_COST_PER_MIN)
-            expected += (r.rejected_count or 0) * SCRAP_COST_PER_UNIT
+    # Derived independently from the records, not from the payload: downtime
+    # minutes at the window's pooled run rate, plus scrap, each at the tenant's
+    # unit value, rounded half up. Fixture: 480 min down, 100 good in 480 run
+    # minutes, 1000 scrapped -> 100 + 1000 units -> £200 + £2,000.
+    import math
+    in_window = [r for r in db.query(models.ProductionRecord).all()
+                 if window.start <= r.created_at < window.end]
+    down = sum(max(0, (r.planned_minutes or 0) - (r.runtime_minutes or 0)) for r in in_window)
+    run_rate = sum(r.good_count for r in in_window) / sum(r.runtime_minutes for r in in_window)
+    down_units = math.floor(down * run_rate + 0.5)
+    scrap = sum(r.rejected_count or 0 for r in in_window)
+    expected = math.floor(down_units * UNIT_VALUE + 0.5) + math.floor(scrap * UNIT_VALUE + 0.5)
+    check("...the independent derivation is the hand-worked £2,200", expected == 2200, str(expected))
     check(f"loss_cost still pools the whole rolling window "
           f"({summary['loss_cost']} vs {expected} derived)",
           summary["loss_cost"] == expected,
@@ -209,7 +220,7 @@ def main():
     m = _machine(db)
     midnight = datetime.combine(datetime.utcnow().date(), datetime.min.time())
     win = oee_contract.OeeWindow(7, now=midnight)
-    _run(db, m.id, win.start + timedelta(hours=3))
+    _run(db, m.id, win.start + timedelta(hours=3), runtime=240, total=500, good=400)
     summary = build_cost_summary(db, "DEFAULT", now=midnight)
     check(f"a midnight window draws 7 bars ({len(summary['daily'])})",
           len(summary["daily"]) == 7, str([d["date"] for d in summary["daily"]]))

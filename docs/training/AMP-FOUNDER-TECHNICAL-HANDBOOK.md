@@ -925,6 +925,9 @@ The concrete engine hides behind the function, so "rules → ML → LLM" can cha
 | **insights** | open recommendations + notable events + proposed agent actions → one time-sorted feed | Mission Control | `ai/insights.py` |
 | **impact** | GROUP BY on `agent_actions` → outputs produced, auto-approval rate, backlog | agent oversight | `ai/impact.py` |
 | **oee / losses / recovery** | production records → pooled OEE + loss breakdown + £ recovery prize | Executive OEE, scorecard | `ai/oee.py`, `analytics_engine.py` |
+| **cost** (cost of losses + trend) | production records → **good units not made** (scrap, plus downtime at the observed run rate), valued in £ **only at the tenant's unit value**; every row sums to its headline | Cost cards, scorecard, weekly report, twin map | `ai/cost.py`, `loss_value.py` |
+
+> **Fixed, 2026-09.** Until then every tenant's losses were priced at a fixed £12 per downtime minute and £25 per scrapped unit, and the management summary used £8 a minute when no rate was set. None of these numbers came from the customer. ADR-0010's rule ("unset means units-only, never a fabricated £") now holds on every surface: without a unit value the cards show good units, and the only £ is the tenant's own rate times those units. See the ADR-0010 addendum.
 | **Pillar family** (windowed SQL aggregations) | downtime/reliability (MTBF/MTTR), quality, production, inventory/coverage/stock_health, delivery, cost, maintenance, compliance, escalations, workforce, connectivity, trace, scorecard, briefing, handover | each pillar's dashboard | `ai/<name>.py` |
 
 ### Diagram

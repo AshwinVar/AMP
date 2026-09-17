@@ -43,3 +43,12 @@ def signed_money(n) -> str:
     strings read exactly as before apart from the symbol.
     """
     return f"{CURRENCY}{n:+,}"
+
+
+def unit_rate(n) -> str:
+    """Format a per-unit rate, keeping pence when it has them: unit_rate(12) ->
+    '£12', unit_rate(2.5) -> '£2.50'. A tenant's unit value is a Float column, and
+    money() would print 2.5 as '£2.5'."""
+    if float(n).is_integer():
+        return money(int(n))
+    return f"{CURRENCY}{n:,.2f}"

@@ -277,6 +277,20 @@ def test_capabilities_are_enforced_per_role():
     check("an engineer can commission but not manage users",
           "commission" in caps["OEM_SERVICE_ENGINEER"]
           and "manage_users" not in caps["OEM_SERVICE_ENGINEER"])
+    # ADR-0020 service contracts: everybody at the manufacturer may read a
+    # contract; drafting, amending, computing and disputing is service
+    # management; binding the company (propose, withdraw, accept a statement,
+    # terminate) is the administrator's alone.
+    check("every OEM role may read service contracts",
+          {r for r, v in caps.items() if "read_contracts" in v} == set(oem_auth.OEM_ROLES),
+          str({r for r, v in caps.items() if "read_contracts" in v}))
+    check("only OEM_ADMIN and OEM_SERVICE_MANAGER manage service contracts",
+          {r for r, v in caps.items() if "manage_contracts" in v}
+          == {"OEM_ADMIN", "OEM_SERVICE_MANAGER"},
+          str({r for r, v in caps.items() if "manage_contracts" in v}))
+    check("only OEM_ADMIN signs service contracts",
+          {r for r, v in caps.items() if "sign_contracts" in v} == {"OEM_ADMIN"},
+          str({r for r, v in caps.items() if "sign_contracts" in v}))
     check("no OEM role is a factory role",
           all(r.startswith("OEM_") for r in caps))
     check("the factory role strings grant nothing here",

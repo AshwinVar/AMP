@@ -397,8 +397,7 @@ def contract_view(db, party, contract, now=None):
         "terminated_by": contract.terminated_by,
         "termination_reason": contract.termination_reason,
         "updated_at": _ts(contract.updated_at),
-        "downtime_shared": oem_sharing.SHARE_DOWNTIME in oem_sharing.grants_for(
-            db, contract.oem_code, contract.factory_tenant_code),
+        "downtime_shared": oem_sharing.contract_statement_visible(db, contract),
         "versions": [version_view(v) for v in _versions(db, contract.id)
                      if _version_visible(v, party)],
     })

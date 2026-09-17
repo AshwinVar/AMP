@@ -160,6 +160,28 @@ def case_a_factory_amendment_needs_the_oem():
     check("its author withdrawing it records 'withdrawn', not 'rejected'",
           w.status == 200 and w.body.get("status") == "withdrawn", w)
 
+    # The OEM accepting the FACTORY's amendment runs the coverage checks from an
+    # OEM request, whose ambient tenant is the OEM sentinel: the machine lookup
+    # must still read the factory's floor, or every such acceptance fails.
+    r = _amend(cid, ps[4]["start"], oem=False, sla_target_pct="98.00")
+    v, h = r.body["version"], r.body["terms_hash"]
+    p = POST(f"/service-contracts/{cid}/amendments/{v}/propose", TOKENS["fa"],
+             {"terms_hash": h})
+    a = POST(f"/oem/contracts/{cid}/amendments/{v}/accept", TOKENS["alpha"],
+             {"terms_hash": h})
+    check("the OEM admin accepts a factory-proposed amendment", p.status == 200
+          and a.status == 200 and a.body.get("status") == "accepted"
+          and a.body.get("oem_accepted_hash") == h == a.body.get("factory_accepted_hash"),
+          (p, a))
+    with H.unscoped() as db:
+        vr = db.query(models.ServiceContractTermVersion).filter_by(contract_id=cid,
+                                                                   version=v).one()
+        snap = sorted((x.serial_number, x.machine_id_at_acceptance)
+                      for x in db.query(models.ServiceContractMachine)
+                      .filter_by(term_version_id=vr.id).all())
+    check("...snapshotting the factory's machines as the OEM accepted them",
+          snap == [("SN-A1", S["machines"]["A1"]), ("SN-A2", S["machines"]["A2"])], snap)
+
 
 def case_an_agreed_statement_is_not_amended_away():
     section("3. NO AMENDMENT MAY PREDATE AN AGREED STATEMENT")

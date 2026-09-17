@@ -57,6 +57,7 @@ import json
 import re
 from dataclasses import dataclass
 from datetime import datetime, timedelta
+from types import SimpleNamespace
 
 from fastapi import HTTPException, Response
 from sqlalchemy import and_, or_, update
@@ -96,6 +97,10 @@ GRID_FIELDS = ("currency", "period_months", "timezone", "term_months")
 VOCABULARY_LOOKBACK_DAYS = 90
 
 MAX_LIST = 500
+# Every id column here is an INTEGER. A path id beyond it is not a row that
+# might exist: on SQLite binding it raises OverflowError (a 500), and it must
+# get exactly the answer a missing row gets, so it is refused before any query.
+MAX_ROW_ID = 2 ** 31 - 1
 MAX_HISTORY = 1000
 # One contract covers a customer's fleet of one manufacturer's machines, not a
 # catalogue. Each covered installation costs queries at every acceptance, so an
@@ -146,6 +151,11 @@ class Party:
         if self.side == OEM:
             return f"oem:{self.oem_code}:{self.actor}"
         return self.actor
+
+    def for_engine(self):
+        """What compute_statement records as the computing party: the side, and
+        the same actor label every other contract audit row carries."""
+        return SimpleNamespace(side=self.side, actor=self.audit_actor)
 
     def audit_tenant(self):
         """The tenant this party's own audit rows and history live in."""
@@ -249,13 +259,22 @@ def _contract_query(db, party):
                     models.ServiceContract.status != DRAFT)
 
 
+def _row_id(value):
+    """An id that could be a row: an int in 1..MAX_ROW_ID (bool is not an id)."""
+    return type(value) is int and 1 <= value <= MAX_ROW_ID
+
+
 def get_contract(db, party, contract_id):
     """The contract if this party may see it, else None (-> one 404)."""
+    if not _row_id(contract_id):
+        return None
     return (_contract_query(db, party)
             .filter(models.ServiceContract.id == contract_id).first())
 
 
 def require_contract(db, party, contract_id, *, for_update=False):
+    if not _row_id(contract_id):
+        raise Refused(404, NOT_FOUND)
     q = _contract_query(db, party).filter(models.ServiceContract.id == contract_id)
     if for_update:
         q = q.with_for_update()
@@ -928,6 +947,8 @@ def draft_amendment(db, party, contract_id, body):
 
 
 def _require_version(db, party, contract, number):
+    if not _row_id(number):
+        raise Refused(404, "Amendment not found")
     version = _version(db, contract.id, number)
     if version is None or version.version == 1 or not _version_visible(version, party):
         raise Refused(404, "Amendment not found")
@@ -1081,6 +1102,8 @@ def _require_binding(contract):
 
 
 def require_statement(db, contract, statement_id):
+    if not _row_id(statement_id):
+        raise Refused(404, "Statement not found")
     st = (db.query(models.ContractStatement)
             .filter(models.ContractStatement.id == statement_id,
                     models.ContractStatement.contract_id == contract.id).first())
@@ -1106,7 +1129,7 @@ def _run_compute(db, party, contract, period_start, now, *, allow_expired=False)
     try:
         with oem_sharing.bound_factory_read(contract.factory_tenant_code):
             result = engine.compute_statement(db, contract, period_start,
-                                              party=party, now=now)
+                                              party=party.for_engine(), now=now)
     except engine.PeriodNotClosed as e:
         db.rollback()
         raise Refused(409, {"message": "This period has not closed yet; statements "
@@ -1326,6 +1349,8 @@ def _bucket(value, field):
 
 
 def require_dispute(db, contract, dispute_id):
+    if not _row_id(dispute_id):
+        raise Refused(404, "Dispute not found")
     d = (db.query(models.ContractDispute)
            .filter(models.ContractDispute.id == dispute_id,
                    models.ContractDispute.contract_id == contract.id).first())
@@ -1346,6 +1371,11 @@ def raise_dispute(db, party, contract_id, statement_id, body):
     window_end = parse_ts(body.window_end, "window_end")
     if window_end <= window_start:
         raise Refused(422, {"field": "window_end", "message": "must be after window_start"})
+    if not _row_id(body.installation_id):
+        raise Refused(422, {"field": "installation_id",
+                            "message": "is not covered by the terms of this statement"})
+    if not _row_id(statement_id):
+        raise Refused(404, "Statement not found")
     engine = _engine()
     # Serialise dispute writers on the statement row (a no-op lock on SQLite,
     # whose writes are serialised anyway).
@@ -1459,7 +1489,8 @@ def _after_dispute(db, party, contract, dispute, now, action, details, event=Non
     db.commit()
     db.refresh(dispute)
     ref = _statement_ref(st) if st is not None else None
-    if ref is not None and party.side == OEM             and not oem_sharing.contract_statement_visible(db, contract):
+    if (ref is not None and party.side == OEM
+            and not oem_sharing.contract_statement_visible(db, contract)):
         # Withdrawing one's own dispute needs no consent; learning the revised
         # statement's hash does. The revision number is the contract's, the
         # hash is a fingerprint of the factory's data.

@@ -302,6 +302,26 @@ def case_an_unlinked_machine_cannot_be_covered():
           _count(models.ServiceContractMachine) == 2)
     check("...and consent was not touched", H.grants() == before)
 
+    # Bad data: the installation claims a machine that belongs to ANOTHER
+    # factory. The link is not this factory's machine, so it covers nothing.
+    with H.unscoped() as db:
+        inst = db.query(models.MachineInstallation).filter_by(id=S["inst"]["SN-A3"]).one()
+        inst.machine_id = S["machines"]["AB"]
+        db.commit()
+    try:
+        r = H.draft(serials=("SN-A3",), start_offset=-3)
+        H.propose(r.body["id"])
+        a = H.factory_accept(r.body["id"])
+        check("an installation pointing at another factory's machine is not linked (409)",
+              a.status == 409 and "SN-A3" in str(a.body), a)
+        check("...and no coverage rows were written",
+              _count(models.ServiceContractMachine) == 2)
+    finally:
+        with H.unscoped() as db:
+            inst = db.query(models.MachineInstallation).filter_by(id=S["inst"]["SN-A3"]).one()
+            inst.machine_id = None
+            db.commit()
+
 
 def case_one_machine_one_contract_at_a_time():
     section("6. ONE MACHINE, ONE CONTRACT AT A TIME")

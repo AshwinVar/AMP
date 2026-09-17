@@ -81,6 +81,9 @@ def case_computing_is_bounded_and_idempotent():
     check("the first compute was audited once per party, the no-op not at all",
           len(rows) - audits_before == 2
           and sorted(x[0] for x in rows[audits_before:]) == ["FACTORY_A", SENTINEL_A], rows)
+    check("...naming the OEM's service manager the way every contract audit row does",
+          {x[5] for x in rows[audits_before:]} == {"oem:OEM_ALPHA:alpha_mgr"},
+          [x[5] for x in rows[audits_before:]])
     notes = [n[0] for n in H.notifications() if n[1] == "statement_computed"]
     check("both parties are told a statement was computed",
           sorted(notes) == ["FACTORY_A", SENTINEL_A], notes)
@@ -211,6 +214,52 @@ def case_expired_evidence_does_not_block_acceptance():
     check("...and the statement is agreed", _statement(cid, st["id"]).body.get("agreed") is True)
 
 
+def case_rule_disputed_time_is_cleared_by_a_dispute():
+    section("5. TIME THE RULES MADE DISPUTED BLOCKS ACCEPTANCE UNTIL A DISPUTE SETTLES IT (C12)")
+    cid = H.active_contract(serials=("SN-A2",), start_offset=-4)
+    ps = H.periods(cid)
+    p0s, p0e = H.parse_ts(ps[0]["start"]), H.parse_ts(ps[0]["end"])
+    off_s = p0s + timedelta(days=5)
+    off_e = off_s + timedelta(hours=1)
+    mid = S["machines"]["A2"]
+    H.add_span("FACTORY_A", mid, p0s, off_s)
+    # "Offline" defaults to DISPUTED in the terms: nobody's fault until agreed.
+    H.add_span("FACTORY_A", mid, off_s, off_e, status="Offline")
+    H.add_span("FACTORY_A", mid, off_e, p0e + timedelta(days=1))
+    r = H.compute(cid, ps[0]["start"], oem=False)
+    st = r.body["statement"]
+    body = _statement(cid, st["id"], oem=False).body
+    sla = (body.get("content") or {}).get("sla", {})
+    check("an hour Offline makes the statement pending_disputes",
+          sla.get("state") == "pending_disputes", sla)
+    a = H.accept_statement(cid, st["id"], st["content_hash"], st["revision"])
+    check("a pending_disputes statement cannot be accepted, though no dispute is open",
+          a.status == 409 and "DISPUTED" in str(a.body), a)
+    check("...and nothing was inserted", _acceptance_count(st["id"]) == 0)
+
+    fmt = "%Y-%m-%dT%H:%M:%SZ"
+    d = POST(f"/service-contracts/{cid}/statements/{st['id']}/disputes", TOKENS["fa"],
+             {"installation_id": S["inst"]["SN-A2"], "window_start": off_s.strftime(fmt),
+              "window_end": off_e.strftime(fmt), "reason": "planned power shutdown",
+              "proposed_bucket": "FACTORY"})
+    check("the factory raises a dispute over exactly that hour", d.status == 200, d)
+    did = d.body["dispute"]["id"]
+    p = POST(f"/service-contracts/{cid}/disputes/{did}/propose-resolution", TOKENS["fa"],
+             {"resolution_bucket": "FACTORY", "note": "our shutdown"})
+    ok = POST(f"/oem/contracts/{cid}/disputes/{did}/accept-resolution", TOKENS["alpha"],
+              {"resolution_bucket": "FACTORY"})
+    check("the factory proposes FACTORY and the OEM accepts", p.status == 200
+          and ok.status == 200, (p, ok))
+    body = _statement(cid, st["id"], oem=False).body
+    sla = body["content"]["sla"]
+    check("the recomputed statement is no longer pending_disputes",
+          sla.get("state") in ("met", "breached"), sla)
+    a = H.accept_statement(cid, st["id"], body["content_hash"], body["revision"])
+    f = H.accept_statement(cid, st["id"], body["content_hash"], body["revision"], oem=False)
+    check("...and both parties can now accept it", a.status == 200 and f.status == 200
+          and f.body.get("agreed") is True, (a, f))
+
+
 def run_all():
     H.boot()
     H.seed()
@@ -218,6 +267,7 @@ def run_all():
     case_an_acceptance_names_what_the_party_saw()
     case_open_disputes_block_acceptance()
     case_expired_evidence_does_not_block_acceptance()
+    case_rule_disputed_time_is_cleared_by_a_dispute()
 
 
 def test_contract_acceptance():

@@ -230,6 +230,26 @@ def case_ids_belong_to_their_contract():
              {"content_hash": S["st"]["content_hash"], "revision": S["st"]["revision"]})
     check("accepting another contract's statement through this one: 404", r.status == 404, r)
 
+    # Ids no INTEGER column can hold get the missing-row answer, never a 500.
+    huge = 10 ** 30
+    missing = GET("/oem/contracts/999999", TOKENS["alpha"])
+    for path in (f"/oem/contracts/{huge}", f"/oem/contracts/{cid}/statements/{huge}",
+                 f"/service-contracts/{huge}/history"):
+        tok = TOKENS["fa"] if path.startswith("/service") else TOKENS["alpha"]
+        r = GET(path, tok)
+        check(f"{path.replace(str(huge), 'HUGE')}: 404, no server error", r.status == 404, r)
+    r = GET(f"/oem/contracts/{huge}", TOKENS["alpha"])
+    check("...worded exactly like a missing contract", r.body == missing.body, r)
+    ws = H.parse_ts(S["ps"][1]["start"]) + timedelta(days=20)
+    r = POST(f"/service-contracts/{cid}/statements/{S['st']['id']}/disputes", TOKENS["fa"],
+             {"installation_id": huge, "window_start": ws.strftime(FMT),
+              "window_end": (ws + timedelta(hours=1)).strftime(FMT), "reason": "x",
+              "proposed_bucket": "OEM"})
+    check("a dispute naming a HUGE installation id: 422, no server error", r.status == 422, r)
+    r = POST(f"/oem/contracts/{cid}/amendments/{huge}/accept", TOKENS["alpha"],
+             {"terms_hash": S["hash"]})
+    check("an amendment version no column can hold: 404", r.status == 404, r)
+
 
 def case_founder_preview():
     section("5. THE FOUNDER'S SWITCHER: ADMIN ONLY, NEVER AT AN OEM SENTINEL")

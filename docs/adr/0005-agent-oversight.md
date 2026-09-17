@@ -45,3 +45,15 @@ Introduce an **agent oversight layer**: agents **propose**, a human **approves**
 
 1. **PR #16 (this ADR):** `AgentAction`; agents propose + log; approve/reject endpoints; Mission Control Approve/Reject; BOM → `InventoryLow`. Unit-tested + boot/login smoke.
 2. Later: auto-approve policy for trusted low-risk actions; an agent-activity view beyond the live feed; per-agent enable/disable.
+
+## Note (2026-09-17): the pending item is held, not just logged
+
+"Nothing an agent does takes effect until a human says so" was true of the
+decision endpoints only: the ordinary CRUD routes could still move, receive
+against or delete a `Proposed` task, `Draft` PO or `Proposed` escalation, and a
+later decision then recorded against an item that never moved. Since the
+ADR-0015 addendum an undecided proposal **holds** its item: every PATCH and
+DELETE on it is refused (409) until an Admin or Supervisor approves or rejects
+it, and no decision is recorded unless the item moves with it. The hold applies
+only where the tenant's plan includes the decision API (the Intelligence Pack);
+see ADR-0015 for the open question about agents proposing elsewhere.

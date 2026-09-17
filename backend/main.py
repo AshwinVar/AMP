@@ -32,6 +32,8 @@ import schemas
 import connected_equipment_routes
 import oem_routes
 import oem_admin_routes
+import oem_contract_routes
+import service_contract_routes
 import tenancy
 import ws_auth
 import sim_state
@@ -444,6 +446,14 @@ app.include_router(connected_equipment_routes.router)
 # done TO one, and an organisation that could create or reactivate itself is not
 # an organisation the platform controls.
 app.include_router(oem_admin_routes.router)
+
+# Register service contracts with agreed downtime attribution (ADR-0020), from
+# both sides: /oem/contracts for the manufacturer (require_oem) and
+# /service-contracts for the factory (require_roles). Both are thin over
+# service_contracts, so the two parties cannot see two versions of one rule.
+# AMP computes the statements; it never invoices or moves money.
+app.include_router(oem_contract_routes.router)
+app.include_router(service_contract_routes.router)
 
 # Register the AI Factory Copilot behind the platform (off until ANTHROPIC_API_KEY is set).
 ai.copilot.register(app)

@@ -30,8 +30,10 @@ for data the sharing policy withholds.
 import models
 import oem_auth
 from events import event_bus
-from oem_events import (MachineClaimed, MachineCommissioned, MachineInstalled,
-                        ServiceCompleted)
+from oem_events import (AmendmentProposed, ContractAccepted, ContractProposed,
+                        CoverageEnded, DisputeRaised, DisputeResolved,
+                        MachineClaimed, MachineCommissioned, MachineInstalled,
+                        ServiceCompleted, StatementAgreed, StatementComputed)
 
 
 def _notify(db, tenant_code, kind, severity, title, message):
@@ -122,9 +124,109 @@ def notify_both_parties_of_claim(event: MachineClaimed, db) -> None:
     )
 
 
+# ── Service contracts (ADR-0020) ──────────────────────────────────────
+#
+# A contract has two parties and every step waits on one of them, so every
+# notification goes to BOTH: once in the factory's tenant, once in the
+# manufacturer's sentinel tenant, exactly as a claim does.
+#
+# The message names the contract, the period and what happened. It never
+# carries a total, an availability, a credit or a reason: an OEM notification
+# is readable whether or not the factory still shares downtime, so a figure in
+# it would outlive a withdrawal of consent.
+
+
+def _notify_both(db, event, kind, title, message):
+    _notify(db, event.tenant_code, kind, "Info", title, message)
+    _notify(db, oem_auth.sentinel_tenant(event.oem_code), kind, "Info", title,
+            message)
+
+
+def notify_contract_proposed(event: ContractProposed, db) -> None:
+    _notify_both(
+        db, event, "contract_proposed",
+        f"Service contract {event.contract_ref} proposed",
+        f"{event.oem_code} proposed service contract {event.contract_ref}"
+        + (f" ({event.title})" if event.title else "")
+        + f" to {event.tenant_code}. Nothing is measured until "
+          f"{event.tenant_code} accepts the terms.")
+
+
+def notify_contract_accepted(event: ContractAccepted, db) -> None:
+    _notify_both(
+        db, event, "contract_accepted",
+        f"Service contract {event.contract_ref} accepted",
+        f"{event.tenant_code} accepted service contract {event.contract_ref} "
+        f"from {event.oem_code}, covering {event.installations} machine(s), and "
+        "agreed to share downtime for the attribution statements. Sharing can "
+        "be withdrawn under Connected Equipment.")
+
+
+def notify_amendment_proposed(event: AmendmentProposed, db) -> None:
+    _notify_both(
+        db, event, "amendment_proposed",
+        f"Amendment {event.version} to {event.contract_ref} proposed",
+        f"{event.proposed_by_party} proposed version {event.version} of the "
+        f"terms of {event.contract_ref}, effective {event.effective_from}. It "
+        "applies only when the other party accepts the same terms.")
+
+
+def notify_statement_computed(event: StatementComputed, db) -> None:
+    _notify_both(
+        db, event, "statement_computed",
+        f"{event.contract_ref}: statement for {event.period_start[:10]} updated",
+        f"The downtime attribution statement for {event.contract_ref}, period "
+        f"starting {event.period_start}, is now at revision {event.revision}. "
+        "Any earlier acceptance no longer counts.")
+
+
+def notify_statement_agreed(event: StatementAgreed, db) -> None:
+    _notify_both(
+        db, event, "statement_agreed",
+        f"{event.contract_ref}: statement for {event.period_start[:10]} agreed",
+        f"Both parties accepted revision {event.revision} of the downtime "
+        f"attribution statement for {event.contract_ref}, period starting "
+        f"{event.period_start}. It is now final.")
+
+
+def notify_dispute_raised(event: DisputeRaised, db) -> None:
+    _notify_both(
+        db, event, "dispute_raised",
+        f"{event.contract_ref}: dispute #{event.dispute_id} raised",
+        f"{event.raised_by_party} disputed part of a downtime attribution "
+        f"statement under {event.contract_ref}. The statement cannot be agreed "
+        "until the dispute is resolved or withdrawn.")
+
+
+def notify_dispute_resolved(event: DisputeResolved, db) -> None:
+    _notify_both(
+        db, event, "dispute_resolved",
+        f"{event.contract_ref}: dispute #{event.dispute_id} resolved",
+        f"Both parties agreed how the disputed window under {event.contract_ref} "
+        "is attributed. The statement has been recomputed and must be accepted "
+        "again.")
+
+
+def notify_coverage_ended(event: CoverageEnded, db) -> None:
+    _notify_both(
+        db, event, "coverage_ended",
+        f"{event.contract_ref}: coverage of {event.serial_number} ended",
+        f"Machine {event.serial_number} is no longer linked to the machine "
+        f"{event.contract_ref} was accepted for (at {event.coverage_ended_at}). "
+        "Covered time from then on is reported as No data.")
+
+
 def register(bus=event_bus) -> None:
     """Wire the OEM subscribers. Called once at startup, beside subscribers.register."""
     bus.subscribe(MachineInstalled, notify_factory_of_installation)
     bus.subscribe(MachineCommissioned, notify_factory_of_commissioning)
     bus.subscribe(ServiceCompleted, notify_factory_of_service)
     bus.subscribe(MachineClaimed, notify_both_parties_of_claim)
+    bus.subscribe(ContractProposed, notify_contract_proposed)
+    bus.subscribe(ContractAccepted, notify_contract_accepted)
+    bus.subscribe(AmendmentProposed, notify_amendment_proposed)
+    bus.subscribe(StatementComputed, notify_statement_computed)
+    bus.subscribe(StatementAgreed, notify_statement_agreed)
+    bus.subscribe(DisputeRaised, notify_dispute_raised)
+    bus.subscribe(DisputeResolved, notify_dispute_resolved)
+    bus.subscribe(CoverageEnded, notify_coverage_ended)

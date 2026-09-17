@@ -243,7 +243,7 @@ const REQUIREMENT_LABELS: Record<string, string> = {
 };
 
 export type AnomalyView = {
-  kind: "consent_required" | "insufficient_history" | "unavailable" | "scored" | "error";
+  kind: "consent_required" | "preview_not_allowed" | "insufficient_history" | "unavailable" | "scored" | "error";
   /** Experimental scores are NEVER an alert; only an adopted evaluation could make one. */
   alert: false;
   text: string;
@@ -272,6 +272,16 @@ export function describeAnomalyError(error: unknown): AnomalyView {
       kind: "consent_required",
       alert: false,
       text: "Learning from telemetry is off for this company. An Admin can turn it on under AI learning consent.",
+      detail: typeof body.reason === "string" ? body.reason : null,
+    };
+  }
+  if (status === 403 && body?.code === "learning_not_from_preview") {
+    // A founder previewing a customer: the customer's consent covers its own
+    // Admins and Supervisors, so the check does not run from a preview at all.
+    return {
+      kind: "preview_not_allowed",
+      alert: false,
+      text: "The anomaly check learns from this company's telemetry, so it does not run from a platform preview.",
       detail: typeof body.reason === "string" ? body.reason : null,
     };
   }

@@ -122,16 +122,30 @@ anomaly check fits one machine's normal range from its own last 14 days.
   BEFORE consulting the gate, so another tenant's machine id reveals nothing about
   consent. Without consent it raises `ConsentRequired` and reads no telemetry; the
   route answers 403 `{code: "learning_consent_required", capability, reason}`.
-- **Founder preview cannot consent.** A platform Admin previewing a customer
-  (X-Tenant) may read the page, but the PUT refuses when the effective tenant
+- **Founder preview cannot consent, and cannot learn.** A platform Admin previewing a
+  customer (X-Tenant) may read the page, but the PUT refuses when the effective tenant
   differs from the token's tenant claim. Consent to learn from a company's data is
   that company's decision. The founder's own DEFAULT workspace may consent for itself.
+  The same test refuses the learning step itself: what an Admin agrees to is the
+  company's OWN Admins and Supervisors opening the anomaly check (the consent text
+  says so), so from a preview `GET /ai/native/anomaly/machines/{id}` answers 403
+  `{code: "learning_not_from_preview"}` before the consent row or any telemetry is
+  read. Failure risk learns nothing and answers in a preview like any factory read.
 - `/ai-consent` is not under `/ai/`, so the API is not plan-gated: a downgraded tenant
   can still see and withdraw consent. **Known gap:** the consent card is rendered in
   Agent Activity, which the UI shows only with the Intelligence Pack, so today a
   downgraded tenant withdraws through the API (or support) until the card is also
   placed in an always-open view.
-- Offboarding purges consent rows (they carry `tenant_code`) and keeps the audit trail.
+- Offboarding with `?purge=true` purges consent rows (they carry `tenant_code`) and
+  keeps the audit trail. Deleting a company from the registry WITHOUT purge also
+  deletes its consent rows (`consent.remove_for_company`), in the same commit as the
+  registry row and with one `ai.learning_consent.removed_with_company` audit record
+  per row: a delete without purge leaves the tenant's other rows behind and the code
+  can be registered again for a different company, which never opted in. (Those
+  other leftover rows are a pre-existing problem outside this ADR.)
+- The consent history cannot be written by hand: `POST /audit-logs` answers 400 for
+  any action in `ai.learning_consent.*` or entity type `ai_learning_consent` (case
+  and padding ignored), so every record there was written by `amp_ai.consent`.
 
 ### 6. No persistence of tenant baselines; windows kept apart
 
@@ -156,9 +170,17 @@ engine is `rules` and every `/copilot/ask` answer is exactly the keyword router'
 ### 8. What is not a source
 
 OEM telemetry is not stored by AMP (ADR-0017), so it cannot feed a baseline.
-`industrial_signals` rows count only with `quality == "Good"`, and their
-`machine_id` is copied from the device's link when written, so relinking a device
-does not move its history.
+`industrial_signals` rows count only with `quality == "Good"`, and only by the
+`machine_id` stored on the row, which is set when the row is written, so
+relinking a device does not move its history. Where that id comes from depends on
+the write path: the demo adapters (`industrial_adapters.py`) copy the device's
+`linked_machine_id`, but `POST /industrial/signals` stores `machine_id` (and
+`quality`, default "Good") straight from the request body, without checking that
+the device is linked to that machine. Other tenants' rows are still excluded (the
+loader filters `tenant_code` explicitly), but **within a tenant any Admin or
+Supervisor can post "Good" readings for any machine from any device, and those
+readings feed that machine's consented baseline.** The loader does not yet require
+`machine_id` to equal the device's `linked_machine_id`; that is an open item.
 
 ## Consequences
 
@@ -175,8 +197,15 @@ does not move its history.
   suites are reported beside each result, but only real-plant data can confirm them.
 - Per-request cost: failure risk loads 120 days of history for every machine and
   re-verifies its artifact; the anomaly check reads up to 50k telemetry rows. Both
-  are rate limited (`RATE_LIMIT_AI`, bucketed by route prefix, so walking machine
-  ids does not buy a fresh budget), and so are the model cards.
+  are rate limited (`RATE_LIMIT_AI`), and so are the model cards. The bucket is the
+  route prefix AND the verified token's principal (`http_security.PRINCIPAL_KEYED_PREFIXES`),
+  not the client address: walking machine ids or sending a new X-Forwarded-For does
+  not buy a fresh budget, and a request without a validly signed token is not
+  counted (authentication refuses it before any work), so a stranger who knows a
+  factory's address cannot spend its users' budget. A single user who holds a valid
+  token is limited per instance only (one uvicorn worker today). `/ai/ask`,
+  `/ai/report` and `/copilot/ask` still key on the left-most X-Forwarded-For hop,
+  as before this ADR.
 - The copilot artifact is ~0.9 MB of JSON; every rebuild adds that to git history.
 - 14-day telemetry retention means baselines see no seasonality, and a new machine
   gets `insufficient_history` for at least 3 days.

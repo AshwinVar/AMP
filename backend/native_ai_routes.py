@@ -28,13 +28,16 @@ modules.json. /ai-consent deliberately does NOT ("/ai-consent" is not under
 consent it gave. The two scoring endpoints and the cards are in
 http_security.RATE_LIMITS.
 
-WHY FOUNDER PREVIEW CANNOT CONSENT
-----------------------------------
+WHY FOUNDER PREVIEW CANNOT CONSENT, OR LEARN
+--------------------------------------------
 A founder Admin may PREVIEW a customer (X-Tenant) and read that customer's
 consent page. Consent to learn from a company's data is that company's decision;
 a platform operator switching into their workspace is not an Admin OF that
 company, so the PUT refuses whenever the effective tenant differs from the
 token's own tenant claim. The founder's own DEFAULT workspace is its own company.
+The same test refuses the anomaly check (the one learning step) from a preview:
+what an Admin consents to is the company's OWN Admins and Supervisors opening
+it. Failure risk learns nothing, so it answers in a preview like any factory read.
 """
 from datetime import datetime
 
@@ -122,11 +125,22 @@ def native_anomaly(machine_id: int, db: Session = Depends(_get_db),
                    current_user: dict = Depends(require_roles(ANALYST_ROLES))):
     """The last hour of one machine's telemetry against a baseline fitted from its own previous 14 days.
 
+    403 {code: learning_not_from_preview, reason} from a founder preview, before anything is read.
     404 for a machine this tenant does not own, BEFORE consent is looked at.
     403 {code: learning_consent_required, capability, reason} without consent.
     200 with a null score for insufficient history or an unavailable evaluation.
     """
     tenant = request_tenant(current_user)
+    if tenant != _claim_tenant(current_user):
+        # The consent covers the company's OWN Admins and Supervisors opening the
+        # check (consent.CAPABILITY_INFO "reads"). A platform operator previewing
+        # the company is neither, so the learning step does not run for them -
+        # the same rule that stops a preview from giving the consent.
+        reason = (f"You are previewing {tenant} from the platform workspace. The anomaly check learns from "
+                  f"{tenant}'s own telemetry, and {tenant}'s consent covers only its own Admins and "
+                  "Supervisors, so it does not run from a preview.")
+        return JSONResponse(status_code=403, content={"code": "learning_not_from_preview", "reason": reason,
+                                                      "detail": reason})
     try:
         return service.score_machine(db, tenant, machine_id, gate=consent.DbConsentGate())
     except service.MachineNotFound:

@@ -28,6 +28,7 @@ import plan_gate
 import platform_routes
 import schemas
 import tenancy
+from amp_ai import consent as amp_ai_consent
 from auth import get_current_user, require_roles
 from database import SessionLocal
 from platform_routes import log_audit
@@ -205,6 +206,13 @@ def delete_company_tenant(tenant_id: int, purge: bool = False, db: Session = Dep
             # browser sees an opaque network failure instead of this message.
             raise HTTPException(status_code=500, detail=f"Data purge failed: {e}")
     db.delete(row)
+    # Consent to learn from a company's data (ADR-0020) is given by that company's
+    # Admin and must not outlive the company. Without ?purge the tenant's other rows
+    # stay behind and the code can be registered again for a DIFFERENT company, which
+    # never opted in. Removed in the same commit as the registry row, each removal
+    # audited. It runs AFTER the purge for the same reason the registry row does
+    # (#600): a failed purge must leave the company, and its consent, as they were.
+    amp_ai_consent.remove_for_company(db, code, current_user.get("sub", "?"))
     db.commit()
     if purge:
         plan_gate.invalidate(code)

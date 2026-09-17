@@ -215,6 +215,19 @@ describe("describeAnomalyError", () => {
     expect(v.alert).toBe(false);
   });
 
+  it("says a platform preview cannot run the learning step, without pointing at consent", () => {
+    const body = JSON.stringify({
+      code: "learning_not_from_preview",
+      reason: "You are previewing TA from the platform workspace.",
+    });
+    const v = describeAnomalyError(new Error(`Failed request: /ai/native/anomaly/machines/3 | 403 | ${body}`));
+    expect(v.kind).toBe("preview_not_allowed");
+    expect(v.text).toMatch(/preview/i);
+    expect(v.text).not.toMatch(/turn it on/i);
+    expect(v.detail).toBe("You are previewing TA from the platform workspace.");
+    expect(v.alert).toBe(false);
+  });
+
   it("does not mistake a role refusal for a consent refusal", () => {
     const v = describeAnomalyError(new Error('Failed request: /x | 403 | {"detail":"You do not have permission"}'));
     expect(v.kind).toBe("error");

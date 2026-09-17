@@ -452,7 +452,19 @@ def create_audit_log(payload: schemas.AuditLogCreate, db: Session = Depends(get_
     only the `or` changes nothing observable; removing it AND the column default
     writes NULL and 500s on the response_model). Kept because it mirrors
     log_audit's own `actor or "system"` two hundred lines up.
+
+    THE CONSENT HISTORY IS NOT WRITABLE HERE (ADR-0020). A record in the
+    ai.learning_consent.* namespace, or with entity_type ai_learning_consent,
+    posted here would look exactly like the one amp_ai.consent writes when an
+    Admin grants or withdraws learning consent, so the trail the consent card
+    calls the full history could hold decisions nobody made. Only amp_ai.consent
+    writes those records; this route answers 400.
     """
+    from amp_ai import consent as amp_ai_consent   # local: amp_ai.consent imports this module
+    if amp_ai_consent.is_consent_audit_record(payload.action, payload.entity_type):
+        raise HTTPException(status_code=400, detail=(
+            "Learning-consent audit records are written only by AMP when an Admin changes consent; "
+            "they cannot be added through this endpoint."))
     row = models.AuditLog(**payload.model_dump(),
                           actor=current_user.get("sub") or "system")
     db.add(row)

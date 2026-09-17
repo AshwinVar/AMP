@@ -140,6 +140,20 @@ RATE_LIMITS = {
     "/ai/models": (_env_int("RATE_LIMIT_AI", 20), 60),
 }
 
+# Entries whose every route requires a signed-in user (ADR-0020). Their bucket is
+# the VERIFIED token's principal, not the client address, because the address is
+# whatever the client writes in X-Forwarded-For:
+#   * keyed on the address, a new X-Forwarded-For per request bought a fresh
+#     budget, so the cost and probing control held only for polite clients;
+#   * and requests with no valid token were counted against the address they
+#     claimed, so anyone who knew a factory's egress address could spend its
+#     Admins' and Supervisors' budget with 401s and lock them out.
+# A request without a validly signed, unexpired token is NOT counted here: the
+# route refuses it in authentication before any history or telemetry is read.
+# /ai/ask, /ai/report and /copilot/ask keep the address key (pre-existing; not
+# changed by ADR-0020).
+PRINCIPAL_KEYED_PREFIXES = frozenset({"/ai/native/failure-risk", "/ai/native/anomaly", "/ai/models"})
+
 
 class _SlidingWindow:
     """Per-key timestamp deques. Bounded by construction: entries older than
@@ -197,6 +211,23 @@ def _client_key(scope):
     return client[0] if client else "unknown"
 
 
+def _principal_key(scope):
+    """``principal:<kind>:<sub>@<tenant claim>`` for a request carrying a validly signed, unexpired
+    bearer token; None otherwise. The token's own claims only, never X-Tenant or X-Forwarded-For."""
+    from auth import decode_token_optional   # local: keeps this module importable without the auth stack
+    token = None
+    for k, v in scope.get("headers", []):
+        if k == b"authorization":
+            parts = v.decode("latin-1").split(" ", 1)
+            if len(parts) == 2 and parts[0].lower() == "bearer":
+                token = parts[1].strip()
+    claims = decode_token_optional(token)
+    if not isinstance(claims, dict) or not claims.get("sub"):
+        return None
+    kind = claims.get("principal") or "factory"
+    return f"principal:{kind}:{claims.get('sub')}@{claims.get('tenant') or claims.get('oem') or ''}"
+
+
 def _rate_limit_entry(path):
     """(prefix, (limit, window)) of the longest RATE_LIMITS prefix covering path, or None."""
     match = None
@@ -241,8 +272,18 @@ class RateLimitMiddleware:
         # and a parameterised path (/ai/native/anomaly/machines/{id}) would have
         # handed out a fresh budget per id.
         prefix, (limit, window) = entry
+        if prefix in PRINCIPAL_KEYED_PREFIXES:
+            caller = _principal_key(scope)
+            if caller is None:
+                # Not counted: authentication refuses it before any work (see
+                # PRINCIPAL_KEYED_PREFIXES), and counting it would let a stranger
+                # spend a signed-in user's budget.
+                await self.app(scope, receive, send)
+                return
+        else:
+            caller = _client_key(scope)
         allowed, retry_after = _window.hit(
-            f"{_client_key(scope)}:{prefix}", limit, window, time.monotonic()
+            f"{caller}:{prefix}", limit, window, time.monotonic()
         )
         if allowed:
             await self.app(scope, receive, send)

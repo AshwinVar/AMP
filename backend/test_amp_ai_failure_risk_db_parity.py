@@ -209,8 +209,27 @@ def section_bounds():
                               new_status="Breakdown", utilization=0, source="t",
                               created_at=start - timedelta(days=H.STATE_LOOKBACK_DAYS, microseconds=1)))
     s.commit()
-    loaded = {h.name: h for h in D.load_histories(s, A, as_of)}
+    # The "state before the window" read is a join: a tenant-filtered subquery finds
+    # the machine's last pre-window instant, the OUTER query fetches the row(s) at
+    # that instant. A foreign tenant's event carrying this machine's id at EXACTLY
+    # that instant matches the join; only the outer query's own tenant filter keeps
+    # it out (it is written later, so ordered by id it would win the tie).
+    s.add(models.MachineEvent(tenant_code=B, machine_id=m.id, machine_name="EDGE", old_status="Running",
+                              new_status="Breakdown", utilization=0, source="evil",
+                              created_at=start - timedelta(microseconds=1)))
+    s.commit()
+    token = tenancy.set_current_tenant(None)
+    try:
+        loaded = {h.name: h for h in D.load_histories(s, A, as_of)}
+    finally:
+        tenancy.reset_current_tenant(token)
+    check("the foreign same-instant event really shares the victim's machine id and timestamp",
+          s.query(models.MachineEvent).filter(models.MachineEvent.machine_id == m.id,
+                                              models.MachineEvent.created_at == start - timedelta(microseconds=1))
+          .count() == 2)
     edge = loaded["EDGE"]
+    check("another tenant's event at the SAME instant as the last pre-window event does not become the state "
+          "(no ambient tenant)", edge.state_at_window_start == ("Running", 55), repr(edge.state_at_window_start))
     check("an event exactly at the window start is loaded; one exactly at as_of is not",
           [e[0] for e in edge.events] == [start, as_of - timedelta(microseconds=1)], repr([e[0] for e in edge.events]))
     check("same for downtime rows", [d[0] for d in edge.downtime] == [start, as_of - timedelta(microseconds=1)])

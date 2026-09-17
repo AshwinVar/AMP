@@ -20,7 +20,9 @@ HOW THAT IS ENFORCED
   agent_policies). No row, a revoked row, an unknown capability or a blank tenant
   is a refusal with a reason a person can read. There is no cache, so revocation
   bites on the next request.
-* ``set_consent`` is the only writer. It validates the capability against
+* ``set_consent`` is the only writer of a decision. (``remove_for_company``
+  only deletes a company's rows when the company leaves the registry, with an
+  audit record per row.) ``set_consent`` validates the capability against
   ``LEARNING_CAPABILITIES``, updates the row and adds the AuditLog record, then
   COMMITS ONCE. If the audit row cannot be written the whole change is rolled
   back: consent never changes without a record of who changed it. (It builds the
@@ -39,21 +41,28 @@ import platform_routes
 
 from .core.contracts import CAPABILITY_TELEMETRY_BASELINE, LEARNING_CAPABILITIES, ConsentDecision
 
-__all__ = ["AUDIT_ENTITY", "AUDIT_GRANTED", "AUDIT_REVOKED", "CAPABILITY_INFO", "DbConsentGate",
-           "set_consent", "consent_view"]
+__all__ = ["AUDIT_ACTION_PREFIX", "AUDIT_ENTITY", "AUDIT_GRANTED", "AUDIT_REMOVED_WITH_COMPANY", "AUDIT_REVOKED",
+           "CAPABILITY_INFO", "DbConsentGate", "set_consent", "remove_for_company", "is_consent_audit_record",
+           "consent_view"]
 
 AUDIT_ENTITY = "ai_learning_consent"
 AUDIT_GRANTED = "ai.learning_consent.granted"
 AUDIT_REVOKED = "ai.learning_consent.revoked"
+AUDIT_REMOVED_WITH_COMPANY = "ai.learning_consent.removed_with_company"
+# Every consent audit record's action starts with this, and its entity_type is
+# AUDIT_ENTITY. POST /audit-logs refuses both (platform_routes.create_audit_log),
+# so only this module writes the consent history.
+AUDIT_ACTION_PREFIX = "ai.learning_consent."
 
 # What an Admin is agreeing to, in the words the consent card shows. Kept next to
 # the gate so the promise and the enforcement are reviewed together.
 CAPABILITY_INFO = {
     CAPABILITY_TELEMETRY_BASELINE: {
         "title": "Learn each machine's normal telemetry",
-        "reads": ("When an Admin or Supervisor opens the anomaly check for one machine, AMP reads that "
-                  "machine's own telemetry from the last 14 days (AMP keeps no older telemetry) and fits "
-                  "that machine's normal range from it."),
+        "reads": ("When one of this company's own Admins or Supervisors opens the anomaly check for one "
+                  "machine, AMP reads that machine's own telemetry from the last 14 days (AMP keeps no older "
+                  "telemetry) and fits that machine's normal range from it. It never runs for AMP staff "
+                  "previewing the company from the platform workspace."),
         "stored": ("Nothing. The fitted baseline exists only while that one request is answered. It is not "
                    "saved, cached, pooled across machines or companies, or used to train any model."),
         "used_by": "The anomaly check (GET /ai/native/anomaly/machines/{id}).",
@@ -145,6 +154,41 @@ def set_consent(db, tenant, capability, granted, actor, *, now=None):
         db.rollback()
         raise
     return row
+
+
+def remove_for_company(db, tenant, actor) -> list:
+    """Delete every consent row of ``tenant``, adding one audit record per row. Does NOT commit.
+
+    For removing a company from the registry (saas_routes.delete_company_tenant),
+    with or without the data purge. Consent is given by a company's Admin and
+    must not outlive that company: a registry delete without ``purge`` leaves the
+    tenant's other rows behind, and the same code can be registered again for a
+    different company, which never opted in. The caller commits ONCE, so the
+    registry row, the consent rows and their audit records go together.
+
+    Returns the capabilities removed. Raises ValueError for a blank tenant.
+    """
+    if not isinstance(tenant, str) or not tenant.strip():
+        raise ValueError("a consent belongs to exactly one company; tenant is required")
+    found = (db.query(models.AiLearningConsent)
+             .filter(models.AiLearningConsent.tenant_code == tenant)
+             .order_by(models.AiLearningConsent.id).all())
+    removed = []
+    for row in found:
+        details = json.dumps({"capability": row.capability, "previous": row.granted is True, "new": False,
+                              "reason": "the company was removed from the tenant registry"}, sort_keys=True)
+        db.add(platform_routes.build_audit_row(actor or "unknown", AUDIT_REMOVED_WITH_COMPANY, AUDIT_ENTITY,
+                                               row.id, details=details, tenant_code=tenant))
+        removed.append(row.capability)
+        db.delete(row)
+    return removed
+
+
+def is_consent_audit_record(action, entity_type) -> bool:
+    """True for an audit record in the consent history's namespace, however it is cased or padded."""
+    def norm(value):
+        return value.strip().lower() if isinstance(value, str) else ""
+    return norm(action).startswith(AUDIT_ACTION_PREFIX) or norm(entity_type) == AUDIT_ENTITY
 
 
 def consent_view(db, tenant) -> list:

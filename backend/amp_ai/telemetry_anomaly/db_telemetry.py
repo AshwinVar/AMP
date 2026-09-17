@@ -21,11 +21,17 @@ open a gap or an overlap. ``series`` counts its buckets back from the same ancho
 SOURCES
 -------
 * ``iot_telemetry`` rows for the machine, named ``iot:<signal_name>``.
-* ``industrial_signals`` rows whose ``machine_id`` is the machine and whose
-  quality is "Good", named ``plc:<signal_name>``. ``machine_id`` is copied from
-  the device's ``linked_machine_id`` when a row is WRITTEN, so relinking a device
-  to another machine does not move its history - old rows stay with the old
-  machine, which is what they measured.
+* ``industrial_signals`` rows whose stored ``machine_id`` is the machine and whose
+  quality is "Good", named ``plc:<signal_name>``. ``machine_id`` is fixed when a
+  row is WRITTEN, so relinking a device to another machine does not move its
+  history. Where it comes from depends on the writer: the demo adapters
+  (industrial_adapters.py) copy the device's ``linked_machine_id``, but
+  ``POST /industrial/signals`` stores ``machine_id`` and ``quality`` straight from
+  the request body, without checking that the device is linked to that machine.
+  So within ONE tenant an Admin or Supervisor can post "Good" readings for any
+  machine from any device, and they are read here. Other tenants' rows cannot
+  arrive (the explicit ``tenant_code`` filter). This loader does not yet require
+  ``machine_id == device.linked_machine_id`` (ADR-0020 section 8, open item).
 * OEM connected-equipment readings are not stored anywhere, so they are not a source.
 
 Value: ``float(signal_value)``; if that does not parse, ``numeric_value``.

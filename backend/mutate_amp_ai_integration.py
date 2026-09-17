@@ -41,6 +41,8 @@ ASSIST = "ai/assistant.py"
 RMR = "read_model_routes.py"
 SVC = "amp_ai/telemetry_anomaly/service.py"
 MIG = "alembic/versions/0009_native_ai_consent.py"
+SAAS = "saas_routes.py"
+PLATFORM = "platform_routes.py"
 
 # (label, file, old, new, suite that must go red)
 MUTATIONS = [
@@ -71,9 +73,35 @@ MUTATIONS = [
     ("write: a non-boolean decision is stored", GATE,
      "    if type(granted) is not bool:", "    if False:", CONSENT),
 
+    # --- consent: the company leaves the registry; the audit namespace ------------------------
+    ("saas: deleting a company without purge leaves its consent behind", SAAS,
+     '    amp_ai_consent.remove_for_company(db, code, current_user.get("sub", "?"))\n', "", CONSENT),
+    ("consent: removing a company's consent is not audited", GATE,
+     '        db.add(platform_routes.build_audit_row(actor or "unknown", AUDIT_REMOVED_WITH_COMPANY,',
+     '        (platform_routes.build_audit_row(actor or "unknown", AUDIT_REMOVED_WITH_COMPANY,', CONSENT),
+    ("consent: removing one company's consent removes every company's", GATE,
+     "             .filter(models.AiLearningConsent.tenant_code == tenant)\n"
+     "             .order_by(models.AiLearningConsent.id).all())",
+     "             .order_by(models.AiLearningConsent.id).all())", CONSENT),
+    ("audit-logs: a consent grant or revoke can be posted by hand", PLATFORM,
+     "    if amp_ai_consent.is_consent_audit_record(payload.action, payload.entity_type):", "    if False:",
+     CONSENT),
+    ("audit-logs: the namespace check is exact-case and unpadded", GATE,
+     "    return norm(action).startswith(AUDIT_ACTION_PREFIX) or norm(entity_type) == AUDIT_ENTITY",
+     "    return str(action).startswith(AUDIT_ACTION_PREFIX) or entity_type == AUDIT_ENTITY", CONSENT),
+
     # --- consent: who may write ---------------------------------------------------------------
     ("route: a founder preview may consent on the customer's behalf", ROUTE,
-     "    if tenant != _claim_tenant(current_user):", "    if False:", CONSENT),
+     "    if tenant != _claim_tenant(current_user):\n        raise HTTPException(status_code=403,",
+     "    if False:\n        raise HTTPException(status_code=403,", CONSENT),
+    ("route: a founder preview may run the consented learning step (anomaly check)", ROUTE,
+     "    if tenant != _claim_tenant(current_user):\n        # The consent covers",
+     "    if False:\n        # The consent covers", ROUTES),
+    ("route: the preview refusal reads consent and telemetry first", ROUTE,
+     "    tenant = request_tenant(current_user)\n    if tenant != _claim_tenant(current_user):\n        # The consent covers",
+     "    tenant = request_tenant(current_user)\n"
+     "    consent.DbConsentGate().check(SessionLocal(), tenant, 'telemetry_baseline')\n"
+     "    if tenant != _claim_tenant(current_user):\n        # The consent covers", ROUTES),
     ("route: Supervisors and Operators may toggle consent", ROUTE,
      'CONSENT_EDITOR_ROLES = ["Admin"]', 'CONSENT_EDITOR_ROLES = ["Admin", "Supervisor", "Operator"]', CONSENT),
     ("route: the writer's refusal of an unknown capability becomes a 500", ROUTE,
@@ -111,7 +139,19 @@ MUTATIONS = [
      "            .filter(models.AiLearningConsent.tenant_code == tenant).all()}",
      "    rows = {r.capability: r for r in db.query(models.AiLearningConsent).all()}", STRUCTURAL),
     ("throttle: a bucket per full path (a fresh budget per machine id)", HTTP,
-     'f"{_client_key(scope)}:{prefix}"', "f\"{_client_key(scope)}:{scope['path']}\"", ROUTES),
+     'f"{caller}:{prefix}"', "f\"{caller}:{scope['path']}\"", ROUTES),
+    ("throttle: the AI endpoints are keyed on the (spoofable) client address again", HTTP,
+     "        if prefix in PRINCIPAL_KEYED_PREFIXES:\n", "        if False:\n", ROUTES),
+    ("throttle: requests with no valid token are counted", HTTP,
+     "            if caller is None:\n                # Not counted",
+     "            if False:\n                # Not counted", ROUTES),
+    ("throttle: an unverified token's claims are trusted for the key", HTTP,
+     "    claims = decode_token_optional(token)\n",
+     "    from jose import jwt as _jwt\n"
+     "    try:\n"
+     "        claims = _jwt.get_unverified_claims(token) if token else None\n"
+     "    except Exception:\n"
+     "        claims = None\n", ROUTES),
     ("throttle: the anomaly endpoint is not rate limited", HTTP,
      '    "/ai/native/anomaly": (_env_int("RATE_LIMIT_AI", 20), 60),\n', "", STRUCTURAL),
 

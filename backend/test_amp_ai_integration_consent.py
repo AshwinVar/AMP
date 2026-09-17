@@ -21,6 +21,12 @@ baseline from that machine's own recent telemetry, on request.
   4. REVOCATION    takes effect on the very next anomaly request (403 with the
                    reason), because nothing is cached.
   5. OFFBOARDING   purges the tenant's consent rows; the audit trail is kept.
+  6. COMPANY GONE  deleting a company from the registry WITHOUT purge still
+                   removes its consent (audited), so a new company given the same
+                   code has not opted in.
+  7. NO FORGERIES  POST /audit-logs refuses the consent audit namespace, so the
+                   consent history holds only what set_consent (or the company
+                   delete) wrote.
 
 Driven at the ASGI layer through the real middleware stack (see
 test_oem_routes.py for why not TestClient).
@@ -46,6 +52,7 @@ import native_ai_routes
 import offboard_tenant
 import plan_gate
 import platform_routes
+import saas_routes
 import tenancy
 from amp_ai import consent as C
 from amp_ai.core.contracts import CAPABILITY_TELEMETRY_BASELINE, ConsentDecision
@@ -68,7 +75,7 @@ def install():
     Base.metadata.drop_all(bind=engine)
     Base.metadata.create_all(bind=engine)
     tenancy.install_scoping()
-    for mod in (database, main, native_ai_routes, plan_gate, platform_routes):
+    for mod in (database, main, native_ai_routes, plan_gate, platform_routes, saas_routes):
         mod.SessionLocal = SessionLocal
     plan_gate._licence_cache.clear()
 
@@ -477,11 +484,111 @@ def section_offboarding():
     db.close()
 
 
+# ----------------------------------------------------------------------------
+def section_company_deleted_without_purge():
+    """Consent is given by a company's Admin; it must not outlive that company.
+
+    Deleting a company from the registry WITHOUT ?purge=true leaves its rows
+    behind (pre-existing), and create_company_tenant accepts the same code again.
+    The consent row must not be among the leftovers: a new company with that code
+    never opted in, so the gate must refuse it rather than cite the old Admin.
+    """
+    print()
+    print("=" * 74)
+    print("5. A DELETED COMPANY'S CONSENT IS NOT INHERITED BY A NEW COMPANY WITH ITS CODE")
+    print("=" * 74)
+    install()
+    founder = token("founder", "Admin", "DEFAULT")
+    code, body = call("POST", "/saas/tenants", founder, body={"company_code": "TR", "company_name": "Original Co"})
+    check("the founder registers TR", code == 200 and isinstance(body.get("id"), int), f"{code} {str(body)[:200]}")
+    tenant_id = body.get("id")
+    code, body = call("PUT", f"/ai-consent/{CAP}", token("tr-admin", "Admin", "TR"), body={"granted": True})
+    check("TR's own Admin grants telemetry_baseline", code == 200, f"{code} {str(body)[:200]}")
+    db = fresh()
+    C.set_consent(db, "TB", CAP, True, "tb-admin")
+    check("CONTROL: before the delete, TR's consent is granted", C.DbConsentGate().check(db, "TR", CAP).granted is True)
+    db.close()
+
+    code, body = call("DELETE", f"/saas/tenants/{tenant_id}", founder)
+    check("the founder deletes TR WITHOUT purge", code == 200 and body.get("purged") is None,
+          f"{code} {str(body)[:200]}")
+    db = fresh()
+    d = C.DbConsentGate().check(db, "TR", CAP)
+    check("TR's consent is gone with the company: the gate refuses", d.granted is False, repr(d))
+    check("...no consent row is left for TR", not rows(db, "TR"), str([(r.tenant_code, r.granted) for r in rows(db)]))
+    check("...another company's consent is untouched", C.DbConsentGate().check(db, "TB", CAP).granted is True)
+    removed = [a for a in consent_audits(db, "TR") if a.action == C.AUDIT_REMOVED_WITH_COMPANY]
+    check("...and the removal is audited in TR's trail, by the founder", len(removed) == 1
+          and removed[0].actor == "founder", str([(a.action, a.actor) for a in consent_audits(db, "TR")]))
+    if removed:
+        details = json.loads(removed[0].details or "{}")
+        check("...naming the capability and that it was granted", details.get("capability") == CAP
+              and details.get("previous") is True and details.get("new") is False, str(details))
+    check("...and TR's earlier grant record is kept", [a.action for a in consent_audits(db, "TR")][:1]
+          == [C.AUDIT_GRANTED], str([a.action for a in consent_audits(db, "TR")]))
+    db.close()
+
+    code, body = call("POST", "/saas/tenants", founder,
+                      body={"company_code": "TR", "company_name": "Totally Different Co"})
+    check("a new company re-uses the code TR", code == 200, f"{code} {str(body)[:200]}")
+    db = fresh()
+    d = C.DbConsentGate().check(db, "TR", CAP)
+    check("the new TR has NOT opted in: the gate refuses", d.granted is False, repr(d))
+    check("...and does not cite the old company's Admin", "tr-admin" not in d.reason, d.reason)
+    db.close()
+    code, body = call("GET", "/ai-consent", token("tr-admin-2", "Admin", "TR"))
+    got = {c["capability"]: c for c in body.get("capabilities", [])}.get(CAP, {})
+    check("the new TR's consent page shows it off and never granted", code == 200 and got.get("granted") is False
+          and got.get("granted_by") is None, f"{code} {str(got)[:200]}")
+
+
+# ----------------------------------------------------------------------------
+def section_consent_audit_not_forgeable():
+    """Only set_consent (and the company delete) may write consent audit records.
+
+    POST /audit-logs appends a caller-described row. A consent grant or revoke
+    written there looks exactly like the real one, so the trail the consent card
+    calls the full history could be filled with events that never happened.
+    """
+    print()
+    print("=" * 74)
+    print("6. THE CONSENT AUDIT TRAIL CANNOT BE WRITTEN THROUGH POST /audit-logs")
+    print("=" * 74)
+    install()
+    admin = token("ta-admin", "Admin", "TA")
+    forged = [
+        {"action": "ai.learning_consent.revoked", "entity_type": "ai_learning_consent",
+         "details": json.dumps({"capability": CAP, "previous": True, "new": False})},
+        {"action": "ai.learning_consent.granted", "entity_type": "report"},
+        {"action": "  AI.Learning_Consent.Granted ", "entity_type": None},
+        {"action": "report_requested", "entity_type": "AI_Learning_Consent"},
+        {"action": C.AUDIT_REMOVED_WITH_COMPANY},
+    ]
+    for payload in forged:
+        code, body = call("POST", "/audit-logs", admin, body=payload)
+        check(f"POST /audit-logs {payload.get('action')!r} / {payload.get('entity_type')!r} -> 400",
+              code == 400, f"{code} {str(body)[:200]}")
+    db = fresh()
+    check("...and none of them was stored", db.query(models.AuditLog).count() == 0,
+          str([(a.action, a.entity_type) for a in db.query(models.AuditLog).all()]))
+    db.close()
+    code, body = call("POST", "/audit-logs", admin, body={"action": "report_requested", "entity_type": "report",
+                                                           "details": "monthly OEE"})
+    check("CONTROL: an ordinary audit record is still accepted", code == 200 and body.get("actor") == "ta-admin",
+          f"{code} {str(body)[:200]}")
+    db = fresh()
+    C.set_consent(db, "TA", CAP, True, "ta-admin")
+    check("CONTROL: set_consent still writes its own audit record", len(consent_audits(db, "TA")) == 1)
+    db.close()
+
+
 def main_():
     section_gate()
     section_audit_and_atomicity()
     section_http()
     section_offboarding()
+    section_company_deleted_without_purge()
+    section_consent_audit_not_forgeable()
     print()
     if failures:
         print(f"{len(failures)} FAILED")

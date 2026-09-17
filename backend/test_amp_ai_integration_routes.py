@@ -12,7 +12,11 @@ USER -> AUTHENTICATION -> RBAC -> TENANT / CONSENT -> AMP TOOL -> DATA -> MODEL.
   3. CONSENT       no consent -> 403 {code: learning_consent_required, capability,
                    reason}. With consent: an honest 200 - "insufficient_history"
                    with a null score, or a real score labelled experimental.
-  4. PLAN GATE     /ai/native/* and /ai/models are Intelligence Pack; /ai-consent
+  3b. PREVIEW      a founder previewing a customer (X-Tenant) is not that
+                   customer's Admin or Supervisor, so the consented learning step
+                   is refused (403 learning_not_from_preview) before consent or
+                   telemetry is read; failure risk (no learning) still answers.
+  4. PLAN GATE    /ai/native/* and /ai/models are Intelligence Pack; /ai-consent
                    is not gated.
   5. MODEL CARDS   looked up in a fixed registry, never a path; no "parameters"
                    anywhere in the card; the verdicts are the committed ones.
@@ -21,7 +25,11 @@ USER -> AUTHENTICATION -> RBAC -> TENANT / CONSENT -> AMP TOOL -> DATA -> MODEL.
                    match: the card says unavailable and the endpoints say
                    model_unavailable - the failure-risk endpoint still shows the rule.
   7. THROTTLE      both endpoints are rate-limited, and scanning many machine ids
-                   shares ONE budget rather than getting a fresh one per id.
+                   shares ONE budget rather than getting a fresh one per id. The
+                   bucket is the verified token's principal: a new X-Forwarded-For
+                   buys nothing, and requests without a valid token (none, junk,
+                   or signed with the wrong key) are never counted, so they cannot
+                   lock a signed-in user out by claiming the factory's address.
 
 Run:  DATABASE_URL="sqlite:///./ci.db" python backend/test_amp_ai_integration_routes.py
 """
@@ -362,6 +370,74 @@ def section_anomaly(ids):
     db.close()
 
 
+def section_founder_preview(ids):
+    """A platform operator previewing a customer (X-Tenant) is not that customer's Admin or Supervisor.
+
+    The consent an Admin gives covers "an Admin or Supervisor" of THEIR company
+    opening the anomaly check (consent.CAPABILITY_INFO). So the learning step
+    must not run from a founder preview, even though TA has consented: refused
+    before the consent row or any telemetry is read. Scoring without learning
+    (failure risk) stays available in a preview, like every other factory read.
+    """
+    print()
+    print("=" * 74)
+    print("3b. FOUNDER PREVIEW: THE CONSENTED LEARNING STEP DOES NOT RUN FROM A PREVIEW")
+    print("=" * 74)
+    founder = token("founder", "Admin", "DEFAULT")
+    preview = {"X-Tenant": "TA"}
+    target = f"/ai/native/anomaly/machines/{ids['TA-PRESS-1']}"
+    code, body = call("GET", target, token("ta-admin", "Admin", "TA"))
+    check("CONTROL: TA has consented and has telemetry, so TA's own Admin gets a score",
+          code == 200 and body.get("status") == "ok", f"{code} {str(body)[:200]}")
+
+    db = SessionLocal()
+    audits_before = db.query(models.AuditLog).count()
+    db.close()
+    calls, loads = [], []
+    original, original_load = C.DbConsentGate.check, service.DT.load
+
+    def spy(self, db, tenant, capability):
+        calls.append((tenant, capability))
+        return original(self, db, tenant, capability)
+
+    def load_spy(db, tenant, machine_id, **kw):
+        loads.append((tenant, machine_id))
+        return original_load(db, tenant, machine_id, **kw)
+
+    C.DbConsentGate.check, service.DT.load = spy, load_spy
+    try:
+        code, body = call("GET", target, founder, headers=preview)
+        check("the founder previewing TA -> 403", code == 403, f"{code} {str(body)[:200]}")
+        check("...with its own code, not the consent code (TA HAS consented)",
+              body.get("code") == "learning_not_from_preview", str(body)[:200])
+        check("...and a reason that names the preview", "preview" in str(body.get("reason", "")).lower(),
+              str(body)[:300])
+        check("...refused before TA's consent row was read", calls == [], str(calls))
+        check("...and before any of TA's telemetry was read", loads == [], str(loads))
+        check("...and without a score", "score" not in body or body.get("score") is None, str(body)[:200])
+        code, body = call("GET", "/ai/native/anomaly/machines/999999", founder, headers=preview)
+        check("a preview of a machine id that exists nowhere is the same 403 (nothing is looked up)",
+              code == 403 and body.get("code") == "learning_not_from_preview" and calls == [] and loads == [],
+              f"{code} {calls} {loads}")
+    finally:
+        C.DbConsentGate.check, service.DT.load = original, original_load
+    db = SessionLocal()
+    check("nothing was written to the audit trail by the refused previews",
+          db.query(models.AuditLog).count() == audits_before)
+    db.close()
+
+    code, body = call("GET", target, token("ta-sup", "Supervisor", "TA"), headers={"X-Tenant": "TB"})
+    check("CONTROL: a TA Supervisor's X-Tenant header is ignored (no preview), so the check runs for TA",
+          code == 200 and body.get("status") == "ok", f"{code} {str(body)[:200]}")
+    reads = C.CAPABILITY_INFO[CAP]["reads"].lower()
+    check("the consent text an Admin agrees to says whose request it covers, and that a preview is not one",
+          "own admins or supervisors" in reads and "preview" in reads, C.CAPABILITY_INFO[CAP]["reads"])
+    code, body = call("GET", "/ai/native/failure-risk", founder, headers=preview)
+    check("CONTROL: scoring without learning (failure risk) still works in a preview",
+          code == 200 and sorted(m.get("name") for m in body.get("machines", [])) == ["TA-PRESS-1", "TA-PRESS-2"],
+          f"{code} {str(body)[:200]}")
+
+
 def section_plan_gate(ids):
     print()
     print("=" * 74)
@@ -525,8 +601,35 @@ def section_throttle(ids):
           all(c != 429 for c in codes[:limit]) and codes[limit] == 429, str(codes[-3:]))
     code, _ = call("GET", "/ai/native/failure-risk", sup, reset=False, client="10.9.9.9")
     check("...while the failure-risk budget is separate", code == 200, str(code))
-    code, _ = call("GET", f"/ai/native/anomaly/machines/{ids['TA-PRESS-1']}", sup, reset=False, client="10.8.8.8")
-    check("...and another client is not throttled", code != 429, str(code))
+    code, _ = call("GET", f"/ai/native/anomaly/machines/{ids['TA-PRESS-1']}", token("ta-admin", "Admin", "TA"),
+                   reset=False, client="10.9.9.9")
+    check("...and another signed-in user, even from the same address, is not throttled", code != 429, str(code))
+
+    # The bucket is the verified token's principal, not the client address: an
+    # address is whatever the client puts in X-Forwarded-For.
+    code, _ = call("GET", f"/ai/native/anomaly/machines/{ids['TA-PRESS-1']}", sup, reset=False, client="10.8.8.8",
+                   headers={"X-Forwarded-For": "198.51.100.23"})
+    check("...while the throttled user coming from another address is STILL throttled", code == 429, str(code))
+    http_security._window.reset()
+    rotating = token("ta-sup-2", "Supervisor", "TA")
+    codes = [call("GET", f"/ai/native/anomaly/machines/{900000 + i}", rotating, reset=False,
+                  headers={"X-Forwarded-For": f"203.0.113.{i + 1}"})[0] for i in range(limit + 1)]
+    check(f"a new X-Forwarded-For on every request does not buy a fresh budget (request {limit + 1} -> 429)",
+          all(c != 429 for c in codes[:limit]) and codes[limit] == 429, str(codes[-3:]))
+
+    http_security._window.reset()
+    victim_address = {"X-Forwarded-For": "192.0.2.77"}
+    codes = [call("GET", "/ai/native/failure-risk", None, reset=False, headers=victim_address)[0]
+             for _ in range(limit * 2)]
+    forged = pyjwt.encode({"sub": "ta-sup", "role": "Supervisor", "tenant": "TA",
+                           "exp": datetime.utcnow() + timedelta(hours=1)}, "not-the-server-key", algorithm=auth.ALGORITHM)
+    for bad in ("not-a-valid-token", forged):
+        codes += [call("GET", "/ai/native/failure-risk", bad, reset=False, headers=victim_address)[0]
+                  for _ in range(limit * 2)]
+    check("requests with no token or a forged token are refused by authentication, never counted (no 429)",
+          all(c in (401, 403) for c in codes), str(sorted(set(codes))))
+    code, _ = call("GET", "/ai/native/failure-risk", sup, reset=False, headers=victim_address)
+    check("...so they cannot spend a factory user's budget by sharing the factory's address", code == 200, str(code))
     http_security._window.reset()
     login_limit = http_security.RATE_LIMITS["/login"][0]
     check("CONTROL: an exact-path entry keeps its own bucket", http_security._limit_for("/login") is not None
@@ -539,6 +642,7 @@ def main_():
     section_rbac(ids)
     section_failure_risk(ids)
     section_anomaly(ids)
+    section_founder_preview(ids)
     section_plan_gate(ids)
     section_cards()
     section_tampering(ids)

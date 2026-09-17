@@ -595,10 +595,7 @@ def run_all():
 
 def test_contract_lifecycle():
     H.failures.clear()
-    try:
-        run_all()
-    finally:
-        H.uninstall()
+    run_all()
     assert not H.failures, H.failures
 
 

@@ -28,12 +28,10 @@ per contract period, against a real database:
   * verify distinguishes consistent, blob_mismatch, records_diverged and
     content_purged.
 
-PHASE 1 DEPENDENCIES. SPAN_GAP_SECONDS and SETTLE_SECONDS belong to
-telemetry_coverage, the span retention days to retention.py's policy table, and
-log_audit(tenant_code=, commit=False) to platform_routes. While any of those has
-not landed, this suite installs a stand-in with the planned value or signature
-and NAMES it at the end of the run. A green run with stand-ins is not a claim
-that the integrated system works.
+SHARED PIECES. SPAN_GAP_SECONDS and SETTLE_SECONDS belong to telemetry_coverage,
+the span retention days to retention.py's policy table, and
+log_audit(tenant_code=, commit=False) to platform_routes. The suite uses the
+real ones, never a stand-in, and refuses to start if one is missing.
 
 POSTGRESQL. With DATABASE_URL=postgresql://... the suite runs on a disposable
 scratch database (pg_scratch), including the concurrent-update race.
@@ -41,7 +39,6 @@ scratch database (pg_scratch), including the concurrent-update race.
 Run: DATABASE_URL="sqlite:///./ci.db" python test_contract_statements.py
 """
 import ast
-import importlib.util
 import inspect
 import io
 import json
@@ -50,7 +47,6 @@ import re
 import shutil
 import sys
 import tempfile
-import types
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 
@@ -60,41 +56,23 @@ sys.path.insert(0, HERE)
 from sqlalchemy import create_engine, event  # noqa: E402
 from sqlalchemy.orm import close_all_sessions, sessionmaker  # noqa: E402
 
-STAND_INS = []
 
 
-def _install_phase1_stand_ins():
+def _require_shared_pieces():
+    """The real shared pieces or nothing: a stand-in here once leaked into every
+    later suite of a one-process pytest run (a log_audit that refused commit=True)."""
     import models
-    if importlib.util.find_spec("telemetry_coverage") is None:
-        mod = types.ModuleType("telemetry_coverage")
-        mod.SPAN_GAP_SECONDS = 300
-        mod.SPAN_WRITE_RESOLUTION_SECONDS = 30
-        mod.SETTLE_SECONDS = 300 + 30 + 60
-        mod.__stand_in__ = True
-        sys.modules["telemetry_coverage"] = mod
-        STAND_INS.append("module telemetry_coverage (SPAN_GAP_SECONDS=300, "
-                         "SETTLE_SECONDS=390; plan section 3)")
-    import retention
-    if not any(p.model is models.MachineTelemetrySpan for p in retention.POLICIES):
-        retention.POLICIES = retention.POLICIES + (retention.RetentionPolicy(
-            models.MachineTelemetrySpan, "span_end", 400,
-            "stand-in for the planned policy (plan section 2, T8)"),)
-        STAND_INS.append("retention policy for machine_telemetry_spans (400 days by span_end)")
     import platform_routes
+    import retention
+    import telemetry_coverage
+    for name in ("SPAN_GAP_SECONDS", "SETTLE_SECONDS"):
+        assert hasattr(telemetry_coverage, name), f"telemetry_coverage.{name} is missing"
+    assert sum(p.model is models.MachineTelemetrySpan for p in retention.POLICIES) == 1,         "retention.py has no single policy for machine_telemetry_spans"
     params = inspect.signature(platform_routes.log_audit).parameters
-    if "commit" not in params or "tenant_code" not in params:
-        def log_audit(db, actor, action, entity_type=None, entity_id=None, details=None, *,
-                      tenant_code=None, commit=True):
-            assert commit is False, "the stand-in implements only commit=False"
-            db.add(models.AuditLog(actor=actor or "system", action=action,
-                                   entity_type=entity_type, entity_id=entity_id,
-                                   details=details, tenant_code=tenant_code))
-        platform_routes.log_audit = log_audit
-        STAND_INS.append("platform_routes.log_audit(tenant_code=, commit=False) "
-                         "(plan section 4, C6)")
+    assert "commit" in params and "tenant_code" in params,         "platform_routes.log_audit(tenant_code=, commit=) is missing"
 
 
-_install_phase1_stand_ins()
+_require_shared_pieces()
 
 import canonical  # noqa: E402
 import contract_periods as cp  # noqa: E402
@@ -1019,8 +997,3 @@ if __name__ == "__main__":
             shutil.rmtree(TMP, ignore_errors=True)
     where = f"PostgreSQL ({PG_VERSION.split(',')[0]})" if ON_PG else "SQLite"
     print(f"ALL {len(tests)} CONTRACT STATEMENT TESTS PASSED on {where}")
-    if STAND_INS:
-        print("\nSTAND-INS IN USE (Phase 1 pieces not landed yet; this run does not prove "
-              "the integrated system):")
-        for s in STAND_INS:
-            print("   *", s)

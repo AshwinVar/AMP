@@ -9,23 +9,16 @@ what they share: the database, the HTTP client, tokens, a two-OEM /
 three-factory seed, a plan-schema terms document, and the helpers that walk a
 contract through its lifecycle.
 
-STAND-INS FOR CODE THAT HAS NOT LANDED YET, AND HOW THEY ARE KEPT HONEST
------------------------------------------------------------------------
+NO STAND-INS
+------------
 The routes run against the REAL engine (contract_terms, contract_periods,
-contract_statements, attribution_engine), which is imported whole and never
-patched. They were built before the Phase 1 shared pieces landed
-(telemetry_coverage's span constants, retention's span policy, oem_auth
-contract capabilities, oem_sharing.widen_grants / bound_factory_read /
-contract_statement_visible, log_audit(commit=False, tenant_code=...)), and call
-those by their PLANNED names. Until they exist, `install()` provides stand-ins,
-under three rules:
-
-  * A MODULE is stood in only when it cannot be found at all.
-  * A shared HELPER or SETTING is stood in only while its real module lacks it,
-    and each stand-in implements the plan's text, nothing more.
-  * Every stand-in in use is NAMED on stdout at the end of the run
-    (`stand_in_banner`). A green run with stand-ins is not a claim that the
-    integrated system works; the banner says so.
+contract_statements, attribution_engine) and the REAL shared pieces
+(telemetry_coverage, retention's span policy, oem_auth's contract capabilities,
+oem_sharing.widen_grants / bound_factory_read / contract_statement_visible,
+platform_routes.log_audit(tenant_code=, commit=)). None of it is patched.
+`require_integrated()` checks each piece is present before a suite starts and
+fails the suite, naming what is missing, if one is not: a green run is a claim
+about the integrated system and nothing less.
 
 Nothing here is imported by application code.
 """
@@ -37,7 +30,6 @@ import inspect
 import json
 import os
 import sys
-import types
 from datetime import datetime, timedelta
 
 from jose import jwt as pyjwt
@@ -62,7 +54,6 @@ SessionLocal = sessionmaker(bind=engine)
 ALGO = getattr(auth, "ALGORITHM", "HS256")
 
 failures = []
-STAND_INS = []
 
 
 FAIL_FAST = os.environ.get("CONTRACT_FAIL_FAST") == "1"
@@ -89,175 +80,43 @@ def section(title):
     print("=" * 74)
 
 
-# ── Stand-ins ─────────────────────────────────────────────────────────
+# ── The integrated system, checked rather than assumed ─────────────────
 
-SETTLE_SECONDS_STAND_IN = 300 + 30 + 60
-SPAN_GAP_STAND_IN = 300
-SPAN_RETENTION_DAYS_STAND_IN = 400
-BUCKETS = ("AVAILABLE", "OEM", "FACTORY", "DISPUTED", "UNMEASURED")
-
-
-def _module_missing(name):
-    return importlib.util.find_spec(name) is None
-
-
-def _stand_in_telemetry_coverage():
-    mod = types.ModuleType("telemetry_coverage")
-    mod.__stand_in__ = True
-    mod.SPAN_GAP_SECONDS = SPAN_GAP_STAND_IN
-    mod.SPAN_WRITE_RESOLUTION_SECONDS = 30
-    mod.SETTLE_SECONDS = SETTLE_SECONDS_STAND_IN
-    return mod
-
-
-def _install_module(name, factory):
-    label = f"module {name} (not present; plan-signature stand-in)"
-    present = sys.modules.get(name)
-    if present is not None and getattr(present, "__stand_in__", False):
-        # Installed by an earlier suite in the same process (pytest runs every
-        # suite in one). find_spec would raise on it: a bare module has no spec.
-        if label not in STAND_INS:
-            STAND_INS.append(label)
-        return
-    if _module_missing(name):
-        sys.modules[name] = factory()
-        STAND_INS.append(label)
-    else:
-        importlib.import_module(name)
-
-
-_ORIGINALS = {}
-_INSTALLED = [False]
-
-
-def install():
-    """Provide stand-ins for whatever has not landed. Idempotent."""
+def require_integrated():
+    """Fail loudly, naming each missing piece, unless every shared helper the
+    contract routes call is the real one. Nothing is substituted."""
     import oem_auth
     import oem_sharing
     import platform_routes
-
-    # Idempotent on a FLAG, not on STAND_INS being non-empty: uninstall keeps the
-    # module entries, and under one pytest process the next suite's install()
-    # must still put the helper stand-ins back.
-    if _INSTALLED[0]:
-        return
-    _INSTALLED[0] = True
-    _install_module("telemetry_coverage", _stand_in_telemetry_coverage)
-
     import retention
-    if not any(p.model is models.MachineTelemetrySpan for p in retention.POLICIES):
-        _ORIGINALS["retention"] = retention.POLICIES
-        retention.POLICIES = retention.POLICIES + (retention.RetentionPolicy(
-            models.MachineTelemetrySpan, "span_end", SPAN_RETENTION_DAYS_STAND_IN,
-            "stand-in for the planned policy (plan section 2, T8)"),)
-        STAND_INS.append("retention policy for machine_telemetry_spans "
-                         "(400 days by span_end)")
 
-    if not any("read_contracts" in caps for caps in oem_auth.ROLE_CAPABILITIES.values()):
-        _ORIGINALS["caps"] = {k: set(v) for k, v in oem_auth.ROLE_CAPABILITIES.items()}
-        for role in oem_auth.OEM_ROLES:
-            oem_auth.ROLE_CAPABILITIES[role].add("read_contracts")
-        for role in (oem_auth.OEM_ADMIN, oem_auth.OEM_SERVICE_MANAGER):
-            oem_auth.ROLE_CAPABILITIES[role].add("manage_contracts")
-        oem_auth.ROLE_CAPABILITIES[oem_auth.OEM_ADMIN].add("sign_contracts")
-        STAND_INS.append("oem_auth contract capabilities (plan section 5 table)")
-
-    if "commit" not in inspect.signature(platform_routes.log_audit).parameters:
-        original = platform_routes.log_audit
-        _ORIGINALS["log_audit"] = original
-
-        def log_audit(db, actor, action, entity_type=None, entity_id=None,
-                      details=None, *, tenant_code=None, commit=True):
-            if not commit:
-                # C6: no try/except, no rollback: a failure raises into the
-                # caller's transaction.
-                db.add(models.AuditLog(actor=actor or "system", action=action,
-                                       entity_type=entity_type, entity_id=entity_id,
-                                       details=details, tenant_code=tenant_code))
-                return
-            if tenant_code is None:
-                return original(db, actor, action, entity_type, entity_id, details)
-            try:
-                db.add(models.AuditLog(actor=actor or "system", action=action,
-                                       entity_type=entity_type, entity_id=entity_id,
-                                       details=details, tenant_code=tenant_code))
-                db.commit()
-            except Exception:
-                db.rollback()
-
-        platform_routes.log_audit = log_audit
-        STAND_INS.append("platform_routes.log_audit(tenant_code=, commit=)")
-
-    if not hasattr(oem_sharing, "contract_statement_visible"):
-        def contract_statement_visible(db, contract):
-            return oem_sharing.SHARE_DOWNTIME in oem_sharing.grants_for(
-                db, contract.oem_code, contract.factory_tenant_code)
-        oem_sharing.contract_statement_visible = contract_statement_visible
-        STAND_INS.append("oem_sharing.contract_statement_visible")
-
-    if not hasattr(oem_sharing, "bound_factory_read"):
-        @contextlib.contextmanager
-        def bound_factory_read(tenant_code):
-            token = tenancy.set_current_tenant(tenant_code)
-            try:
-                yield
-            finally:
-                tenancy.reset_current_tenant(token)
-        oem_sharing.bound_factory_read = bound_factory_read
-        STAND_INS.append("oem_sharing.bound_factory_read")
-
-    if not hasattr(oem_sharing, "widen_grants"):
-        def widen_grants(db, oem_code, tenant_code, grants, actor, *, context):
-            policy = (db.query(models.OemDataSharingPolicy)
-                        .filter(models.OemDataSharingPolicy.oem_code == oem_code,
-                                models.OemDataSharingPolicy.tenant_code == tenant_code)
-                        .first())
-            before = policy.grants if policy else "(no policy)"
-            existing = oem_sharing.parse_grants(policy.grants) if policy else set()
-            if policy is None:
-                policy = models.OemDataSharingPolicy(oem_code=oem_code,
-                                                     tenant_code=tenant_code)
-                db.add(policy)
-            policy.grants = ",".join(sorted(existing | set(grants)))
-            policy.updated_by = actor
-            db.flush()
-            platform_routes.log_audit(
-                db, actor, "oem_sharing_changed", "oem_data_sharing_policy", policy.id,
-                f"oem={oem_code} before={before!r} after={policy.grants!r} ({context})",
-                tenant_code=tenant_code, commit=False)
-            return policy
-        oem_sharing.widen_grants = widen_grants
-        STAND_INS.append("oem_sharing.widen_grants")
-
-
-def uninstall():
-    """Undo the helper stand-ins (module stand-ins stay in sys.modules)."""
-    import oem_auth
-    import oem_sharing
-    import platform_routes
-
-    if "caps" in _ORIGINALS:
-        oem_auth.ROLE_CAPABILITIES.clear()
-        oem_auth.ROLE_CAPABILITIES.update(_ORIGINALS.pop("caps"))
-    if "log_audit" in _ORIGINALS:
-        platform_routes.log_audit = _ORIGINALS.pop("log_audit")
-    if "retention" in _ORIGINALS:
-        import retention
-        retention.POLICIES = _ORIGINALS.pop("retention")
+    missing = []
+    if importlib.util.find_spec("telemetry_coverage") is None:
+        missing.append("module telemetry_coverage")
+    else:
+        tc = importlib.import_module("telemetry_coverage")
+        for name in ("SPAN_GAP_SECONDS", "SPAN_WRITE_RESOLUTION_SECONDS",
+                     "SETTLE_SECONDS", "record_message"):
+            if not hasattr(tc, name):
+                missing.append(f"telemetry_coverage.{name}")
+    if sum(p.model is models.MachineTelemetrySpan for p in retention.POLICIES) != 1:
+        missing.append("retention policy for machine_telemetry_spans")
+    for cap in ("read_contracts", "manage_contracts", "sign_contracts"):
+        if not any(cap in caps for caps in oem_auth.ROLE_CAPABILITIES.values()):
+            missing.append(f"oem_auth capability {cap}")
+    params = inspect.signature(platform_routes.log_audit).parameters
+    if "commit" not in params or "tenant_code" not in params:
+        missing.append("platform_routes.log_audit(tenant_code=, commit=)")
     for name in ("contract_statement_visible", "bound_factory_read", "widen_grants"):
-        if any(name in s for s in STAND_INS) and hasattr(oem_sharing, name):
-            delattr(oem_sharing, name)
-    STAND_INS[:] = [s for s in STAND_INS if s.startswith("module ")]
-    _INSTALLED[0] = False
+        if not hasattr(oem_sharing, name):
+            missing.append(f"oem_sharing.{name}")
+    if missing:
+        raise AssertionError("the contract routes need these shared pieces, which are "
+                             "missing: " + "; ".join(missing))
 
 
 def stand_in_banner():
-    if not STAND_INS:
-        print("RAN AGAINST THE REAL ENGINE AND REAL SHARED HELPERS (no stand-ins)")
-        return
-    print("RAN WITH STAND-INS for code that has not landed (plan signatures):")
-    for s in STAND_INS:
-        print("   -", s)
+    print("RAN AGAINST THE REAL ENGINE AND REAL SHARED HELPERS (no stand-ins)")
 
 
 # ── Application wiring ────────────────────────────────────────────────
@@ -266,16 +125,21 @@ main = None
 
 
 def boot():
+    """Check the integrated system is present, then wire the app (see wire)."""
+    require_integrated()
+    return wire()
+
+
+def wire():
     """Import the app and point every route module at the test database."""
     global main
-    install()
     import main as _main
     main = _main
     database.SessionLocal = SessionLocal
     main.SessionLocal = SessionLocal
     for mod in ("oem_routes", "connected_equipment_routes", "oem_admin_routes",
                 "machines_routes", "platform_routes", "oem_contract_routes",
-                "service_contract_routes"):
+                "service_contract_routes", "industrial_iot_routes"):
         try:
             __import__(mod)
         except ModuleNotFoundError:

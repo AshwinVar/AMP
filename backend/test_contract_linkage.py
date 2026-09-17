@@ -130,6 +130,17 @@ def case_edits_that_are_not_a_link_change():
                       factory_tenant_code="FACTORY_A")
     check("site, status, hours, last_seen_at and same-value writes do not end coverage",
           [c[1] for c in coverage("SN-A2")] == [None], str(coverage("SN-A2")))
+    with H.unscoped() as db:
+        # An EXPIRED attribute has no old value in its history, so a write of
+        # the same value looks like a change there. The listener compares with
+        # what the database holds instead.
+        row = db.get(models.MachineInstallation, H.S["inst"]["SN-A2"])
+        db.expire(row, ["machine_id", "factory_tenant_code"])
+        row.machine_id = H.S["machines"]["A2"]
+        row.factory_tenant_code = "FACTORY_A"
+        db.commit()
+    check("a same-value write over expired attributes does not end coverage either",
+          [c[1] for c in coverage("SN-A2")] == [None], str(coverage("SN-A2")))
     edit_installation("SN-B1", machine_id=None)
     check("an installation no contract covers changes without an audit row",
           len(H.audit_rows("contract_coverage_ended")) == audits)

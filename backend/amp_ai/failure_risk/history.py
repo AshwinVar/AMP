@@ -53,7 +53,7 @@ RECORD SHAPES (each list sorted by time)
 Standard library only (test_amp_ai_failure_risk_purity.py).
 """
 import bisect
-from datetime import date, datetime, time, timedelta
+from datetime import datetime, time, timedelta
 
 __all__ = [
     "LOOKBACK_DAYS", "HORIZON_DAYS", "STATE_LOOKBACK_DAYS", "BREAKDOWN",

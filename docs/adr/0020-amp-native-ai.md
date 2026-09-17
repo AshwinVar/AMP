@@ -308,5 +308,19 @@ readings feed that machine's consented baseline.** The loader does not yet requi
 
 `backend/test_amp_ai_integration_{migration,consent,routes,copilot,isolation,structural}.py`,
 `backend/mutate_amp_ai_integration.py` (integration guards), `backend/verify_pg_native_ai.py`
-(PostgreSQL), the capability suites `test_amp_ai_core_*`, `test_amp_ai_failure_risk_*`,
-`test_amp_ai_anomaly_*` and `test_amp_ai_intent_*`, and `frontend/lib/aiModels.test.ts`.
+(PostgreSQL), the capability suites `test_amp_ai_core_*`, `test_amp_ai_failure_risk_*`
+(including `test_amp_ai_failure_risk_diagnostics.py`, which re-runs the post-hoc
+diagnostics and checks the card states them), `test_amp_ai_anomaly_*` and
+`test_amp_ai_intent_*`, `frontend/lib/aiModels.test.ts` and
+`frontend/components/AIModelCard.test.tsx`.
+
+**Review round 1 (2026-09-17)** added: the preview refusal of the learning step,
+consent removal when a company leaves the registry, the refusal of hand-written
+consent audit records, principal-keyed throttling of the native AI endpoints, a
+same-instant foreign-event test for the failure-risk loader's outer state query,
+and the disclosures in section 3. Still open: the next failure-risk gate needs a
+single-feature baseline; the copilot pool's similarity to the corpus is not
+measured by a committed script; the anomaly loader does not require a signal's
+`machine_id` to match its device's link; `/ai/ask`, `/ai/report` and `/copilot/ask`
+still throttle by X-Forwarded-For; and a registry delete without purge still
+leaves a tenant's non-consent rows behind (pre-existing).

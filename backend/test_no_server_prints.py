@@ -114,6 +114,15 @@ CLI_ONLY_FUNCTIONS = {
         "main": "CLI entry point; prints the refusal reason",
         "_run": "CLI dispatch; prints what was rebuilt or published",
     },
+    "retention.py": {
+        # The web process imports retention ONLY to read POLICIES: the service
+        # contract engine (contract_statements.span_retention_days) reads the
+        # span retention window from the policy table rather than copying the
+        # number (ADR-0020). main() is the operator's `python retention.py`
+        # entry point and is never called from a request; its report IS the
+        # result a person approves before --apply.
+        "main": "the retention CLI entry point; the web process imports retention only to read POLICIES",
+    },
 }
 
 # Whole files that the web process never imports. These are not in main.py's
@@ -121,7 +130,6 @@ CLI_ONLY_FUNCTIONS = {
 # kept only so that a reader can see they were considered rather than missed.
 KNOWN_CLI_TOOLS = {
     "backfill_enterprise_tenants.py": "approval-gated backfill; prints a dry-run report",
-    "retention.py": "operational prune; prints what it would delete for a human to approve",
     "reseed_inventory.py": "one-tenant dev reseed (--tenant, --yes, refuses production); "
                            "prints what it deleted and seeded",
     "reset_machines.py": "local dev helper",

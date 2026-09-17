@@ -274,6 +274,57 @@ def test_policy_table_covers_the_audited_tables_and_holds_its_invariants():
             if p.model is models.EventLog] == ["occurred_at"]
 
 
+def _span(db, age, label, tenant="DEFAULT"):
+    """One machine_telemetry_spans row whose span_end is ``age`` before NOW."""
+    row = models.MachineTelemetrySpan(tenant_code=tenant, machine_id=1, source="mqtt",
+                                      status=label, span_start=NOW - age - timedelta(hours=1),
+                                      span_end=NOW - age, message_count=3)
+    db.add(row)
+    db.commit()
+    return row
+
+
+def test_telemetry_spans_are_kept_400_days_by_span_end():
+    """ADR-0020: the downtime attribution engine reads machine_telemetry_spans,
+    and a statement cannot be recomputed once they are gone (EvidenceExpired
+    reads THIS policy, it never copies the number). 400 days covers a yearly
+    contract plus a quarter of dispute time. Pruned by span_end: the engine reads
+    spans whose END reaches the period, so a span that started long ago but was
+    still running is still evidence."""
+    import contract_statements
+    spans = [p for p in POLICIES if p.model is models.MachineTelemetrySpan]
+    assert len(spans) == 1, spans
+    assert spans[0].days == 400 and spans[0].timestamp_column == "span_end", spans[0]
+    assert contract_statements.span_retention_days() == 400
+
+    db = _fresh_session()
+    _span(db, timedelta(days=400, hours=1), "old")
+    _span(db, timedelta(days=399, hours=23), "kept")
+    report = prune(db, dry_run=False, now=NOW, tables=["machine_telemetry_spans"])
+    assert report["machine_telemetry_spans"]["deleted"] == 1, report
+    assert [r.status for r in db.query(models.MachineTelemetrySpan).all()] == ["kept"]
+
+
+def test_a_days_override_cannot_shorten_the_span_evidence_window():
+    """``--days`` shortens every other prunable table on purpose. For the spans
+    that would silently turn agreed-attribution evidence into "no data" for any
+    statement still open inside 400 days, so an override can only LENGTHEN that
+    window. CONTROL: the same --days 0 run empties iot_telemetry."""
+    db = _fresh_session()
+    _telemetry(db, timedelta(days=1), "fresh", 2)
+    _span(db, timedelta(days=30), "recent")
+    _span(db, timedelta(days=401), "expired")
+
+    report = prune(db, dry_run=False, days=0, now=NOW)
+    assert report["iot_telemetry"]["deleted"] == 2, report["iot_telemetry"]
+    entry = report["machine_telemetry_spans"]
+    assert entry["retention_days"] == 400 and entry["deleted"] == 1, entry
+    assert [r.status for r in db.query(models.MachineTelemetrySpan).all()] == ["recent"]
+
+    longer = prune(_fresh_session(), dry_run=True, days=900, now=NOW)
+    assert longer["machine_telemetry_spans"]["retention_days"] == 900, longer
+
+
 if __name__ == "__main__":
     test_apply_deletes_only_rows_older_than_the_window()
     test_dry_run_reports_expiry_but_deletes_nothing()
@@ -284,6 +335,8 @@ if __name__ == "__main__":
     test_prune_ignores_an_inherited_tenant_scope()
     test_a_prunable_policy_over_a_nullable_tenant_column_is_refused()
     test_policy_table_covers_the_audited_tables_and_holds_its_invariants()
+    test_telemetry_spans_are_kept_400_days_by_span_end()
+    test_a_days_override_cannot_shorten_the_span_evidence_window()
     print("RETENTION OK: expired rows pruned and in-window rows kept (boundary controlled); "
           "dry run deletes nothing; deletes batch across batch boundaries; audit_logs + event_log "
           "exempt under --days 0; empty tables safe; NULL timestamps kept; tenant scope ignored; "

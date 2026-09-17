@@ -64,10 +64,9 @@ and acceptances together. Only the parties' own exported copies can show that.
 `live` recomputes from current evidence (reason "evidence_expired" past
 retention) and reports whether it still matches.
 
-PHASE 1 DEPENDENCIES are read at call time, so importing this module never
-depends on them: telemetry_coverage (SPAN_GAP_SECONDS, SETTLE_SECONDS),
-retention.POLICIES (span retention), platform_routes.log_audit(tenant_code=,
-commit=False).
+SHARED SETTINGS are read where they are owned, never copied: telemetry_coverage
+(SPAN_GAP_SECONDS, SETTLE_SECONDS), retention.POLICIES (span retention, read at
+call time), platform_routes.log_audit(tenant_code=, commit=False).
 
 Run the tests: DATABASE_URL="sqlite:///./ci.db" python backend/test_contract_statements.py
 """
@@ -84,6 +83,7 @@ import contract_money
 import contract_periods
 import contract_terms
 import models
+import telemetry_coverage
 import tenancy
 
 SCHEMA = "amp.downtime-attribution-statement/1"
@@ -133,28 +133,16 @@ class ContractIntegrityError(RuntimeError):
     """Stored contract data contradicts itself. Never guessed around."""
 
 
-# ── Phase 1 settings, read where they are owned ─────────────────────────────
-
-def _telemetry_coverage():
-    try:
-        import telemetry_coverage
-    except ModuleNotFoundError as e:
-        if e.name != "telemetry_coverage":
-            raise
-        raise RuntimeError(
-            "contract_statements needs telemetry_coverage (SPAN_GAP_SECONDS, "
-            "SETTLE_SECONDS; ADR-0020), which is not installed") from None
-    return telemetry_coverage
-
+# ── Shared settings, read where they are owned ──────────────────────────────
 
 def span_gap_seconds():
     """telemetry_coverage.SPAN_GAP_SECONDS: how long a span holds after its last message."""
-    return _telemetry_coverage().SPAN_GAP_SECONDS
+    return telemetry_coverage.SPAN_GAP_SECONDS
 
 
 def settle_seconds():
     """telemetry_coverage.SETTLE_SECONDS: how long after period end compute waits."""
-    return _telemetry_coverage().SETTLE_SECONDS
+    return telemetry_coverage.SETTLE_SECONDS
 
 
 def span_retention_days():
@@ -227,7 +215,8 @@ def governing_version(versions, instant):
     boundary, so a version governs whole periods). None when none does."""
     best = None
     for v in versions:
-        if v.status == TERMS_ACCEPTED and v.effective_from <= instant                 and (best is None or v.version > best.version):
+        if v.status == TERMS_ACCEPTED and v.effective_from <= instant \
+                and (best is None or v.version > best.version):
             best = v
     return best
 

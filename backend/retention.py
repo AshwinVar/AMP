@@ -81,6 +81,10 @@ class RetentionPolicy:
     timestamp_column: str
     days: Optional[int]
     why: str
+    # EVIDENCE a signed agreement rests on (ADR-0020). ``--days`` may LENGTHEN
+    # its window but never shorten it: pruning it early would turn agreed
+    # attribution evidence into "no data" for every statement still open.
+    evidence: bool = False
 
 
 # ── The policy table ───────────────────────────────────────────────────────
@@ -123,6 +127,21 @@ POLICIES = (
         # months keeps a meaningful seasonal comparison and still bounds the
         # table, which is the point.
         "machine service record; 6x the 30-day predictive window",
+    ),
+    RetentionPolicy(
+        models.MachineTelemetrySpan, "span_end", 400,
+        # The per-source status history the downtime attribution engine reads
+        # (ADR-0020). One row per run of one status per source, not per message,
+        # so it grows with status CHANGES rather than with the tick rate. 400
+        # days covers a yearly contract's statements plus a quarter for disputes
+        # to settle. After that a statement cannot be recomputed:
+        # contract_statements.EvidenceExpired reads THIS number (never a copy),
+        # and acceptance falls back to the stored revision. Pruned by span_end,
+        # because the engine reads every span whose END reaches the period; a
+        # span that started long ago and was still running is still evidence.
+        # `evidence=True`: a --days override can lengthen this, never shorten it.
+        "attribution evidence for service-contract statements; 400 days",
+        evidence=True,
     ),
     RetentionPolicy(
         models.Notification, "created_at", 90,
@@ -281,6 +300,9 @@ def _prune_one(db, policy, dry_run, days, batch_size, now):
         return entry
 
     retention_days = policy.days if days is None else days
+    if policy.evidence and days is not None:
+        # An override may keep evidence LONGER, never shorter (see RetentionPolicy).
+        retention_days = max(days, policy.days)
     entry = _blank_entry(policy, retention_days)
 
     # Safety guard, defence in depth behind the policy table: refuse to prune a
@@ -451,7 +473,8 @@ if __name__ == "__main__":
                         help="actually delete (default: report only)")
     parser.add_argument("--days", type=int, default=None,
                         help="override the retention window for every non-exempt "
-                             "table; exempt tables stay exempt")
+                             "table; exempt tables stay exempt, and evidence tables "
+                             "(machine_telemetry_spans) can only be kept longer")
     parser.add_argument("--table", action="append", dest="tables", metavar="NAME",
                         help=f"restrict to a table (repeatable). One of: {', '.join(table_names())}")
     parser.add_argument("--batch-size", type=int, default=DEFAULT_BATCH_SIZE,

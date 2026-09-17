@@ -12,6 +12,7 @@ from sqlalchemy.orm import Session
 
 import models
 import schemas
+import telemetry_coverage
 from auth import get_current_user, require_roles
 from database import SessionLocal
 from machine_status import clamp_utilization, normalize_machine_status
@@ -49,6 +50,11 @@ def create_iot_telemetry(telemetry: schemas.IoTTelemetryCreate, db: Session = De
             machine.utilization = util
 
     if signal in ["status", "machine_status"]:
+        # ADR-0020: the status history of source "iot", from every status
+        # signal, recorded raw (an unrecognised value is disputed downstream).
+        telemetry_coverage.record_message(
+            db, machine.tenant_code, machine.id, telemetry_coverage.IOT,
+            telemetry.signal_value, telemetry_coverage.received_at())
         # Only apply a RECOGNISED status; an unknown string would drop the machine
         # from every status-based report, so leave the machine's status untouched.
         new_status = normalize_machine_status(telemetry.signal_value)
@@ -121,6 +127,11 @@ def create_industrial_signal(signal: schemas.IndustrialSignalCreate, db: Session
         if machine:
             field = signal.signal_name.lower()
             if field in ["status", "machine_status", "state"]:
+                # ADR-0020: the status history of source "industrial_gateway".
+                telemetry_coverage.record_message(
+                    db, machine.tenant_code, machine.id,
+                    telemetry_coverage.INDUSTRIAL_GATEWAY, signal.signal_value,
+                    telemetry_coverage.received_at())
                 new_status = normalize_machine_status(signal.signal_value)
                 old_status = machine.status
                 if new_status and new_status != old_status:

@@ -74,7 +74,8 @@ def machine_weeks(fleet, first_day=H.LOOKBACK_DAYS):
     rows = []
     for mh in fleet.histories:
         truth = fleet.truth[mh.machine_id]
-        for day in range(first_day, fleet.days - H.HORIZON_DAYS + 1, 7):
+        # last day: the label window [10:00, +7 days) must end inside the generated days
+        for day in range(first_day, fleet.days - H.HORIZON_DAYS, 7):
             as_of = S.as_of_for_day(day)
             if H.in_breakdown_at(mh, as_of):
                 continue
@@ -335,7 +336,7 @@ def section_not_the_rule(fleet):
 
     labels, scores = [], []
     for mh in fleet.histories:
-        for day in range(H.LOOKBACK_DAYS, fleet.days - H.HORIZON_DAYS + 1, 7):
+        for day in range(H.LOOKBACK_DAYS, fleet.days - H.HORIZON_DAYS, 7):
             as_of = S.as_of_for_day(day)
             view = H.truncate(mh, as_of)
             if H.in_breakdown_at(view, as_of):

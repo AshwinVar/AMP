@@ -6,6 +6,8 @@ approve/reject decisions. Peeled out of main.py, following the register(app)
 pattern. Every handler is tenant-scoped; the mutating ones (policy PUT,
 approve/reject) advance an AgentAction under human oversight (ADR-0005).
 """
+from datetime import datetime
+
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import func
 from sqlalchemy.orm import Session
@@ -27,14 +29,22 @@ def _get_db():
         db.close()
 
 
-def _agent_action_dict(a):
+def _agent_action_dict(a, now=None):
     return {
         "id": a.id, "agent": a.agent, "action_type": a.action_type, "summary": a.summary,
         "ref_kind": a.ref_kind, "ref_id": a.ref_id, "severity": a.severity, "status": a.status,
         "related_machine_id": a.related_machine_id,
         "created_at": a.created_at.isoformat() if a.created_at else None,
         "decided_by": a.decided_by, "decided_at": a.decided_at.isoformat() if a.decided_at else None,
+        # An undecided proposal past its expiry: it can no longer be approved,
+        # only rejected (which releases its item). False once decided.
+        "expired": a.status in approvals.DECIDABLE and approvals.is_expired(a, now),
     }
+
+
+# One page of GET /agent-actions. The list is the only way an approver reaches a
+# proposal that holds its item, so it pages rather than silently truncating.
+AGENT_ACTIONS_PAGE = 300
 
 
 def _decide_agent_action(action_id, decision, db, current_user):
@@ -91,14 +101,23 @@ router = APIRouter(tags=["Agents"])
 
 
 @router.get("/agent-actions")
-def list_agent_actions(status: str = None, db: Session = Depends(_get_db), current_user: dict = Depends(get_current_user)):
-    # Agent activity log + approval queue (ADR-0005), tenant-scoped.
+def list_agent_actions(status: str = None, limit: int = AGENT_ACTIONS_PAGE, offset: int = 0,
+                       db: Session = Depends(_get_db), current_user: dict = Depends(get_current_user)):
+    # Agent activity log + approval queue (ADR-0005), tenant-scoped, newest first,
+    # one page at a time. Measured before paging: a held Draft PO whose proposal
+    # was older than 300 newer Proposed rows never appeared here, while its own
+    # PATCH answered 409 "decide it in Approvals" -- locked with no way out.
+    # id breaks created_at ties, so consecutive pages neither repeat nor skip.
+    limit = max(1, min(limit, AGENT_ACTIONS_PAGE))
+    offset = max(0, offset)
     tenant = request_tenant(current_user)
     q = db.query(models.AgentAction).filter(models.AgentAction.tenant_code == tenant)
     if status:
         q = q.filter(models.AgentAction.status == status)
-    rows = q.order_by(models.AgentAction.created_at.desc()).limit(300).all()
-    return [_agent_action_dict(a) for a in rows]
+    rows = (q.order_by(models.AgentAction.created_at.desc(), models.AgentAction.id.desc())
+            .offset(offset).limit(limit).all())
+    now = datetime.utcnow()
+    return [_agent_action_dict(a, now) for a in rows]
 
 
 @router.get("/agent-actions/stats")

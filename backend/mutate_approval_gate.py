@@ -27,8 +27,8 @@ import sys
 SUITES = ["test_approval_gate.py", "test_agents.py", "test_agent_decide.py",
           "test_agent_item_lock.py", "test_agent_item_lock_guard.py"]
 
-# The --postgresql mutations touch approvals._check_item / locate_pending_item,
-# all exercised by test_agent_item_lock.py.
+# The --postgresql mutations touch approvals._check_item / locate_pending_item
+# and the Approvals list's paging, all exercised by test_agent_item_lock.py.
 # Running fewer suites can only turn a catch into a survivor, never the reverse.
 POSTGRESQL_SUITES = ["test_agent_item_lock.py"]
 
@@ -243,6 +243,33 @@ MUTATIONS = [
      "    approvals.refuse_manual_pending_status(models.Escalation, escalation.status)\n",
      ""),
 
+    # --- every proposal is reachable from Approvals ---------------------------
+    ("the Approvals list ignores its offset (no way past page one)", "agent_routes.py",
+     "            .offset(offset).limit(limit).all())",
+     "            .limit(limit).all())"),
+    ("the Approvals list page is uncapped", "agent_routes.py",
+     "    limit = max(1, min(limit, AGENT_ACTIONS_PAGE))",
+     "    limit = max(1, limit)"),
+    ("a negative offset reaches the database", "agent_routes.py",
+     "    offset = max(0, offset)",
+     "    offset = offset"),
+    ("rows sharing a timestamp have no stable order to page by", "agent_routes.py",
+     "    rows = (q.order_by(models.AgentAction.created_at.desc(), models.AgentAction.id.desc())",
+     "    rows = (q.order_by(models.AgentAction.created_at.desc())"),
+    ("an agent action never reports expired", "agent_routes.py",
+     '        "expired": a.status in approvals.DECIDABLE and approvals.is_expired(a, now),',
+     '        "expired": False,'),
+    ("a decided action reports expired", "agent_routes.py",
+     '        "expired": a.status in approvals.DECIDABLE and approvals.is_expired(a, now),',
+     '        "expired": approvals.is_expired(a, now),'),
+    ("approving an expired proposal sends the approver back to the agent", "approvals.py",
+     '            "This proposal has expired and can no longer be approved: the "\n'
+     '            "conditions it was based on may have changed. It can only be "\n'
+     '            "rejected, which releases the item it holds.")',
+     '            "This proposal has expired and can no longer be actioned. The "\n'
+     '            "conditions it was based on may have changed; ask the agent to "\n'
+     '            "re-evaluate.")'),
+
     # --- the item row lock: two decisions at once -----------------------------
     ("the item check reads without the lock (lock=True -> lock=False)", "approvals.py",
      "    item, reason = locate_pending_item(db, action, lock=True)",
@@ -260,6 +287,8 @@ MUTATIONS = [
 PG_ONLY = {
     "the item row is not locked (FOR UPDATE dropped, re-read kept)":
         "SQLite has no row locks; the PostgreSQL race (verify_pg_approvals.py) catches it",
+    "a negative offset reaches the database":
+        "SQLite reads a negative OFFSET as 0; PostgreSQL refuses it (verify_pg_approvals.py)",
 }
 # What --postgresql runs: every PG_ONLY mutation plus the rest of the row lock.
 POSTGRESQL_RUN = set(PG_ONLY) | {

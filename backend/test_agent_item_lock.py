@@ -36,7 +36,9 @@ WHAT THIS SUITE PINS
      PostgreSQL can hold (SELECT ... FOR UPDATE). On SQLite it prints SKIP;
      verify_pg_approvals.py runs it on a local scratch PostgreSQL;
  12. nobody moves an item INTO its pending status by hand (PATCH or POST, 400),
-     so an orphaned proposal cannot be re-armed over rewritten content.
+     so an orphaned proposal cannot be re-armed over rewritten content;
+ 13. every proposal is reachable from the Approvals list (it pages), and each
+     says whether it has expired.
 
 Run: DATABASE_URL="sqlite:///./ci.db" python test_agent_item_lock.py
      DATABASE_URL=<local scratch postgresql> python test_agent_item_lock.py
@@ -578,8 +580,14 @@ def test_expired_proposals():
         ok, code, detail = patch(db, kind, iid, MOVE[kind])
         check(f"{kind}: ...the 409 says it must be rejected", "reject" in str(detail).lower(),
               str(detail))
-        ok, code, _ = decide(db, aid, "approve")
+        ok, code, detail = decide(db, aid, "approve")
         check(f"{kind}: approving it is refused as expired (409)", code == 409, str(code))
+        # The agent cannot re-propose while the item is held (every dedup counts
+        # the pending status as open), so "ask the agent to re-evaluate" would
+        # send the approver nowhere. The answer names the one exit: reject.
+        check(f"{kind}: ...and the refusal says it can only be rejected, which releases the item",
+              "only be rejected" in str(detail) and "releases" in str(detail)
+              and "re-evaluate" not in str(detail), str(detail))
         check(f"{kind}: ...and nothing was written", action_row(db, aid).status == "Proposed",
               action_row(db, aid).status)
         ok, code, out = decide(db, aid, "reject")
@@ -1095,6 +1103,66 @@ def test_no_hand_move_into_the_pending_status():
               ok and out.status != PENDING[kind], f"{code} {out}")
 
 
+def test_every_proposal_is_reachable_from_approvals():
+    banner("13. EVERY PROPOSAL CAN BE REACHED FROM THE APPROVALS LIST")
+    # Measured before paging: one held Draft PO whose action was 2 days old, plus
+    # 300 newer Proposed actions (orphans, which lazy withdrawal leaves in place).
+    # GET /agent-actions?status=Proposed answered 300 rows without the held one,
+    # while PATCH on the PO answered 409 "... in Approvals". Now that the list is
+    # the only way out for a held item, every row of it must be reachable.
+    db = fresh_db()
+    now = datetime.utcnow()
+    held_aid, held_iid = propose(db, "purchase_order", created_at=now - timedelta(days=2))
+    with unbound():
+        same_moment = now - timedelta(hours=1)
+        db.add_all([models.AgentAction(tenant_code=A, agent="reorder", action_type="x",
+                                       summary="orphan", ref_kind="purchase_order", ref_id=None,
+                                       status="Proposed", created_at=same_moment)
+                    for _ in range(300)])
+        db.commit()
+
+    def page(**kw):
+        db.expire_all()
+        ok, code, rows = call(A, agent_routes.list_agent_actions, status="Proposed", db=db,
+                              current_user=ADMIN, **kw)
+        assert ok, (code, rows)
+        return rows
+
+    first = page()
+    check("setup: the default page is full (300) and lacks the held proposal",
+          len(first) == 300 and held_aid not in {r["id"] for r in first}, str(len(first)))
+    check("setup: ...while the PO list flags it as held by that proposal",
+          (listing(db, "purchase_order")[held_iid]["awaiting_approval"] or {}).get("agent_action_id")
+          == held_aid)
+    second = page(offset=300)
+    check("the next page (offset=300) carries the held proposal",
+          [r["id"] for r in second] == [held_aid], str([r["id"] for r in second]))
+    ids = [r["id"] for r in first + second]
+    check("the pages neither repeat nor drop a row, though 300 share one timestamp",
+          len(ids) == 301 and len(set(ids)) == 301, f"{len(ids)} rows, {len(set(ids))} distinct")
+    check("...because a shared timestamp is ordered by id, newest first (a stable order to page)",
+          ids[:300] == sorted(ids[:300], reverse=True), str(ids[:5]))
+    check("a smaller page walks the same order",
+          [r["id"] for r in page(limit=100, offset=200)] == ids[200:300])
+    check("the page size is capped at 300", len(page(limit=5000)) == 300)
+    check("a negative offset and a zero limit are clamped, not an error",
+          [r["id"] for r in page(offset=-5, limit=0)] == ids[:1])
+
+    # Each action says whether it can still be approved.
+    db = fresh_db()
+    fresh, _ = propose(db, "purchase_order")
+    stale, _ = propose(db, "maintenance_task", created_at=now - timedelta(days=400))
+    decided = seed_action(db, "escalation", None, status="Approved",
+                          created_at=now - timedelta(days=400))
+    rows = {r["id"]: r for r in call(A, agent_routes.list_agent_actions, db=db,
+                                     current_user=ADMIN)[2]}
+    check("a fresh proposal carries expired: false", rows[fresh].get("expired") is False,
+          str(rows[fresh].get("expired")))
+    check("an expired proposal carries expired: true (it can only be rejected)",
+          rows[stale].get("expired") is True, str(rows[stale].get("expired")))
+    check("a decided action is not 'expired' (the flag is about what can still be decided)",
+          rows[decided].get("expired") is False, str(rows[decided].get("expired")))
+
 
 if __name__ == "__main__":
     test_every_bypass_is_refused()
@@ -1109,6 +1177,7 @@ if __name__ == "__main__":
     test_held_exactly_when_decidable()
     test_simultaneous_decisions_on_postgresql()
     test_no_hand_move_into_the_pending_status()
+    test_every_proposal_is_reachable_from_approvals()
     print()
     print("=" * 74)
     if failures:

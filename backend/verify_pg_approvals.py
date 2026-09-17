@@ -22,7 +22,8 @@ What this proves, on PostgreSQL 18.3:
      <decision>", and the record names the winner;
   6. the row lock is load-bearing: mutate_approval_gate.py --postgresql
      removes the lock three ways (lock=False, FOR UPDATE dropped, re-read
-     dropped), and every one must turn that suite red on PostgreSQL;
+     dropped), plus the Approvals list's offset clamp, which SQLite cannot
+     judge either, and every one must turn that suite red on PostgreSQL;
   7. downgrade() reverses both columns.
 
 It only ever talks to a DISPOSABLE database on a LOCAL server: pg_scratch
@@ -178,8 +179,8 @@ def main():
                        env={**os.environ, "DATABASE_URL": mut_url, "PYTHONIOENCODING": "utf-8"},
                        capture_output=True, text=True, errors="replace")
     caught = r.stdout.count(" caught ")
-    check(f"every row-lock mutation is caught on PostgreSQL ({caught} of 3)",
-          r.returncode == 0 and caught == 3 and "all 3 mutations caught" in r.stdout
+    check(f"every PostgreSQL-only and row-lock mutation is caught there ({caught} of 4)",
+          r.returncode == 0 and caught == 4 and "all 4 mutations caught" in r.stdout
           and "engine: PostgreSQL" in r.stdout, r.stdout[-900:] + r.stderr[-400:])
 
     # --- 6. downgrade ---------------------------------------------------------

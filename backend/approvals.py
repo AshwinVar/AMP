@@ -182,12 +182,15 @@ def _check_state(action):
 
 
 def _check_freshness(action, now=None):
+    # Not "ask the agent to re-evaluate": while the proposal holds its item the
+    # agent cannot propose again (every agent dedup counts the pending status as
+    # open), so the one way forward is the recorded exit -- reject.
     if is_expired(action, now):
         raise ApprovalDenied(
             409,
-            "This proposal has expired and can no longer be actioned. The "
-            "conditions it was based on may have changed; ask the agent to "
-            "re-evaluate.")
+            "This proposal has expired and can no longer be approved: the "
+            "conditions it was based on may have changed. It can only be "
+            "rejected, which releases the item it holds.")
 
 
 def _check_actor(db, action, actor):

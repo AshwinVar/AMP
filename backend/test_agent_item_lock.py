@@ -34,7 +34,9 @@ WHAT THIS SUITE PINS
      decided (for a licensed tenant, ignoring expiry);
  11. the same race with the two decisions truly overlapping, which only
      PostgreSQL can hold (SELECT ... FOR UPDATE). On SQLite it prints SKIP;
-     verify_pg_approvals.py runs it on a local scratch PostgreSQL.
+     verify_pg_approvals.py runs it on a local scratch PostgreSQL;
+ 12. nobody moves an item INTO its pending status by hand (PATCH or POST, 400),
+     so an orphaned proposal cannot be re-armed over rewritten content.
 
 Run: DATABASE_URL="sqlite:///./ci.db" python test_agent_item_lock.py
      DATABASE_URL=<local scratch postgresql> python test_agent_item_lock.py
@@ -627,16 +629,18 @@ def test_flags_on_lists_and_responses():
         check(f"{kind}: a PATCH response validates and carries the flag (null)",
               ok and resp.model_validate(out).awaiting_approval is None, str(code))
 
-        # A PATCH that brings a moved item BACK into its pending status revives a
-        # Proposed action -- the response must say so rather than claim it is free.
+        # A PATCH may not bring a moved item BACK into its pending status: that
+        # would revive the Proposed action behind it, over content a non-approver
+        # may have rewritten meanwhile (section 12).
         aid2, moved = propose(db, kind)
         with unbound():
             db.query(MODEL[kind]).filter(MODEL[kind].id == moved).first().status = "Cancelled"
             db.commit()
         ok, code, out = patch(db, kind, moved, {"status": PENDING[kind]})
-        flag = resp.model_validate(out).awaiting_approval if ok else None
-        check(f"{kind}: a PATCH back into the pending status reports the revived hold",
-              ok and flag is not None and flag.agent_action_id == aid2, f"{code} {flag}")
+        check(f"{kind}: a PATCH back into the pending status is refused (400); no hold is revived",
+              not ok and code == 400 and item_row(db, kind, moved).status == "Cancelled"
+              and listing(db, kind)[moved]["awaiting_approval"] is None,
+              f"{ok} {code} {out} {item_row(db, kind, moved).status}")
 
     # Zero agent_actions queries when nothing is in a pending status.
     db = fresh_db()
@@ -1006,6 +1010,91 @@ def test_simultaneous_decisions_on_postgresql():
         _open.clear()
 
 
+def test_no_hand_move_into_the_pending_status():
+    banner("12. NOBODY PUTS AN ITEM INTO ITS PENDING STATUS BY HAND")
+    # Measured through main.app before this rule: a legacy orphan (item moved by
+    # hand while its action stayed Proposed -- lazy withdrawal leaves these in
+    # place) was re-armed by an Operator. PATCH the content (200, not held),
+    # PATCH {status: <pending>} (200, now held), and a Supervisor's approval then
+    # recorded 'Approved' under the agent's name for content the agent never
+    # proposed. The pending status is systemOnly in status-vocab.json: only an
+    # agent's proposal writes it. The server now says so too.
+    later = (datetime.utcnow() + timedelta(days=30)).date()
+    content = {"maintenance_task": {"priority": "Low", "assigned_to": "nobody", "planned_date": later},
+               "purchase_order": {"expected_delivery_date": later, "notes": "rewritten"},
+               "escalation": {"owner": "nobody", "department": "Nowhere",
+                              "resolution_notes": "rewritten"}}
+    moved_to = {"maintenance_task": "Open", "purchase_order": "Approved", "escalation": "Open"}
+    for kind in KINDS:
+        db = fresh_db()
+        aid, iid = propose(db, kind)
+        with unbound():
+            db.query(MODEL[kind]).filter(MODEL[kind].id == iid).first().status = moved_to[kind]
+            db.commit()
+        ok, code, _ = patch(db, kind, iid, content[kind])
+        check(f"{kind}: an Operator may still edit the orphaned item (it is not held)", ok, str(code))
+        for actor in (OPER, SUP, ADMIN):
+            ok, code, detail = patch(db, kind, iid, {"status": PENDING[kind]}, actor=actor)
+            check(f"{kind}: ...but {actor['role']} cannot move it back into '{PENDING[kind]}' (400)",
+                  not ok and code == 400 and "agent" in str(detail), f"{ok} {code} {detail}")
+        check(f"{kind}: ...the item keeps its status and is not held",
+              item_row(db, kind, iid).status == moved_to[kind]
+              and listing(db, kind)[iid]["awaiting_approval"] is None,
+              item_row(db, kind, iid).status)
+        ok, code, _ = decide(db, aid, "approve", actor=SUP)
+        act = action_row(db, aid)
+        check(f"{kind}: ...so approving the orphan records nothing (409, withdrawn)",
+              not ok and code == 409 and act.status == "Cancelled"
+              and act.decided_by == approvals.WITHDRAWN_BY, f"{code} {act.status}/{act.decided_by}")
+
+        # Controls: a row ALREADY in its pending status may re-send it (no change).
+        lookalike = seed_item(db, kind)
+        ok, code, _ = patch(db, kind, lookalike, {"status": PENDING[kind], **OTHER_FIELD[kind]})
+        check(f"{kind}: a look-alike already '{PENDING[kind]}' may re-send its own status", ok, str(code))
+        ordinary = seed_item(db, kind, status="Open")
+        ok, code, _ = patch(db, kind, ordinary, {"status": PENDING[kind]})
+        check(f"{kind}: an ordinary row with no proposal cannot be moved into it either (400)",
+              not ok and code == 400, str(code))
+        ok, code, _ = patch(db, kind, ordinary, {"status": "Cancelled"})
+        check(f"{kind}: ...while any other status change still works", ok, str(code))
+
+    # The rule is the vocabulary's, not the lock's: it holds on every plan.
+    db = fresh_db()
+    set_licence(db, A, "core,operations,factory")
+    iid = seed_item(db, "purchase_order", status="Open")
+    ok, code, _ = patch(db, "purchase_order", iid, {"status": "Draft"})
+    check("a tenant without the Intelligence pack cannot move a PO into Draft by hand either (400)",
+          not ok and code == 400, str(code))
+
+    # Creating straight into the pending status is refused too.
+    db = fresh_db()
+    with unbound():
+        supplier = models.Supplier(tenant_code=A, supplier_code="SUP-H", supplier_name="Steel Co")
+        db.add(supplier)
+        db.commit()
+        supplier_id = supplier.id
+    today = datetime.utcnow().date()
+    creates = {
+        "maintenance_task": (factory_ops_routes.create_maintenance_task, schemas.MaintenanceTaskCreate,
+                             {"task_no": "MT-HAND", "machine_id": _machine(db, A),
+                              "task_type": "Preventive", "assigned_to": "Fitter",
+                              "planned_date": today}),
+        "purchase_order": (orders_routes.create_purchase_order, schemas.PurchaseOrderCreate,
+                           {"po_no": "PO-HAND", "supplier_id": supplier_id, "item_name": "Steel",
+                            "order_quantity": 5, "unit": "kg", "expected_delivery_date": today}),
+        "escalation": (factory_ops_routes.create_escalation, schemas.EscalationCreate,
+                       {"title": "By hand", "severity": "High", "owner": "o", "department": "d"}),
+    }
+    for kind, (fn, schema, body) in creates.items():
+        ok, code, detail = call(A, fn, schema(**body, status=PENDING[kind]), db=db, current_user=ADMIN)
+        check(f"{kind}: POST with status '{PENDING[kind]}' is refused (400)",
+              not ok and code == 400, f"{ok} {code} {detail}")
+        db.rollback()
+        ok, code, out = call(A, fn, schema(**body), db=db, current_user=ADMIN)
+        check(f"{kind}: ...the same POST with its default status is created",
+              ok and out.status != PENDING[kind], f"{code} {out}")
+
+
 
 if __name__ == "__main__":
     test_every_bypass_is_refused()
@@ -1019,6 +1108,7 @@ if __name__ == "__main__":
     test_auto_approval_with_no_tenant_bound()
     test_held_exactly_when_decidable()
     test_simultaneous_decisions_on_postgresql()
+    test_no_hand_move_into_the_pending_status()
     print()
     print("=" * 74)
     if failures:

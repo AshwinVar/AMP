@@ -78,6 +78,11 @@ one implementation):
 Expiry is ignored: an expired proposal still holds its item, and reject is the
 way out. Human look-alikes (pending status, no Proposed action) are ordinary.
 
+Nobody moves an item INTO its pending status by hand
+(``refuse_manual_pending_status``, 400): that would re-arm an orphaned proposal
+over content a non-approver rewrote, and an approval would then record it as
+the agent's.
+
 The actor check is a database lookup, deliberately, and deliberately HERE
 rather than in ``get_current_user``: putting it on every request would add a
 SELECT to all of them to defend an action that happens a handful of times a day.
@@ -362,6 +367,25 @@ def refuse_if_awaiting_decision(db, item):
         409, f"This {noun} was proposed by the {proposal.agent} agent and is awaiting "
              f"approval (agent action #{proposal.id}). An Admin or Supervisor must approve "
              "or reject it in Approvals before it can be changed or deleted.")
+
+
+def refuse_manual_pending_status(model, new_status, current_status=None):
+    """Only an agent's proposal puts an item INTO its pending status (PENDING;
+    systemOnly in frontend/lib/status-vocab.json). Call in every handler that
+    creates (``current_status=None``) or changes a proposable item, after the
+    lock: moving a row into that status by hand would re-arm a Proposed action
+    still pointing at it -- over content a non-approver may have rewritten --
+    and a later approval would record the agent's proposal for it. Re-sending
+    the status a row already has is not a move and passes. 400, every role and
+    every plan: this is the vocabulary's rule, not the lock's."""
+    kind = _KIND_FOR_MODEL[model]
+    pending = PENDING[kind][1]
+    if new_status == pending and current_status != pending:
+        noun = _NOUN[kind]
+        article = "an" if noun[0] in "aeiou" else "a"
+        raise ApprovalDenied(
+            400, f"'{pending}' is set only when an agent proposes {article} {noun}; "
+                 "it cannot be chosen by hand.")
 
 
 def annotate_awaiting_decision(db, model, rows):

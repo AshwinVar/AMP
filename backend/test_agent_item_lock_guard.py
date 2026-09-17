@@ -9,7 +9,10 @@ reopens the bypass. So the guard reads the code:
   1. ROUTE INVENTORY. Walk main.app.routes. Every PATCH / PUT / DELETE under
      /maintenance/tasks/, /escalations/ or /purchase-orders/ must call
      approvals.refuse_if_awaiting_decision before it writes. At least the six
-     known handlers must be found, by name, or the walk has gone blind.
+     known handlers must be found, by name, or the walk has gone blind. Every
+     PATCH / PUT there, and the three create handlers, must also call
+     approvals.refuse_manual_pending_status: only an agent puts an item into
+     its pending status, or an orphaned proposal is re-armed by hand.
   2. WRITER SCAN. An AST pass over the route modules (*_routes.py and main.py,
      NOT scripts): any function that loads a MaintenanceTask, PurchaseOrder or
      Escalation row and then writes to it (attribute assignment, setattr,
@@ -47,6 +50,7 @@ import approvals
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 HELPER = "refuse_if_awaiting_decision"
+STATUS_HELPER = "refuse_manual_pending_status"
 APPROVABLE = {model.__name__ for model, _ in approvals.PENDING.values()}
 ROUTE_FAMILIES = {"maintenance_task": "/maintenance/tasks/",
                   "escalation": "/escalations/",
@@ -54,6 +58,7 @@ ROUTE_FAMILIES = {"maintenance_task": "/maintenance/tasks/",
 KNOWN_HANDLERS = {"update_maintenance_task", "delete_maintenance_task",
                   "update_escalation", "delete_escalation",
                   "update_purchase_order", "delete_purchase_order"}
+KNOWN_CREATORS = {"create_maintenance_task", "create_escalation", "create_purchase_order"}
 
 failures = []
 
@@ -80,12 +85,16 @@ def _row_models(node):
     return found
 
 
-def _is_helper_call(n):
+def _is_helper_call(n, name=HELPER):
     if not isinstance(n, ast.Call):
         return False
     f = n.func
-    return (isinstance(f, ast.Name) and f.id == HELPER) or (
-        isinstance(f, ast.Attribute) and f.attr == HELPER)
+    return (isinstance(f, ast.Name) and f.id == name) or (
+        isinstance(f, ast.Attribute) and f.attr == name)
+
+
+def _calls(src, name):
+    return any(_is_helper_call(n, name) for n in ast.walk(ast.parse(src)))
 
 
 def scan_function(fn):
@@ -169,8 +178,16 @@ def test_route_inventory():
     check("every proposable kind has a URL family to inventory",
           set(ROUTE_FAMILIES) == set(approvals.PENDING), str(set(approvals.PENDING)))
     found = {}
+    creators = set()
+    roots = {path.rstrip("/") for path in ROUTE_FAMILIES.values()}
     for route in main.app.routes:
         if not isinstance(route, APIRoute):
+            continue
+        if "POST" in route.methods and route.path in roots:
+            fn = route.endpoint
+            creators.add(fn.__name__)
+            check(f"POST {route.path} ({fn.__name__}) calls {STATUS_HELPER}",
+                  _calls(textwrap.dedent(inspect.getsource(fn)), STATUS_HELPER), "no call")
             continue
         if not route.methods & {"PATCH", "PUT", "DELETE"}:
             continue
@@ -183,10 +200,15 @@ def test_route_inventory():
         found[fn.__name__] = (sorted(route.methods), route.path)
         check(f"{sorted(route.methods)} {route.path} ({fn.__name__}) calls {HELPER} before writing",
               calls_helper and not problems, str(problems) or "no call at all")
+        if route.methods & {"PATCH", "PUT"}:
+            check(f"{sorted(route.methods)} {route.path} ({fn.__name__}) calls {STATUS_HELPER}",
+                  _calls(src, STATUS_HELPER), "no call")
     check(f"the inventory is not blind: found {len(found)} routes (>= 6)", len(found) >= 6,
           str(found))
     check("...including all six known handlers by name", KNOWN_HANDLERS <= set(found),
           str(KNOWN_HANDLERS - set(found)))
+    check("...and all three create handlers by name", KNOWN_CREATORS <= creators,
+          str(KNOWN_CREATORS - creators))
 
 
 def test_writer_scan():
@@ -353,6 +375,18 @@ def test_the_guard_can_fail():
     check("setup: the endpoint source carries the call", mutated != ep_src)
     check("the route-inventory check goes red on the mutated endpoint",
           not any(_is_helper_call(n) for n in ast.walk(ast.parse(mutated))))
+
+    # ...and the pending-status check, on a PATCH and on a create.
+    import orders_routes
+    for fn, call in ((orders_routes.update_purchase_order,
+                      "approvals.refuse_manual_pending_status(models.PurchaseOrder, payload.status, po.status)"),
+                     (factory_ops_routes.create_escalation,
+                      "approvals.refuse_manual_pending_status(models.Escalation, escalation.status)")):
+        ep_src = textwrap.dedent(inspect.getsource(fn))
+        check(f"setup: {fn.__name__} carries the pending-status call",
+              ep_src.count(call) == 1 and _calls(ep_src, STATUS_HELPER))
+        check(f"removing it from {fn.__name__} turns the inventory check red",
+              not _calls(ep_src.replace(call, "pass", 1), STATUS_HELPER))
 
 
 if __name__ == "__main__":

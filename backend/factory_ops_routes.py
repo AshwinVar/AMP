@@ -53,6 +53,9 @@ def create_escalation(
     db: Session = Depends(_get_db),
     current_user: dict = Depends(require_roles(["Admin", "Supervisor", "Operator"])),
 ):
+    # "Proposed" is written only by the escalation agent's proposal (ADR-0015).
+    approvals.refuse_manual_pending_status(models.Escalation, escalation.status)
+
     if escalation.machine_id:
         machine = (
             db.query(models.Machine)
@@ -88,6 +91,8 @@ def update_escalation(
 
     # An agent proposal holds this escalation until it is decided (ADR-0015).
     approvals.refuse_if_awaiting_decision(db, escalation)
+    # ...and only an agent puts one back into "Proposed".
+    approvals.refuse_manual_pending_status(models.Escalation, payload.status, escalation.status)
 
     if payload.status is not None:
         escalation.status = payload.status
@@ -394,6 +399,9 @@ def create_maintenance_task(
     db: Session = Depends(_get_db),
     current_user: dict = Depends(require_roles(["Admin", "Supervisor"])),
 ):
+    # "Proposed" is written only by the maintenance agent's proposal (ADR-0015).
+    approvals.refuse_manual_pending_status(models.MaintenanceTask, task.status)
+
     existing = db.query(models.MaintenanceTask).filter(models.MaintenanceTask.task_no == task.task_no).first()
     if existing:
         raise HTTPException(status_code=400, detail="Task number already exists")
@@ -426,6 +434,8 @@ def update_maintenance_task(
 
     # An agent proposal holds this task until it is decided (ADR-0015).
     approvals.refuse_if_awaiting_decision(db, task)
+    # ...and only an agent puts one back into "Proposed".
+    approvals.refuse_manual_pending_status(models.MaintenanceTask, payload.status, task.status)
 
     for key, value in payload.model_dump(exclude_unset=True).items():
         setattr(task, key, value)

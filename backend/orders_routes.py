@@ -486,6 +486,9 @@ def create_purchase_order(
     db: Session = Depends(_get_db),
     current_user: dict = Depends(require_roles(["Admin", "Supervisor"])),
 ):
+    # "Draft" is written only by the reorder agent's proposal (ADR-0015).
+    approvals.refuse_manual_pending_status(models.PurchaseOrder, po.status)
+
     existing = db.query(models.PurchaseOrder).filter(models.PurchaseOrder.po_no == po.po_no).first()
     if existing:
         raise HTTPException(status_code=400, detail="PO number already exists")
@@ -545,6 +548,8 @@ def update_purchase_order(
     # An agent proposal holds this PO until it is decided (ADR-0015): no status
     # change, and no receipt booking stock against a draft nobody approved.
     approvals.refuse_if_awaiting_decision(db, po)
+    # ...and only the agent puts one back into "Draft".
+    approvals.refuse_manual_pending_status(models.PurchaseOrder, payload.status, po.status)
 
     # received_quantity is Column(Integer, default=0) WITHOUT nullable=False, so a
     # row written by raw SQL / a migration / a cleared update can hold a true NULL,

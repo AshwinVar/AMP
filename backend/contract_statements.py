@@ -417,7 +417,12 @@ def _build(db, contract, version, terms, period, statement, as_of=None):
 
 def _replace_records(db, statement, segments):
     CAR = models.ContractAttributionRecord
-    db.query(CAR).filter(CAR.statement_id == statement.id).delete(synchronize_session=False)
+    # Instance deletes, not a bulk DELETE (test_bulk_write_scoping), flushed
+    # before the inserts: the unit of work saves before it deletes, and the new
+    # rows reuse (statement_id, seq).
+    for old in db.query(CAR).filter(CAR.statement_id == statement.id).all():
+        db.delete(old)
+    db.flush()
     for seq, s in enumerate(segments, start=1):
         db.add(CAR(statement_id=statement.id, seq=seq, installation_id=s.installation_id,
                    start_at=s.start, end_at=s.end, seconds=s.seconds, bucket=s.bucket,

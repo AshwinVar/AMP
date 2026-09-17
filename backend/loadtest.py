@@ -121,9 +121,18 @@ for i in range({n_machines}):
         tenant_code={TENANT!r}, item_code=f"INV-{{i:05d}}", item_name=f"Part {{i}}",
         category="Raw", unit="kg", current_stock=100 + i, reorder_level=10))
     if i % 5 == 0:
+        # A real Draft PO behind each pending reorder proposal: that is what the
+        # product holds (and what the purchase-order list flags as awaiting
+        # approval), and an action with nothing behind it can never be decided.
+        po = models.PurchaseOrder(
+            tenant_code={TENANT!r}, po_no=f"AUTO-PO-{{i:05d}}", supplier_id=None,
+            item_name=f"Part {{i}}", order_quantity=20, unit="kg",
+            expected_delivery_date=now.date(), status="Draft")
+        db.add(po)
+        db.flush()
         db.add(models.AgentAction(
             tenant_code={TENANT!r}, agent="reorder", action_type="draft_po",
-            summary="restock", ref_kind="purchase_order", ref_id=None,
+            summary="restock", ref_kind="purchase_order", ref_id=po.id,
             status="Proposed", created_at=now))
     if i % 100 == 0:
         db.commit()

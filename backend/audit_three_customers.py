@@ -379,9 +379,18 @@ def main():
     # -------------------------------------------------------- 9 approvals --
     banner(9, "ONE CUSTOMER'S ADMIN CANNOT DECIDE ANOTHER'S AGENT ACTION")
     tok = tenancy.set_current_tenant(None)
+    # A REAL Draft purchase order behind the action. The gate refuses to record
+    # a decision whose item cannot move (ADR-0015 addendum), so an action with
+    # ref_id=None would make the CONTROL below fail for the wrong reason.
+    draft = models.PurchaseOrder(
+        tenant_code="FACTORY_B", po_no="AUTO-PO-AUDIT-9", supplier_id=None,
+        item_name="restock", order_quantity=10, unit="kg",
+        expected_delivery_date=datetime.utcnow().date(), status="Draft")
+    db.add(draft)
+    db.flush()
     action = models.AgentAction(
         tenant_code="FACTORY_B", agent="reorder", action_type="draft_po",
-        summary="restock", ref_kind="purchase_order", ref_id=None,
+        summary="restock", ref_kind="purchase_order", ref_id=draft.id,
         status="Proposed", created_at=datetime.utcnow())
     db.add(action)
     db.commit()

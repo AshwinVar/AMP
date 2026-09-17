@@ -69,6 +69,8 @@ the work.
 
 Run: DATABASE_URL="sqlite:///./ci.db" python backend/test_open_escalation_one_rule.py
 """
+import io
+import os
 from datetime import datetime, timedelta
 
 from sqlalchemy import create_engine, text
@@ -298,6 +300,8 @@ def main():
     tenancy.reset_current_tenant(tok)
     db.close()
 
+    generators_follow_the_rule()
+
     print()
     print("=" * 74)
     if failures:
@@ -308,6 +312,137 @@ def main():
         print("ALL CHECKS PASSED")
     print("=" * 74)
     return 1 if failures else 0
+
+
+def generators_follow_the_rule():
+    """7. THE SEVEN ESCALATION GENERATORS.
+
+    The audit above counted "five spellings across eight sites" and fixed the
+    four that spelled A. It did not count the seven GENERATOR dedups — document
+    review, maintenance overdue, OEE recovery, low stock, late customer order,
+    overdue purchase order, quality defect — which carried the same A shape,
+    `or_(status IS NULL, status != "Resolved")`, added when their NULL handling
+    was fixed (#295/#403). So the defect #565 named — a Cancelled escalation
+    silencing its alert permanently — survived on every one of them: withdraw a
+    "Low stock: BOLT-M8" escalation raised in error, and that item could never
+    raise a low-stock alert again, however empty the bin got.
+
+    Structural half first, because it covers all seven AND the eighth someone
+    writes next: no backend module may test `Escalation.status != "Resolved"`.
+    The only definition of "open" is ai.escalations.open_clause().
+    """
+    import glob
+    import re
+
+    import inventory_routes
+
+    print()
+    print("=" * 74)
+    print("7. THE SEVEN ESCALATION GENERATORS USE THE ONE RULE")
+    print("=" * 74)
+
+    backend = os.path.dirname(os.path.abspath(__file__))
+    resolved_only = re.compile(r"Escalation\.status\s*!=\s*[\"']Resolved[\"']")
+    offenders, adopters = [], 0
+    for path in sorted(glob.glob(os.path.join(backend, "*.py")) +
+                       glob.glob(os.path.join(backend, "ai", "*.py"))):
+        name = os.path.basename(path)
+        # Tests describe the old spelling; the mutation harnesses reintroduce it.
+        if name.startswith("test_") or name.startswith("mutate_"):
+            continue
+        with io.open(path, encoding="utf-8") as fh:
+            for lineno, line in enumerate(fh, 1):
+                code = line.split("#", 1)[0]
+                if resolved_only.search(code):
+                    offenders.append(f"{name}:{lineno}")
+                if "open_clause()" in code and "def open_clause" not in code:
+                    adopters += 1
+    check("no backend module decides 'open' with status != 'Resolved'",
+          offenders == [], ", ".join(offenders))
+    # Self-probe: the scan must actually be reading call sites, or it would pass the
+    # check above by reading nothing. Measured: 11 call sites on master before this
+    # change, 18 after the seven generators adopted the rule. A floor at the old
+    # count would not notice a generator quietly reverting, so the floor is 18.
+    check(f"the scan sees open_clause() at every adopting site ({adopters} >= 18)",
+          adopters >= 18, str(adopters))
+
+    # The regex above bans ONE spelling. `status.notin_(("Resolved",))` or
+    # `~(status == "Resolved")` would re-create the defect and pass it. So the rule
+    # is also stated positively, by AST: every generator dedup — a `.filter(...)`
+    # comparing `models.Escalation.title == ...` — must call open_clause() in the
+    # same filter. That holds whatever the next spelling is.
+    import ast
+    dedups, missing = 0, []
+    for name in ("factory_ops_routes.py", "inventory_routes.py", "orders_routes.py",
+                 "quality_routes.py"):
+        tree = ast.parse(io.open(os.path.join(backend, name), encoding="utf-8").read())
+        for node in ast.walk(tree):
+            if not (isinstance(node, ast.Call) and getattr(node.func, "attr", "") == "filter"):
+                continue
+            by_title = any(
+                isinstance(a, ast.Compare) and isinstance(a.left, ast.Attribute)
+                and a.left.attr == "title"
+                and isinstance(a.left.value, ast.Attribute) and a.left.value.attr == "Escalation"
+                for a in node.args)
+            if not by_title:
+                continue
+            dedups += 1
+            if not any(isinstance(a, ast.Call) and getattr(a.func, "attr", "") == "open_clause"
+                       for a in node.args):
+                missing.append(f"{name}:{node.lineno}")
+    check(f"the AST scan finds all seven generator dedups ({dedups} == 7)", dedups == 7,
+          str(dedups))
+    check("every generator dedup calls open_clause() in the same filter",
+          missing == [], ", ".join(missing))
+
+    # Behavioural half, on the real low-stock generator.
+    engine = create_engine("sqlite://", connect_args={"check_same_thread": False},
+                           poolclass=StaticPool)
+    Base.metadata.create_all(bind=engine)
+    db = sessionmaker(bind=engine)()
+    tok = tenancy.set_current_tenant(T)
+    try:
+        def fresh_item(code):
+            db.add(models.InventoryItem(tenant_code=T, item_code=code, item_name=code,
+                                        category="Raw", unit="pcs", current_stock=0,
+                                        reorder_level=10))
+            db.commit()
+            return f"Low stock: {code} - {code}"
+
+        def existing(title, status):
+            db.add(models.Escalation(tenant_code=T, title=title, severity="High",
+                                     owner="Stores", department="Inventory",
+                                     status=status, source="Inventory"))
+            db.commit()
+
+        def count(title):
+            return db.query(models.Escalation).filter(models.Escalation.title == title).count()
+
+        cancelled = fresh_item("CANCELLED-1")
+        existing(cancelled, "Cancelled")
+        resolved = fresh_item("RESOLVED-1")
+        existing(resolved, "Resolved")
+        still_open = fresh_item("OPEN-1")
+        existing(still_open, "In Progress")
+        null_status = fresh_item("NULL-1")
+        existing(null_status, "Open")
+        db.execute(text("UPDATE escalations SET status = NULL WHERE title = :t"),
+                   {"t": null_status})
+        db.commit()
+
+        inventory_routes.generate_low_stock_escalations(db=db, current_user=USER)
+
+        check("a CANCELLED escalation no longer silences the alert: a new one is raised",
+              count(cancelled) == 2, str(count(cancelled)))
+        check("...a RESOLVED one never did, and still does not",
+              count(resolved) == 2, str(count(resolved)))
+        check("an IN PROGRESS escalation is still open: no duplicate",
+              count(still_open) == 1, str(count(still_open)))
+        check("a NULL-status escalation is still open (#295/#403): no duplicate",
+              count(null_status) == 1, str(count(null_status)))
+    finally:
+        tenancy.reset_current_tenant(tok)
+        db.close()
 
 
 def test_open_escalation_one_rule():

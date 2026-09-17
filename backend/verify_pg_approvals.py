@@ -14,25 +14,39 @@ What this proves, on PostgreSQL 18.3:
   2. existing users come out active, so nobody is locked out by the deploy;
   3. the NOT NULL constraint is real (the database refuses a NULL is_active);
   4. agent_actions.expires_at is genuinely nullable;
-  5. the gate itself refuses every bypass against this engine;
+  5. the gate itself refuses every bypass against this engine, and the
+     held-item lock (test_agent_item_lock.py: SELECT ... FOR UPDATE, the batched
+     awaiting_approval query, the compare-and-set withdraw and the double-decide
+     race) holds on it too;
   6. downgrade() reverses both columns.
+
+It only ever talks to a DISPOSABLE database on a LOCAL server: pg_scratch
+drops and recreates scratch databases, so this refuses any host that is not
+localhost rather than trust that the borrowed URL points somewhere harmless.
 
 Run: python backend/verify_pg_approvals.py [port]
 """
 import os
 import subprocess
 import sys
+from urllib.parse import urlparse
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import pg_scratch  # noqa: E402
 
 DB = "amp_scratch_approvals"
+LOCAL_HOSTS = ("localhost", "127.0.0.1", "::1")
 
 
 def main():
     port = sys.argv[1] if len(sys.argv) > 1 else None
     here = os.path.dirname(os.path.abspath(__file__))
+    host = urlparse(pg_scratch.scratch_url(port, DB)).hostname
+    if host not in LOCAL_HOSTS:
+        print(f"REFUSING: {host!r} is not a local PostgreSQL. This harness drops and "
+              "recreates databases; point it at a throwaway local server only.")
+        return 2
     version = pg_scratch.ensure(port, DB)
     url = pg_scratch.scratch_url(port, DB)
     print(version.split(",")[0])
@@ -134,6 +148,16 @@ def main():
                        capture_output=True, text=True, errors="replace")
     passed = r.stdout.count("PASS  ")
     check(f"test_approval_gate.py green on PostgreSQL ({passed} assertions)",
+          r.returncode == 0, r.stdout[-800:] + r.stderr[-400:])
+
+    # The held-item lock, on the same scratch database (it also drops and
+    # recreates its tables). FOR UPDATE and the compare-and-set are exactly the
+    # parts SQLite cannot exercise.
+    r = subprocess.run([sys.executable, "test_agent_item_lock.py"], cwd=here,
+                       env={**os.environ, "DATABASE_URL": gate_url},
+                       capture_output=True, text=True, errors="replace")
+    passed = r.stdout.count("PASS  ")
+    check(f"test_agent_item_lock.py green on PostgreSQL ({passed} assertions)",
           r.returncode == 0, r.stdout[-800:] + r.stderr[-400:])
 
     # --- 6. downgrade ---------------------------------------------------------

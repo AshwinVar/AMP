@@ -599,20 +599,26 @@ def test_analytics_summary_plant_oee_empty_production_falls_back_not_a_crash():
 
 
 def test_executive_oee_null_utilization_fallback_is_zero_not_a_crash():
-    # No production for the machine -> availability falls back to utilization. With
-    # a NULL reading the old `max(machine.utilization, 0)` raised TypeError; it must
-    # treat an unset reading as 0. Running with no runtime -> performance 90, no
-    # quality rows -> quality 95, so OEE = round(0 * .9 * .95 * 100) = 0.
+    # A NULL utilization reading on a machine with no production must not crash
+    # the endpoint — the original `max(machine.utilization, 0)` raised TypeError.
+    #
+    # What the row SAYS changed on purpose (test_executive_oee_no_invented_machine_
+    # figures.py). This used to assert availability 0 and OEE 0: a utilization
+    # gauge standing in for availability, and the constants 90 and 95 for
+    # performance and quality. With no production nothing was measured, so every
+    # component and the OEE are None and the row says `measured: False`. The
+    # crash-safety half of this test is unchanged: the NULL still reaches the
+    # endpoint and it still answers.
     db = _fresh_session()
     db.add(models.Machine(id=1, name="Unset", status="Running", utilization=0))
     db.commit()
     _null_utilization(db, 1)
     out = analytics_routes.get_executive_oee(db=db, current_user={})
     row = next(r for r in out["machine_ranking"] if r["machine_name"] == "Unset")
-    assert row["availability"] == 0, row
-    assert row["oee"] == 0, row
+    assert row["availability"] is None, row
+    assert row["oee"] is None and row["measured"] is False, row
     assert row["utilization"] is None, row      # raw reading still surfaced honestly
-    print("PASS executive-oee: NULL utilization fallback -> availability 0 (no max(None,0) crash)")
+    print("PASS executive-oee: NULL utilization, no production -> unmeasured, no crash")
 
 
 def test_final_executive_summary_null_columns_are_zero_not_a_crash():

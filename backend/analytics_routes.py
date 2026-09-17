@@ -847,62 +847,43 @@ def get_executive_oee(
             rejected_count,
         ) = production_by_machine.get(machine.id, (0, 0, 0, 0, 0, 0))
 
-        if planned_minutes > 0:
-            # Cap at 100% like pooled_oee / calculate_oee_from_record cap every
-            # component: the HTTP ingest (machines_routes.create_production_record)
-            # rejects negatives and enforces good+rejected==total, but it does NOT
-            # require runtime_minutes <= planned_minutes, so a machine that ran past
-            # its planned window (runtime > planned) computed availability > 100%.
-            # An availability the data can't support (>100%) then inflated THIS
-            # machine's OEE above the physical bound and disagreed with the capped
-            # pooled plant rollup below — the exact honesty/reconciliation rule the
-            # shared OEE definition already follows (performance is clamped the same
-            # way three lines down). min(ratio, 1) before rounding matches pooled_oee.
-            availability = round(min(runtime_minutes / planned_minutes, 1) * 100)
-        else:
-            # No production for this machine — fall back to its utilization as a
-            # rough availability. utilization is nullable, so treat an unset reading
-            # as 0 (max() also floors any stray negative), never `max(None, 0)`.
-            availability = max(machine.utilization or 0, 0)
+        # THE CONTRACT, not a private copy of it. This block used to carry its own
+        # OEE formula, and where a machine produced nothing it filled the gaps with
+        # constants — utilization for availability, `90 if Running else 60` for
+        # performance, 95 for quality — and ranked the product beside real
+        # measurements. Measured before the fix: an idle machine topped this ranking
+        # at an invented 68%, above a machine that had actually run
+        # (test_executive_oee_no_invented_machine_figures.py).
+        #
+        # oee_contract.oee_from_sums is "the one place the formula lives" and is what
+        # the machine cockpit (oee_contract.machine_oee) already uses, so the same
+        # machine now reads the same on both screens. Its rules, which this row
+        # inherits rather than restates:
+        #  * a component with no denominator (no planned time, no runtime, no
+        #    counts) is None — undefined, not 0;
+        #  * OEE is a product and needs all three, so it is None whenever any
+        #    component is. A machine scheduled but never run shows availability 0%
+        #    and no OEE; that measured zero is still on the row, not hidden;
+        #  * every component is clamped to [0, 1] symmetrically, which covers the
+        #    runtime-past-plan, good>total and negative raw-SQL rows the old
+        #    hand-written min/max handled (#414).
+        contract = oee_contract.as_percentages(oee_contract.oee_from_sums(
+            planned_minutes, runtime_minutes, total_count, good_count, ideal_cycle_total))
+        availability = contract["availability"]
+        performance = contract["performance"]
+        quality = contract["quality"]
+        oee = contract["oee"]
 
-        runtime_seconds = runtime_minutes * 60
-        if runtime_seconds > 0:
-            performance = round(min((ideal_cycle_total / runtime_seconds), 1) * 100)
-        else:
-            performance = 90 if machine.status == "Running" else 60
-
-        if total_count > 0:
-            # Clamp to 100% too (same shared OEE definition): the main write paths
-            # enforce good <= total, but a data-entry slip / raw-SQL write can store
-            # good_count > total_count, and an uncapped good/total would print a
-            # quality above 100% — a figure the data can't support. min(ratio, 1)
-            # keeps every normal record unchanged (good <= total -> ratio <= 1).
-            quality = round(min(good_count / total_count, 1) * 100)
-        else:
+        if quality is None:
+            # Display only. With no production counts, a machine's inspections are
+            # still a genuine quality measurement, so the column shows them. They
+            # never feed OEE: the contract's quality is good/total from production,
+            # and a machine that produced nothing cannot acquire an OEE from its
+            # inspections. passed can be NULL (coalesced above) or out of range on a
+            # raw-SQL row, hence the same symmetric clamp.
             q = quality_by_machine.get(machine.id)
             if q and q["inspected"] > 0:
-                quality = round((q["passed"] / q["inspected"]) * 100)
-            else:
-                quality = 95
-
-        # FLOOR every component at 0 as well as capping it at 100 — the SAME
-        # symmetric clamp the shared OEE helper (analytics_engine.pooled_oee_from_sums
-        # / calculate_oee_from_record, #414) and the pooled plant rollup below already
-        # apply. The data branches above cap at 100% (min(ratio, 1)) but never floored:
-        # the ingest rejects negatives, yet a legacy / raw-SQL / migration row can
-        # still hold a negative runtime / good_count / (ideal_cycle * total), whose SUM
-        # makes runtime/planned, ideal_seconds/runtime or good/total NEGATIVE — printing
-        # e.g. quality -50% and an OEE below zero for THIS machine row, while the pooled
-        # plant rollup on the SAME response floors the identical sums to 0 (rule-3: the
-        # per-machine parts must reconcile with the pooled whole). The inspection-based
-        # quality fallback was uncapped in BOTH directions (a raw-SQL row's passed can
-        # exceed or undershoot inspected), so it gets the same treatment. max(0, min(100,
-        # x)) is a strict no-op on every well-formed machine.
-        availability = max(0, min(100, availability))
-        performance = max(0, min(100, performance))
-        quality = max(0, min(100, quality))
-
-        oee = round((availability / 100) * (performance / 100) * (quality / 100) * 100)
+                quality = max(0, min(100, round((q["passed"] / q["inspected"]) * 100)))
 
         machine_rows.append(
             {
@@ -913,6 +894,10 @@ def get_executive_oee(
                 "performance": performance,
                 "quality": quality,
                 "oee": oee,
+                # Stated, not inferred: lib/oee.ts used to treat any row in this
+                # list as measured, which is how an invented figure reached the
+                # dashboard card under the "measured" label.
+                "measured": oee is not None,
                 "downtime_minutes": downtime_by_machine.get(machine.id, 0),
                 "total_count": total_count,
                 "good_count": good_count,
@@ -921,7 +906,15 @@ def get_executive_oee(
             }
         )
 
-    machine_rows.sort(key=lambda row: row["oee"], reverse=True)
+    # Measured machines first, by OEE, highest first (ties keep their existing
+    # order: sort is stable and the key is equal); then machines with no OEE, by
+    # name. A guess must never be ranked among measurements — the old
+    # `key=row["oee"]` put an idle machine's invented 68% at the top.
+    machine_rows.sort(key=lambda row: (
+        row["oee"] is None,
+        -row["oee"] if row["oee"] is not None else 0,
+        (row["machine_name"] or "") if row["oee"] is None else "",
+    ))
 
     # Plant rollup is POOLED (ratio of sums) — the single standardised OEE
     # definition (analytics_engine.pooled_oee), so /analytics/executive-oee agrees

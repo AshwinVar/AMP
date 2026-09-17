@@ -372,6 +372,7 @@ that reports nothing.
 1. **Give MQTT ingest a tenant dimension** — topic-per-tenant or a credential-to-tenant map; make `Machine.name` unique *per tenant*; stamp child rows from the machine's tenant, never a column default.
 2. **Make the BOM per-tenant data**, not a module constant.
 3. **Fix the two OEE correctness bugs** — no fabricated factors for zero-production machines; window the plant OEE.
+   *Correction (2026-09): the windowing half was done; the fabricated-factors half was only done for the PLANT figure. The per-machine `machine_ranking` rows kept inventing availability/performance/quality from utilization, status and constants until the executive-oee rows were moved onto `oee_contract.oee_from_sums` — see docs/engineering/OEE-CONTRACT.md §5.*
 4. **Enforce the ADR-0005 approval gate** server-side so a direct PATCH cannot skip it.
 5. **Make document numbering tenant-safe** (unique per tenant, or a per-tenant sequence).
 6. **Authenticate `/ws/live`** before accepting the connection.

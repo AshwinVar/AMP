@@ -1,0 +1,556 @@
+{
+  "adoption": {
+    "adopted": true,
+    "caveat": "Evaluated on synthetic machines only; not evidence of accuracy on real plants.",
+    "criteria": [
+      {
+        "description": "paired PR-AUC (model - rule) 95% lower bound 0.0294 must be > 0",
+        "name": "paired_pr_auc_lower_bound_above_zero",
+        "passed": true,
+        "threshold": 0.0,
+        "value": 0.029408400252866253
+      },
+      {
+        "description": "ROC-AUC model 0.6980 must be >= rule 0.6115",
+        "name": "roc_auc_not_below_rule",
+        "passed": true,
+        "threshold": 0.6114679626608664,
+        "value": 0.6980129599419974
+      },
+      {
+        "description": "precision@k model 0.1615 must be >= rule 0.1217",
+        "name": "precision_at_k_not_below_rule",
+        "passed": true,
+        "threshold": 0.12171023421023422,
+        "value": 0.16153846153846155
+      },
+      {
+        "description": "Brier 0.0491 must be < base-rate Brier p(1-p) 0.0524",
+        "name": "brier_below_base_rate",
+        "passed": true,
+        "threshold": 0.05239303800323361,
+        "value": 0.04912576140394614
+      },
+      {
+        "description": "ECE 0.0060 must be <= 0.05",
+        "name": "ece_at_most_0_05",
+        "passed": true,
+        "threshold": 0.05,
+        "value": 0.0060074777603170105
+      },
+      {
+        "description": "this must be the first recorded evaluation of the test set (recorded runs: 1)",
+        "name": "first_test_run_for_generator",
+        "passed": true,
+        "threshold": 1,
+        "value": 1
+      }
+    ],
+    "reasons": [],
+    "scope": "Even when adopted, this model does not replace the rule-based scorer on any existing screen (/machine-health, briefing, agents). It may only be shown as the primary column on /ai/native/failure-risk, with the rule beside it. Changing an existing screen needs a real-data backtest under its own consent capability and ADR.",
+    "test_runs_for_this_test_set": 1,
+    "test_set": "main:seed=20260917:machines=400:days=400:test_from_day=300",
+    "test_set_reused": false
+  },
+  "artifact_file": "failure_risk_v1.json",
+  "artifact_sha256": "ad30970f3ac1fca60c955b352939f42152c5e9a0b03f42dfb01047565f90f821",
+  "baseline_metrics": {
+    "misspecification": {
+      "logging_gaps": {
+        "pr_auc": 0.08867866335666982,
+        "precision_at_k": 0.11268148518148519,
+        "roc_auc": 0.612034393692224
+      },
+      "novel_archetype": {
+        "pr_auc": 0.04510753110479886,
+        "precision_at_k": 0.046823997258779865,
+        "roc_auc": 0.518313676653725
+      },
+      "shock_driven": {
+        "pr_auc": 0.07086007864586515,
+        "precision_at_k": 0.07205710955710956,
+        "roc_auc": 0.5066269841269841
+      },
+      "weak_symptoms": {
+        "pr_auc": 0.0888209937898958,
+        "precision_at_k": 0.10476398601398602,
+        "roc_auc": 0.5635988762008338
+      }
+    },
+    "scorer": "predictive_engine.calculate_predictive_risk through amp_ai.failure_risk.baseline_rule: counters over [as_of - 30d, as_of), status and utilisation from the last event, no work orders",
+    "test": {
+      "pr_auc": {
+        "alpha": 0.05,
+        "estimate": 0.09432247985552103,
+        "hi": 0.13928275487170177,
+        "lo": 0.05491639429010708,
+        "n_boot": 1000,
+        "n_valid": 1000
+      },
+      "precision_at_k": {
+        "alpha": 0.05,
+        "estimate": 0.12171023421023422,
+        "hi": 0.18667132867132868,
+        "lo": 0.06332168029933867,
+        "n_boot": 1000,
+        "n_valid": 1000
+      },
+      "roc_auc": {
+        "alpha": 0.05,
+        "estimate": 0.6114679626608664,
+        "hi": 0.6755258817601065,
+        "lo": 0.543341114877237,
+        "n_boot": 1000,
+        "n_valid": 1000
+      }
+    }
+  },
+  "build_seconds": 31.263011000002734,
+  "caveat": "Evaluated on synthetic machines only; not evidence of accuracy on real plants.",
+  "config": {
+    "days": 400,
+    "ece_bins": 10,
+    "first_day": 120,
+    "gap": 8,
+    "horizon": 7,
+    "l2_grid": [
+      0.1,
+      1.0,
+      10.0,
+      100.0,
+      1000.0
+    ],
+    "n_boot": 1000,
+    "n_machines": 400,
+    "name": "full",
+    "precision_k_frac": 0.1,
+    "seed": 20260917,
+    "step_days": 7,
+    "test_frac": 0.25,
+    "test_start": 300,
+    "train_end": 285,
+    "val_frac_of_all": 0.11249999999999999,
+    "val_share_of_rest": 0.15,
+    "val_start": 240,
+    "variants": [
+      "weak_symptoms",
+      "shock_driven",
+      "logging_gaps",
+      "novel_archetype"
+    ]
+  },
+  "consent_basis": "none required: no customer data used",
+  "created_at": "2026-09-17T09:53:55+00:00",
+  "eval_ledger": {
+    "ledger_version": 1,
+    "test_runs": {
+      "1a648e0fb1470aa8a77a7de1746d656218ec61d3f4d3eaf99278eb5f52c11139": {
+        "logging_gaps:seed=20260917:machines=400:days=400:test_from_day=300": 1,
+        "main:seed=20260917:machines=400:days=400:test_from_day=300": 1,
+        "novel_archetype:seed=20260917:machines=400:days=400:test_from_day=300": 1,
+        "shock_driven:seed=20260917:machines=400:days=400:test_from_day=300": 1,
+        "weak_symptoms:seed=20260917:machines=400:days=400:test_from_day=300": 1
+      }
+    }
+  },
+  "generator": "amp_ai.failure_risk.synthetic@v1",
+  "generator_sha256": "1a648e0fb1470aa8a77a7de1746d656218ec61d3f4d3eaf99278eb5f52c11139",
+  "label": "1 if a MachineEvent with new_status 'Breakdown' starts in [as_of, as_of + 7 days), else 0; machine-weeks already in Breakdown at as_of are excluded for the model and the rule alike",
+  "ledger_before": {},
+  "metrics": {
+    "misspecification": {
+      "logging_gaps": {
+        "base_rate_brier": 0.05239303800323361,
+        "dates": 13,
+        "excluded_in_breakdown": 2,
+        "machines": 100,
+        "model_brier": 0.04945620936477619,
+        "model_ece": 0.00963918651187866,
+        "model_mean_probability": 0.047268348284522387,
+        "model_pr_auc": 0.1894372058663868,
+        "model_precision_at_k": 0.16153846153846155,
+        "model_roc_auc": 0.6893012506797173,
+        "paired_pr_auc_model_minus_rule": {
+          "alpha": 0.05,
+          "estimate": 0.10075854250971697,
+          "hi": 0.17824341987684694,
+          "lo": 0.032191324849814865,
+          "mean": 0.10523347343998761,
+          "n_boot": 1000,
+          "n_valid": 1000
+        },
+        "positives": 72,
+        "prevalence": 0.05546995377503852,
+        "rows": 1298,
+        "rule_pr_auc": 0.08867866335666982,
+        "rule_precision_at_k": 0.11268148518148519,
+        "rule_roc_auc": 0.612034393692224
+      },
+      "novel_archetype": {
+        "base_rate_brier": 0.04063726470812376,
+        "dates": 13,
+        "excluded_in_breakdown": 4,
+        "machines": 100,
+        "model_brier": 0.04057651425958902,
+        "model_ece": 0.011175220426736786,
+        "model_mean_probability": 0.03619058419572263,
+        "model_pr_auc": 0.07872683753184663,
+        "model_precision_at_k": 0.07692307692307693,
+        "model_roc_auc": 0.5630063731594755,
+        "paired_pr_auc_model_minus_rule": {
+          "alpha": 0.05,
+          "estimate": 0.03361930642704777,
+          "hi": 0.0797549854005506,
+          "lo": 0.006034080921879297,
+          "mean": 0.038121829090199046,
+          "n_boot": 1000,
+          "n_valid": 1000
+        },
+        "positives": 55,
+        "prevalence": 0.04243827160493827,
+        "rows": 1296,
+        "rule_pr_auc": 0.04510753110479886,
+        "rule_precision_at_k": 0.046823997258779865,
+        "rule_roc_auc": 0.518313676653725
+      },
+      "shock_driven": {
+        "base_rate_brier": 0.05243105939868351,
+        "dates": 13,
+        "excluded_in_breakdown": 3,
+        "machines": 100,
+        "model_brier": 0.05290098396037675,
+        "model_ece": 0.014512192590069037,
+        "model_mean_probability": 0.060783525965127407,
+        "model_pr_auc": 0.11434843508300499,
+        "model_precision_at_k": 0.1,
+        "model_roc_auc": 0.6009183673469388,
+        "paired_pr_auc_model_minus_rule": {
+          "alpha": 0.05,
+          "estimate": 0.043488356437139844,
+          "hi": 0.11830388411948875,
+          "lo": 0.0026540692009998004,
+          "mean": 0.04852261032715019,
+          "n_boot": 1000,
+          "n_valid": 1000
+        },
+        "positives": 72,
+        "prevalence": 0.05551272166538165,
+        "rows": 1297,
+        "rule_pr_auc": 0.07086007864586515,
+        "rule_precision_at_k": 0.07205710955710956,
+        "rule_roc_auc": 0.5066269841269841
+      },
+      "weak_symptoms": {
+        "base_rate_brier": 0.05239303800323361,
+        "dates": 13,
+        "excluded_in_breakdown": 2,
+        "machines": 100,
+        "model_brier": 0.05078148979436469,
+        "model_ece": 0.0046239743474400545,
+        "model_mean_probability": 0.05084597942759848,
+        "model_pr_auc": 0.14483138752392627,
+        "model_precision_at_k": 0.16153846153846155,
+        "model_roc_auc": 0.6666440094254124,
+        "paired_pr_auc_model_minus_rule": {
+          "alpha": 0.05,
+          "estimate": 0.05601039373403047,
+          "hi": 0.1234113014234084,
+          "lo": 0.012854515236196932,
+          "mean": 0.06553734952125485,
+          "n_boot": 1000,
+          "n_valid": 1000
+        },
+        "positives": 72,
+        "prevalence": 0.05546995377503852,
+        "rows": 1298,
+        "rule_pr_auc": 0.0888209937898958,
+        "rule_precision_at_k": 0.10476398601398602,
+        "rule_roc_auc": 0.5635988762008338
+      }
+    },
+    "test": {
+      "base_rate_brier": 0.05239303800323361,
+      "calibration_table": [
+        {
+          "bin": 0,
+          "hi": 0.1,
+          "lo": 0.0,
+          "mean_predicted": 0.04608665023970386,
+          "n": 1172,
+          "observed_rate": 0.043515358361774746
+        },
+        {
+          "bin": 1,
+          "hi": 0.2,
+          "lo": 0.1,
+          "mean_predicted": 0.13332464846479278,
+          "n": 104,
+          "observed_rate": 0.14423076923076922
+        },
+        {
+          "bin": 2,
+          "hi": 0.3,
+          "lo": 0.2,
+          "mean_predicted": 0.2395509675373879,
+          "n": 13,
+          "observed_rate": 0.15384615384615385
+        },
+        {
+          "bin": 3,
+          "hi": 0.4,
+          "lo": 0.3,
+          "mean_predicted": 0.35617198047497156,
+          "n": 4,
+          "observed_rate": 0.0
+        },
+        {
+          "bin": 4,
+          "hi": 0.5,
+          "lo": 0.4,
+          "mean_predicted": 0.41634561780288926,
+          "n": 2,
+          "observed_rate": 0.5
+        },
+        {
+          "bin": 5,
+          "hi": 0.6,
+          "lo": 0.5,
+          "mean_predicted": 0.5348922204312433,
+          "n": 1,
+          "observed_rate": 1.0
+        },
+        {
+          "bin": 6,
+          "hi": 0.7,
+          "lo": 0.6,
+          "mean_predicted": null,
+          "n": 0,
+          "observed_rate": null
+        },
+        {
+          "bin": 7,
+          "hi": 0.8,
+          "lo": 0.7,
+          "mean_predicted": 0.7189378729987749,
+          "n": 1,
+          "observed_rate": 1.0
+        },
+        {
+          "bin": 8,
+          "hi": 0.9,
+          "lo": 0.8,
+          "mean_predicted": 0.802413678553125,
+          "n": 1,
+          "observed_rate": 1.0
+        },
+        {
+          "bin": 9,
+          "hi": 1.0,
+          "lo": 0.9,
+          "mean_predicted": null,
+          "n": 0,
+          "observed_rate": null
+        }
+      ],
+      "dates": 13,
+      "interval_method": "95% percentile cluster bootstrap by machine, 1000 resamples, seed 20260917; precision@k is per as-of date with k = ceil(0.1 x machines scored that date)",
+      "machines": 100,
+      "model": {
+        "brier": {
+          "alpha": 0.05,
+          "estimate": 0.04912576140394614,
+          "hi": 0.06074614358587811,
+          "lo": 0.0389008835193675,
+          "n_boot": 1000,
+          "n_valid": 1000
+        },
+        "ece": {
+          "alpha": 0.05,
+          "estimate": 0.0060074777603170105,
+          "hi": 0.018743695883160993,
+          "lo": 0.004099038181130621,
+          "n_boot": 1000,
+          "n_valid": 1000
+        },
+        "mean_probability": 0.05801779894356412,
+        "pr_auc": {
+          "alpha": 0.05,
+          "estimate": 0.19372959720539143,
+          "hi": 0.3060755250137177,
+          "lo": 0.10316837534717054,
+          "n_boot": 1000,
+          "n_valid": 1000
+        },
+        "precision_at_k": {
+          "alpha": 0.05,
+          "estimate": 0.16153846153846155,
+          "hi": 0.26153846153846155,
+          "lo": 0.0923076923076923,
+          "n_boot": 1000,
+          "n_valid": 1000
+        },
+        "roc_auc": {
+          "alpha": 0.05,
+          "estimate": 0.6980129599419974,
+          "hi": 0.7622845776099465,
+          "lo": 0.6338742312066551,
+          "n_boot": 1000,
+          "n_valid": 1000
+        }
+      },
+      "paired_model_minus_rule": {
+        "pr_auc": {
+          "alpha": 0.05,
+          "estimate": 0.0994071173498704,
+          "hi": 0.17488133714526297,
+          "lo": 0.029408400252866253,
+          "mean": 0.1027001187818674,
+          "n_boot": 1000,
+          "n_valid": 1000
+        },
+        "precision_at_k": {
+          "alpha": 0.05,
+          "estimate": 0.03982822732822733,
+          "hi": 0.10423634004884005,
+          "lo": 0.0012331305572255806,
+          "mean": 0.05097904348731932,
+          "n_boot": 1000,
+          "n_valid": 1000
+        },
+        "roc_auc": {
+          "alpha": 0.05,
+          "estimate": 0.08654499728113096,
+          "hi": 0.1416672815035866,
+          "lo": 0.03170157409828801,
+          "mean": 0.08733075775612432,
+          "n_boot": 1000,
+          "n_valid": 1000
+        }
+      },
+      "positives": 72,
+      "prevalence": 0.05546995377503852,
+      "rows": 1298,
+      "rule": {
+        "pr_auc": {
+          "alpha": 0.05,
+          "estimate": 0.09432247985552103,
+          "hi": 0.13928275487170177,
+          "lo": 0.05491639429010708,
+          "n_boot": 1000,
+          "n_valid": 1000
+        },
+        "precision_at_k": {
+          "alpha": 0.05,
+          "estimate": 0.12171023421023422,
+          "hi": 0.18667132867132868,
+          "lo": 0.06332168029933867,
+          "n_boot": 1000,
+          "n_valid": 1000
+        },
+        "roc_auc": {
+          "alpha": 0.05,
+          "estimate": 0.6114679626608664,
+          "hi": 0.6755258817601065,
+          "lo": 0.543341114877237,
+          "n_boot": 1000,
+          "n_valid": 1000
+        }
+      }
+    }
+  },
+  "model_name": "failure_risk",
+  "notes": [
+    "Every number here is measured on synthetic machines from amp_ai/failure_risk/synthetic.py; none is evidence of accuracy on a real plant.",
+    "Intervals resample machines. Machines of one plant share demand and disturbance days, so machine-level resampling can understate uncertainty that is shared at plant level.",
+    "The misspecification variants reuse the fitted model and the test machines and dates; they are reported, never gated.",
+    "Design changes made while building, all before the full configuration's test set was first evaluated, and prompted by --small builds (seed 20260918, a different fleet): the L2 grid gained 1000 after a --small build chose 100, the plan grid's edge; the class-weighted path rejects a Platt calibrator whose slope is not positive after --small data produced a = -0.248."
+  ],
+  "python": "3.11.0",
+  "report": "amp_ai.failure_risk evaluation",
+  "seed": 20260917,
+  "split": {
+    "as_of_days": {
+      "first": 120,
+      "last": 386,
+      "step": 7
+    },
+    "entity": "machine",
+    "gap": 8,
+    "horizon": 7,
+    "refit": "training + validation rows with day <= train_end (unweighted model)",
+    "test": "0.25 of machines, day >= 300",
+    "time": "as-of day index (10:00 on that day)",
+    "train": "the remaining machines, day + 7 < 240",
+    "train_end": 285,
+    "validation": "0.15 of the other machines, 240 <= day and day + 7 < 300"
+  },
+  "training": {
+    "base_rate": 0.0587467362924282,
+    "calibration_rejected": null,
+    "class_weight": null,
+    "converged": true,
+    "excluded_in_breakdown": 22,
+    "fitted_on": "training + validation machine-weeks with day <= train_end",
+    "fitted_positives": 270,
+    "fitted_rows": 4596,
+    "fitted_rows_max_day": 281,
+    "l2": 10.0,
+    "machine_weeks": 15578,
+    "n_iter": 7,
+    "selection": {
+      "class_weight": null,
+      "l2": 10.0,
+      "l2_grid": [
+        {
+          "converged": true,
+          "l2": 0.1,
+          "n_iter": 7,
+          "val_log_loss": 0.1787296077982187,
+          "val_pr_auc": 0.18365293033363217
+        },
+        {
+          "converged": true,
+          "l2": 1.0,
+          "n_iter": 7,
+          "val_log_loss": 0.17872341745924056,
+          "val_pr_auc": 0.18406292782633016
+        },
+        {
+          "converged": true,
+          "l2": 10.0,
+          "n_iter": 7,
+          "val_log_loss": 0.1785670757054555,
+          "val_pr_auc": 0.18704783715160891
+        },
+        {
+          "converged": true,
+          "l2": 100.0,
+          "n_iter": 7,
+          "val_log_loss": 0.17887276117053527,
+          "val_pr_auc": 0.1666017767185331
+        },
+        {
+          "converged": true,
+          "l2": 1000.0,
+          "n_iter": 7,
+          "val_log_loss": 0.18387621925692604,
+          "val_pr_auc": 0.1523568992148065
+        }
+      ],
+      "val_positives": 15,
+      "val_pr_auc_balanced": 0.1782013233262582,
+      "val_pr_auc_unweighted": 0.18704783715160891,
+      "val_rows": 315
+    },
+    "test_machines": 100,
+    "test_rows": 1298,
+    "train_machines": 255,
+    "train_prevalence": 0.05940822931114193,
+    "train_rows": 4326,
+    "val_machines": 45,
+    "val_prevalence": 0.047619047619047616,
+    "val_rows": 315
+  },
+  "training_data_source": "synthetic:amp_ai.failure_risk.synthetic@v1 seed=20260917",
+  "version": "v1"
+}

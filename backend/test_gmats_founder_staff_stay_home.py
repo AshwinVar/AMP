@@ -17,8 +17,8 @@ and this code:
 
 A non-Admin login in the founder's own DEFAULT workspace — an Operator demo
 account, a Supervisor on the founder's staff — has DEFAULT as its own tenant.
-The code did not lock it there. It locked it to GMATS: the paying pilot
-customer, by name. With no parameters at all, that login read GMATS's item
+The code did not lock it there. It locked it to GMATS: the pilot customer
+(the first client), by name. With no parameters at all, that login read GMATS's item
 master, purchase rates and customers, and the Supervisor could stock in, raise
 proformas (reserving stock), invoice (deducting it) and issue MINs against it.
 `_guard_record` compared by-id writes against the same answer, so the caller's

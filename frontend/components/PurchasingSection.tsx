@@ -68,7 +68,10 @@ export default function PurchasingSection({
   deletePurchaseOrder?: (id: number) => void;
   generateOverdueEscalations: () => void;
 }) {
-  function getSupplierName(id: number) {
+  function getSupplierName(id: number | null) {
+    // A reorder-agent draft has no supplier yet. Printing "Supplier null" read
+    // as a data fault; saying what is true is the whole fix.
+    if (id == null) return "No supplier yet";
     return suppliers.find((row) => row.id === id)?.supplier_name || `Supplier ${id}`;
   }
 

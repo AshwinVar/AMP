@@ -124,8 +124,8 @@ Not tested: password brute-force and rate-limit behaviour against production
 
 **Correction (2026-09) — the GMATS override was half-fixed.** #500 removed the
 free `?tenant=` choice for founder-workspace logins below Admin, but replaced it
-with a hard-coded answer: every such login was locked to `"GMATS"` — the paying
-pilot, by name — instead of to its own `DEFAULT` workspace. So a founder-workspace
+with a hard-coded answer: every such login was locked to `"GMATS"` — the pilot
+customer, by name — instead of to its own `DEFAULT` workspace. So a founder-workspace
 Operator still read GMATS's item master, rates and customers with no parameter at
 all, a Supervisor could still stock in, reserve, invoice and issue against it
 (reproduced: GMATS stock 40 → 47), and the caller's *own* DEFAULT records were the

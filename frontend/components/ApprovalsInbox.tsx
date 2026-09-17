@@ -90,7 +90,11 @@ export default function ApprovalsInbox() {
         await apiPost(`/agent-actions/${id}/${decision}`, {});
         await load();
       } catch (e) {
-        setError(e instanceof Error ? e.message : "Failed to update the action");
+        // Reload even on a refusal: a withdrawn proposal (409) leaves the
+        // queue, and the inbox must not keep offering it.
+        const message = e instanceof Error ? e.message : "Failed to update the action";
+        await load();
+        setError(message);
       }
     },
     [load],

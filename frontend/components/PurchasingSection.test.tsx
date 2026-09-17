@@ -1,4 +1,4 @@
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, render, screen, within } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
 
 import PurchasingSection from "./PurchasingSection";
@@ -78,5 +78,54 @@ describe("PurchasingSection supplier column", () => {
     ]);
     expect(screen.getAllByText("Bharat Fasteners").length).toBeGreaterThan(0);
     expect(screen.getByText("No supplier yet")).toBeTruthy();
+  });
+});
+
+describe("PurchasingSection held rows", () => {
+  // Both are Draft POs; only `awaiting_approval` (the backend's answer) differs.
+  it("locks a held agent draft and hides Delete; a human Draft keeps its controls", () => {
+    render(
+      <PurchasingSection
+        suppliers={suppliers}
+        purchaseOrders={[
+          po({ id: 2, po_no: "AUTO-PO-3-1789", supplier_id: null, status: "Draft",
+            awaiting_approval: { agent_action_id: 11, agent: "reorder", expired: false } }),
+          po({ id: 1, po_no: "PO-HUMAN", status: "Draft", awaiting_approval: null }),
+        ]}
+        inventoryItems={[]}
+        analytics={null}
+        supplierForm={{ supplier_code: "", supplier_name: "", contact_person: "", email: "",
+          phone: "", category: "", status: "Active" }}
+        setSupplierForm={noop}
+        poForm={{ po_no: "", supplier_id: "", item_id: "", item_name: "", order_quantity: 0,
+          received_quantity: 0, unit: "", expected_delivery_date: "", status: "Open", notes: "" }}
+        setPoForm={noop}
+        createSupplier={noop}
+        updateSupplier={noop}
+        createPurchaseOrder={noop}
+        updatePurchaseOrder={noop}
+        deletePurchaseOrder={noop}
+        generateOverdueEscalations={noop}
+      />,
+    );
+    const held = screen.getByText("AUTO-PO-3-1789").closest("tr") as HTMLElement;
+    expect((within(held).getByLabelText("Received quantity of AUTO-PO-3-1789") as HTMLInputElement).disabled).toBe(true);
+    expect((within(held).getByLabelText("Status of AUTO-PO-3-1789") as HTMLSelectElement).disabled).toBe(true);
+    expect(within(held).queryByRole("button", { name: "Delete" })).toBeNull();
+    expect(within(held).getByRole("note").textContent).toBe(
+      "Awaiting approval: proposed by the reorder agent (action #11). An Admin or Supervisor approves or rejects it in Approvals.",
+    );
+
+    const lookalike = screen.getByText("PO-HUMAN").closest("tr") as HTMLElement;
+    expect((within(lookalike).getByLabelText("Received quantity of PO-HUMAN") as HTMLInputElement).disabled).toBe(false);
+    expect((within(lookalike).getByLabelText("Status of PO-HUMAN") as HTMLSelectElement).disabled).toBe(false);
+    expect(within(lookalike).getByRole("button", { name: "Delete" })).toBeTruthy();
+    expect(within(lookalike).queryByRole("note")).toBeNull();
+  });
+
+  it("renders no Delete on a purchase order when the viewer has no delete handler", () => {
+    renderWith([po({ id: 1, po_no: "PO-1001" })]);
+    const row = screen.getByText("PO-1001").closest("tr") as HTMLElement;
+    expect(within(row).queryByRole("button", { name: "Delete" })).toBeNull();
   });
 });

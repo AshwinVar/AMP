@@ -128,7 +128,12 @@ export default function AgentActivitySection() {
       await apiPost(`/agent-actions/${id}/${decision}`, {});
       await load();
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Failed to update the action");
+      // Reload even on a refusal: a proposal whose item was changed or deleted
+      // is withdrawn by the server (409), and the list must show it Cancelled
+      // rather than keep offering Approve / Reject on it.
+      const message = e instanceof Error ? e.message : "Failed to update the action";
+      await load();
+      setError(message);
     }
   }, [load]);
 

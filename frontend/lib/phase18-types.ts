@@ -1,3 +1,5 @@
+import type { AwaitingApproval } from "./awaiting-approval";
+
 export type Supplier = {
   id: number;
   supplier_code: string;
@@ -24,6 +26,8 @@ export type PurchaseOrder = {
   status: string;
   notes?: string | null;
   created_at?: string;
+  /** Set only while an agent proposal holds this PO (see lib/awaiting-approval). */
+  awaiting_approval?: AwaitingApproval | null;
 };
 
 export type PurchasingAnalytics = {

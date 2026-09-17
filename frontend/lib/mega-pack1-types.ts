@@ -1,3 +1,5 @@
+import type { AwaitingApproval } from "./awaiting-approval";
+
 export type ComplianceDocument = {
   id: number;
   document_no: string;
@@ -38,6 +40,8 @@ export type MaintenanceTask = {
   status: string;
   notes?: string | null;
   created_at?: string;
+  /** Set only while an agent proposal holds this task (see lib/awaiting-approval). */
+  awaiting_approval?: AwaitingApproval | null;
 };
 
 export type MaintenanceAnalytics = {

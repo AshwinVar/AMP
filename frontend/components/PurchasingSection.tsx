@@ -1,7 +1,9 @@
+import { isHeld } from "../lib/awaiting-approval";
 import type { InventoryItem } from "../lib/phase13-types";
 import type { PurchaseOrder, PurchasingAnalytics, Supplier } from "../lib/phase18-types";
 import { statusOptions } from "../lib/status-vocab";
 import { LiveInput } from "../lib/useLiveField";
+import AwaitingApprovalNotice from "./AwaitingApprovalNotice";
 
 function statusStyle(status: string) {
   switch (status) {
@@ -213,6 +215,9 @@ export default function PurchasingSection({
               <tbody>
                 {purchaseOrders.map((row) => {
                   const progress = row.order_quantity > 0 ? Math.min(Math.round((row.received_quantity / row.order_quantity) * 100), 100) : 0;
+                  // Held by an undecided agent proposal: read-only until an
+                  // approver decides it. The backend says so; never the status.
+                  const held = isHeld(row);
                   return (
                     <tr key={row.id} className="border-b border-slate-800">
                       <td className="py-3 px-4 font-semibold">{row.po_no}</td>
@@ -220,17 +225,20 @@ export default function PurchasingSection({
                       <td className="py-3 px-4">{row.item_name}</td>
                       <td className="py-3 px-4">{row.order_quantity} {row.unit}</td>
                       <td className="py-3 px-4">
-                        <LiveInput className="w-24 bg-slate-950 border border-slate-700 rounded-lg px-2 py-1" type="number" value={row.received_quantity} onCommit={(raw) => updatePurchaseOrder(row.id, Number(raw), undefined)} />
+                        <LiveInput className="w-24 bg-slate-950 border border-slate-700 rounded-lg px-2 py-1" type="number" aria-label={`Received quantity of ${row.po_no}`} value={row.received_quantity} disabled={held} onCommit={(raw) => updatePurchaseOrder(row.id, Number(raw), undefined)} />
                         <p className="text-xs text-slate-500">{progress}%</p>
                       </td>
                       <td className="py-3 px-4">{row.expected_delivery_date}</td>
                       <td className="py-3 px-4">
-                        <select className={`rounded-full px-3 py-1 text-xs border bg-slate-950 ${statusStyle(row.status)}`} value={row.status} onChange={(e) => updatePurchaseOrder(row.id, row.received_quantity, e.target.value)}>
+                        <select className={`rounded-full px-3 py-1 text-xs border bg-slate-950 disabled:opacity-60 ${statusStyle(row.status)}`} aria-label={`Status of ${row.po_no}`} value={row.status} disabled={held} onChange={(e) => updatePurchaseOrder(row.id, row.received_quantity, e.target.value)}>
                           {statusOptions("PurchaseOrder", "status", row.status).map((option) => <option key={option}>{option}</option>)}
                         </select>
+                        <AwaitingApprovalNotice hold={row.awaiting_approval} />
                       </td>
                       <td className="py-3 px-4">
-                        <button onClick={() => deletePurchaseOrder?.(row.id)} className="text-red-400 border border-red-500/40 rounded-lg px-3 py-1 hover:bg-red-500/10">Delete</button>
+                        {deletePurchaseOrder && !held && (
+                          <button onClick={() => deletePurchaseOrder(row.id)} className="text-red-400 border border-red-500/40 rounded-lg px-3 py-1 hover:bg-red-500/10">Delete</button>
+                        )}
                       </td>
                     </tr>
                   );

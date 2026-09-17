@@ -13,7 +13,8 @@ export type Supplier = {
 export type PurchaseOrder = {
   id: number;
   po_no: string;
-  supplier_id: number;
+  /** null for a reorder-agent draft: no supplier has been chosen yet. */
+  supplier_id: number | null;
   item_id?: number | null;
   item_name: string;
   order_quantity: number;

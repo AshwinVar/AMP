@@ -701,7 +701,12 @@ class PurchaseOrderUpdate(BaseModel):
 class PurchaseOrderResponse(BaseModel):
     id: int
     po_no: str
-    supplier_id: int
+    # Optional in the RESPONSE, still required in PurchaseOrderCreate. A human
+    # raising a PO picks a supplier; the reorder agent drafts one before anyone
+    # has, and writes supplier_id=None into a column that is nullable for exactly
+    # that reason. Typed `int` here, the first agent PO made GET /purchase-orders
+    # answer 500 for the tenant's ENTIRE list (test_agent_items_serialize.py).
+    supplier_id: Optional[int] = None
     item_id: Optional[int] = None
     item_name: str
     order_quantity: int

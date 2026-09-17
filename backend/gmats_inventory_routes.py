@@ -51,7 +51,7 @@ def _effective_tenant(current_user, requested):
     tenancy.effective_tenant and the registry leak in saas_routes (#438).
 
     #500 then closed "any customer" by hard-coding ONE customer: every non-Admin
-    DEFAULT login was sent to "GMATS" — the paying pilot, by name — so it read
+    DEFAULT login was sent to "GMATS" — the pilot customer, by name — so it read
     that customer's item master, rates and customers with no parameter at all,
     a Supervisor could stock in, reserve, invoice and issue against it, and the
     caller's OWN DEFAULT rows were the ones _guard_record refused. The docstring

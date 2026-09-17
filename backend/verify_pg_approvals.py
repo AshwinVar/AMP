@@ -178,7 +178,9 @@ def main():
     r = subprocess.run([sys.executable, "mutate_approval_gate.py", "--postgresql"], cwd=here,
                        env={**os.environ, "DATABASE_URL": mut_url, "PYTHONIOENCODING": "utf-8"},
                        capture_output=True, text=True, errors="replace")
-    caught = r.stdout.count(" caught ")
+    # Count verdict rows, not the table header ("verdict    caught by").
+    caught = sum(1 for line in r.stdout.splitlines()
+                 if " caught " in line and not line.startswith("mutation "))
     check(f"every PostgreSQL-only and row-lock mutation is caught there ({caught} of 4)",
           r.returncode == 0 and caught == 4 and "all 4 mutations caught" in r.stdout
           and "engine: PostgreSQL" in r.stdout, r.stdout[-900:] + r.stderr[-400:])

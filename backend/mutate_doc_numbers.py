@@ -11,7 +11,7 @@ import subprocess
 import sys
 
 SUITES = ["test_tenant_document_numbers.py", "test_migrate.py",
-          "test_unscoped_model_reads.py"]
+          "test_unscoped_model_reads.py", "test_gmats_document_numbers_never_reused.py"]
 
 MUTATIONS = [
     # --- the constraint itself -------------------------------------------
@@ -34,8 +34,13 @@ MUTATIONS = [
      "models.py",
      '        UniqueConstraint("tenant_code", "slip_no", name="uq_material_issue_slips_tenant_slip_no"),\n',
      ""),
+    # OemUser (#509) added a second identical `username` line, so the bare line
+    # matched twice and this entry has reported SKIP -- and the harness exited 1 --
+    # ever since. Anchored on the User class header, which OemUser does not share.
     ("username stops being globally unique", "models.py",
+     'class User(Base):\n    __tablename__ = "users"\n\n    id = Column(Integer, primary_key=True, index=True)\n'
      "    username = Column(String, unique=True, nullable=False)",
+     'class User(Base):\n    __tablename__ = "users"\n\n    id = Column(Integer, primary_key=True, index=True)\n'
      "    username = Column(String, nullable=False)"),
 
     # --- the allocator ----------------------------------------------------
@@ -74,6 +79,42 @@ MUTATIONS = [
      '            db, tenancy.current_tenant() or "DEFAULT", "MIS", models.MaterialIssueSlip,\n'
      '            "slip_no", "MIS", start=5000),',
      '        slip_no=f"MIS-{5000 + db.query(models.MaterialIssueSlip).count() + 1}",'),
+    ("GMATS tax invoices go back to count()+1", "gmats_inventory_routes.py",
+     '        invoice_no=doc_numbers.allocate(db, p.tenant_code, "INV", models.GmatsInvoice, "invoice_no", "INV", start=7000),',
+     '        invoice_no=f"INV-{7000 + db.query(models.GmatsInvoice).filter(models.GmatsInvoice.tenant_code == p.tenant_code).count() + 1}",'),
+    ("GMATS MINs go back to count()+1", "gmats_inventory_routes.py",
+     '        min_no=doc_numbers.allocate(db, tenant, "MIN", models.GmatsMIN, "min_no", "MIN", start=4000),',
+     '        min_no=f"MIN-{4000 + db.query(models.GmatsMIN).filter(models.GmatsMIN.tenant_code == tenant).count() + 1}",'),
+    ("GMATS proformas go back to count()+1", "gmats_inventory_routes.py",
+     '        proforma_no=doc_numbers.allocate(db, tenant, "PI", models.GmatsProforma, "proforma_no", "PI", start=1000),',
+     '        proforma_no=f"PI-{1000 + db.query(models.GmatsProforma).filter(models.GmatsProforma.tenant_code == tenant).count() + 1}",'),
+    ("GMATS invoices draw from the MIN series", "gmats_inventory_routes.py",
+     '"INV", models.GmatsInvoice, "invoice_no", "INV", start=7000)',
+     '"MIN", models.GmatsInvoice, "invoice_no", "INV", start=7000)'),
+    ("GMATS invoice numbering keyed on the caller, not the document", "gmats_inventory_routes.py",
+     'doc_numbers.allocate(db, p.tenant_code, "INV",',
+     'doc_numbers.allocate(db, current_user.get("tenant"), "INV",'),
+    ("GMATS MIN number allocated before the stock check", "gmats_inventory_routes.py",
+     ['    for item_id, qty in needed.items():\n'
+      '        item = db.query(models.GmatsItem).filter(\n'
+      '            models.GmatsItem.id == item_id, models.GmatsItem.tenant_code == tenant).first()\n'
+      '        if not item:\n'
+      '            raise HTTPException(status_code=404, detail="Item not found")\n'
+      '        _heal_stock(item)\n'
+      '        if qty > item.physical_stock:',
+      '        min_no=doc_numbers.allocate(db, tenant, "MIN", models.GmatsMIN, "min_no", "MIN", start=4000),'],
+     ['    early_no = doc_numbers.allocate(db, tenant, "MIN", models.GmatsMIN, "min_no", "MIN", start=4000)\n'
+      '    for item_id, qty in needed.items():\n'
+      '        item = db.query(models.GmatsItem).filter(\n'
+      '            models.GmatsItem.id == item_id, models.GmatsItem.tenant_code == tenant).first()\n'
+      '        if not item:\n'
+      '            raise HTTPException(status_code=404, detail="Item not found")\n'
+      '        _heal_stock(item)\n'
+      '        if qty > item.physical_stock:',
+      '        min_no=early_no,']),
+    ("the count guard stops looking inside additions", "test_gmats_document_numbers_never_reused.py",
+     "                if not (isinstance(add, ast.BinOp) and isinstance(add.op, ast.Add)):",
+     "                if not isinstance(add, ast.Constant):"),
 
     # --- the migration guard ---------------------------------------------
     ("a revision id longer than VARCHAR(32) is accepted",
@@ -99,8 +140,9 @@ def main():
     originals = {}
     for _, path, _, _ in MUTATIONS:
         if path not in originals:
-            originals[path] = io.open(os.path.join(here, path),
-                                      encoding="utf-8").read()
+            # Raw bytes: the tree is CRLF, and a text-mode round trip rewrote every
+            # mutated file as LF (no content diff under autocrlf, but a dirty tree).
+            originals[path] = io.open(os.path.join(here, path), "rb").read()
 
     baseline = run_suites()
     if baseline:
@@ -112,7 +154,9 @@ def main():
 
     survived = []
     for label, path, old, new in MUTATIONS:
-        source = originals[path]
+        raw = originals[path]
+        crlf = b"\r\n" in raw
+        source = raw.decode("utf-8").replace("\r\n", "\n")
         olds = old if isinstance(old, list) else [old]
         news = new if isinstance(new, list) else [new]
         misses = [o for o in olds if source.count(o) != 1]
@@ -124,13 +168,12 @@ def main():
         mutated = source
         for o, n in zip(olds, news):
             mutated = mutated.replace(o, n, 1)
-        io.open(os.path.join(here, path), "w", encoding="utf-8",
-                newline="\n").write(mutated)
+        io.open(os.path.join(here, path), "wb").write(
+            (mutated.replace("\n", "\r\n") if crlf else mutated).encode("utf-8"))
         try:
             failing = run_suites()
         finally:
-            io.open(os.path.join(here, path), "w", encoding="utf-8",
-                    newline="\n").write(source)
+            io.open(os.path.join(here, path), "wb").write(raw)
         verdict = "caught" if failing else "SURVIVED"
         print(f"{label:<58} {verdict:<10} "
               f"{', '.join(s.replace('test_', '').replace('.py', '')[:22] for s in failing) or '-- nothing --'}")
@@ -138,7 +181,7 @@ def main():
             survived.append(label)
 
     dirty = [p for p, original in originals.items()
-             if io.open(os.path.join(here, p), encoding="utf-8").read() != original]
+             if io.open(os.path.join(here, p), "rb").read() != original]
     print()
     print(f"source files restored: {'yes' if not dirty else 'NO - DIRTY: ' + str(dirty)}")
     if dirty:

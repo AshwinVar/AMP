@@ -164,3 +164,29 @@ same way and the release command stays broken — the same dead-migrations outco
 as #499, reached by a different route. SQLite ignores VARCHAR lengths entirely,
 so the whole suite passed locally. `test_migrate.py` now asserts every revision
 id fits, and that guard is itself mutation-verified.
+
+## Addendum (2026-09): the GMATS documents never adopted the sequence
+
+This decision moved the enterprise inventory routes onto `doc_numbers.allocate`.
+`gmats_inventory_routes.py` kept `f"INV-{7000 + count + 1}"` for tax invoices, and
+the same pattern for MINs and proformas. Its tables carry no unique constraint on
+the number, so defect 2 above (reuse after a deletion) never raised an error. The
+duplicate was simply stored. Voiding a tax invoice or a MIN deletes the row:
+
+    INV-7001 issued, INV-7002 issued, INV-7001 voided -> next invoice: INV-7002
+
+Reproduced: two live tax invoices both numbered INV-7002. All three generators now
+call `doc_numbers.allocate` with the document's own tenant (a founder invoicing for
+a customer continues the customer's series) and doc types `PI`, `INV` and `MIN`.
+The first allocation seeds from the highest number already on file, so existing
+data needs no migration. A void leaves a gap, and the void's audit row
+(`gmats_void_invoice`, `gmats_void_min`) names the number that was voided.
+
+`test_gmats_document_numbers_never_reused.py` also finds every f-string in any
+`*_routes.py` that adds to a row count, so a new `count() + 1` number in a request
+handler fails CI. `mutate_doc_numbers.py` gained the GMATS wiring mutations.
+
+**Still open:** no constraint makes a GMATS number unique in the database. Adding
+one needs a migration, and that migration would fail on any production tenant
+that already holds a duplicate from the old generator. Checking production for
+duplicates is the step before that migration. It is not done here.

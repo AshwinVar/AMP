@@ -50,7 +50,9 @@ THE RULES, IN ONE PLACE EACH
 
 What the engine owns (contract_statements, attribution_engine): the statement
 content, its hash, revisions, the acceptance-state rule (via
-canonical.acceptance_is_valid) and the compute/verify audit. This module never
+canonical.acceptance_is_valid), which accepted terms version governs an instant
+(accepted_versions / governing_version, which coverage, periods and termination
+here call) and the compute/verify audit. This module never
 builds statement content and never decides whether an acceptance is valid.
 """
 import json
@@ -306,23 +308,6 @@ def _grid_terms(db, contract):
     return _terms_of(_version(db, contract.id, 1))
 
 
-def accepted_versions(db, contract_id):
-    return (db.query(models.ServiceContractTermVersion)
-              .filter(models.ServiceContractTermVersion.contract_id == contract_id,
-                      models.ServiceContractTermVersion.status == ACCEPTED)
-              .order_by(models.ServiceContractTermVersion.version.asc()).all())
-
-
-def governing_version(versions, instant):
-    """The accepted version with the highest number whose effective_from <= instant."""
-    best = None
-    for v in versions:
-        if v.status == ACCEPTED and v.effective_from <= instant \
-                and (best is None or v.version > best.version):
-            best = v
-    return best
-
-
 def contract_state(contract, now):
     if contract.status not in BINDING_STATUSES:
         return contract.status
@@ -408,7 +393,8 @@ def coverage_ranges(db, contract):
     iff the governing version snapshotted it."""
     if contract.status not in BINDING_STATUSES:
         return {}
-    versions = accepted_versions(db, contract.id)
+    engine = _engine()
+    versions = engine.accepted_versions(db, contract.id)
     if not versions:
         return {}
     rows = (db.query(models.ServiceContractMachine)
@@ -421,7 +407,7 @@ def coverage_ranges(db, contract):
     out = {}
     for p in contract_periods.periods(grid, contract.starts_at,
                                       contract_periods.contract_effective_end(contract)):
-        gov = governing_version(versions, p.start)
+        gov = engine.governing_version(versions, p.start)
         if gov is None:
             continue
         for r in by_version.get(gov.id, []):
@@ -818,7 +804,8 @@ def terminate_contract(db, party, contract_id, reason):
     if now >= contract.ends_at:
         raise Refused(409, "This contract has already ended")
     grid = _grid_terms(db, contract)
-    gov = governing_version(accepted_versions(db, contract.id), now)
+    engine = _engine()
+    gov = engine.governing_version(engine.accepted_versions(db, contract.id), now)
     notice_days = (_terms_of(gov) if gov is not None else grid).termination_notice_days
     effective = contract_periods.boundary_at_or_after(
         grid, contract.starts_at, now + timedelta(days=notice_days))
@@ -858,13 +845,13 @@ def _statements(db, contract_id):
 
 def periods_view(db, party, contract):
     grid = _grid_terms(db, contract)
-    versions = accepted_versions(db, contract.id)
+    engine = _engine()
+    versions = engine.accepted_versions(db, contract.id)
     statements = {s.period_start: s for s in _statements(db, contract.id)}
-    engine = _engine() if statements else None
     out = []
     for p in contract_periods.periods(grid, contract.starts_at,
                                       contract_periods.contract_effective_end(contract)):
-        gov = governing_version(versions, p.start)
+        gov = engine.governing_version(versions, p.start)
         st = statements.get(p.start)
         summary = None
         if st is not None:

@@ -307,6 +307,20 @@ def case_one_clock_and_a_lazy_engine():
           and "503" in ast.unparse(engine))
     check("service_contracts computes no money: no float and no Decimal",
           "float(" not in source and "Decimal" not in source)
+    own = {n.name for n in tree.body if isinstance(n, ast.FunctionDef)}
+    check("service_contracts keeps no copy of the engine's rules (which terms govern, "
+          "whether an acceptance counts)",
+          not own & {"governing_version", "accepted_versions", "acceptance_state",
+                     "acceptance_is_valid"}, sorted(own & {"governing_version",
+                                                           "accepted_versions",
+                                                           "acceptance_state",
+                                                           "acceptance_is_valid"}))
+    engine_calls = [n for n in ast.walk(tree) if isinstance(n, ast.Call)
+                    and isinstance(n.func, ast.Attribute)
+                    and n.func.attr in ("governing_version", "accepted_versions")
+                    and isinstance(n.func.value, ast.Name) and n.func.value.id == "engine"]
+    check("...and calls the engine's governing_version / accepted_versions instead "
+          "(found at least 6 calls)", len(engine_calls) >= 6, len(engine_calls))
     for module in ("oem_contract_routes.py", "service_contract_routes.py"):
         src, tr = _tree(module)
         reads = [n for n in ast.walk(tr) if isinstance(n, ast.Attribute)

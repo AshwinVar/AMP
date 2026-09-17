@@ -30,6 +30,7 @@ from datetime import datetime
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from sqlalchemy.orm import Session
 
+import doc_numbers
 import models
 import tenancy
 from payload_fields import int_cell, int_field, str_field
@@ -433,10 +434,9 @@ def gmats_create_proforma(payload: dict, db: Session = Depends(get_db), current_
         available = item.physical_stock - item.reserved_stock
         if qty > available:
             raise HTTPException(status_code=400, detail=f"Cannot reserve {qty} {item.unit} of {item.item_name}: only {available} available")
-    count = db.query(models.GmatsProforma).filter(models.GmatsProforma.tenant_code == tenant).count()
     p = models.GmatsProforma(
         tenant_code=tenant,
-        proforma_no=f"PI-{1000 + count + 1}",
+        proforma_no=doc_numbers.allocate(db, tenant, "PI", models.GmatsProforma, "proforma_no", "PI", start=1000),
         customer_name=str_field(payload, "customer_name"),
         status="Open",
     )
@@ -529,10 +529,13 @@ def gmats_generate_invoice(pid: int, db: Session = Depends(get_db), current_user
         if item:
             item.physical_stock -= l.qty                              # exact (guard guarantees >= 0)
             item.reserved_stock = max(0, item.reserved_stock - l.qty)  # clear reservation
-    count = db.query(models.GmatsInvoice).filter(models.GmatsInvoice.tenant_code == p.tenant_code).count()
+    # A tax invoice number is the document's legal identity. count()+1 handed a
+    # voided invoice's count to the next one, so after a void two LIVE invoices
+    # carried one number; the shared sequence only moves forward (a void leaves
+    # a gap, named in its audit row). test_gmats_document_numbers_never_reused.
     inv = models.GmatsInvoice(
         tenant_code=p.tenant_code,
-        invoice_no=f"INV-{7000 + count + 1}",
+        invoice_no=doc_numbers.allocate(db, p.tenant_code, "INV", models.GmatsInvoice, "invoice_no", "INV", start=7000),
         proforma_id=p.id,
         customer_name=p.customer_name,
         status="Generated",
@@ -630,10 +633,9 @@ def gmats_create_min(payload: dict, db: Session = Depends(get_db), current_user:
         _heal_stock(item)
         if qty > item.physical_stock:
             raise HTTPException(status_code=400, detail=f"Cannot issue {qty} {item.unit} of {item.item_name}: only {item.physical_stock} physical")
-    count = db.query(models.GmatsMIN).filter(models.GmatsMIN.tenant_code == tenant).count()
     m = models.GmatsMIN(
         tenant_code=tenant,
-        min_no=f"MIN-{4000 + count + 1}",
+        min_no=doc_numbers.allocate(db, tenant, "MIN", models.GmatsMIN, "min_no", "MIN", start=4000),
         customer_name=str_field(payload, "customer_name"),
         machine_ref=payload.get("machine_ref", ""),
         status="Issued",

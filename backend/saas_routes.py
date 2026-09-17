@@ -188,9 +188,13 @@ def delete_company_tenant(tenant_id: int, purge: bool = False, db: Session = Dep
     if not row:
         raise HTTPException(status_code=404, detail="Tenant not found")
     code = row.company_code
-    db.delete(row)
-    db.commit()
     purged = None
+    # PURGE FIRST, then remove the registry row. The row used to be deleted and
+    # committed before the purge ran, so a purge that then failed (on PostgreSQL,
+    # "purge blocked by constraints on: ...") left the company gone from SaaS
+    # Admin with every row of its data still in place — and no registry row left
+    # to press Delete on again. Now a failed purge changes nothing the founder can
+    # see: the company is still listed, and the delete can be retried.
     if purge:
         try:
             purged = offboard_tenant.purge_tenant_data(db, code)
@@ -200,6 +204,9 @@ def delete_company_tenant(tenant_id: int, purge: bool = False, db: Session = Dep
             # Raise a HANDLED error: unhandled exceptions bypass CORS and the
             # browser sees an opaque network failure instead of this message.
             raise HTTPException(status_code=500, detail=f"Data purge failed: {e}")
+    db.delete(row)
+    db.commit()
+    if purge:
         plan_gate.invalidate(code)
         log_audit(db, current_user.get("sub", "?"), "purge_tenant", "tenant", None,
                   f"tenant={code} rows={sum(purged.values())} tables={len(purged)}")

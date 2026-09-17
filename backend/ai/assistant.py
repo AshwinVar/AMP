@@ -509,7 +509,28 @@ def _pillar(name):
     return _briefing if name == "briefing" else None
 
 
-def answer(db, tenant: str, question: str, chosen_route=None) -> dict:
+def _proposed_pillar(proposer, question):
+    """(pillar function, RouteDecision) for a usable proposal, else (None, None).
+
+    `proposer` is a callable question -> RouteDecision (amp_ai.core.contracts),
+    today the AMP-native intent model (ADR-0020). What it may do is exactly what
+    `chosen_route` may do -- name a pillar -- and less: anything that is not a
+    RouteDecision naming an allowlisted pillar is ignored, and so is a proposer
+    that raises. A broken or wrong model costs the user today's keyword answer,
+    never an error. The decision carries no tenant, and none is read from it.
+    """
+    from amp_ai.core.contracts import RouteDecision   # lazy: ai/ is imported by everything
+    try:
+        decision = proposer(question)
+    except Exception:   # noqa: BLE001 - a failing model must degrade to the keyword router
+        return None, None
+    if not isinstance(decision, RouteDecision) or decision.route is None:
+        return None, None
+    fn = _pillar(decision.route)
+    return (fn, decision) if fn is not None else (None, None)
+
+
+def answer(db, tenant: str, question: str, chosen_route=None, proposer=None) -> dict:
     """Answer a plant question from the read-models: a sentence plus the view that
     drills into it. Routes by keyword; defaults to 'what needs attention'.
 
@@ -531,6 +552,15 @@ def answer(db, tenant: str, question: str, chosen_route=None) -> dict:
     environment with no AI key, and shipping an unmeasurable behaviour change is
     what test_ai_evaluation.py section 1c exists to warn against. The envelope
     lands first so it is already correct and under CI on the day a key appears.
+
+    `proposer` (ADR-0020) is the AMP-native model's way in, and it is NARROWER
+    than `chosen_route`: it is consulted only AFTER the machine-name lookup and
+    the `find` prefix, so a question naming a machine is still answered about
+    that machine and the lookup still runs once. Only a RouteDecision naming an
+    allowlisted pillar is used (see `_proposed_pillar`). When a proposer is
+    given, every response says which spoke: `route_source` "model" (with the
+    decision's confidence and model version) or "keywords". Without one the
+    response is byte-for-byte what it was before.
     """
     if chosen_route is not None:
         fn = _pillar(chosen_route)
@@ -542,15 +572,24 @@ def answer(db, tenant: str, question: str, chosen_route=None) -> dict:
         # silent to the caller -- an invalid proposal is not an error condition,
         # it is a model being wrong, and the user still gets an answer.
     # A specific machine named in the question wins — answer about that machine.
+    labelled = {} if proposer is None else {"route_source": "keywords"}
     named = _machine_named(db, question)
     if named is not None:
         text, view = _machine_answer(db, tenant, named)
-        return {"question": question, "answer": text, "view": view, "matched": "machine_detail"}
+        return {"question": question, "answer": text, "view": view, "matched": "machine_detail", **labelled}
 
     # An explicit find/locate phrase runs the global entity search.
     if (question or "").strip().lower().startswith(_FIND_PREFIXES):
         text, view = _find(db, tenant, question)
-        return {"question": question, "answer": text, "view": view, "matched": "find"}
+        return {"question": question, "answer": text, "view": view, "matched": "find", **labelled}
+
+    if proposer is not None:
+        fn, decision = _proposed_pillar(proposer, question)
+        if fn is not None:
+            text, view = fn(db, tenant)
+            return {"question": question, "answer": text, "view": view, "matched": fn.__name__.lstrip("_"),
+                    "route_source": "model", "confidence": decision.confidence,
+                    "model_version": decision.model_version}
 
     q = f" {(question or '').lower()} "
     # FIRST MATCH WINS, and the order of _ROUTES is load-bearing.
@@ -570,6 +609,7 @@ def answer(db, tenant: str, question: str, chosen_route=None) -> dict:
     for keys, fn in _ROUTES:
         if any(k in q for k in keys):
             text, view = fn(db, tenant)
-            return {"question": question, "answer": text, "view": view, "matched": fn.__name__.lstrip("_")}
+            return {"question": question, "answer": text, "view": view, "matched": fn.__name__.lstrip("_"),
+                    **labelled}
     text, view = _briefing(db, tenant)
-    return {"question": question, "answer": text, "view": view, "matched": "briefing"}
+    return {"question": question, "answer": text, "view": view, "matched": "briefing", **labelled}

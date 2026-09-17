@@ -54,6 +54,7 @@ import platform_routes
 from platform_routes import log_audit
 import read_model_routes
 import agent_routes
+import native_ai_routes
 import saas_routes
 import costing_routes
 import machines_routes
@@ -388,6 +389,12 @@ app.include_router(read_model_routes.router)
 # Register the agent oversight endpoints (ADR-0004/0005) — activity log + approval
 # queue, roster, autonomy policy, impact, trend, and human approve/reject.
 app.include_router(agent_routes.router)
+
+# Register the AMP-native AI endpoints (ADR-0020) - failure risk beside the rule,
+# the consent-gated telemetry anomaly check, the model cards, and the per-tenant
+# learning consent. Standard-library models with pinned artifacts; the models
+# never choose a tenant, a query or a role.
+app.include_router(native_ai_routes.router)
 
 # Register the SaaS / tenant-lifecycle endpoints (ADR-0008) — the founder's
 # control plane: registry, onboarding, admin provisioning, plan/status, delete.

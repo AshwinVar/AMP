@@ -127,6 +127,17 @@ RATE_LIMITS = {
     "/ai/ask": (_env_int("RATE_LIMIT_AI", 20), 60),
     "/ai/report": (_env_int("RATE_LIMIT_AI", 20), 60),
     "/copilot/ask": (_env_int("RATE_LIMIT_AI", 20), 60),
+    # AMP-native AI (ADR-0020). Both are the COST target and the second is also a
+    # probing target: failure-risk loads 120 days of every machine's history and
+    # re-verifies the model artifact per call; the anomaly check reads up to 50k
+    # telemetry rows and fits a baseline per call. The anomaly entry is a PREFIX
+    # (/ai/native/anomaly/machines/{id}) and the bucket is keyed on the prefix,
+    # not the full path, so walking machine ids does not buy a fresh budget per id.
+    "/ai/native/failure-risk": (_env_int("RATE_LIMIT_AI", 20), 60),
+    "/ai/native/anomaly": (_env_int("RATE_LIMIT_AI", 20), 60),
+    # The model cards verify each artifact against its pinned hash on every call
+    # (about 0.1 s of CPU for all three, the copilot's artifact is ~0.9 MB).
+    "/ai/models": (_env_int("RATE_LIMIT_AI", 20), 60),
 }
 
 
@@ -186,12 +197,18 @@ def _client_key(scope):
     return client[0] if client else "unknown"
 
 
-def _limit_for(path):
+def _rate_limit_entry(path):
+    """(prefix, (limit, window)) of the longest RATE_LIMITS prefix covering path, or None."""
     match = None
     for prefix, conf in RATE_LIMITS.items():
         if path == prefix or path.startswith(prefix + "/"):
             if match is None or len(prefix) > len(match[0]):
                 match = (prefix, conf)
+    return match
+
+
+def _limit_for(path):
+    match = _rate_limit_entry(path)
     return match[1] if match else None
 
 
@@ -213,14 +230,19 @@ class RateLimitMiddleware:
             await self.app(scope, receive, send)
             return
 
-        conf = _limit_for(scope.get("path", ""))
-        if conf is None:
+        entry = _rate_limit_entry(scope.get("path", ""))
+        if entry is None:
             await self.app(scope, receive, send)
             return
 
-        limit, window = conf
+        # Keyed on the matched PREFIX, not the raw path: every path under one entry
+        # shares one budget. Before, /ai/ask/stream and /ai/ask were separate
+        # buckets despite the docstring of test_prefix_matching_is_boundary_safe,
+        # and a parameterised path (/ai/native/anomaly/machines/{id}) would have
+        # handed out a fresh budget per id.
+        prefix, (limit, window) = entry
         allowed, retry_after = _window.hit(
-            f"{_client_key(scope)}:{scope['path']}", limit, window, time.monotonic()
+            f"{_client_key(scope)}:{prefix}", limit, window, time.monotonic()
         )
         if allowed:
             await self.app(scope, receive, send)

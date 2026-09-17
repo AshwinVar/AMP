@@ -96,23 +96,32 @@ def apply_plan_tier(db, tenant_code, plan_name):
     return c
 
 
-def add_audit(db, actor, action, entity_type=None, entity_id=None, details=None,
-              tenant_code=None):
-    """Stage an audit record in the CALLER's transaction, without committing, for
-    a record that must commit or roll back together with the write it describes
-    (approvals.withdraw).
+def build_audit_row(actor, action, entity_type=None, entity_id=None, details=None, tenant_code=None):
+    """An AuditLog row, NOT added to any session and NOT committed.
+
+    The one place an audit record's shape is decided. add_audit stages it in the
+    caller's transaction; log_audit stages it and commits on its own.
 
     tenant_code: the company the audited record belongs to, when that can differ
-    from the request's tenant. Left None, the row is stamped with the request
-    tenant (tenancy.before_flush). A founder correcting a customer's records from
-    the DEFAULT workspace must pass the record's tenant, or the row is filed under
-    DEFAULT and the customer's (tenant-scoped) audit log never shows it. Callers
-    pass a tenant only after the record's own tenant guard has admitted them."""
-    row = models.AuditLog(
+    from the request's tenant. Left None, the ADR-0002 before_flush hook stamps the
+    request tenant. A founder correcting a customer's records from the DEFAULT
+    workspace must pass the record's tenant, or the row is filed under DEFAULT and
+    the customer's (tenant-scoped) audit log never shows it. Callers pass a tenant
+    only after the record's own tenant guard has admitted them.
+    """
+    return models.AuditLog(
         actor=actor or "system", action=action,
         entity_type=entity_type, entity_id=entity_id, details=details,
         tenant_code=tenant_code,
     )
+
+
+def add_audit(db, actor, action, entity_type=None, entity_id=None, details=None, tenant_code=None):
+    """Stage an audit record in the CALLER's transaction, without committing, for
+    a record that must commit or roll back together with the write it describes
+    (approvals.withdraw, amp_ai.consent). A failure raises into the caller: a
+    decision that must never happen unaudited must not survive a failed audit."""
+    row = build_audit_row(actor, action, entity_type, entity_id, details, tenant_code)
     db.add(row)
     return row
 
@@ -120,8 +129,8 @@ def add_audit(db, actor, action, entity_type=None, entity_id=None, details=None,
 def log_audit(db, actor, action, entity_type=None, entity_id=None, details=None, tenant_code=None):
     """Append an audit record on its own. Safe to call anywhere — never raises.
 
-    This is add_audit plus a commit: use it for a record that stands on its own,
-    and add_audit when the row must share the caller's transaction."""
+    add_audit plus a commit: use it for a record that stands on its own, and
+    add_audit when the row must share the caller's transaction."""
     try:
         add_audit(db, actor, action, entity_type, entity_id, details, tenant_code)
         db.commit()

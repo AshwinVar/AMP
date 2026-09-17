@@ -36,6 +36,7 @@ from payload_fields import int_cell, int_field, str_field
 from csv_safe import read_upload_text
 from auth import get_current_user, require_roles
 from database import SessionLocal
+from platform_routes import log_audit
 
 
 def _effective_tenant(current_user, requested):
@@ -82,6 +83,38 @@ def _guard_record(current_user, record_tenant):
     allowed = _effective_tenant(current_user, record_tenant)
     if record_tenant != allowed:
         raise HTTPException(status_code=403, detail="This record belongs to another company")
+
+
+def _audit(db, current_user, record_tenant, action, entity_type, entity_id, details):
+    """Every GMATS write leaves one audit row (test_gmats_writes_leave_a_trail).
+
+    The pilot promises "Admin can correct/void any operator mistake; full audit
+    trail", and no GMATS record stores who made it, so this row is the only
+    answer to "who set this stock to 7, and what was it before". Call it after the
+    handler's last commit, so a refused or failed write leaves no row. The row is
+    filed under the RECORD's tenant: a founder working from the DEFAULT workspace
+    would otherwise file it under DEFAULT, out of the customer's audit log."""
+    log_audit(db, current_user.get("sub"), action, entity_type, entity_id, details,
+              tenant_code=record_tenant)
+
+
+AUDIT_IMPORT_CHANGES_SHOWN = 50
+
+
+def _changes(before, after):
+    """'field old -> new' for each field whose value changed, else 'no change'."""
+    diffs = [f"{k} {before[k]} -> {after[k]}" for k in before if before[k] != after[k]]
+    return ", ".join(diffs) or "no change"
+
+
+def _lines_text(db, tenant, lines):
+    """'CODE xQTY' for each document line, for the audit row. Names come from the
+    document's own tenant only, like the listings (never a foreign item's code)."""
+    ids = {l.item_id for l in lines}
+    items = (db.query(models.GmatsItem)
+             .filter(models.GmatsItem.id.in_(ids), models.GmatsItem.tenant_code == tenant).all()) if ids else []
+    codes = {i.id: i.item_code for i in items}
+    return ", ".join(f"{codes.get(l.item_id, f'item {l.item_id}')} x{l.qty}" for l in lines)
 
 
 router = APIRouter(prefix="/gmats", tags=["GMATS Inventory"])
@@ -215,6 +248,8 @@ def gmats_create_item(payload: dict, db: Session = Depends(get_db), current_user
         if alias.strip():
             db.add(models.GmatsAlias(tenant_code=item.tenant_code, item_id=item.id, alias_name=alias.strip()))
     db.commit()
+    _audit(db, current_user, item.tenant_code, "gmats_create_item", "gmats_item", item.id,
+           f"{item.item_code} {item.item_name}: created with physical_stock {item.physical_stock}")
     return _item_dict(db, item)
 
 
@@ -224,13 +259,18 @@ def gmats_update_item(item_id: int, payload: dict, db: Session = Depends(get_db)
     if not item:
         raise HTTPException(status_code=404, detail="Item not found")
     _guard_record(current_user, item.tenant_code)
+    fields = ("reorder_level", "purchase_rate", "location")
+    before = {f: getattr(item, f) for f in fields}
     if "reorder_level" in payload:
         item.reorder_level = int_field(payload, "reorder_level")
     if "purchase_rate" in payload:
         item.purchase_rate = int_field(payload, "purchase_rate")
     if "location" in payload:
         item.location = str_field(payload, "location", required=False)
+    after = {f: getattr(item, f) for f in fields}
     db.commit()
+    _audit(db, current_user, item.tenant_code, "gmats_update_item", "gmats_item", item.id,
+           f"{item.item_code}: {_changes(before, after)}")
     return _item_dict(db, item)
 
 
@@ -243,10 +283,14 @@ def gmats_stock_in(item_id: int, payload: dict, db: Session = Depends(get_db), c
     _guard_record(current_user, item.tenant_code)
     qty = int_field(payload, "qty", minimum=1)
     _heal_stock(item)
+    before = {"physical_stock": item.physical_stock, "purchase_rate": item.purchase_rate}
     item.physical_stock += qty
     if payload.get("purchase_rate"):
         item.purchase_rate = int_field(payload, "purchase_rate")
+    after = {"physical_stock": item.physical_stock, "purchase_rate": item.purchase_rate}
     db.commit()
+    _audit(db, current_user, item.tenant_code, "gmats_stock_in", "gmats_item", item.id,
+           f"{item.item_code}: +{qty} in, {_changes(before, after)}")
     return _item_dict(db, item)
 
 # ── Aliases ───────────────────────────────────────────────────
@@ -262,6 +306,8 @@ def gmats_add_alias(item_id: int, payload: dict, db: Session = Depends(get_db), 
     if name:
         db.add(models.GmatsAlias(tenant_code=item.tenant_code, item_id=item.id, alias_name=name))
         db.commit()
+        _audit(db, current_user, item.tenant_code, "gmats_add_alias", "gmats_item", item.id,
+               f"{item.item_code}: alias {name!r}")
     return _item_dict(db, item)
 
 
@@ -406,6 +452,9 @@ def gmats_create_proforma(payload: dict, db: Session = Depends(get_db), current_
         item.reserved_stock += qty               # RESERVE — physical unchanged
         db.add(models.GmatsProformaLine(proforma_id=p.id, item_id=item.id, qty=qty))
     db.commit()
+    reserved = db.query(models.GmatsProformaLine).filter(models.GmatsProformaLine.proforma_id == p.id).all()
+    _audit(db, current_user, p.tenant_code, "gmats_create_proforma", "gmats_proforma", p.id,
+           f"{p.proforma_no} for {p.customer_name}: reserved {_lines_text(db, p.tenant_code, reserved)}")
     return {"id": p.id, "proforma_no": p.proforma_no}
 
 
@@ -423,6 +472,8 @@ def gmats_cancel_proforma(pid: int, db: Session = Depends(get_db), current_user:
             item.reserved_stock = max(0, item.reserved_stock - l.qty)   # release reservation
     p.status = "Cancelled"
     db.commit()
+    _audit(db, current_user, p.tenant_code, "gmats_cancel_proforma", "gmats_proforma", p.id,
+           f"{p.proforma_no} cancelled: released {_lines_text(db, p.tenant_code, lines)}")
     return {"ok": True}
 
 # ── Tax Invoice (final deduction) ─────────────────────────────
@@ -489,6 +540,8 @@ def gmats_generate_invoice(pid: int, db: Session = Depends(get_db), current_user
     db.add(inv)
     p.status = "Invoiced"
     db.commit()
+    _audit(db, current_user, p.tenant_code, "gmats_generate_invoice", "gmats_invoice", inv.id,
+           f"{inv.invoice_no} from {p.proforma_no}: deducted {_lines_text(db, p.tenant_code, lines)}")
     return {"id": inv.id, "invoice_no": inv.invoice_no}
 
 # ── Material Issue Note (free spares with a machine) ──────────
@@ -597,6 +650,9 @@ def gmats_create_min(payload: dict, db: Session = Depends(get_db), current_user:
         item.physical_stock -= qty   # exact (the summed guard above keeps it >= 0), so void restores exactly
         db.add(models.GmatsMINLine(min_id=m.id, item_id=item.id, qty=qty))
     db.commit()
+    issued = db.query(models.GmatsMINLine).filter(models.GmatsMINLine.min_id == m.id).all()
+    _audit(db, current_user, m.tenant_code, "gmats_create_min", "gmats_min", m.id,
+           f"{m.min_no} for {m.customer_name} ({m.machine_ref}): issued {_lines_text(db, m.tenant_code, issued)}")
     return {"id": m.id, "min_no": m.min_no}
 
 # ── Admin corrections (fix operator mistakes) ─────────────────
@@ -609,6 +665,8 @@ def gmats_correct_item(item_id: int, payload: dict, db: Session = Depends(get_db
     if not item:
         raise HTTPException(status_code=404, detail="Item not found")
     _guard_record(current_user, item.tenant_code)
+    fields = ("physical_stock", "reserved_stock", "reorder_level", "purchase_rate")
+    before = {f: getattr(item, f) for f in fields}
     if "physical_stock" in payload:
         item.physical_stock = int_field(payload, "physical_stock")
     if "reserved_stock" in payload:
@@ -617,7 +675,10 @@ def gmats_correct_item(item_id: int, payload: dict, db: Session = Depends(get_db
         item.reorder_level = int_field(payload, "reorder_level")
     if "purchase_rate" in payload:
         item.purchase_rate = int_field(payload, "purchase_rate")
+    after = {f: getattr(item, f) for f in fields}
     db.commit()
+    _audit(db, current_user, item.tenant_code, "gmats_correct_item", "gmats_item", item.id,
+           f"{item.item_code}: {_changes(before, after)}")
     return _item_dict(db, item)
 
 
@@ -628,9 +689,14 @@ def gmats_delete_item(item_id: int, db: Session = Depends(get_db), current_user:
     if not item:
         raise HTTPException(status_code=404, detail="Item not found")
     _guard_record(current_user, item.tenant_code)
+    # Read what is being deleted BEFORE the commit expires the (then deleted) row.
+    tenant = item.tenant_code
+    gone = (f"{item.item_code} {item.item_name}: deleted "
+            f"(physical {item.physical_stock}, reserved {item.reserved_stock})")
     db.query(models.GmatsAlias).filter(models.GmatsAlias.item_id == item_id).delete()
     db.delete(item)
     db.commit()
+    _audit(db, current_user, tenant, "gmats_delete_item", "gmats_item", item_id, gone)
     return {"ok": True}
 
 
@@ -641,6 +707,9 @@ def gmats_void_invoice(inv_id: int, db: Session = Depends(get_db), current_user:
     if not inv:
         raise HTTPException(status_code=404, detail="Invoice not found")
     _guard_record(current_user, inv.tenant_code)
+    # The invoice row is deleted below, so the audit row is the only record left
+    # that it existed: capture its number, proforma and lines before the commit.
+    tenant, gone = inv.tenant_code, f"{inv.invoice_no} voided"
     if inv.proforma_id:
         lines = db.query(models.GmatsProformaLine).filter(models.GmatsProformaLine.proforma_id == inv.proforma_id).all()
         for l in lines:
@@ -651,8 +720,11 @@ def gmats_void_invoice(inv_id: int, db: Session = Depends(get_db), current_user:
         p = db.query(models.GmatsProforma).filter(models.GmatsProforma.id == inv.proforma_id).first()
         if p:
             p.status = "Cancelled"
+            gone += f", {p.proforma_no} cancelled"
+        gone += f": restored {_lines_text(db, tenant, lines)}"
     db.delete(inv)
     db.commit()
+    _audit(db, current_user, tenant, "gmats_void_invoice", "gmats_invoice", inv_id, gone)
     return {"ok": True}
 
 
@@ -669,11 +741,15 @@ def gmats_void_min(min_id: int, db: Session = Depends(get_db), current_user: dic
         if item:
             _heal_stock(item)
             item.physical_stock += l.qty                # restore the issued spares
+    # The MIN and its lines are deleted below; capture them for the audit row first.
+    tenant = m.tenant_code
+    gone = f"{m.min_no} voided: restored {_lines_text(db, tenant, lines)}"
     db.flush()
     # Delete children before the parent explicitly (no relationship() to order the flush).
     db.query(models.GmatsMINLine).filter(models.GmatsMINLine.min_id == min_id).delete(synchronize_session=False)
     db.query(models.GmatsMIN).filter(models.GmatsMIN.id == min_id).delete(synchronize_session=False)
     db.commit()
+    _audit(db, current_user, tenant, "gmats_void_min", "gmats_min", min_id, gone)
     return {"ok": True}
 
 # ── CSV import (Tally / Excel) ────────────────────────────────
@@ -691,6 +767,7 @@ async def gmats_import_csv(
     reader = csv_lib.DictReader(io.StringIO(text))
     created = updated = skipped = 0
     errors = []
+    overwritten = []   # "CODE physical_stock old -> new" for the audit row
     for i, row in enumerate(reader, start=2):
         try:
             code = (row.get("item_code") or row.get("Item Code") or "").strip()
@@ -718,6 +795,8 @@ async def gmats_import_csv(
                 models.GmatsItem.tenant_code == tenant, models.GmatsItem.item_code == code
             ).first()
             if existing:
+                if existing.physical_stock != physical:
+                    overwritten.append(f"{code} physical_stock {existing.physical_stock} -> {physical}")
                 existing.item_name = name
                 existing.category = category
                 existing.unit = unit
@@ -751,6 +830,14 @@ async def gmats_import_csv(
         except Exception as e:
             errors.append(f"Row {i}: {str(e)}")
     db.commit()
+    # An import overwrites physical stock wholesale, so the row lists each figure it
+    # changed (capped, with the remainder counted, so one huge sheet cannot bloat it).
+    shown = "; ".join(overwritten[:AUDIT_IMPORT_CHANGES_SHOWN])
+    more = len(overwritten) - AUDIT_IMPORT_CHANGES_SHOWN
+    _audit(db, current_user, tenant, "gmats_import_csv", "gmats_import", None,
+           f"CSV import: created {created}, updated {updated}, skipped {skipped}, errors {len(errors)}"
+           + (f"; stock overwritten: {shown}" if shown else "")
+           + (f" (+{more} more)" if more > 0 else ""))
     return {"created": created, "updated": updated, "skipped": skipped,
             "errors": errors[:10], "encoding": encoding}
 

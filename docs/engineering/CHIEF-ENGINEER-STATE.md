@@ -3,22 +3,27 @@
 > Handover file. A new session should be able to read only this and continue.
 > Keep it short. Update it at the end of every completed task.
 
-**Updated:** 2026-09-18 (#617–#630: figures that claimed more than was measured —
-two trends, an invented OEE, the scorecard's arrows and coverage, a fake
-"Generated", a lifetime report, founder-only diagnostics, machine history, shift
-efficiency and goods receipts; see the section of that date below)
-**Master SHA:** `08abe31` (#630). A docs-only merge on top of it changes nothing
+**Updated:** 2026-09-18 (#631–#638: verification that had stopped verifying.
+The founder's preview could reach an OEM namespace. The specialist audit had
+gone stale. Five OEE surfaces stated no coverage. 13 mutation tests applied to
+nothing, 11 in Python and 2 in the UI. One guard lost its proof to #631. Four
+money cards had no thousands separator. See the section of that date below.)
+**Master SHA:** `25f15bc` (#638). A docs-only merge on top of it changes nothing
 that runs.
-**Production SHA:** `08abe31` — verified live, not assumed:
-`{"status":"ok","database":"ok","schema":"ok","version":"08abe31"}` from
-`https://flowmes-production.up.railway.app/health`, read at 17:46 UTC; `/readiness`
-200 at `0010_outcome_contracts`; the frontend (`https://flow-mes.vercel.app`)
-answers 200. Master and production are in step. Railway auto-deploys master, so
+**Production SHA:** `25f15bc`, verified live, not assumed:
+`{"status":"ok","database":"ok","schema":"ok","version":"25f15bc"}` from
+`https://flowmes-production.up.railway.app/health`, read at 20:37 UTC;
+`/readiness` 200 at `0010_outcome_contracts`; the frontend
+(`https://flow-mes.vercel.app`) answers 200. Railway auto-deploys master, so
 prod tracks HEAD; re-check `/health` rather than trusting this line's age.
+**Vercel, check once:** its production deploy of `8f05217` (#637, a backend
+test only) sat at "Vercel is deploying your app" from 20:08 UTC and was still
+pending at 20:37, with #638's preview queued behind it. The live frontend is
+`c217bcf`'s build (#636). It holds every frontend change so far except
+`lib/mutation-anchors.test.ts` and a harness, and neither of those ships. If the
+queue has not cleared, look at the Vercel dashboard.
 
-**Awaiting review:** #631 (the founder's `X-Tenant` preview could bind an OEM's
-sentinel namespace; `effective_tenant` no longer binds a reserved code, and a new
-guard refuses such a request with a readable 403 on every route).
+**Awaiting review:** none.
 
 > This header was twenty PRs stale when it was found (`040d30a`/#539 while master
 > was `208f564`/#559). A handover whose own first three lines are wrong teaches a
@@ -156,6 +161,70 @@ Two lessons worth keeping:
   `$<digit>` but not a JSX-text `${m.cost}`, which is exactly how two components
   printed dollars. Both missed lines are now pinned verbatim as a probe.
 
+### 2026-09-18 — verification that had stopped verifying (#631–#638)
+
+Three of these fix what a person sees. Five fix the proof that everything else
+is still true. The fleet run behind #635 is the thing to remember. Every audit
+and mutation harness was run against master, each in its own worktree. It found:
+- 13 mutations (11 Python, 2 UI) and 2 audit checks that had stopped testing
+  anything, some for six weeks;
+- one guard whose only proof a new layer (#631) had absorbed.
+Nothing had noticed, because nothing ran them.
+
+| PR | What | Evidence |
+|---|---|---|
+| #631 | **The founder's company-switcher preview bound whatever `X-Tenant` named, including an OEM's sentinel namespace (`OEM:ACME`).** A crafted request could write where that OEM's sessions read. `effective_tenant` no longer binds a reserved code, and `ReservedPreviewGuardMiddleware` refuses one with a readable 403 on every route. Verified on production: `X-Tenant: OEM:ACME` → 403 | 13 checks |
+| #632 | The handover brought up to #630 | docs |
+| #633 | **`audit_oem_specialist.py` exited 1 with two FINDINGs while the readiness doc said "NO FINDING".** Both were the audit gone stale within a day: #614's response dicts were counted as writes, and #616 had moved the refusal wording it searched for. The checks now test the properties: they run the refusal, read each grant door, and run `widen_grants` on an in-memory DB. The write detector now also sees constructor keywords, Core `.values()`, raw SQL, and the `ai/` and `amp_ai/` packages. **It is now a CI step** | 160 checks; 12/12 planted defects; 3/3 controls clean |
+| #634 | **The Trends card read "OEE up 16 pts to 72% week on week" in green the week the worst machine went silent**, and both `.txt` reports printed a partial plant as the plant. `/oee-trend` now carries `coverage` and `prior_coverage`, and every figure its verdict states is qualified. `/analytics/summary` and `/analytics/management` carry `coverage`, and the reports print "(from 2 of 3 machines)" | 7/7 mutations; 321/321 |
+| #635 | **11 mutation tests had silently stopped testing their guards.** Their anchors were stranded by #509, #522, #614, #616 and my #631; `mutate_mqtt_identity` had exited 1 since 2026-08-09. They are retargeted and each shown caught again. `test_mutation_anchors_apply.py` now fails the PR that strands an anchor | 838 anchors in 25 harnesses; its 4 failure modes planted and caught; 322/322 |
+| #636 | **Four money figures printed "£49740" where every other card reads "£49,740"** (the enterprise Cost KPI, Costing's Manual Cost, the SaaS page's MRR and each tenant's fee). `lib/money.ts` claimed to be the one place the symbol is written, while 16 lines in 10 files wrote it themselves. Every amount now goes through `money()`, and `lib/currency-literals.test.ts` holds the claim | vitest 619/619; failing first on the 16 lines |
+| #637 | **#631's middleware left `service_contracts.for_factory`'s own sentinel refusal untested.** The HTTP check now stops at the middleware, so removing the route's guard went unnoticed; the fleet run caught it as the one real survivor. The guard is tested directly again, by binding the sentinel without the header | harness: all 96 caught or shadowed (exit 1 on master); 321/321 |
+| #638 | **The frontend harnesses had the same rot.** #612's `detailOf` → `errorDetail` stranded two of `mutate-oem-ui`'s guards: a refused lookup swallowed into a generic message, and a refused confirmation reported as success. Retargeted, and `frontend/lib/mutation-anchors.test.ts` now checks every UI anchor on each push | 86 anchors; failing first on the 2 |
+
+Lessons worth keeping:
+
+- **Verification nobody runs rots, silently.** The specialist audit went red
+  within a day of the changes that broke it. Thirteen mutations applied to
+  nothing, some for six weeks. The same fix worked for both: put the cheap part in CI
+  (the audit takes seconds, and so does counting anchors). Run the expensive
+  part, each harness's own suites, as an occasional fleet, every harness in its
+  own worktree.
+- **Run the full sweep before opening a PR, even one that only touches a
+  harness.** #633's first push failed CI. The audit's new check read
+  `OemDataSharingPolicy` with no tenant filter, and
+  `test_unscoped_model_reads.py` scans every backend file, audits included. The
+  per-file sweep would have caught it; I had run only the audit and its
+  mutations.
+- **When a planted defect is not caught, check the plant first.** Text appended
+  after an anchor leaves the anchor matching: the guard was fine, the plant was
+  not.
+- **A new guard upstream silently retires the proofs downstream.** #631's
+  middleware answers the requests that `test_contract_tenancy.py` used to prove
+  the contract routes' own guard with. The test kept passing, and it had
+  stopped reaching the guard. Only a mutation run shows that. After adding a
+  layer in front of existing checks, give each of those checks a direct test.
+- **Take the SHA a poller watches from git** (`git rev-parse HEAD`), never type
+  it. A mistyped SHA polls a commit that does not exist, forever.
+- **Harnesses restore files through a text-mode write.** On this Windows
+  checkout that turns CRLF into LF, with the committed blob's bytes. `git status`
+  reports the file as modified; `git diff --ignore-cr-at-eol --name-only` shows
+  whether the content really changed.
+
+**Founder decision added:**
+
+12. **The week-on-week OEE verdict now states partial coverage (#634), but it
+    still compares each week's whole-plant pooled figure.** Should the change be
+    computed only over machines that reported in both weeks (like-for-like, as
+    the per-machine movers already are)? That is a methodology choice, not a
+    defect.
+
+**Next** (verified in passing unless marked):
+- decisions 10 and 12, once chosen;
+- run the harness fleet again after any refactor of the OEM, tenancy or
+  AI-consent code, and after adding any guard upstream of existing ones (see
+  HARNESS DEBT for how).
+
 ### 2026-09-18 — figures that claimed more than was measured (#617–#630)
 
 Every one of these published a number or a status the data did not support. Each
@@ -238,10 +307,10 @@ default) `apply_decision` moves it **Draft → Approved**; the handbook now says
 
 **Next** (verified in passing unless marked):
 - decision 10 above, once chosen;
-- the remaining plant-OEE text surfaces the audit listed (`/oee-trend`, `/analytics/summary`, `/analytics/management`, the `.txt` reports) carry no coverage yet. The scorecard, briefing, copilot, weekly report, Executive tile and money card now do;
-- six frontend spots write "£" literally instead of `money()` / `CURRENCY` (`MoneyStorySnapshot`, `NextBestActionCard`, `RecoverySnapshot`). They render the same as `money()` today, so this is a single-source tidy, not a visible defect;
-- the OEM sentinel namespace via `X-Tenant`: verified and fixed in #631, awaiting review;
-- `audit_oem_specialist.py` reports two open findings (unknown sharing grants are not refused by the vocabulary check; four code paths assign a factory tenant to a machine). Not CI gates; not yet triaged.
+- ~~the remaining plant-OEE text surfaces (`/oee-trend`, `/analytics/summary`, `/analytics/management`, the `.txt` reports) carry no coverage yet~~ **done, #634**;
+- ~~six frontend spots write "£" literally~~ **done, #636**: there were 16 lines in 10 files, and four printed amounts with no thousands separator, so it *was* a visible defect;
+- ~~the OEM sentinel namespace via `X-Tenant`~~ **merged, #631**;
+- ~~`audit_oem_specialist.py` reports two open findings~~ **triaged: both were the audit's own staleness, not the product's. Fixed and put in CI, #633**.
 
 Checked and not a defect:
 - **PLC signal mappings** are stored and never applied, but `docs/sales/REAL-OEM-INPUT-REQUIRED.md` already says so, and no screen claims otherwise.
@@ -698,6 +767,38 @@ Phases 2, 4–6 not started. Note before starting Phase 2: the LLM is already re
 
 ## HARNESS DEBT
 
+- **The fleet run (2026-09-18, master `e0baec2` to `7b35568`).** Every
+  `mutate_*.py` (25) and the two SQLite audits were run, one worktree per lane,
+  because a harness edits source in place. Results:
+  - **20 exited 0**, including both audits.
+  - **`mutate_amp_ai_integration` and `mutate_mqtt_identity`** exited 1 on
+    stranded anchors. **`mutate_oem_auth`, `mutate_oem_lifecycle` and
+    `mutate_oem_service`** were not run on master: their anchors were stranded
+    too. All 11 stranded entries were fixed and shown caught in #635.
+  - **`mutate_service_contracts`** exited 1 on one real survivor, a guard that
+    #631's middleware had shadowed. Fixed in #637.
+  - **`mutate_oem_claim`** cannot run in a worktree: its baseline includes
+    `verify_pg_claim.py`, which borrows PostgreSQL credentials from
+    `backend/.env`, and only the main checkout has that file. Run it from the
+    main checkout, with `DATABASE_URL` pointing at a scratch SQLite file for the
+    SQLite suites. On `c217bcf` it exited 0: all 29 mutations caught or shadowed
+    with recorded reasons, including #635's three retargets and the PostgreSQL
+    race. It rewrites the files it mutated with LF. Check
+    `git diff --ignore-cr-at-eol` is empty, then `git checkout --` them.
+  - **The frontend harnesses** (`mutate-oem-ui.mjs`, `mutate-contracts-ui.mjs`)
+    had the same rot. #612's `detailOf` → `errorDetail` stranded 2 of
+    `mutate-oem-ui`'s 33. They were fixed in #638, and
+    `frontend/lib/mutation-anchors.test.ts` now checks all 86 anchors on every
+    push. Run in full on #638's branch, both exit 0 (33/33 and 53/53). They
+    restore each file's own line endings, so they leave no noise.
+- **The static half runs in CI now** (`test_mutation_anchors_apply.py`: every
+  anchor still names one line). Whether a mutation is still CAUGHT needs the
+  harness itself, so rerun the fleet after refactoring guarded code. A guard that
+  a new upstream layer shadows, as #631 did to #637's, shows up only there.
+- **Line endings.** Several harnesses restore a file through a text-mode write,
+  which leaves LF where a Windows checkout had CRLF, with the committed blob's
+  exact bytes. Harmless (git normalises; Linux CI never sees it), but judge a
+  harness's leftovers by `git diff --ignore-cr-at-eol`, not by `git status`.
 - ~~`audit_oem_adversarial.py` reports a false BREACH~~ — **FIXED.** My first diagnosis of it was wrong and is corrected here: I recorded that the fixture "was not updated" to grant `SHARE_OPERATING_HOURS`. It does grant it. The real cause is **ordering** — section G ("revocation takes effect on the next request") sets `pol.grants = ""` to prove revocation works and never restores it, so a control 200 lines later ran with consent switched off. Invisible until #522 made a caller-supplied `service_hours` a 403 without that grant. The control now states its own precondition instead of depending on everything above it, and the other half of #522's rule — the same call **refused** without consent — is asserted too, which nothing did before. 138 → 141 checks, no breaches; verified non-vacuous by removing #522's guard.
 
 ---

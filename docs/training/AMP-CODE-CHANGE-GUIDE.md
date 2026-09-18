@@ -11,6 +11,7 @@
 - **Never** alter a production table with `create_all` — write an **Alembic migration**.
 - **Always** smoke-test middleware/auth changes on a *running* server (`boot + POST /login`), per ADR-0002.
 - **Always** ship a test; for a security rule, ship a `mutate_*.py` too.
+- **Always** update a mutation's anchor when you rewrite the line it names. A harness finds the line to break by its text; a stranded anchor makes that mutation SKIP or NOT APPLIED, and the guard it proved goes unproven. `test_mutation_anchors_apply.py` fails the PR that strands one (11 had gone stale unseen by 2026-09-18).
 
 ---
 

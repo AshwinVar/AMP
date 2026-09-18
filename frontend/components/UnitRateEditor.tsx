@@ -2,6 +2,7 @@
 
 import { useCallback, useState } from "react";
 import { apiPatch } from "../lib/api";
+import { CURRENCY } from "../lib/money";
 
 // Shared inline editor for the tenant's £/good-unit rate
 // (TenantConfig.unit_value_gbp). Admin-only; PATCHes /tenant-config and calls
@@ -41,7 +42,7 @@ export default function UnitRateEditor({
   if (editing) {
     return (
       <span className="inline-flex items-center gap-1">
-        <span className="text-slate-500">£</span>
+        <span className="text-slate-500">{CURRENCY}</span>
         <input
           type="number"
           min="0"

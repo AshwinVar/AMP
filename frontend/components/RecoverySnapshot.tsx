@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { apiGet } from "../lib/api";
+import { money } from "../lib/money";
 import UnitRateEditor from "./UnitRateEditor";
 
 // Mirrors the backend recovery read-model (ai/recovery.py build_recovery_summary).
@@ -72,7 +73,7 @@ export default function RecoverySnapshot({ isAdmin = false }: { isAdmin?: boolea
           {s.recoverable_value_per_year != null ? (
             <>
               <p className="text-3xl font-bold text-emerald-400 tabular-nums">
-                {s.at_world_class ? "£0" : `£${s.recoverable_value_per_year.toLocaleString()}`}
+                {money(s.at_world_class ? 0 : s.recoverable_value_per_year)}
               </p>
               <p className="text-[11px] text-slate-500">
                 / yr upside{s.at_world_class ? "" : ` · +${s.recoverable_units_per_year.toLocaleString()} good units`}
@@ -123,7 +124,7 @@ export default function RecoverySnapshot({ isAdmin = false }: { isAdmin?: boolea
           <span>
             Unit value:{" "}
             {s.unit_value_gbp != null ? (
-              <span className="text-slate-300 tabular-nums">£{s.unit_value_gbp.toLocaleString()} / good unit</span>
+              <span className="text-slate-300 tabular-nums">{money(s.unit_value_gbp)} / good unit</span>
             ) : (
               <span className="text-slate-500">not set — showing units only</span>
             )}

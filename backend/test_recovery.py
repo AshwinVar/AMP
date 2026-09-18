@@ -17,6 +17,7 @@ def _run(records, rate=None, prior=None):
     # and _unit_value; stub all three so no DB is needed (rate=None means the tenant
     # hasn't configured one; prior=None means no prior week -> trend "new").
     orig_prod, orig_prior, orig_val = rec._recent_production, rec._prior_production, rec._unit_value
+    orig_cov = rec._coverage
     # Signatures track the real ones: _recent_production takes the request's
     # anchor (now=), and _prior_production is handed the CURRENT window rather
     # than a day count, because the prior half is now derived from it
@@ -24,10 +25,14 @@ def _run(records, rate=None, prior=None):
     rec._recent_production = lambda db, days=7, now=None, machine_id=None: records
     rec._prior_production = lambda db, current: (prior or [])
     rec._unit_value = lambda db, tenant: rate
+    # Coverage is a DB count too (oee_contract.coverage); these tests are about
+    # the arithmetic, and test_exec_oee_and_recovery_state_coverage.py covers it.
+    rec._coverage = lambda db, tenant, window: None
     try:
         return rec.build_recovery_summary(db=None, tenant="DEFAULT")
     finally:
         rec._recent_production, rec._prior_production, rec._unit_value = orig_prod, orig_prior, orig_val
+        rec._coverage = orig_cov
 
 
 def _r(**kw):

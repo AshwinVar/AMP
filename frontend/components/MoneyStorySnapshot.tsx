@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { apiGet } from "../lib/api";
+import { type Coverage, coveragePhrase } from "../lib/coverage";
 import UnitRateEditor from "./UnitRateEditor";
 
 // The money story: the OEE gap and downtime, both valued off the one per-tenant
@@ -10,6 +11,10 @@ import UnitRateEditor from "./UnitRateEditor";
 type Recovery = {
   has_data: boolean;
   oee: number;
+  // How much of the plant `oee` measured (OEE contract s4). A silent poor
+  // machine narrows the gap and shrinks the upside, so the card says when the
+  // figure is partial.
+  coverage?: Coverage | null;
   world_class: number;
   gap_points: number;
   unit_value_gbp: number | null;
@@ -113,6 +118,9 @@ export default function MoneyStorySnapshot({ isAdmin = false }: { isAdmin?: bool
             {rec.gap_points === 0
               ? `at or above the ${rec.world_class}% world-class benchmark`
               : `closing OEE ${rec.oee}% → ${rec.world_class}% ≈ ${units(rec.recoverable_units_per_year)} more good units / yr`}
+            {coveragePhrase(rec.coverage) && (
+              <span className="text-amber-300/90"> · OEE {coveragePhrase(rec.coverage)}</span>
+            )}
             {trendBadge(rec.oee_trend, rec.oee_points_delta)}
           </p>
         </div>

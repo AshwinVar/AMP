@@ -80,6 +80,13 @@ def _physical_good(records, good: int, days: int) -> int:
     return round(good * ceiling / planned)
 
 
+def _coverage(db, tenant, window):
+    """How much of the plant the window measured (oee_contract.coverage). A seam
+    beside _recent_production / _prior_production / _unit_value, so this
+    read-model's arithmetic stays testable with no database (test_recovery.py)."""
+    return oee_contract.coverage(db, tenant, window)
+
+
 def build_recovery_summary(db, tenant: str) -> dict:
     """The recovery opportunity over the last 7 days: gap to world-class OEE and
     what closing it is worth in good units. production_records is auto-scoped."""
@@ -147,6 +154,10 @@ def build_recovery_summary(db, tenant: str) -> dict:
     return {
         "has_data": True,
         "oee": o["oee"],
+        # How much of the plant `oee` measured (OEE contract s4). A silent poor
+        # machine narrows the gap to world class and shrinks the per-year upside,
+        # so the card must be able to say the figure is partial.
+        "coverage": _coverage(db, tenant, window),
         "world_class": WORLD_CLASS_OEE,
         "gap_points": max(0, WORLD_CLASS_OEE - o["oee"]),
         "at_world_class": at_wc,

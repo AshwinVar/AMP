@@ -1,3 +1,5 @@
+import type { Coverage } from "./coverage";
+
 export type ExecutiveMachineOee = {
   machine_id: number;
   machine_name: string;
@@ -44,6 +46,8 @@ export type ExecutiveOee = {
   // "0% and 'did not run' are different answers". The field existed on the
   // wire before it existed here, so no consumer could ask.
   has_data: boolean;
+  // How much of the plant plant_oee measured (OEE contract s4); see lib/coverage.
+  coverage?: Coverage | null;
   machine_ranking: ExecutiveMachineOee[];
   downtime_pareto: DowntimeParetoRow[];
   shift_oee: ShiftOeeRow[];

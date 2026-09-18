@@ -2,15 +2,11 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { apiGet } from "../lib/api";
+import { type Coverage, coveragePhrase } from "../lib/coverage";
 import { CURRENCY, money } from "../lib/money";
 
 // Mirrors the backend scorecard read-model (ai/scorecard.py build_scorecard).
-// How much of the plant a figure measured (backend oee_contract.coverage). Only
-// the Plant OEE KPI carries it.
-type Coverage = {
-  machines_expected: number; machines_reporting: number;
-  coverage_pct: number | null; complete: boolean;
-};
+// Only the Plant OEE KPI carries a coverage (backend oee_contract.coverage).
 type Kpi = {
   key: string; label: string; value: number | null; unit: string;
   tone: "good" | "warn" | "bad" | "none";
@@ -94,11 +90,8 @@ export default function ScorecardStrip({ onOpen }: { onOpen?: (viewKey: string) 
             <p className={`text-3xl font-bold mt-1 ${toneCls[k.tone]}`}>{fmt(k)}</p>
             {/* A plant OEE from part of the plant says so: a machine that stops
                 reporting leaves the pooled figure, which then reads higher. */}
-            {k.value != null && k.coverage && !k.coverage.complete && (
-              <p className="text-[11px] mt-0.5 text-amber-300/90">
-                from {k.coverage.machines_reporting} of {k.coverage.machines_expected} machine
-                {k.coverage.machines_expected !== 1 ? "s" : ""}
-              </p>
+            {k.value != null && coveragePhrase(k.coverage) && (
+              <p className="text-[11px] mt-0.5 text-amber-300/90">{coveragePhrase(k.coverage)}</p>
             )}
             {k.delta != null && (
               <p className={`text-xs mt-0.5 ${deltaCls[k.delta_tone ?? "flat"]}`}>

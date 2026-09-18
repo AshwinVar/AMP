@@ -135,6 +135,11 @@ scorecard's Plant OEE tile says "from 2 of 3 machines" under the figure whenever
 coverage is incomplete. The tile's arrow can turn green the week the worst
 machine goes silent; the line under it is what says why
 (`backend/test_scorecard_oee_states_coverage.py`, `ScorecardStrip.test.tsx`).
+The Executive OEE page's Plant OEE tile and the money-story card ("closing OEE
+X% → 85%") say it the same way: `/analytics/executive-oee` and
+`/recovery-summary` carry the coverage of the window they pooled, and one wording
+serves both ends (`oee_contract.coverage_phrase`, `frontend/lib/coverage.ts`;
+`backend/test_exec_oee_and_recovery_state_coverage.py`).
 
 ---
 

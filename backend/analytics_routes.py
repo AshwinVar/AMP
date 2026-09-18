@@ -1009,6 +1009,10 @@ def get_executive_oee(
         "plant_performance": plant_performance,
         "plant_quality": plant_quality,
         "plant_oee": plant_oee,
+        # How much of the plant plant_oee measured (OEE contract s4), over the
+        # window it pooled: a machine that stops reporting leaves the figure,
+        # which then reads higher (test_exec_oee_and_recovery_state_coverage.py).
+        "coverage": oee_contract.coverage(db, request_tenant(current_user), _oee_window),
         "machine_ranking": machine_rows,
         "downtime_pareto": downtime_pareto,
         "shift_oee": shift_rows,

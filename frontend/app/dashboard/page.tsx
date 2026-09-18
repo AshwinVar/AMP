@@ -79,6 +79,7 @@ import CsvExportsCard from "../../components/CsvExportsCard";
 import CsvImportButton from "../../components/CsvImportButton";
 import TenantAdoptionCard from "../../components/TenantAdoptionCard";
 import BrandingSettingsCard from "../../components/BrandingSettingsCard";
+import BrandMark from "../../components/BrandMark";
 import QualityIntelCard from "../../components/QualityIntelCard";
 import DowntimeIntelCard from "../../components/DowntimeIntelCard";
 import DeliveryIntelCard from "../../components/DeliveryIntelCard";
@@ -143,6 +144,15 @@ import {
 import LockedModuleView from "../../components/LockedModuleView";
 
 import { getStatusStyle } from "../../lib/utils";
+
+/** GET /tenant-config: the licence and the white-label branding the sidebar applies. */
+type TenantBranding = {
+  enabled_modules: string[];
+  brand_name: string;
+  brand_color: string | null;
+  brand_logo_url: string | null;
+};
+
 type Machine = {
   id: number;
   name: string;
@@ -515,9 +525,9 @@ export default function DashboardPage() {
 
   // Per-tenant licensing + branding fetched from the platform layer. Lifted into
   // a callback so the Branding settings card can refresh the header live on save.
-  const [tenantCfg, setTenantCfg] = useState<{ enabled_modules: string[]; brand_name: string; brand_color: string } | null>(null);
+  const [tenantCfg, setTenantCfg] = useState<TenantBranding | null>(null);
   const reloadTenantCfg = useCallback(() => {
-    apiGet<{ enabled_modules: string[]; brand_name: string; brand_color: string }>("/tenant-config")
+    apiGet<TenantBranding>("/tenant-config")
       .then(setTenantCfg)
       .catch(() => {});
   }, []);
@@ -1832,7 +1842,7 @@ export default function DashboardPage() {
     <main className="phase29-shell min-h-screen bg-slate-950 text-white p-6">
 <aside className={`phase29-sidebar ${mobileNavOpen ? "phase29-sidebar-open" : ""}`}>
   <div className="phase29-brand">
-    <div className="phase29-brand-mark">⌁</div>
+    <BrandMark name={brandName} color={tenantCfg?.brand_color} logoUrl={tenantCfg?.brand_logo_url} />
     <div>
       <div className="phase29-brand-title">{brandName}</div>
       <div className="phase29-brand-subtitle">Manufacturing Execution System</div>

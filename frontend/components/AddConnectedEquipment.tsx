@@ -2,7 +2,7 @@
 
 import React, { useState } from "react";
 
-import { apiGet, apiPost } from "../lib/api";
+import { apiGet, apiPost, errorDetail } from "../lib/api";
 
 /**
  * Adding a machine a supplier sent you (ADR-0019).
@@ -89,7 +89,7 @@ export default function AddConnectedEquipment({
       // The backend's own sentence. It is deliberately the same for every
       // failure — mistyped, expired, withdrawn, already used — because telling
       // them apart would help somebody guessing codes.
-      setError(detailOf(err));
+      setError(errorDetail(err));
     } finally {
       setBusy(false);
     }
@@ -109,7 +109,7 @@ export default function AddConnectedEquipment({
       setCode("");
       onAdded();
     } catch (err) {
-      setError(detailOf(err));
+      setError(errorDetail(err));
     } finally {
       setBusy(false);
     }
@@ -315,29 +315,4 @@ export default function AddConnectedEquipment({
       )}
     </div>
   );
-}
-
-/**
- * The backend's own sentence, not a generic one.
- *
- * "That claim code is not valid…" and "Unknown sharing grants: X" call for
- * different reactions, and a swallowed message makes both look like an outage.
- */
-function detailOf(err: unknown): string {
-  const raw = err instanceof Error ? err.message : String(err);
-  try {
-    const parsed = JSON.parse(raw);
-    if (parsed?.detail) return String(parsed.detail);
-  } catch {
-    /* a non-JSON error body is still an error; keep the text */
-  }
-  // apiGet formats failures as "Failed request: <path> | <status> | <body>".
-  const tail = raw.split("|").pop()?.trim() ?? raw;
-  try {
-    const parsed = JSON.parse(tail);
-    if (parsed?.detail) return String(parsed.detail);
-  } catch {
-    /* fall through */
-  }
-  return tail || "That did not work.";
 }

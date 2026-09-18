@@ -28,6 +28,27 @@ function getPreviewTenant(): string {
   return company && company !== "DEFAULT" ? company : "";
 }
 
+/**
+ * The backend's own sentence from a failed call, not a generic one.
+ *
+ * apiPost/apiPut throw the raw response body; apiGet/apiPatch throw
+ * "Failed request: <path> | <status> | <body>". Either way a FastAPI refusal
+ * carries a `detail`, and a screen that swallows it makes a validation refusal
+ * ("brand_color must be a colour like #1d4ed8") look like an outage.
+ */
+export function errorDetail(err: unknown): string {
+  const raw = err instanceof Error ? err.message : String(err);
+  for (const candidate of [raw, raw.split("|").pop()?.trim() ?? raw]) {
+    try {
+      const parsed = JSON.parse(candidate);
+      if (parsed?.detail) return String(parsed.detail);
+    } catch {
+      /* not JSON; try the next form */
+    }
+  }
+  return raw.split("|").pop()?.trim() || "That did not work.";
+}
+
 export function getAuthHeaders(): Record<string, string> {
   const headers: Record<string, string> = {
     "Content-Type": "application/json",

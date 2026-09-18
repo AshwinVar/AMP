@@ -2,7 +2,13 @@
 
 import React, { useMemo, useState } from "react";
 
-import { contractError, termsTemplate, type ContractDetail, type Terms } from "../lib/contracts";
+import {
+  contractError,
+  startMonthOf,
+  termsTemplate,
+  type ContractDetail,
+  type Terms,
+} from "../lib/contracts";
 import type { FleetMachine } from "../lib/oem";
 import { oemContractsApi } from "../lib/oemContracts";
 import { useInFlight } from "../lib/useInFlight";
@@ -25,28 +31,56 @@ import ContractWorkspace from "./contracts/ContractWorkspace";
 
 const CONTRACT_TYPES = ["AMC", "WARRANTY", "UPTIME_CLAUSE"];
 
-function NewContractForm({ fleet, onCreated }: { fleet: FleetMachine[]; onCreated: () => void }) {
+/**
+ * A contract draft: a new one, or `draft` edited in place before it is proposed.
+ *
+ * Editing matters because a reference is never reused (withdrawn contracts keep
+ * theirs), so without it a typo in a saved draft's fee cost the manufacturer the
+ * contract's reference. The server replaces the draft whole, and refuses once
+ * the contract is proposed; after that the terms change only by amendment.
+ */
+function ContractDraftForm({ fleet, draft, onSaved, onClose }: {
+  fleet: FleetMachine[];
+  draft?: ContractDetail;
+  onSaved: () => void;
+  onClose: () => void;
+}) {
   const { run, busy } = useInFlight();
+  const draftTerms = draft?.versions.find((v) => v.version === 1)?.terms;
+  const covered = useMemo(() => draftTerms?.covered_installations ?? [], [draftTerms]);
   const customers = useMemo(
-    () => Array.from(new Set(fleet.map((m) => m.customer).filter((c): c is string => Boolean(c)))).sort(),
-    [fleet],
+    () => Array.from(new Set([
+      ...fleet.map((m) => m.customer).filter((c): c is string => Boolean(c)),
+      ...(draft ? [draft.factory_tenant_code] : []),
+    ])).sort(),
+    [fleet, draft],
   );
-  const [open, setOpen] = useState(false);
-  const [ref, setRef] = useState("");
-  const [title, setTitle] = useState("Annual maintenance contract");
-  const [type, setType] = useState("AMC");
-  const [customer, setCustomer] = useState("");
-  const [startMonth, setStartMonth] = useState("");
-  const [chosen, setChosen] = useState<number[]>([]);
+  const [ref, setRef] = useState(draft?.contract_ref ?? "");
+  const [title, setTitle] = useState(draft?.title ?? "Annual maintenance contract");
+  const [type, setType] = useState(draft?.contract_type ?? "AMC");
+  const [customer, setCustomer] = useState(draft?.factory_tenant_code ?? "");
+  const [startMonth, setStartMonth] = useState(
+    () => (draft && draftTerms ? startMonthOf(draft.starts_at, draftTerms.timezone) : ""));
+  const [chosen, setChosen] = useState<number[]>(() => covered.map((c) => c.installation_id));
   const [termsText, setTermsText] = useState(() => {
-    const { covered_installations: _omit, ...rest } = termsTemplate([]);
+    const { covered_installations: _omit, ...rest } = draftTerms ?? termsTemplate([]);
     void _omit;
     return JSON.stringify(rest, null, 2);
   });
   const [error, setError] = useState("");
   const [created, setCreated] = useState("");
 
-  const atCustomer = fleet.filter((m) => m.customer === customer);
+  // The customer's machines on the loaded fleet page, plus any the draft already
+  // covers there that the page left out: an unrelated edit must not silently drop
+  // a covered machine from the terms.
+  const atCustomer = useMemo(() => {
+    const here = fleet.filter((m) => m.customer === customer)
+      .map((m) => ({ installation_id: m.installation_id, serial_number: m.serial_number }));
+    const listed = new Set(here.map((m) => m.installation_id));
+    const kept = customer === draft?.factory_tenant_code
+      ? covered.filter((c) => !listed.has(c.installation_id)) : [];
+    return [...here, ...kept];
+  }, [fleet, customer, draft, covered]);
 
   function toggle(id: number) {
     setChosen((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
@@ -63,32 +97,27 @@ function NewContractForm({ fleet, onCreated }: { fleet: FleetMachine[]; onCreate
       setError("The terms are not valid JSON.");
       return;
     }
-    const covered = atCustomer
-      .filter((m) => chosen.includes(m.installation_id))
-      .map((m) => ({ installation_id: m.installation_id, serial_number: m.serial_number }));
-    void run("create", async () => {
+    const installations = atCustomer.filter((m) => chosen.includes(m.installation_id));
+    const body = {
+      contract_ref: ref.trim(), title: title.trim(), contract_type: type,
+      factory_tenant_code: customer, start_month: startMonth,
+      terms: { ...rest, covered_installations: installations } as Terms,
+    };
+    void run("save", async () => {
       try {
-        const detail = await oemContractsApi.create({
-          contract_ref: ref.trim(), title: title.trim(), contract_type: type,
-          factory_tenant_code: customer, start_month: startMonth,
-          terms: { ...rest, covered_installations: covered } as Terms,
-        });
-        setCreated(`Draft ${detail.contract_ref} created. Review it below and propose it to ${customer}.`);
-        onCreated();
+        if (draft) {
+          await oemContractsApi.editDraft(draft.id, body);
+        } else {
+          const detail = await oemContractsApi.create(body);
+          setCreated(`Draft ${detail.contract_ref} created. Review it below and propose it to ${customer}.`);
+        }
+        onSaved();
       } catch (err) {
         setError(contractError(err).message);
       }
     });
   }
 
-  if (!open) {
-    return (
-      <button type="button" onClick={() => setOpen(true)}
-              className="rounded-lg bg-blue-600 px-3 py-1.5 text-sm font-medium text-white">
-        Draft a service contract
-      </button>
-    );
-  }
   return (
     <form onSubmit={submit} className="space-y-3 rounded-xl border border-slate-800 bg-slate-900/60 p-4 text-xs">
       <div className="grid gap-3 sm:grid-cols-3">
@@ -142,11 +171,11 @@ function NewContractForm({ fleet, onCreated }: { fleet: FleetMachine[]; onCreate
         AMP computes the credit from these terms; it never invoices or moves money.
       </p>
       <div className="flex gap-2">
-        <button type="submit" disabled={busy("create")}
+        <button type="submit" disabled={busy("save")}
                 className="rounded-lg bg-blue-600 px-3 py-1.5 font-medium text-white disabled:opacity-40">
-          Save draft
+          {draft ? "Save changes" : "Save draft"}
         </button>
-        <button type="button" onClick={() => setOpen(false)}
+        <button type="button" onClick={onClose}
                 className="rounded-lg border border-slate-700 px-3 py-1.5 text-slate-300">Close</button>
       </div>
       {created && <p className="text-emerald-400">{created}</p>}
@@ -155,13 +184,31 @@ function NewContractForm({ fleet, onCreated }: { fleet: FleetMachine[]; onCreate
   );
 }
 
-function OfferActions({ detail, canSign, reload }: {
-  detail: ContractDetail; canSign: boolean; reload: () => void;
+function NewContract({ fleet, onCreated }: { fleet: FleetMachine[]; onCreated: () => void }) {
+  const [open, setOpen] = useState(false);
+  if (!open) {
+    return (
+      <button type="button" onClick={() => setOpen(true)}
+              className="rounded-lg bg-blue-600 px-3 py-1.5 text-sm font-medium text-white">
+        Draft a service contract
+      </button>
+    );
+  }
+  return <ContractDraftForm fleet={fleet} onSaved={onCreated} onClose={() => setOpen(false)} />;
+}
+
+function OfferActions({ detail, canManage, canSign, fleet, reload }: {
+  detail: ContractDetail; canManage: boolean; canSign: boolean; fleet: FleetMachine[];
+  reload: () => void;
 }) {
   const { run, busy } = useInFlight();
   const [error, setError] = useState("");
-  if (!canSign) return null;
+  const [editing, setEditing] = useState(false);
+  if (!canSign && !canManage) return null;
   const v1 = detail.versions.find((v) => v.version === 1);
+  // Editing is managing (the server's MANAGE capability); proposing and withdrawing
+  // are signing. A draft being edited is not offered for proposal until it is saved.
+  const editable = canManage && detail.status === "draft" && Boolean(v1);
   async function act(key: string, fn: () => Promise<unknown>) {
     await run(key, async () => {
       setError("");
@@ -174,20 +221,35 @@ function OfferActions({ detail, canSign, reload }: {
     });
   }
   return (
-    <div className="flex flex-wrap items-center gap-2 text-xs" data-testid="offer-actions">
-      {detail.status === "draft" && v1 && (
-        <button type="button" disabled={busy("propose")}
-                onClick={() => act("propose", () => oemContractsApi.propose(detail.id, v1.terms_hash))}
-                className="rounded bg-blue-600 px-2 py-1 text-white">
-          Propose to {detail.factory_tenant_code}
-        </button>
+    <div className="space-y-2" data-testid="offer-actions">
+      <div className="flex flex-wrap items-center gap-2 text-xs">
+        {editable && (
+          <button type="button" aria-expanded={editing} onClick={() => setEditing((on) => !on)}
+                  className="rounded border border-slate-700 px-2 py-1 text-slate-300">
+            Edit draft
+          </button>
+        )}
+        {canSign && detail.status === "draft" && v1 && !editing && (
+          <button type="button" disabled={busy("propose")}
+                  onClick={() => act("propose", () => oemContractsApi.propose(detail.id, v1.terms_hash))}
+                  className="rounded bg-blue-600 px-2 py-1 text-white">
+            Propose to {detail.factory_tenant_code}
+          </button>
+        )}
+        {canSign && (
+          <button type="button" disabled={busy("withdraw")}
+                  onClick={() => act("withdraw", () => oemContractsApi.withdraw(detail.id))}
+                  className="rounded border border-slate-700 px-2 py-1 text-slate-300">
+            Withdraw
+          </button>
+        )}
+        {error && <span role="alert" className="text-red-400">{error}</span>}
+      </div>
+      {editable && editing && (
+        <ContractDraftForm fleet={fleet} draft={detail}
+                           onSaved={() => { setEditing(false); reload(); }}
+                           onClose={() => setEditing(false)} />
       )}
-      <button type="button" disabled={busy("withdraw")}
-              onClick={() => act("withdraw", () => oemContractsApi.withdraw(detail.id))}
-              className="rounded border border-slate-700 px-2 py-1 text-slate-300">
-        Withdraw
-      </button>
-      {error && <span role="alert" className="text-red-400">{error}</span>}
     </div>
   );
 }
@@ -215,14 +277,15 @@ export default function OemContracts({ capabilities, fleet }: {
           AMP computes credits and never moves money.
         </p>
       </div>
-      {canManage && <NewContractForm fleet={fleet} onCreated={() => setReloadToken((n) => n + 1)} />}
+      {canManage && <NewContract fleet={fleet} onCreated={() => setReloadToken((n) => n + 1)} />}
       <ContractWorkspace
         api={oemContractsApi}
         canManage={canManage}
         canSign={canSign}
         reloadToken={reloadToken}
         renderOfferActions={(detail, reload) => (
-          <OfferActions detail={detail} canSign={canSign} reload={reload} />
+          <OfferActions detail={detail} canManage={canManage} canSign={canSign} fleet={fleet}
+                        reload={reload} />
         )}
       />
     </section>

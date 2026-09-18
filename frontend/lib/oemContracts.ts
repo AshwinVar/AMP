@@ -12,7 +12,7 @@ import type {
   TermVersion,
   VerifyReport,
 } from "./contracts";
-import { get, post } from "./oem";
+import { get, post, put } from "./oem";
 
 /**
  * Service contracts from the MANUFACTURER's side: /oem/contracts (ADR-0021).
@@ -36,6 +36,8 @@ export type ContractDraftBody = {
 
 export const oemContractsApi: ContractsApi & {
   create(body: ContractDraftBody): Promise<ContractDetail>;
+  /** Replace a DRAFT whole, before it is proposed. After that, terms change only by amendment. */
+  editDraft(id: number, body: ContractDraftBody): Promise<ContractDetail>;
   propose(id: number, termsHash: string): Promise<ContractDetail>;
   withdraw(id: number): Promise<ContractDetail>;
 } = {
@@ -70,6 +72,7 @@ export const oemContractsApi: ContractsApi & {
   rejectAmendment: (id, version, note) =>
     post<TermVersion>(`${base(id)}/amendments/${version}/reject`, { note }),
   create: (body) => post<ContractDetail>("/oem/contracts", body),
+  editDraft: (id, body) => put<ContractDetail>(`${base(id)}/draft`, body),
   propose: (id, termsHash) => post<ContractDetail>(`${base(id)}/propose`, { terms_hash: termsHash }),
   withdraw: (id) => post<ContractDetail>(`${base(id)}/withdraw`, {}),
 };

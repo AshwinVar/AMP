@@ -205,15 +205,24 @@ export type OemClaimCreated = OemClaim & {
   note: string;
 };
 
-/** POST to /oem. Exported for the other OEM clients (lib/oemContracts). */
-export async function post<T>(path: string, body: unknown): Promise<T> {
+async function send<T>(method: "POST" | "PUT", path: string, body: unknown): Promise<T> {
   const response = await fetch(`${API_URL}${path}`, {
-    method: "POST",
+    method,
     headers: getAuthHeaders(),
     body: JSON.stringify(body ?? {}),
   });
   if (!response.ok) throw await refusal(response);
   return response.json();
+}
+
+/** POST to /oem. Exported for the other OEM clients (lib/oemContracts). */
+export function post<T>(path: string, body: unknown): Promise<T> {
+  return send<T>("POST", path, body);
+}
+
+/** PUT to /oem: replace a whole resource (a contract draft, lib/oemContracts). */
+export function put<T>(path: string, body: unknown): Promise<T> {
+  return send<T>("PUT", path, body);
 }
 
 export const registerMachine = (body: {

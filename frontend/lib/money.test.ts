@@ -59,9 +59,11 @@ describe("lossFigure", () => {
 /**
  * Contract money (ADR-0021) arrives as DECIMAL TEXT ("40000.00") because the
  * backend computes it with exact decimals and never lets it become a float. The
- * display must not undo that on the last inch: Number("1234567.89") is fine,
- * but a 12-digit fee with paise is where binary floating point starts to drift,
- * and a credit two parties signed is the one number that must not.
+ * display keeps it text: the integer part is grouped as a BigInt and the paise
+ * are the two characters the server sent. (Parsing and printing alone would
+ * survive a float, since a double prints 15 significant digits back and this
+ * money has at most 14; arithmetic would not, and a credit two parties signed is
+ * the one number that must not drift. So there is none here.)
  */
 describe("formatDecimalMoney", () => {
   it("formats rupees with Indian grouping, digit for digit", () => {

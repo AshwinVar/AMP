@@ -17,7 +17,7 @@ import { readFileSync, writeFileSync } from "node:fs";
 
 const SUITES = [
   "lib/contracts.test.ts", "lib/contractClients.test.ts", "lib/money.test.ts",
-  "lib/modules.test.ts", "lib/oem.test.ts",
+  "lib/modules.test.ts", "lib/oem.test.ts", "lib/api.test.ts",
   "components/contracts/StatementView.test.tsx", "components/contracts/AcceptancePanel.test.tsx",
   "components/contracts/DisputePanel.test.tsx", "components/contracts/wiring.test.ts",
   "components/ServiceContracts.test.tsx", "components/OemContracts.test.tsx",
@@ -58,11 +58,22 @@ const MUTATIONS = [
   },
 
   // --- money --------------------------------------------------------------------
+  // "Contract money goes through a float" (Number(amount) formatted to 2 places) is
+  // NOT here: it is unobservable. Money text has at most 12 integer digits plus paise,
+  // 14 significant digits, and a double prints any 15 back exactly; probing 402,400
+  // values across every magnitude and paise found no difference. Floats break money
+  // in ARITHMETIC, which this display does none of. The mutations below can happen.
   {
-    label: "contract money goes through a float",
+    label: "contract money is grouped the Western way",
+    file: "lib/money.ts",
+    from: '  const grouped = new Intl.NumberFormat("en-IN").format(BigInt(match[1]));',
+    to: '  const grouped = new Intl.NumberFormat("en-US").format(BigInt(match[1]));',
+  },
+  {
+    label: "the paise are dropped",
     file: "lib/money.ts",
     from: '  return symbol + grouped + "." + match[2];',
-    to: '  return symbol + new Intl.NumberFormat("en-IN", { minimumFractionDigits: 2 }).format(Number(amount));',
+    to: '  return symbol + grouped + ".00";',
   },
   {
     label: "malformed money is displayed instead of refused",
@@ -150,11 +161,14 @@ const MUTATIONS = [
     from: "          <button type=\"button\" disabled={!consent || !v1 || busy(\"accept\")}",
     to: "          <button type=\"button\" disabled={!v1 || busy(\"accept\")}",
   },
+  // "The grant is always sent as true" is NOT here: Accept is disabled until the box
+  // is ticked, so a hard-coded true cannot be observed. The consent failures that CAN
+  // happen are the button enabled early (above) and a box that starts ticked.
   {
-    label: "the grant is always sent as true",
+    label: "the consent box starts ticked",
     file: "components/ServiceContracts.tsx",
-    from: "                    serviceContractsApi.accept(detail.id, v1!.terms_hash, consent))}",
-    to: "                    serviceContractsApi.accept(detail.id, v1!.terms_hash, true))}",
+    from: "  const [consent, setConsent] = useState(false);",
+    to: "  const [consent, setConsent] = useState(true);",
   },
   {
     label: "the transport drops grant_downtime_sharing",
@@ -172,8 +186,20 @@ const MUTATIONS = [
   {
     label: "a Supervisor is offered the decision",
     file: "components/ServiceContracts.tsx",
-    from: '  const canSign = getUserRole() === "Admin";',
-    to: '  const canSign = getUserRole() !== "Operator";',
+    from: '  const canSign = getUserRole() === "Admin" && !previewing;',
+    to: '  const canSign = getUserRole() !== "Operator" && !previewing;',
+  },
+  {
+    label: "the founder's preview is offered the decision",
+    file: "components/ServiceContracts.tsx",
+    from: '  const canSign = getUserRole() === "Admin" && !previewing;',
+    to: '  const canSign = getUserRole() === "Admin";',
+  },
+  {
+    label: "the preview flag disagrees with the X-Tenant header",
+    file: "lib/api.ts",
+    from: '  return getPreviewTenant() !== "";',
+    to: "  return false;",
   },
   {
     label: "unmapped reasons are presented as attributed",
@@ -227,6 +253,79 @@ const MUTATIONS = [
     file: "components/OemContracts.tsx",
     from: "                onClick={() => act(\"propose\", () => oemContractsApi.propose(detail.id, v1.terms_hash))}",
     to: "                onClick={() => act(\"propose\", () => oemContractsApi.propose(detail.id, \"\"))}",
+  },
+  // --- editing a draft before it is proposed -------------------------------------------
+  {
+    label: "a proposed contract is offered Edit draft",
+    file: "components/OemContracts.tsx",
+    from: '  const editable = canManage && detail.status === "draft" && Boolean(v1);',
+    to: "  const editable = canManage && Boolean(v1);",
+  },
+  {
+    label: "a principal without manage_contracts is offered Edit draft",
+    file: "components/OemContracts.tsx",
+    from: '  const editable = canManage && detail.status === "draft" && Boolean(v1);',
+    to: '  const editable = detail.status === "draft" && Boolean(v1);',
+  },
+  {
+    label: "an unsaved edit can be proposed",
+    file: "components/OemContracts.tsx",
+    from: '        {canSign && detail.status === "draft" && v1 && !editing && (',
+    to: '        {canSign && detail.status === "draft" && v1 && (',
+  },
+  {
+    label: "saving an edit creates a second contract",
+    file: "components/OemContracts.tsx",
+    from: "        if (draft) {\n          await oemContractsApi.editDraft(draft.id, body);",
+    to: "        if (false) {\n          await oemContractsApi.editDraft(draft.id, body);",
+  },
+  {
+    label: "the editor opens on the template's terms, not the draft's",
+    file: "components/OemContracts.tsx",
+    from: "    const { covered_installations: _omit, ...rest } = draftTerms ?? termsTemplate([]);",
+    to: "    const { covered_installations: _omit, ...rest } = termsTemplate([]);",
+  },
+  {
+    label: "the editor forgets the draft's contract type",
+    file: "components/OemContracts.tsx",
+    from: '  const [type, setType] = useState(draft?.contract_type ?? "AMC");',
+    to: '  const [type, setType] = useState("AMC");',
+  },
+  {
+    label: "the editor opens with none of the draft's machines chosen",
+    file: "components/OemContracts.tsx",
+    from: "  const [chosen, setChosen] = useState<number[]>(() => covered.map((c) => c.installation_id));",
+    to: "  const [chosen, setChosen] = useState<number[]>([]);",
+  },
+  {
+    label: "an edit drops a covered machine the fleet page left out",
+    file: "components/OemContracts.tsx",
+    from: "    return [...here, ...kept];",
+    to: "    return here;",
+  },
+  {
+    label: "the first month is read off the UTC string",
+    file: "components/OemContracts.tsx",
+    from: "    () => (draft && draftTerms ? startMonthOf(draft.starts_at, draftTerms.timezone) : \"\"));",
+    to: "    () => (draft && draftTerms ? draft.starts_at.slice(0, 7) : \"\"));",
+  },
+  {
+    label: "startMonthOf ignores the contract's timezone",
+    file: "lib/contracts.ts",
+    from: '  const parts = new Intl.DateTimeFormat("en-CA", { timeZone, year: "numeric", month: "2-digit" })',
+    to: '  const parts = new Intl.DateTimeFormat("en-CA", { timeZone: "UTC", year: "numeric", month: "2-digit" })',
+  },
+  {
+    label: "a draft edit is sent as a POST",
+    file: "lib/oemContracts.ts",
+    from: "  editDraft: (id, body) => put<ContractDetail>(`${base(id)}/draft`, body),",
+    to: "  editDraft: (id, body) => post<ContractDetail>(`${base(id)}/draft`, body),",
+  },
+  {
+    label: "the OEM transport's PUT is sent as a POST",
+    file: "lib/oem.ts",
+    from: '  return send<T>("PUT", path, body);',
+    to: '  return send<T>("POST", path, body);',
   },
   {
     label: "the dashboard renders contracts outside the role and plan gate",

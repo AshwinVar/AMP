@@ -218,6 +218,10 @@ stored revision.
    database access could rewrite content, hashes and acceptances together.
 6. The SLA is pooled; one SLA metric; whole monthly or quarterly periods; only
    the OEM drafts contracts; the draft editor is a JSON terms editor with defaults.
+   A draft can be edited, whole, until it is proposed (`PUT /oem/contracts/{id}/draft`,
+   "Edit draft" in the portal); after that its terms change only by amendment. A
+   reference is never reused, so without the edit a typo in a saved draft would
+   cost the manufacturer the reference.
 7. An agreed statement is final. Corrections happen outside AMP (credit notes).
 8. No invoicing, payments, usage billing or pay-per-output. Pay-per-output billing
    is a later phase and out of scope.
@@ -232,9 +236,11 @@ stored revision.
 13. Span writes add at most one UPDATE per 30 s per machine and source.
 14. The demo simulator writes spans with source `simulator`, which a real contract
     should never trust.
-15. A founder-workspace Admin previewing a customer (X-Tenant) can accept a
-    contract on the customer's behalf, consistent with the existing claim and
-    sharing routes; this is a decision for the founder.
+15. A founder-workspace Admin previewing a customer (X-Tenant) reads its
+    contracts but cannot accept, dispute or sign anything for it (section 6).
+    Connected-equipment sharing grants and machine claims still accept a preview;
+    whether a preview may give a company's consent anywhere is a platform decision
+    for the founder.
 
 ## Consequences
 
@@ -259,7 +265,8 @@ disputes as the only remedy.
 | Routes and rules | `service_contracts.py`, `oem_contract_routes.py`, `service_contract_routes.py` | `test_contract_*.py`, `audit_oem_contracts_adversarial.py` |
 | Spans | `telemetry_coverage.py` and the MQTT, HTTP ingest and simulator writers | `test_telemetry_coverage.py` |
 | Coverage end | `contract_linkage.py` | `test_contract_linkage.py` |
-| Consent helpers, audit | `oem_sharing.py`, `platform_routes.log_audit` | `test_oem_sharing_helpers.py`, `test_audit_explicit_tenant.py` |
+| Consent helpers, audit | `oem_sharing.py`, `platform_routes.add_audit` (staged in the caller's transaction) | `test_oem_sharing_helpers.py`, `test_audit_explicit_tenant.py` |
+| A preview reads but never signs | `tenancy.is_preview`, `service_contracts.for_factory_signer` | `test_contract_preview_cannot_sign.py` |
 | Offboarding | `offboard_tenant._close_service_contracts` | `test_contract_offboarding.py` |
 | Screens | `frontend/components/contracts/*`, `OemContracts.tsx`, `ServiceContracts.tsx` | `*.test.tsx`, `components/contracts/wiring.test.ts` |
 | Mutation harnesses | `mutate_canonical.py`, `mutate_contract_engine.py`, `mutate_service_contracts.py`, `mutate_contract_integration.py`, `frontend/mutate-contracts-ui.mjs` | |

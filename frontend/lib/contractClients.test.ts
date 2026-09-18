@@ -120,6 +120,13 @@ describe("only the manufacturer drafts, proposes and withdraws", () => {
     await run();
     expect(call()).toEqual({ method: "POST", path, body });
   });
+
+  it("edits a draft with a PUT that replaces it whole", async () => {
+    const body = { contract_ref: "AMC-1", title: "AMC", contract_type: "AMC",
+                   factory_tenant_code: "FACTORY_A", start_month: "2026-05", terms: TERMS };
+    await oemContractsApi.editDraft(7, body);
+    expect(call()).toEqual({ method: "PUT", path: "/oem/contracts/7/draft", body });
+  });
 });
 
 describe("only the factory accepts, rejects and reads its reason vocabulary", () => {

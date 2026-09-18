@@ -20,6 +20,7 @@ import {
   sharesTileCovered,
   shortHash,
   slaStateLabel,
+  startMonthOf,
   termsTemplate,
   verifyCanonical,
   type Acceptance,
@@ -373,6 +374,16 @@ describe("time inputs", () => {
                        "2026-05-02T25:00", "02/05/2026 08:30", "2026-05-02T08:30:15.5Z"]) {
       expect(parseUtcInput(bad), bad).toBeNull();
     }
+  });
+
+  it("reads a contract's first month in the contract's timezone, not off the UTC string", () => {
+    // The server stores local midnight on the 1st (contract_periods.month_start_utc).
+    expect(startMonthOf("2026-04-30T18:30:00Z", "Asia/Kolkata")).toBe("2026-05");
+    expect(startMonthOf("2026-12-31T18:30:00Z", "Asia/Kolkata")).toBe("2027-01");
+    expect(startMonthOf("2026-05-01T04:00:00Z", "America/New_York")).toBe("2026-05");
+    expect(startMonthOf("2026-05-01T00:00:00Z", "UTC")).toBe("2026-05");
+    // CONTROL: the same instant is still April in UTC, so the zone is doing the work.
+    expect(startMonthOf("2026-04-30T18:30:00Z", "UTC")).toBe("2026-04");
   });
 });
 

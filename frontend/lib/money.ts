@@ -42,6 +42,10 @@ export function lossFigure(cost: number | null | undefined, units: number | null
 // integer part is grouped as a BigInt and the paise are appended as the two
 // characters the server sent. `money()` above is the platform's GBP analytics
 // figure and is a different thing; do not route contract amounts through it.
+//
+// Indian digit grouping (12,34,567.89) is right because contracts are INR-only
+// (backend contract_terms.CURRENCIES). Admitting a second currency means the
+// grouping must follow it: a GBP fee would otherwise read "£12,34,567.89".
 const DECIMAL_MONEY = /^([0-9]{1,12})\.([0-9]{2})$/;
 
 /** formatDecimalMoney("1234567.89", "INR") -> "₹12,34,567.89" (en-IN grouping). */

@@ -628,6 +628,20 @@ export function parseUtcInput(text: string): string | null {
   return `${m[1]}-${m[2]}-${m[3]}T${m[4]}:${m[5]}:${pad2(second)}Z`;
 }
 
+/**
+ * The "YYYY-MM" a contract starts in: the month of `startsAt` in the contract's
+ * own timezone. The server stores a draft's start_month as local midnight on the
+ * 1st, in UTC (contract_periods.month_start_utc), so this is its exact inverse.
+ * Reading the month off the UTC string is wrong east of UTC: an Asia/Kolkata May
+ * starts at 2026-04-30T18:30:00Z.
+ */
+export function startMonthOf(startsAt: string, timeZone: string): string {
+  const parts = new Intl.DateTimeFormat("en-CA", { timeZone, year: "numeric", month: "2-digit" })
+    .formatToParts(new Date(startsAt));
+  const part = (type: string) => parts.find((p) => p.type === type)?.value ?? "";
+  return `${part("year")}-${part("month")}`;
+}
+
 // ── Drafting ─────────────────────────────────────────────────────────
 
 /**

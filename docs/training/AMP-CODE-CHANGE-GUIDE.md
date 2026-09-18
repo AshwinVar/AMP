@@ -45,6 +45,7 @@
 2. `backend/mqtt_service.py` (`on_message`) — parse + persist (to `IoTTelemetry` or a `Machine` column + migration).
 3. `backend/machine_status.py` — if it should influence status/utilization.
 4. Surface via `ai/twin.build_machine_detail` → `MachineDetailDrawer.tsx`.
+5. Any path that changes `Machine.status` also writes a `MachineEvent` (old status, new status, `source`: `manual`, `mqtt`, `simulator`, `import`, …). It is the machine's status history, which the timeline, the risk scorer and the failure-risk model read; a path that skips it leaves the history saying the machine never changed (`test_machine_import_records_status_change.py`).
 
 ## Recipe: add / change a domain event
 1. `backend/events.py` — a new frozen dataclass (`tenant_code`, `event_type`, `event_version`).

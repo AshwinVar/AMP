@@ -61,6 +61,18 @@ comparison cannot double-count the boundary.
 Default $d = 7$ days — a factory week is the unit operations manage in, and a
 shorter window swings on one bad shift.
 
+**Week over week is built from one anchor.** `oee_contract.prior_window(current)`
+is the window that ends exactly where `current` starts, so every record is in at
+most one of the two weeks at any time of day, and "this week" is the same set of
+records as the headline's. The scorecard's Plant OEE arrow, the recovery card's
+badge and `/oee-trend` all build their weeks this way. Calendar halves are the
+recurring defect here: `[midnight(today-13), midnight(today-6))` overlapped the
+rolling week by up to a day (`test_week_halves_tile.py`), and `/oee-trend`'s
+"this week" of dates `today-6 … today` left a record from late on the eighth date
+in the headline's week and in the trend's prior one, so the trend's current OEE
+and the headline beside it were different numbers
+(`test_oee_trend_uses_the_contract_windows.py`).
+
 `days=None` means all time. It is correct only for an explicit "since
 commissioning" view and is **never** the default.
 
@@ -120,6 +132,7 @@ assistant's context does so in prose:
 | `/oee-summary` (dashboard) | last 7 days | last 7 days, **+ coverage** |
 | AI copilot LLM context | **last 10 records** | last 7 days, + coverage |
 | `plant_oee()` / `machine_oee()` | — | last 7 days |
+| `/oee-trend` (this week vs last) | dates `today-6 … today` vs the 7 dates before | last 7 days vs `prior_window` of it |
 
 Measured before, on one factory at one moment:
 

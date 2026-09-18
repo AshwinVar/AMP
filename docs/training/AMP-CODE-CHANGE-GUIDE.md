@@ -63,6 +63,7 @@
 - Pooled + per-record engines: `backend/analytics_engine.py` (`pooled_oee_from_sums`, `calculate_oee_from_record`).
 - £ money story: `TenantConfig.unit_value_gbp` + `tenancy.tenant_unit_value`.
 - Tests: `test_oee_contract.py` (golden datasets) + `mutate_oee_contract.py`.
+- Week on week: `current = OeeWindow(7)`, `prior = oee_contract.prior_window(current)`, one anchor per request. Never calendar halves (`test_week_halves_tile.py`, `test_oee_trend_uses_the_contract_windows.py`).
 
 ## Recipe: change inventory / BOM
 - Reorder trigger: `stock_events.py stock_dropped` (`InventoryLow`), called by every writer of `current_stock`.

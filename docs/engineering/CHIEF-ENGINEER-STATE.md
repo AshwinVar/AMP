@@ -3,27 +3,25 @@
 > Handover file. A new session should be able to read only this and continue.
 > Keep it short. Update it at the end of every completed task.
 
-**Updated:** 2026-09-18 (#631–#643: verification that had stopped verifying.
+**Updated:** 2026-09-18 (#631–#644: verification that had stopped verifying.
 The founder's preview could reach an OEM namespace. The specialist audit had
 gone stale. Five OEE surfaces stated no coverage. 13 mutation tests applied to
 nothing, 11 in Python and 2 in the UI. One guard lost its proof to #631. Four
 money cards had no thousands separator. Every audit that can fail now runs on
 every push, and the whole mutation fleet runs every Monday. See the section of
 that date below.)
-**Master SHA:** `96faddb` (#643). A docs-only merge on top of it changes nothing
+**Master SHA:** `48583f4` (#644). A docs-only merge on top of it changes nothing
 that runs.
-**Production SHA:** `96faddb`, verified live, not assumed:
-`{"status":"ok","database":"ok","schema":"ok","version":"96faddb"}` from
-`https://flowmes-production.up.railway.app/health`, read at 21:54 UTC;
+**Production SHA:** `48583f4`, verified live, not assumed:
+`{"status":"ok","database":"ok","schema":"ok","version":"48583f4"}` from
+`https://flowmes-production.up.railway.app/health`, read at 22:26 UTC;
 `/readiness` 200 at `0010_outcome_contracts`; the frontend
 (`https://flow-mes.vercel.app`) answers 200. Railway auto-deploys master, so
 prod tracks HEAD; re-check `/health` rather than trusting this line's age.
-**Vercel is slow, not broken:** its deploys queued for well over an hour this
-evening. `8f05217`'s completed at last, and `25f15bc`'s and `96faddb`'s were
-still "deploying" at 21:54 UTC. Nothing that ships in the frontend has changed
-since `c217bcf` (#636), whose deploy completed; #638 changed only a test and a
-harness. So the live frontend already behaves as master does. If the queue has
-not cleared by the next session, look at the Vercel dashboard.
+**Vercel was slow this evening, not broken.** Its deploys queued for over an
+hour from 20:08 UTC. By 22:15 UTC they were back to deploying previews within
+minutes. Nothing that ships in the frontend has changed since `c217bcf` (#636),
+whose production deploy completed.
 
 **Awaiting review:** none.
 
@@ -163,7 +161,7 @@ Two lessons worth keeping:
   `$<digit>` but not a JSX-text `${m.cost}`, which is exactly how two components
   printed dollars. Both missed lines are now pinned verbatim as a probe.
 
-### 2026-09-18 — verification that had stopped verifying (#631–#643)
+### 2026-09-18 — verification that had stopped verifying (#631–#644)
 
 Three of these fix what a person sees. The rest fix the proof that everything
 else is still true, and put that proof where it runs by itself. The fleet run behind #635 is the thing to remember. Every audit
@@ -188,6 +186,7 @@ Nothing had noticed, because nothing ran them.
 | #641 | The four PostgreSQL audits (`audit_oem_adversarial`, `audit_oem_pilot_journey`, `audit_three_customers`, `audit_isolation`) now run in the migration gate's job, each in a scratch database | each exits 1 on a planted defect; all four passed in CI |
 | #642 | **The whole mutation fleet runs every Monday** (`.github/workflows/mutation-fleet.yml`): one job per backend harness, discovered from the tree; `mutate_oem_claim` against a PostgreSQL service; both UI harnesses. It also runs on any PR that edits the workflow. **Its first run found a guard only Windows tested:** the failure-risk generator hash is line-ending-independent, but the only check compared against the committed hash, which an LF checkout (Linux, CI) matches either way. The test now hashes the source both ways | reproduced on Windows with an LF checkout: the old check passes the mutant, the new one fails it |
 | #643 | The six PostgreSQL migration verifications (`verify_pg_migration`, `_docnumbers`, `_bom`, `_oem`, `_native_ai`, `_claim`) now run in the migration gate's job. **One had gone stale:** `verify_pg_native_ai` upgraded to "head" and failed when 0010 moved it, on a migration that was still correct; it now names 0009 | each exits 1 on a defect in its own scope (the BOM one's first plant was out of scope: the drift gate owns that constraint) |
+| #644 | **The module map named a component #389 deleted** (`IndustrialGatewaySection`). Nothing checked the 728 file names the training docs cite; `test_training_doc_references.py` now requires each to resolve, with the recipe placeholders listed | failing first on the one real reference; placeholder checks fire on their plants |
 
 Lessons worth keeping:
 
@@ -1049,7 +1048,10 @@ re-deriving it is worse than none.
    working the first one** (`ai/agents.py:171` and `:279`). Not yet fixed.
 
 5. **Training-doc drift** — P8, explicitly the lowest. 18 of 20 misleading items
-   unsynced (MQTT / events / twin are done).
+   unsynced (MQTT / events / twin are done). The list of the 20 was never
+   written down, so a new pass would have to re-derive it. What IS guarded
+   since #644: every file the training docs name exists
+   (`test_training_doc_references.py`); claims about behaviour are not checked.
 
 ### Removed from this list, with why
 

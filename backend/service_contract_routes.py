@@ -1,4 +1,4 @@
-"""Service contracts, from the FACTORY's side (ADR-0020).
+"""Service contracts, from the FACTORY's side (ADR-0021).
 
 The factory's half of the contract a manufacturer proposes: review the terms,
 see which of its OWN downtime reasons they map, accept explicitly (which grants

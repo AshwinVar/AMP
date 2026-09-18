@@ -5,7 +5,7 @@ import AcceptancePanel from "./AcceptancePanel";
 import { acceptance, dispute, fakeApi, HASH, statement } from "./testFixtures";
 
 /**
- * Accepting an exact revision (ADR-0020).
+ * Accepting an exact revision (ADR-0021).
  *
  * An acceptance names a hash AND a revision; a later revision cancels it even
  * when the bytes come back the same. The panel must show that per revision, send

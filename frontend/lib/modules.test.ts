@@ -385,7 +385,7 @@ describe("viewLabel - the copilot drill-in button", () => {
   });
 });
 
-describe("service contracts (ADR-0020)", () => {
+describe("service contracts (ADR-0021)", () => {
   // Where a factory accepts, rejects or disputes terms that bind it and grants
   // SHARE_DOWNTIME by accepting. Like Connected Equipment it is CORE: the right
   // to refuse or dispute a contract cannot sit behind a paywall.

@@ -1,4 +1,4 @@
-"""Coverage ends where an installation stops pointing at the machine a contract accepted (ADR-0020, C8).
+"""Coverage ends where an installation stops pointing at the machine a contract accepted (ADR-0021, C8).
 
 WHAT THIS PINS
 --------------

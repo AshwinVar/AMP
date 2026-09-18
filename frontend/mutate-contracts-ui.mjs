@@ -1,5 +1,5 @@
 /**
- * Mutation harness for the service-contract user interface (ADR-0020).
+ * Mutation harness for the service-contract user interface (ADR-0021).
  *
  * The backend harnesses (mutate_contract_engine, mutate_service_contracts,
  * mutate_contract_integration) prove the server computes, refuses and withholds

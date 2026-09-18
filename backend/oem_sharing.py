@@ -131,7 +131,7 @@ def contract_statement_visible(db, contract):
     """May this service contract's MANUFACTURER see its statements right now?
 
     SHARE_DOWNTIME granted by the contract's factory to the contract's OEM, read
-    at call time through `grants_for` (ADR-0020). Being party to the contract is
+    at call time through `grants_for` (ADR-0021). Being party to the contract is
     not consent: the terms stay visible to both parties, but statement content
     is the factory's downtime, and a factory that withdraws the grant withholds
     it from the next request on.

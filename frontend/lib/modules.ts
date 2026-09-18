@@ -43,7 +43,7 @@ export const NAV_ITEMS: NavItem[] = [
   // and withdraws what a machine's manufacturer can read about their shop
   // floor, and a consent control behind a paywall is not a consent control.
   { key: "connected",      label: "Connected Equipment", icon: "◈", module: "core" },
-  // CORE for the same reason (ADR-0020): where a factory accepts, rejects or
+  // CORE for the same reason (ADR-0021): where a factory accepts, rejects or
   // disputes a service contract that binds it. Admin and Supervisor only.
   { key: "contracts",      label: "Service Contracts",  icon: "§", module: "core" },
   { key: "workorders",     label: "Work Orders",        icon: "▣", module: "operations" },

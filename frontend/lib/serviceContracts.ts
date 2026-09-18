@@ -15,7 +15,7 @@ import type {
 } from "./contracts";
 
 /**
- * Service contracts from the FACTORY's side: /service-contracts (ADR-0020).
+ * Service contracts from the FACTORY's side: /service-contracts (ADR-0021).
  *
  * Transport only, over the dashboard's own apiGet/apiPost (so the founder's
  * company preview header and session refresh behave as on every other screen).

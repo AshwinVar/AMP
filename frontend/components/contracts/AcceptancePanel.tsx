@@ -16,7 +16,7 @@ import {
 import { useInFlight } from "../../lib/useInFlight";
 
 /**
- * Accepting one exact statement revision, and checking what was accepted (ADR-0020).
+ * Accepting one exact statement revision, and checking what was accepted (ADR-0021).
  *
  * An acceptance names a content hash AND a revision. Any later change to the
  * statement bumps the revision and cancels every earlier acceptance, even when

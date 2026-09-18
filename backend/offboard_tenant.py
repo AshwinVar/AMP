@@ -54,7 +54,7 @@ def purge_tenant_data(db, tenant_code: str) -> dict:
     if not code or code == DEFAULT_TENANT:
         raise ValueError("This tenant cannot be purged")
     # Offboarding also runs as a CLI, without main's boot: the unlink below must
-    # still end any service contract's coverage (ADR-0020).
+    # still end any service contract's coverage (ADR-0021).
     contract_linkage.install()
 
     targets = []
@@ -81,7 +81,7 @@ def purge_tenant_data(db, tenant_code: str) -> dict:
         # showed nothing.
         # Contracts first: closing them reads the installations' coverage as it
         # stood, and the unlink below then ends coverage through the linkage
-        # listener (ADR-0020).
+        # listener (ADR-0021).
         counts.update(_close_service_contracts(db, code))
         counts.update(_unlink_oem_installations(db, code))
         # Also BEFORE the sweep: the GMATS line tables have no tenant_code, so the
@@ -193,7 +193,7 @@ def _close_service_contracts(db, code: str, now=None) -> dict:
     The sweep above cannot see the contract tables (they carry
     `factory_tenant_code`, never `tenant_code`, precisely so that a purge of one
     party cannot delete the other party's copy of a contract it signed). So this
-    function owes the behaviour (ADR-0020):
+    function owes the behaviour (ADR-0021):
 
       * a contract on offer (proposed) is withdrawn; an accepted one is
         terminated by the SYSTEM at the first period boundary at or after now

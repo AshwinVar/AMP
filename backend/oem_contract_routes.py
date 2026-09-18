@@ -1,4 +1,4 @@
-"""Service contracts, from the MANUFACTURER's side (ADR-0020).
+"""Service contracts, from the MANUFACTURER's side (ADR-0021).
 
 Thin by design: every rule is in service_contracts, keyed on a Party, so the
 manufacturer and the factory cannot drift into two versions of one contract.

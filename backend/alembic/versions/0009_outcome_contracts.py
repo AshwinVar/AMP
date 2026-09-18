@@ -1,4 +1,4 @@
-"""agreed downtime attribution: service contracts, statements, acceptances, spans (ADR-0020)
+"""agreed downtime attribution: service contracts, statements, acceptances, spans (ADR-0021)
 
 Revision ID: 0009_outcome_contracts
 Revises: 0008_machine_claim

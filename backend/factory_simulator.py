@@ -813,7 +813,7 @@ def tick_machine_status(db):
 
 
 def tick_status_heartbeat(db):
-    """Report every machine's current status as simulator telemetry (ADR-0020).
+    """Report every machine's current status as simulator telemetry (ADR-0021).
 
     The simulated plant's equivalent of a gateway publishing on an interval: one
     span message of source "simulator" per machine of the BOUND tenant, so a

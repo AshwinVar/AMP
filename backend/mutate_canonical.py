@@ -1,4 +1,4 @@
-"""Mutation harness for the statement-integrity primitives and the 0009 schema (ADR-0020).
+"""Mutation harness for the statement-integrity primitives and the 0009 schema (ADR-0021).
 
 Each mutation is a plausible edit that would let an acceptance count for content
 nobody accepted, let one statement content hash two ways, or let the schema stop

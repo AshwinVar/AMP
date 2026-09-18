@@ -261,7 +261,7 @@ describe("talking to /oem", () => {
   });
 });
 
-describe("a structured refusal (ADR-0020 contract routes)", () => {
+describe("a structured refusal (ADR-0021 contract routes)", () => {
   // The contract routes refuse with an OBJECT detail — {field, message} for a
   // bad term, {withheld: true, reason} when the factory has withdrawn consent,
   // {message, problems} for coverage. String(detail) of any of those is

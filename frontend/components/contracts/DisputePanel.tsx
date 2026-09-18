@@ -15,7 +15,7 @@ import {
 import { useInFlight } from "../../lib/useInFlight";
 
 /**
- * Disputing a window of a statement, and settling it (ADR-0020).
+ * Disputing a window of a statement, and settling it (ADR-0021).
  *
  * A dispute covers one machine and one UTC window inside the statement period.
  * Raising or withdrawing one revises the statement, which cancels every

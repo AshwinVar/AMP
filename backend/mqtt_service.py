@@ -421,7 +421,7 @@ def on_message(client, userdata, msg):
 
         _record_installation_report(db, route.tenant, machine, payload)
 
-        # ADR-0020: EVERY status-bearing message is a span of source "mqtt",
+        # ADR-0021: EVERY status-bearing message is a span of source "mqtt",
         # whether or not it changes Machine.status. The MachineEvent below is
         # written only on a change against the shared status, so it cannot say
         # what MQTT itself reported (critic finding C2). The RAW status goes in,

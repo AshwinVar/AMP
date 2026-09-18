@@ -1,4 +1,4 @@
-"""Coverage of a service contract ends where its installation's link changes (ADR-0020, C8).
+"""Coverage of a service contract ends where its installation's link changes (ADR-0021, C8).
 
 WHY
 ---

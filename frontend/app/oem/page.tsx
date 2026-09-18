@@ -261,7 +261,7 @@ export default function OemPortalPage() {
 
           <OemMachineRegistry models={models} />
 
-          {/* ADR-0020. Rendered only for a role with read_contracts; the server
+          {/* ADR-0021. Rendered only for a role with read_contracts; the server
               enforces every capability and the factory's consent again. */}
           <OemContracts capabilities={identity.capabilities} fleet={machines} />
 

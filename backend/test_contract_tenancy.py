@@ -1,4 +1,4 @@
-"""Tenant and manufacturer isolation of service contracts (ADR-0020, ADR-0017, ADR-0002).
+"""Tenant and manufacturer isolation of service contracts (ADR-0021, ADR-0017, ADR-0002).
 
 THE PROPERTIES UNDER TEST
 -------------------------

@@ -1,4 +1,4 @@
-"""The statement-integrity primitives (ADR-0020): canonical bytes, hash, acceptance.
+"""The statement-integrity primitives (ADR-0021): canonical bytes, hash, acceptance.
 
 WHAT THESE PRIMITIVES ARE FOR
 -----------------------------

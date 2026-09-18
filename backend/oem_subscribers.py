@@ -124,7 +124,7 @@ def notify_both_parties_of_claim(event: MachineClaimed, db) -> None:
     )
 
 
-# ── Service contracts (ADR-0020) ──────────────────────────────────────
+# ── Service contracts (ADR-0021) ──────────────────────────────────────
 #
 # A contract has two parties and every step waits on one of them, so every
 # notification goes to BOTH: once in the factory's tenant, once in the

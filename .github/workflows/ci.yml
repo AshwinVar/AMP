@@ -244,7 +244,7 @@ jobs:
         working-directory: backend
         run: python verify_pg_deploy.py 5432
 
-      # 2b. ADR-0020's eight tables (0009), migrated from a POPULATED previous
+      # 2b. ADR-0021's eight tables (0009), migrated from a POPULATED previous
       #     revision built from the frozen snapshot: every row survives, the
       #     schema matches models.py, PostgreSQL itself refuses a second
       #     statement per period and a second acceptance per revision, the

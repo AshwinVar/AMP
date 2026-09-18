@@ -5,7 +5,7 @@ import React from "react";
 import type { HistoryRow } from "../../lib/contracts";
 
 /**
- * This party's audit trail of one contract (ADR-0020).
+ * This party's audit trail of one contract (ADR-0021).
  *
  * Each party reads its OWN copy (the factory's tenant, or the manufacturer's).
  * While a factory has withdrawn SHARE_DOWNTIME, a manufacturer still sees that a

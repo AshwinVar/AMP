@@ -448,7 +448,7 @@ def main():
     print("=" * 74)
     print("AFTER THE MEETING — a reset clears the demo's service contracts, and only those")
     print("=" * 74)
-    # A prospect who is shown the downtime attribution contract (ADR-0020) leaves
+    # A prospect who is shown the downtime attribution contract (ADR-0021) leaves
     # contract rows behind that REFERENCE the demo's installation and machines.
     # On PostgreSQL those foreign keys would block the next reset, exactly as
     # industrial devices once did. Planted directly — the contract steps

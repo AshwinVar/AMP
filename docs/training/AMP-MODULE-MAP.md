@@ -130,7 +130,7 @@ Every module follows the same skeleton:
 - **Read-models:** `oem_sharing.fleet_row` / `service_view` / `commissioning_view`
 - **Tests:** `test_machine_claim.py`, `test_oem_provisioning.py`, `test_oem_service_consent.py`, `test_connected_equipment.py`, `mutate_oem_sharing.py`, `audit_oem_adversarial.py`, `audit_oem_demo_journey.py`
 
-### Agreed downtime attribution (ADR-0020, in progress: data model only so far)
+### Agreed downtime attribution (ADR-0021, in progress: data model only so far)
 - **What:** service contracts between an OEM and a factory, a periodic statement attributing every covered downtime minute to AVAILABLE / OEM / FACTORY / DISPUTED / UNMEASURED from the factory's own records, and both parties' acceptance of an exact statement revision. The attribution is the differentiator; metering and shared usage ledgers already exist and are not claimed as new. No ledger, chain or usage billing. A freedom-to-operate review is needed before commercial launch.
 - **Tables (migration `0009_outcome_contracts`):** `ServiceContract`, `ServiceContractTermVersion`, `ServiceContractMachine`, `ContractStatement`, `ContractAttributionRecord`, `ContractStatementAcceptance`, `ContractDispute` (carry `oem_code` + `factory_tenant_code`, never `tenant_code`; not in `SCOPED_MODELS`), and `MachineTelemetrySpan` (tenant-scoped per-source status history)
 - **Logic:** `canonical.py` — canonical statement bytes, SHA-256 content hash, `ts`/`utc_seconds`, and `acceptance_is_valid` (hash AND revision AND statement: the only copy of the rule)

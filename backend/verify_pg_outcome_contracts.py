@@ -3,7 +3,7 @@
 WHY POSTGRESQL AND NOT ONLY SQLITE
 ----------------------------------
 SQLite ignores VARCHAR lengths, does not enforce foreign keys by default, and
-stores NUMERIC as REAL. The agreed-downtime-attribution tables (ADR-0020) lean on
+stores NUMERIC as REAL. The agreed-downtime-attribution tables (ADR-0021) lean on
 exactly those: a 64-character hash column, foreign keys that decide offboarding
 order, and a NOT NULL tenant with no default. test_migration_0009_outcome_contracts
 pins the shape on SQLite; this proves it on the engine production runs.

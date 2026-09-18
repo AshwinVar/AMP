@@ -50,7 +50,7 @@ def create_iot_telemetry(telemetry: schemas.IoTTelemetryCreate, db: Session = De
             machine.utilization = util
 
     if signal in ["status", "machine_status"]:
-        # ADR-0020: the status history of source "iot", from every status
+        # ADR-0021: the status history of source "iot", from every status
         # signal, recorded raw (an unrecognised value is disputed downstream).
         telemetry_coverage.record_message(
             db, machine.tenant_code, machine.id, telemetry_coverage.IOT,
@@ -127,7 +127,7 @@ def create_industrial_signal(signal: schemas.IndustrialSignalCreate, db: Session
         if machine:
             field = signal.signal_name.lower()
             if field in ["status", "machine_status", "state"]:
-                # ADR-0020: the status history of source "industrial_gateway".
+                # ADR-0021: the status history of source "industrial_gateway".
                 telemetry_coverage.record_message(
                     db, machine.tenant_code, machine.id,
                     telemetry_coverage.INDUSTRIAL_GATEWAY, signal.signal_value,

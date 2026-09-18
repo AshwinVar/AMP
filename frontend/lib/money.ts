@@ -32,8 +32,9 @@ export function lossFigure(cost: number | null | undefined, units: number | null
   if (cost != null) return money(cost);
   if (units != null) return `${units.toLocaleString()} unit${units === 1 ? "" : "s"}`;
   return "—";
+}
 
-// ── Contract money (ADR-0020) ────────────────────────────────────────
+// ── Contract money (ADR-0021) ────────────────────────────────────────
 //
 // A service-contract statement carries money as DECIMAL TEXT with exactly two
 // places ("40000.00"), in the contract's own currency, computed server-side

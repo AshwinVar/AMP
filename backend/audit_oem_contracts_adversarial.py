@@ -1,4 +1,4 @@
-"""Service contracts under attack: try to break every boundary they add (ADR-0020).
+"""Service contracts under attack: try to break every boundary they add (ADR-0021).
 
 The route suites prove the rules. This audit plays the adversary against a
 populated two-OEM, three-factory world through the HTTP surface only, and

@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
 /**
- * STRUCTURAL GUARD for the two screens that are not unit-rendered (ADR-0020).
+ * STRUCTURAL GUARD for the two screens that are not unit-rendered (ADR-0021).
  *
  * The factory dashboard (app/dashboard/page.tsx, ~2,900 lines) and the OEM
  * portal page are exercised by Playwright, not by vitest. The contract

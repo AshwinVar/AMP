@@ -81,7 +81,7 @@ class RetentionPolicy:
     timestamp_column: str
     days: Optional[int]
     why: str
-    # EVIDENCE a signed agreement rests on (ADR-0020). ``--days`` may LENGTHEN
+    # EVIDENCE a signed agreement rests on (ADR-0021). ``--days`` may LENGTHEN
     # its window but never shorten it: pruning it early would turn agreed
     # attribution evidence into "no data" for every statement still open.
     evidence: bool = False
@@ -131,7 +131,7 @@ POLICIES = (
     RetentionPolicy(
         models.MachineTelemetrySpan, "span_end", 400,
         # The per-source status history the downtime attribution engine reads
-        # (ADR-0020). One row per run of one status per source, not per message,
+        # (ADR-0021). One row per run of one status per source, not per message,
         # so it grows with status CHANGES rather than with the tick rate. 400
         # days covers a yearly contract's statements plus a quarter for disputes
         # to settle. After that a statement cannot be recomputed:

@@ -89,7 +89,7 @@ Creates two tables (skipped if present) and then **seeds legacy recipes**.
 **What to do:** check the row count in `bills_of_materials` after the deploy
 against the log line the migration prints.
 
-### 0009 — agreed downtime attribution (ADR-0020)
+### 0009 — agreed downtime attribution (ADR-0021)
 
 The product: a statement that attributes each covered downtime minute of an OEM's
 machine to the OEM, the factory, disputed or unmeasured, from the factory's own

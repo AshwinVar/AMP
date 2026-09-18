@@ -171,7 +171,7 @@ def wipe(db):
     """
     _assert_demo_scope()
 
-    # Service contracts (ADR-0020). A contract shown in a demo leaves rows that
+    # Service contracts (ADR-0021). A contract shown in a demo leaves rows that
     # reference the demo's installations (and, through them, its machines), so
     # they go before either. Demo scope is a contract of the demo MANUFACTURER or
     # one addressed to the demo FACTORY; the children are removed by their
@@ -281,7 +281,7 @@ def wipe(db):
            .filter(models.IndustrialDevice.linked_machine_id.in_(machine_ids),
                    models.IndustrialDevice.tenant_code != DEMO_TENANT)
            .update({"linked_machine_id": None}, synchronize_session=False))
-    # Telemetry spans (ADR-0020) reference the demo's machines, so they precede
+    # Telemetry spans (ADR-0021) reference the demo's machines, so they precede
     # them.
     for M in (models.Notification, models.Alert, models.MachineTelemetrySpan,
               models.Machine, models.EventLog, models.TenantConfig):

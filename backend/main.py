@@ -348,7 +348,7 @@ tenancy.ensure_tenant_columns(engine)  # ADR-0002: tenant_code on core tables
 tenancy.ensure_tenant_columns(engine, tenancy.FAIL_SAFE_TENANT_TABLES, backfill=False)
 tenancy.install_scoping()              # ADR-0002: auto-enforce tenant scoping
 import contract_linkage  # noqa: E402
-contract_linkage.install()             # ADR-0020: a changed installation link ends contract coverage
+contract_linkage.install()             # ADR-0021: a changed installation link ends contract coverage
 
 # Optional error monitoring — active only when SENTRY_DSN is set in the env.
 _SENTRY_DSN = os.environ.get("SENTRY_DSN")
@@ -449,7 +449,7 @@ app.include_router(connected_equipment_routes.router)
 # an organisation the platform controls.
 app.include_router(oem_admin_routes.router)
 
-# Register service contracts with agreed downtime attribution (ADR-0020), from
+# Register service contracts with agreed downtime attribution (ADR-0021), from
 # both sides: /oem/contracts for the manufacturer (require_oem) and
 # /service-contracts for the factory (require_roles). Both are thin over
 # service_contracts, so the two parties cannot see two versions of one rule.
@@ -522,7 +522,7 @@ async def _simulation_loop():
                         m.utilization = drift_utilization(m.utilization, random.randint(-5, 5))
                     db.commit()
                     # Last, so it reports the statuses this tick settled on:
-                    # the simulated plant's status telemetry (ADR-0020).
+                    # the simulated plant's status telemetry (ADR-0021).
                     tick_status_heartbeat(db)
                 except Exception as tick_err:
                     db.rollback()

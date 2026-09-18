@@ -5,7 +5,7 @@ import { oemContractsApi } from "./oemContracts";
 import { serviceContractsApi } from "./serviceContracts";
 
 /**
- * The two transports of one contract (ADR-0020).
+ * The two transports of one contract (ADR-0021).
  *
  * The manufacturer and the factory reach the same service through different
  * prefixes and different auth. Every operation is pinned here to its method,

@@ -1,4 +1,4 @@
-"""Per-source status spans: the only status history the downtime attribution reads (ADR-0020).
+"""Per-source status spans: the only status history the downtime attribution reads (ADR-0021).
 
 WHAT THIS PINS
 --------------

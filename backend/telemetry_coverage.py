@@ -1,4 +1,4 @@
-"""Per-source machine status spans: what AMP actually heard, and when (ADR-0020).
+"""Per-source machine status spans: what AMP actually heard, and when (ADR-0021).
 
 WHAT A SPAN IS
 --------------

@@ -1,4 +1,4 @@
-"""Canonical bytes, content hashes and acceptance validity for statements (ADR-0020).
+"""Canonical bytes, content hashes and acceptance validity for statements (ADR-0021).
 
 WHAT THIS MODULE IS FOR
 -----------------------

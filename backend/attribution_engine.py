@@ -1,4 +1,4 @@
-"""Agreed downtime attribution: every covered second of a machine into one bucket (ADR-0020).
+"""Agreed downtime attribution: every covered second of a machine into one bucket (ADR-0021).
 
 WHAT THIS MODULE IS
 -------------------

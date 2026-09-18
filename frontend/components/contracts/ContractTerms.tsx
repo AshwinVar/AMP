@@ -6,7 +6,7 @@ import { bucketLabel, formatDuration, shortHash, type TermVersion } from "../../
 import { formatDecimalMoney } from "../../lib/money";
 
 /**
- * The terms of one version of a contract, as either party reads them (ADR-0020).
+ * The terms of one version of a contract, as either party reads them (ADR-0021).
  *
  * Shown in full to BOTH parties before anything binds them, including the one
  * limitation that matters most: the status sources a contract trusts are

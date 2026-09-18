@@ -1,4 +1,4 @@
-"""Request bodies for the service-contract routes (ADR-0020).
+"""Request bodies for the service-contract routes (ADR-0021).
 
 Every body refuses fields it does not name (`extra="forbid"`). A contract body
 that carried an `oem_code` must be refused rather than ignored: the manufacturer

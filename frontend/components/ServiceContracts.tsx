@@ -14,7 +14,7 @@ import { useInFlight } from "../lib/useInFlight";
 import ContractWorkspace from "./contracts/ContractWorkspace";
 
 /**
- * Service contracts in the factory's dashboard (ADR-0020).
+ * Service contracts in the factory's dashboard (ADR-0021).
  *
  * The factory's half: review what a machine's manufacturer proposes, see which
  * of your OWN downtime reasons its terms would attribute and which would come

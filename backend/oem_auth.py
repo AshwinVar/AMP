@@ -59,7 +59,7 @@ ROLE_CAPABILITIES = {
                            "read_contracts"},
     OEM_VIEWER: {"read_fleet", "read_contracts"},
 }
-# Service contracts (ADR-0020): every role reads a contract it is party to;
+# Service contracts (ADR-0021): every role reads a contract it is party to;
 # drafting, amending, computing and disputing is service management; binding the
 # company (propose, withdraw, accept terms or a statement, terminate) is the
 # administrator's alone.

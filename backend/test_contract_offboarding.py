@@ -1,4 +1,4 @@
-"""Offboarding a factory closes its service contracts and removes its data from them (ADR-0020).
+"""Offboarding a factory closes its service contracts and removes its data from them (ADR-0021).
 
 WHAT THIS PINS
 --------------

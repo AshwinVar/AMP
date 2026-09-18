@@ -25,7 +25,7 @@ import DisputePanel from "./DisputePanel";
 import StatementView from "./StatementView";
 
 /**
- * One contract workspace for BOTH parties (ADR-0020).
+ * One contract workspace for BOTH parties (ADR-0021).
  *
  * The manufacturer's portal and the factory's dashboard render this same
  * component over their own transport (`api`), so the two sides of one contract

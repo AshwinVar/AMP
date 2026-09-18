@@ -1280,7 +1280,7 @@ class AiLearningConsent(Base):
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
 
-# ── Agreed downtime attribution for service contracts (ADR-0020) ──────
+# ── Agreed downtime attribution for service contracts (ADR-0021) ──────
 #
 # WHAT THIS IS. An SME machine maker (the OEM) and its factory customer already
 # sign annual maintenance contracts, warranties and uptime clauses. These tables
@@ -1567,7 +1567,7 @@ class MachineTelemetrySpan(Base):
     spans is a gap in data: it is UNMEASURED, never uptime or downtime.
 
     Statuses from these sources are provisioned or posted by the FACTORY; they
-    are not authenticated as the OEM's. That is an honest limitation (ADR-0020),
+    are not authenticated as the OEM's. That is an honest limitation (ADR-0021),
     and disputes are the remedy.
 
     Tenant-owned and in tenancy.SCOPED_MODELS. `tenant_code` has NO default: a

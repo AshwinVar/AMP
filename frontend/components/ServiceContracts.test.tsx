@@ -4,7 +4,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { detail, periods, statement, version } from "./contracts/testFixtures";
 
 /**
- * The factory's service-contract screen (ADR-0020).
+ * The factory's service-contract screen (ADR-0021).
  *
  * The property that matters most: accepting a contract GRANTS the manufacturer
  * SHARE_DOWNTIME, so the grant must be an explicit, informed choice. The screen

@@ -1,4 +1,4 @@
-"""The downtime attribution engine: every covered second into exactly one bucket (ADR-0020).
+"""The downtime attribution engine: every covered second into exactly one bucket (ADR-0021).
 
 WHAT THIS PINS
 --------------

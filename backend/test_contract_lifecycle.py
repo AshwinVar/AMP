@@ -1,4 +1,4 @@
-"""A service contract's life: draft, propose, explicit acceptance, termination (ADR-0020).
+"""A service contract's life: draft, propose, explicit acceptance, termination (ADR-0021).
 
 THE PROPERTIES UNDER TEST
 -------------------------

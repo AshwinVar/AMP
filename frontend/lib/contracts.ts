@@ -2,7 +2,7 @@ import { API_URL, getAuthHeaders } from "./api";
 import { OemRequestError, refusalText } from "./oem";
 
 /**
- * Agreed downtime attribution for service contracts: the shared client (ADR-0020).
+ * Agreed downtime attribution for service contracts: the shared client (ADR-0021).
  *
  * A machine maker and a factory already sign service contracts (annual
  * maintenance, warranties, uptime clauses) and argue at month end about whose

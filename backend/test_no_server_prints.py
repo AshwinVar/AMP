@@ -118,7 +118,7 @@ CLI_ONLY_FUNCTIONS = {
         # The web process imports retention ONLY to read POLICIES: the service
         # contract engine (contract_statements.span_retention_days) reads the
         # span retention window from the policy table rather than copying the
-        # number (ADR-0020). main() is the operator's `python retention.py`
+        # number (ADR-0021). main() is the operator's `python retention.py`
         # entry point and is never called from a request; its report IS the
         # result a person approves before --apply.
         "main": "the retention CLI entry point; the web process imports retention only to read POLICIES",

@@ -1,4 +1,4 @@
-"""Downtime attribution statements: compute, persist, accept state, verify (ADR-0020).
+"""Downtime attribution statements: compute, persist, accept state, verify (ADR-0021).
 
 WHAT THIS PINS
 --------------

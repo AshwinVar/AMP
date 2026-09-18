@@ -1,4 +1,4 @@
-"""Mutation harness for the service-contract routes and their domain service (ADR-0020).
+"""Mutation harness for the service-contract routes and their domain service (ADR-0021).
 
 Each mutation is a plausible edit that would let a stranger see a contract, let
 a manufacturer read a factory's downtime after consent was withdrawn, bind a

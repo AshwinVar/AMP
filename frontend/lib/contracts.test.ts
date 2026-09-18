@@ -29,7 +29,7 @@ import {
 import { OemRequestError } from "./oem";
 
 /**
- * The shared client logic of agreed downtime attribution (ADR-0020).
+ * The shared client logic of agreed downtime attribution (ADR-0021).
  *
  * What is worth pinning here is honesty, not layout:
  *   * UNMEASURED always reads "No data" — never uptime, never downtime;

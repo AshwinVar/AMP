@@ -1,6 +1,6 @@
 """platform_routes.log_audit with an explicit tenant, inside the caller's transaction.
 
-WHY THIS EXISTS (ADR-0020, critic finding C6)
+WHY THIS EXISTS (ADR-0021, critic finding C6)
 ---------------------------------------------
 A service-contract transition is written by one party and must be recorded for
 BOTH: one audit row in the factory's tenant and one in the manufacturer's

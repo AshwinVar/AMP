@@ -5,7 +5,7 @@ import DisputePanel from "./DisputePanel";
 import { dispute, fakeApi, statement } from "./testFixtures";
 
 /**
- * Disputing a window, and settling it (ADR-0020).
+ * Disputing a window, and settling it (ADR-0021).
  *
  * A dispute names one machine and a UTC window; the typed times reach the API in
  * its whole-second form or not at all. A resolution is accepted by the OTHER

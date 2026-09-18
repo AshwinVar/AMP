@@ -277,7 +277,7 @@ def test_capabilities_are_enforced_per_role():
     check("an engineer can commission but not manage users",
           "commission" in caps["OEM_SERVICE_ENGINEER"]
           and "manage_users" not in caps["OEM_SERVICE_ENGINEER"])
-    # ADR-0020 service contracts: everybody at the manufacturer may read a
+    # ADR-0021 service contracts: everybody at the manufacturer may read a
     # contract; drafting, amending, computing and disputing is service
     # management; binding the company (propose, withdraw, accept a statement,
     # terminate) is the administrator's alone.

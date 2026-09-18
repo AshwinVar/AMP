@@ -1,4 +1,4 @@
-# ADR-0020: Agreed downtime attribution for service contracts
+# ADR-0021: Agreed downtime attribution for service contracts
 
 **Status:** accepted · **Date:** 2026-09-17 · **Extends [ADR-0017](0017-oem-fleet-and-cross-tenant-equipment.md) and [ADR-0019](0019-factory-controlled-machine-claim.md).**
 

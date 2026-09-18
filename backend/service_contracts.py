@@ -1,4 +1,4 @@
-"""Service contracts with agreed downtime attribution: the domain service (ADR-0020).
+"""Service contracts with agreed downtime attribution: the domain service (ADR-0021).
 
 WHAT THIS PRODUCT IS, AND IS NOT
 --------------------------------

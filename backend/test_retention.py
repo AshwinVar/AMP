@@ -285,7 +285,7 @@ def _span(db, age, label, tenant="DEFAULT"):
 
 
 def test_telemetry_spans_are_kept_400_days_by_span_end():
-    """ADR-0020: the downtime attribution engine reads machine_telemetry_spans,
+    """ADR-0021: the downtime attribution engine reads machine_telemetry_spans,
     and a statement cannot be recomputed once they are gone (EvidenceExpired
     reads THIS policy, it never copies the number). 400 days covers a yearly
     contract plus a quarter of dispute time. Pruned by span_end: the engine reads

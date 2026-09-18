@@ -308,7 +308,7 @@ def accept_claim(code: str, payload: ClaimAcceptance,
     # under Connected Equipment.
     #
     # The union is oem_sharing.widen_grants, the one implementation that
-    # accepting a service contract also uses (ADR-0020). The claim, the widened
+    # accepting a service contract also uses (ADR-0021). The claim, the widened
     # policy and both audit rows now commit together: an audit row can no longer
     # be lost after the claim it records was committed.
     log_audit(db, actor, "claim_accepted", "machine_installation", inst.id,
@@ -495,7 +495,7 @@ def release_installation(installation_id: int, db: Session = Depends(_get_db),
         raise HTTPException(status_code=404, detail="Equipment not found")
     # A bulk UPDATE never reaches the before_flush linkage listener, so a
     # service contract covering this machine is told here, in the same
-    # transaction (ADR-0020): covered time from now on is "no data".
+    # transaction (ADR-0021): covered time from now on is "no data".
     contract_linkage.end_coverage(db, inst.id, contract_linkage.INSTALLATION_RELEASED)
 
     log_audit(db, actor, "installation_released", "machine_installation", inst.id,

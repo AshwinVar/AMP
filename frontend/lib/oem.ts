@@ -97,7 +97,7 @@ export class OemRequestError extends Error {
 /**
  * A refusal's `detail` as one readable sentence.
  *
- * Most routes refuse with a sentence. The service-contract routes (ADR-0020)
+ * Most routes refuse with a sentence. The service-contract routes (ADR-0021)
  * refuse with an object — {field, message} for a term, {message, problems} for
  * coverage, {withheld, reason, message} when a factory has withdrawn consent —
  * and String() of an object is "[object Object]", which tells nobody what to

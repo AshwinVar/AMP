@@ -1,5 +1,5 @@
 /**
- * Fixtures for the service-contract component tests (ADR-0020). Shapes follow
+ * Fixtures for the service-contract component tests (ADR-0021). Shapes follow
  * backend/service_contracts.py and backend/contract_statements.py exactly.
  */
 import type {

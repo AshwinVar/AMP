@@ -1,4 +1,4 @@
-"""Structural guards on the service-contract routes and their service (ADR-0020).
+"""Structural guards on the service-contract routes and their service (ADR-0021).
 
 Behavioural suites prove what the routes do today. These guards make the rules
 hard to break TOMORROW, by reading the source: a handler added without a gate, a

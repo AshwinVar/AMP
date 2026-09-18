@@ -1,4 +1,4 @@
-"""Disputing a downtime attribution statement (ADR-0020).
+"""Disputing a downtime attribution statement (ADR-0021).
 
 THE PROPERTIES UNDER TEST
 -------------------------

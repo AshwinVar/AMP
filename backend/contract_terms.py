@@ -1,4 +1,4 @@
-"""The terms of a downtime attribution contract: parse, canonicalise, hash (ADR-0020).
+"""The terms of a downtime attribution contract: parse, canonicalise, hash (ADR-0021).
 
 WHAT THE TERMS SAY
 ------------------

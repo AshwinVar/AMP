@@ -1,4 +1,4 @@
-"""Consent: what a manufacturer sees of a contract, and when (ADR-0020, ADR-0017).
+"""Consent: what a manufacturer sees of a contract, and when (ADR-0021, ADR-0017).
 
 THE PROPERTIES UNDER TEST
 -------------------------

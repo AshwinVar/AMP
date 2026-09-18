@@ -53,7 +53,7 @@ _EXPECTED_VIEWS = {
     # a gated pack would leave Starter tenants with equipment they cannot see
     # the sharing position of — so the pin is the thing that would catch it.
     "connected": "core",
-    # CORE too (ADR-0020). Service contracts are where a factory reviews what a
+    # CORE too (ADR-0021). Service contracts are where a factory reviews what a
     # manufacturer proposes, grants SHARE_DOWNTIME by accepting, and disputes a
     # statement. Like consent itself, the right to refuse or dispute terms that
     # bind you cannot sit behind a paywall. /service-contracts is not in any

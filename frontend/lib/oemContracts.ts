@@ -15,7 +15,7 @@ import type {
 import { get, post } from "./oem";
 
 /**
- * Service contracts from the MANUFACTURER's side: /oem/contracts (ADR-0020).
+ * Service contracts from the MANUFACTURER's side: /oem/contracts (ADR-0021).
  *
  * Transport only, over the OEM client's own get/post (so a refusal keeps its
  * status and structured detail). What a manufacturer may do is decided by the

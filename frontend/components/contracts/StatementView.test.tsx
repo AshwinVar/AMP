@@ -5,7 +5,7 @@ import StatementView from "./StatementView";
 import { content } from "./testFixtures";
 
 /**
- * A statement as both parties read it (ADR-0020).
+ * A statement as both parties read it (ADR-0021).
  *
  * The properties: the tiles are the statement's own totals and add up to the
  * covered time; unmeasured time says "No data" and is never drawn as uptime or

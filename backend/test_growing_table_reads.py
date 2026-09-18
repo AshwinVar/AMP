@@ -61,7 +61,7 @@ GROWING = {
     "DowntimeLog", "MachineEvent", "AgentAction", "AuditLog", "ProductionRecord",
     "Notification", "InventoryTransaction", "OperatorExecution",
     "QualityInspection", "ShiftData", "CostRecord", "MaintenanceTask",
-    # ADR-0020. One row per (machine, source, status run): every connected
+    # ADR-0021. One row per (machine, source, status run): every connected
     # machine adds rows for as long as it reports.
     "MachineTelemetrySpan",
 }

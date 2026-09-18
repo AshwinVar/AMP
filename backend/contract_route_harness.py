@@ -1,4 +1,4 @@
-"""Shared harness for the service-contract route suites (ADR-0020).
+"""Shared harness for the service-contract route suites (ADR-0021).
 
 WHAT THIS FILE IS
 -----------------

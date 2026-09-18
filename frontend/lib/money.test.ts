@@ -55,7 +55,7 @@ describe("lossFigure", () => {
     expect(lossFigure(null, null)).toBe("—");
 
 /**
- * Contract money (ADR-0020) arrives as DECIMAL TEXT ("40000.00") because the
+ * Contract money (ADR-0021) arrives as DECIMAL TEXT ("40000.00") because the
  * backend computes it with exact decimals and never lets it become a float. The
  * display must not undo that on the last inch: Number("1234567.89") is fine,
  * but a 12-digit fee with paise is where binary floating point starts to drift,

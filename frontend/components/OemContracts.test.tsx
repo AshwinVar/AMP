@@ -5,7 +5,7 @@ import { OemRequestError } from "../lib/oem";
 import { detail, periods, statement, version } from "./contracts/testFixtures";
 
 /**
- * Service contracts in the manufacturer's portal (ADR-0020).
+ * Service contracts in the manufacturer's portal (ADR-0021).
  *
  * Two properties. CONSENT: when the factory has withdrawn SHARE_DOWNTIME, the
  * manufacturer sees "sharing withdrawn by factory" and NO numbers — not a zero,

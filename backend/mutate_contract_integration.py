@@ -1,4 +1,4 @@
-"""Mutation harness for the shared pieces service contracts integrate with (ADR-0020).
+"""Mutation harness for the shared pieces service contracts integrate with (ADR-0021).
 
 The engine (mutate_contract_engine.py) and the routes (mutate_service_contracts.py)
 have their own harnesses. This one covers what joins them to the rest of AMP:

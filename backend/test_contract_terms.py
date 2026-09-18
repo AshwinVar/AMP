@@ -1,4 +1,4 @@
-"""The contract terms document: parsed fail-closed, hashed one way (ADR-0020).
+"""The contract terms document: parsed fail-closed, hashed one way (ADR-0021).
 
 WHAT THIS PINS
 --------------

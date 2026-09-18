@@ -21,7 +21,7 @@ import {
 import { formatDecimalMoney } from "../../lib/money";
 
 /**
- * One downtime attribution statement, as both parties read it (ADR-0020).
+ * One downtime attribution statement, as both parties read it (ADR-0021).
  *
  * Every covered second of every covered machine sits in exactly one bucket, and
  * the bar and the legend are drawn from the same totals so they cannot disagree.

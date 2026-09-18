@@ -1,4 +1,4 @@
-"""Money, percentages and the SLA/credit evaluation of a statement (ADR-0020).
+"""Money, percentages and the SLA/credit evaluation of a statement (ADR-0021).
 
 WHAT THIS MODULE IS
 -------------------

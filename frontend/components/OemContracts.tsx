@@ -9,7 +9,7 @@ import { useInFlight } from "../lib/useInFlight";
 import ContractWorkspace from "./contracts/ContractWorkspace";
 
 /**
- * Service contracts in the manufacturer's portal (ADR-0020).
+ * Service contracts in the manufacturer's portal (ADR-0021).
  *
  * A manufacturer drafts a contract for machines it has installed at one
  * customer, proposes it, and from then on works the monthly statements with

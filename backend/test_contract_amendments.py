@@ -1,4 +1,4 @@
-"""Changing a contract's terms needs both parties (ADR-0020).
+"""Changing a contract's terms needs both parties (ADR-0021).
 
 THE PROPERTIES UNDER TEST
 -------------------------

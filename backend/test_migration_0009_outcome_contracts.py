@@ -2,7 +2,7 @@
 
 WHAT THIS PINS
 --------------
-Eight new tables (ADR-0020). Seven hold service contracts, their statements and
+Eight new tables (ADR-0021). Seven hold service contracts, their statements and
 the parties' acceptances; the eighth, machine_telemetry_spans, is a per-source
 status history of a factory's machines.
 

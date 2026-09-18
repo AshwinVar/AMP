@@ -105,7 +105,7 @@ class ServiceCompleted:
     event_version: int = 1
 
 
-# ── Service contracts: agreed downtime attribution (ADR-0020) ─────────
+# ── Service contracts: agreed downtime attribution (ADR-0021) ─────────
 #
 # Filed under the FACTORY's tenant for the same reason as the lifecycle events
 # above: a contract is about the customer's machines on the customer's floor.

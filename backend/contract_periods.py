@@ -1,4 +1,4 @@
-"""Statement periods and covered hours for a downtime attribution contract (ADR-0020).
+"""Statement periods and covered hours for a downtime attribution contract (ADR-0021).
 
 ANCHORED, NOT ROLLING
 ---------------------

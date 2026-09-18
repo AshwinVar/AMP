@@ -18,6 +18,7 @@ from sqlalchemy.orm import Session
 import models
 import schemas
 from auth import get_current_user, require_roles
+from payload_fields import MAX_QTY
 from database import SessionLocal
 from events import event_bus, InventoryLow
 from tenancy import request_tenant
@@ -48,12 +49,30 @@ def get_inventory_items(
     )
 
 
+def check_stock_levels(current_stock, reorder_level):
+    """THE bound on an item's stock and reorder level for a JSON write: whole
+    numbers in [0, MAX_QTY], or a 400. Create and PATCH both call it; the CSV
+    importers apply the same bound per cell through payload_fields.int_cell.
+
+    A NEGATIVE value is physically impossible and corrupts the low-stock
+    read-model: generate_low_stock_escalations would label a -5 item "Medium"
+    (current_stock == 0 is false) and print "Current stock -5". Past MAX_QTY is a
+    typo, and on PostgreSQL an overflow of the INTEGER column, not a stock.
+    (test_inventory_stock_bounds.py)"""
+    if min(current_stock, reorder_level) < 0:
+        raise HTTPException(status_code=400, detail="current_stock and reorder_level must be non-negative")
+    if max(current_stock, reorder_level) > MAX_QTY:
+        raise HTTPException(status_code=400, detail="current_stock and reorder_level must be at most "
+                                                    f"{MAX_QTY:,}")
+
+
 @router.post("/items", response_model=schemas.InventoryItemResponse)
 def create_inventory_item(
     item: schemas.InventoryItemCreate,
     db: Session = Depends(_get_db),
     current_user: dict = Depends(require_roles(["Admin", "Supervisor"])),
 ):
+    check_stock_levels(item.current_stock, item.reorder_level)
     existing = (
         db.query(models.InventoryItem)
         .filter(models.InventoryItem.item_code == item.item_code)
@@ -109,14 +128,8 @@ def update_inventory_item(
     item.current_stock = item.current_stock or 0
     item.reorder_level = item.reorder_level or 0
 
-    # Reject a negative stock/level (parity with the create-path ingests: production
-    # #266, quality #324, orders). A NULL heals to 0 above; a NEGATIVE patch value
-    # (`{"current_stock": -5}`) is physically impossible and corrupts the low-stock
-    # read-model — generate_low_stock_escalations would label a -5 item "Medium"
-    # (current_stock == 0 is false) and print "Current stock -5" — so a clean 400,
-    # not a stored negative.
-    if min(item.current_stock, item.reorder_level) < 0:
-        raise HTTPException(status_code=400, detail="current_stock and reorder_level must be non-negative")
+    # A NULL heals to 0 above; a NEGATIVE patch value is refused (check_stock_levels).
+    check_stock_levels(item.current_stock, item.reorder_level)
 
     db.commit()
     db.refresh(item)

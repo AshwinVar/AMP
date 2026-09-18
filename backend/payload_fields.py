@@ -87,7 +87,9 @@ def int_cell(value, label: str = "value", *, default: int = 0, minimum: int = 0,
     single bad row dragged the plant figures below or above the truth. Every JSON
     write of these same columns already refuses exactly those via ``int_field``'s
     [0, MAX_QTY] bound (and the proforma/MIN line guards reject a negative qty); this
-    is that same bound for the CSV side, so the two ingest routes agree.
+    is that same bound for the CSV side, so the two ingest routes agree. (The GMATS
+    importer has used it since #440; the enterprise importer kept the bare parse,
+    and stored "-5", until test_inventory_stock_bounds.py.)
 
     A missing / blank cell coalesces to ``default`` — a blank quantity cell means 0,
     matching the ``or "0"`` the call sites already applied. Anything present but not

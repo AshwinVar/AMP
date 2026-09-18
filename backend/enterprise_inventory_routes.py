@@ -15,7 +15,7 @@ import doc_numbers
 import models
 import tenancy
 from csv_safe import import_row_error, read_upload_text
-from payload_fields import int_field, str_field
+from payload_fields import int_cell, int_field, str_field
 from auth import get_current_user, require_roles
 from database import SessionLocal
 
@@ -713,8 +713,14 @@ async def import_inventory_csv(
                 else:
                     category = (row.get("category") or row.get("Category") or "Imported").strip()
                     unit = (row.get("unit") or row.get("Unit") or "pcs").strip()
-                    stock = int(float((row.get("current_stock") or row.get("Opening Stock") or row.get("Stock") or "0").strip() or 0))
-                    reorder = int(float((row.get("reorder_level") or row.get("Reorder Level") or "0").strip() or 0))
+                    # int_cell: decimal-tolerant ("5.00" from Excel) but bounded to
+                    # [0, MAX_QTY], the bound PATCH and POST /inventory/items apply
+                    # (inventory_routes.check_stock_levels). A bad cell refuses its
+                    # row, reported below; the rest of the file still imports.
+                    stock = int_cell(row.get("current_stock") or row.get("Opening Stock")
+                                     or row.get("Stock"), "current_stock")
+                    reorder = int_cell(row.get("reorder_level") or row.get("Reorder Level"),
+                                       "reorder_level")
                     supplier = (row.get("supplier") or row.get("Supplier") or "").strip()
                     location = (row.get("location") or row.get("Location") or "").strip()
                     existing = db.query(models.InventoryItem).filter(models.InventoryItem.item_code == code).first()

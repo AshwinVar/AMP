@@ -1,0 +1,143 @@
+# Weekly mutation fleet: every mutation harness, run for real.
+#
+# WHY THIS EXISTS. A mutation harness breaks one guard at a time and asserts that
+# a suite goes red. Two questions keep it honest:
+#
+#   1. Does every mutation still APPLY? A harness finds the code to break by its
+#      text, and a refactor can strand it. backend/test_mutation_anchors_apply.py
+#      and frontend/lib/mutation-anchors.test.ts answer this on every push, in
+#      seconds.
+#   2. Is every mutation still CAUGHT? Only the harness's own suites can say, and
+#      they take minutes per harness (the longest, about 25), so they do not run
+#      on every push. They ran only by hand.
+#
+# On 2026-09-18 a manual run of all of them found 13 mutations that applied to
+# nothing (#635, #638), one of them since 2026-08-09, and a guard whose only
+# proof #631's new middleware had quietly absorbed (#637). None of that showed in
+# CI. This job asks question 2 every week, and whenever it is dispatched.
+#
+# A FAILURE HERE IS A FINDING, not flakiness. A SURVIVED line is a guarantee no
+# test protects. A SKIP or NOT APPLIED line is a mutation that proves nothing.
+# Read the harness's own output before touching its expectations.
+name: Mutation fleet
+
+on:
+  schedule:
+    # 04:17 UTC Mondays. Off the hour, like the backup and the retention prune:
+    # GitHub queues scheduled workflows globally and top-of-hour crons are delayed.
+    - cron: "17 4 * * 1"
+  workflow_dispatch:
+  # A change to this file proves itself on its own PR, rather than waiting for
+  # the first Monday to find out it cannot run.
+  pull_request:
+    paths:
+      - ".github/workflows/mutation-fleet.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: mutation-fleet
+  cancel-in-progress: false
+
+jobs:
+  # The harness list is read from the tree, so a new mutate_*.py joins the fleet
+  # without anybody remembering to add it here. mutate_oem_claim runs in its own
+  # job below, because its race suite needs PostgreSQL.
+  discover:
+    runs-on: ubuntu-latest
+    outputs:
+      harnesses: ${{ steps.list.outputs.harnesses }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: list
+        working-directory: backend
+        run: |
+          python - <<'PY' >> "$GITHUB_OUTPUT"
+          import glob
+          import json
+          names = sorted(h[:-3] for h in glob.glob("mutate_*.py") if h != "mutate_oem_claim.py")
+          print("harnesses=" + json.dumps(names))
+          PY
+
+  backend:
+    needs: discover
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        harness: ${{ fromJSON(needs.discover.outputs.harnesses) }}
+    env:
+      DATABASE_URL: "sqlite:///./ci.db"
+      DEMO_PASSWORD: ci-demo-password
+      PYTHONIOENCODING: utf-8
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install backend dependencies
+        run: pip install -r backend/requirements.txt
+      - name: ${{ matrix.harness }}
+        working-directory: backend
+        run: python ${{ matrix.harness }}.py
+
+  # mutate_oem_claim's baseline includes verify_pg_claim.py: 25 two-thread races
+  # for one claim code, which only a real PostgreSQL can arbitrate. pg_scratch
+  # borrows credentials from backend/.env first (a developer's machine), so this
+  # job writes one naming the service; the SQLite suites keep the sqlite
+  # DATABASE_URL from the environment. The database named there (amp_dev) need
+  # not exist: pg_scratch takes only the credentials and host from it, and
+  # refuses to hand back that name.
+  claim-on-postgres:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: "sqlite:///./ci.db"
+      PYTHONIOENCODING: utf-8
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install backend dependencies
+        run: pip install -r backend/requirements.txt
+      - name: Point pg_scratch at the service, as backend/.env does locally
+        working-directory: backend
+        run: echo 'DATABASE_URL=postgresql://postgres:postgres@localhost:5432/amp_dev' > .env
+      - name: mutate_oem_claim (its race suite needs PostgreSQL)
+        working-directory: backend
+        run: python mutate_oem_claim.py
+
+  # The two UI harnesses restore each file's own line endings and run their
+  # suites through vitest.
+  ui:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        harness: [mutate-oem-ui.mjs, mutate-contracts-ui.mjs]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Install frontend dependencies
+        run: cd frontend && npm ci
+      - name: ${{ matrix.harness }}
+        run: cd frontend && node ${{ matrix.harness }}

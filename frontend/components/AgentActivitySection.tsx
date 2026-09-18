@@ -5,22 +5,12 @@ import { apiGet, apiPost } from "../lib/api";
 import AgentDetailDrawer from "./AgentDetailDrawer";
 import AgentPolicyPanel from "./AgentPolicyPanel";
 import { parseApiDate } from "../lib/apiDate";
-
-// Mirrors the backend AgentAction (main.py _agent_action_dict).
-type AgentAction = {
-  id: number;
-  agent: string;
-  action_type: string;
-  summary: string;
-  ref_kind: string;
-  ref_id: number | null;
-  severity: string;
-  status: string;
-  related_machine_id: number | null;
-  created_at: string;
-  decided_by: string | null;
-  decided_at: string | null;
-};
+import {
+  AGENT_ACTIONS_PAGE,
+  EXPIRED_PROPOSAL_NOTE,
+  loadAgentActions,
+  type AgentAction,
+} from "../lib/agent-actions";
 
 // Mirrors the backend impact rollup (ai/impact.py build_impact).
 type Impact = {
@@ -89,6 +79,9 @@ function weekday(iso: string) {
 
 export default function AgentActivitySection() {
   const [rows, setRows] = useState<AgentAction[]>([]);
+  // Paged like the Approvals inbox (lib/agent-actions).
+  const [depth, setDepth] = useState(AGENT_ACTIONS_PAGE);
+  const [more, setMore] = useState(false);
   const [impact, setImpact] = useState<Impact | null>(null);
   const [roster, setRoster] = useState<AgentInfo[]>([]);
   const [trend, setTrend] = useState<Trend | null>(null);
@@ -101,14 +94,14 @@ export default function AgentActivitySection() {
     setLoading(true);
     setError(null);
     try {
-      const q = filter === "All" ? "" : `?status=${filter}`;
       const [list, imp, rost, tr] = await Promise.all([
-        apiGet<AgentAction[]>(`/agent-actions${q}`),
+        loadAgentActions((path) => apiGet<AgentAction[]>(path), filter === "All" ? null : filter, depth),
         apiGet<Impact>("/agent-actions/impact"),
         apiGet<AgentInfo[]>("/agent-roster"),
         apiGet<Trend>("/agent-actions/trend"),
       ]);
-      setRows(list);
+      setRows(list.rows);
+      setMore(list.more);
       setImpact(imp);
       setRoster(rost);
       setTrend(tr);
@@ -117,7 +110,7 @@ export default function AgentActivitySection() {
     } finally {
       setLoading(false);
     }
-  }, [filter]);
+  }, [filter, depth]);
 
   useEffect(() => {
     load();
@@ -128,7 +121,12 @@ export default function AgentActivitySection() {
       await apiPost(`/agent-actions/${id}/${decision}`, {});
       await load();
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Failed to update the action");
+      // Reload even on a refusal: a proposal whose item was changed or deleted
+      // is withdrawn by the server (409), and the list must show it Cancelled
+      // rather than keep offering Approve / Reject on it.
+      const message = e instanceof Error ? e.message : "Failed to update the action";
+      await load();
+      setError(message);
     }
   }, [load]);
 
@@ -225,7 +223,7 @@ export default function AgentActivitySection() {
 
       <div className="flex gap-2 flex-wrap">
         {FILTERS.map((f) => (
-          <button key={f} onClick={() => setFilter(f)}
+          <button key={f} onClick={() => { setFilter(f); setDepth(AGENT_ACTIONS_PAGE); }}
             className={`rounded-lg px-3 py-1.5 text-sm border ${
               filter === f
                 ? "bg-white text-slate-950 border-white font-semibold"
@@ -265,10 +263,13 @@ export default function AgentActivitySection() {
                 {a.decided_by && <span>· {a.status.toLowerCase()} by {a.decided_by} {fmt(a.decided_at)}</span>}
                 {a.related_machine_id != null && <span>· machine #{a.related_machine_id}</span>}
               </div>
+              {a.status === "Proposed" && a.expired && (
+                <p role="note" className="mt-3 text-sm text-amber-300">{EXPIRED_PROPOSAL_NOTE}</p>
+              )}
               {a.status === "Proposed" && (
                 <div className="mt-4 flex gap-2">
-                  <button onClick={() => decide(a.id, "approve")}
-                    className="rounded-lg bg-emerald-500/90 text-slate-950 font-semibold px-3 py-1.5 text-sm hover:bg-emerald-400">
+                  <button onClick={() => decide(a.id, "approve")} disabled={a.expired === true}
+                    className="rounded-lg bg-emerald-500/90 text-slate-950 font-semibold px-3 py-1.5 text-sm hover:bg-emerald-400 disabled:cursor-not-allowed disabled:opacity-40">
                     Approve
                   </button>
                   <button onClick={() => decide(a.id, "reject")}
@@ -279,6 +280,12 @@ export default function AgentActivitySection() {
               )}
             </div>
           ))}
+          {more && (
+            <button onClick={() => setDepth((d) => d + AGENT_ACTIONS_PAGE)}
+              className="w-full rounded-xl border border-slate-700 px-4 py-2 text-sm text-slate-300 hover:bg-slate-800">
+              Load older activity
+            </button>
+          )}
         </div>
       )}
       {selectedAgent && (

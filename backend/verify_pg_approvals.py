@@ -14,25 +14,45 @@ What this proves, on PostgreSQL 18.3:
   2. existing users come out active, so nobody is locked out by the deploy;
   3. the NOT NULL constraint is real (the database refuses a NULL is_active);
   4. agent_actions.expires_at is genuinely nullable;
-  5. the gate itself refuses every bypass against this engine;
-  6. downgrade() reverses both columns.
+  5. the gate itself refuses every bypass against this engine, and the
+     held-item lock holds on it too: test_agent_item_lock.py runs here in full,
+     including section 11, which SQLite skips -- approve and reject (and a
+     double approve) truly overlapping, held apart only by SELECT ... FOR UPDATE
+     on the item row: exactly one is accepted, the other gets 400 "Already
+     <decision>", and the record names the winner;
+  6. the row lock is load-bearing: mutate_approval_gate.py --postgresql
+     removes the lock three ways (lock=False, FOR UPDATE dropped, re-read
+     dropped), plus the Approvals list's offset clamp, which SQLite cannot
+     judge either, and every one must turn that suite red on PostgreSQL;
+  7. downgrade() reverses both columns.
+
+It only ever talks to a DISPOSABLE database on a LOCAL server: pg_scratch
+drops and recreates scratch databases, so this refuses any host that is not
+localhost rather than trust that the borrowed URL points somewhere harmless.
 
 Run: python backend/verify_pg_approvals.py [port]
 """
 import os
 import subprocess
 import sys
+from urllib.parse import urlparse
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import pg_scratch  # noqa: E402
 
 DB = "amp_scratch_approvals"
+LOCAL_HOSTS = ("localhost", "127.0.0.1", "::1")
 
 
 def main():
     port = sys.argv[1] if len(sys.argv) > 1 else None
     here = os.path.dirname(os.path.abspath(__file__))
+    host = urlparse(pg_scratch.scratch_url(port, DB)).hostname
+    if host not in LOCAL_HOSTS:
+        print(f"REFUSING: {host!r} is not a local PostgreSQL. This harness drops and "
+              "recreates databases; point it at a throwaway local server only.")
+        return 2
     version = pg_scratch.ensure(port, DB)
     url = pg_scratch.scratch_url(port, DB)
     print(version.split(",")[0])
@@ -135,6 +155,35 @@ def main():
     passed = r.stdout.count("PASS  ")
     check(f"test_approval_gate.py green on PostgreSQL ({passed} assertions)",
           r.returncode == 0, r.stdout[-800:] + r.stderr[-400:])
+
+    # The held-item lock, on the same scratch database (it also drops and
+    # recreates its tables). FOR UPDATE and the compare-and-set are exactly the
+    # parts SQLite cannot exercise.
+    r = subprocess.run([sys.executable, "test_agent_item_lock.py"], cwd=here,
+                       env={**os.environ, "DATABASE_URL": gate_url, "PYTHONIOENCODING": "utf-8"},
+                       capture_output=True, text=True, errors="replace")
+    passed = r.stdout.count("PASS  ")
+    check(f"test_agent_item_lock.py green on PostgreSQL ({passed} assertions)",
+          r.returncode == 0, r.stdout[-800:] + r.stderr[-400:])
+    # A green run that skipped the overlapping race proves nothing about the lock.
+    race = r.stdout.split("11. TWO DECISIONS AT THE SAME INSTANT", 1)[-1].split("\n12. ", 1)[0]
+    race_passes = race.count("PASS  ")
+    check(f"...including the overlapping-decision race, not skipped ({race_passes} assertions)",
+          "11. TWO DECISIONS AT THE SAME INSTANT" in r.stdout and "SKIP  " not in race
+          and race_passes >= 20, race[:600])
+
+    print("\n3b. THE ROW LOCK IS LOAD-BEARING (MUTATIONS, ON POSTGRESQL)")
+    mut_url = pg_scratch.scratch_url(port, DB + "_mut")
+    pg_scratch.ensure(port, DB + "_mut")
+    r = subprocess.run([sys.executable, "mutate_approval_gate.py", "--postgresql"], cwd=here,
+                       env={**os.environ, "DATABASE_URL": mut_url, "PYTHONIOENCODING": "utf-8"},
+                       capture_output=True, text=True, errors="replace")
+    # Count verdict rows, not the table header ("verdict    caught by").
+    caught = sum(1 for line in r.stdout.splitlines()
+                 if " caught " in line and not line.startswith("mutation "))
+    check(f"every PostgreSQL-only and row-lock mutation is caught there ({caught} of 4)",
+          r.returncode == 0 and caught == 4 and "all 4 mutations caught" in r.stdout
+          and "engine: PostgreSQL" in r.stdout, r.stdout[-900:] + r.stderr[-400:])
 
     # --- 6. downgrade ---------------------------------------------------------
     print("\n4. THE MIGRATION REVERSES")

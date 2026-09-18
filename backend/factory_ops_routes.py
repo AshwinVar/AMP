@@ -15,6 +15,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 import ai.escalations
+import approvals
 import models
 import schemas
 from auth import get_current_user, require_roles
@@ -37,12 +38,13 @@ def get_escalations(
     db: Session = Depends(_get_db),
     current_user: dict = Depends(get_current_user),
 ):
-    return (
+    rows = (
         db.query(models.Escalation)
         .order_by(models.Escalation.id.desc())
         .limit(300)
         .all()
     )
+    return approvals.annotate_awaiting_decision(db, models.Escalation, rows)
 
 
 @router.post("/escalations", response_model=schemas.EscalationResponse)
@@ -51,6 +53,9 @@ def create_escalation(
     db: Session = Depends(_get_db),
     current_user: dict = Depends(require_roles(["Admin", "Supervisor", "Operator"])),
 ):
+    # "Proposed" is written only by the escalation agent's proposal (ADR-0015).
+    approvals.refuse_manual_pending_status(models.Escalation, escalation.status)
+
     if escalation.machine_id:
         machine = (
             db.query(models.Machine)
@@ -84,6 +89,11 @@ def update_escalation(
     if not escalation:
         raise HTTPException(status_code=404, detail="Escalation not found")
 
+    # An agent proposal holds this escalation until it is decided (ADR-0015).
+    approvals.refuse_if_awaiting_decision(db, escalation, current_user)
+    # ...and only an agent puts one back into "Proposed".
+    approvals.refuse_manual_pending_status(models.Escalation, payload.status, escalation.status)
+
     if payload.status is not None:
         escalation.status = payload.status
         if payload.status == "Resolved" and escalation.resolved_at is None:
@@ -101,6 +111,9 @@ def update_escalation(
     db.commit()
     db.refresh(escalation)
 
+    # No awaiting_approval annotation: a PATCH that got here left the row unheld
+    # (a held row is refused 409 above, and nothing may move a row INTO its pending
+    # status by hand), so the response's flag is null by construction.
     return escalation
 
 
@@ -118,6 +131,8 @@ def delete_escalation(
 
     if not escalation:
         raise HTTPException(status_code=404, detail="Escalation not found")
+
+    approvals.refuse_if_awaiting_decision(db, escalation, current_user)
 
     db.delete(escalation)
     db.commit()
@@ -377,7 +392,8 @@ def get_maintenance_tasks(
     db: Session = Depends(_get_db),
     current_user: dict = Depends(get_current_user),
 ):
-    return db.query(models.MaintenanceTask).order_by(models.MaintenanceTask.id.desc()).limit(500).all()
+    rows = db.query(models.MaintenanceTask).order_by(models.MaintenanceTask.id.desc()).limit(500).all()
+    return approvals.annotate_awaiting_decision(db, models.MaintenanceTask, rows)
 
 
 @router.post("/maintenance/tasks", response_model=schemas.MaintenanceTaskResponse)
@@ -386,6 +402,9 @@ def create_maintenance_task(
     db: Session = Depends(_get_db),
     current_user: dict = Depends(require_roles(["Admin", "Supervisor"])),
 ):
+    # "Proposed" is written only by the maintenance agent's proposal (ADR-0015).
+    approvals.refuse_manual_pending_status(models.MaintenanceTask, task.status)
+
     existing = db.query(models.MaintenanceTask).filter(models.MaintenanceTask.task_no == task.task_no).first()
     if existing:
         raise HTTPException(status_code=400, detail="Task number already exists")
@@ -416,6 +435,11 @@ def update_maintenance_task(
     if not task:
         raise HTTPException(status_code=404, detail="Maintenance task not found")
 
+    # An agent proposal holds this task until it is decided (ADR-0015).
+    approvals.refuse_if_awaiting_decision(db, task, current_user)
+    # ...and only an agent puts one back into "Proposed".
+    approvals.refuse_manual_pending_status(models.MaintenanceTask, payload.status, task.status)
+
     for key, value in payload.model_dump(exclude_unset=True).items():
         setattr(task, key, value)
 
@@ -424,6 +448,9 @@ def update_maintenance_task(
 
     db.commit()
     db.refresh(task)
+    # No awaiting_approval annotation: a PATCH that got here left the row unheld
+    # (a held row is refused 409 above, and nothing may move a row INTO its pending
+    # status by hand), so the response's flag is null by construction.
     return task
 
 
@@ -436,6 +463,8 @@ def delete_maintenance_task(
     task = db.query(models.MaintenanceTask).filter(models.MaintenanceTask.id == task_id).first()
     if not task:
         raise HTTPException(status_code=404, detail="Maintenance task not found")
+
+    approvals.refuse_if_awaiting_decision(db, task, current_user)
 
     db.delete(task)
     db.commit()

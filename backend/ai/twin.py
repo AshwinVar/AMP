@@ -12,6 +12,7 @@ from datetime import datetime, timedelta
 
 from sqlalchemy import func
 
+import approvals
 import models
 import oee_contract
 from ai.maintenance import OPEN_STATUSES
@@ -284,8 +285,12 @@ def _open_actions(db, machine_id, tenant):
                     models.AgentAction.tenant_code == tenant,
                     models.AgentAction.status == "Proposed")
             .order_by(models.AgentAction.id.desc()).all())
+    # `expired`: past its expiry, it can only be rejected (approvals.is_expired, the
+    # one rule). The cockpit drawer offered Approve on it anyway.
+    now = datetime.utcnow()
     return [{"id": a.id, "agent": a.agent, "action_type": a.action_type, "summary": a.summary,
-             "severity": a.severity, "created_at": _iso(a.created_at)} for a in rows]
+             "severity": a.severity, "created_at": _iso(a.created_at),
+             "expired": approvals.is_expired(a, now)} for a in rows]
 
 
 def _window_span(window):

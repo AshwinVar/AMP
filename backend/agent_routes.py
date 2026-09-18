@@ -6,11 +6,14 @@ approve/reject decisions. Peeled out of main.py, following the register(app)
 pattern. Every handler is tenant-scoped; the mutating ones (policy PUT,
 approve/reject) advance an AgentAction under human oversight (ADR-0005).
 """
+from datetime import datetime
+
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 import ai
+import approvals
 import models
 import schemas
 from auth import get_current_user, require_roles
@@ -26,14 +29,22 @@ def _get_db():
         db.close()
 
 
-def _agent_action_dict(a):
+def _agent_action_dict(a, now=None):
     return {
         "id": a.id, "agent": a.agent, "action_type": a.action_type, "summary": a.summary,
         "ref_kind": a.ref_kind, "ref_id": a.ref_id, "severity": a.severity, "status": a.status,
         "related_machine_id": a.related_machine_id,
         "created_at": a.created_at.isoformat() if a.created_at else None,
         "decided_by": a.decided_by, "decided_at": a.decided_at.isoformat() if a.decided_at else None,
+        # An undecided proposal past its expiry: it can no longer be approved,
+        # only rejected (which releases its item). False once decided.
+        "expired": a.status in approvals.DECIDABLE and approvals.is_expired(a, now),
     }
+
+
+# One page of GET /agent-actions. The list is the only way an approver reaches a
+# proposal that holds its item, so it pages rather than silently truncating.
+AGENT_ACTIONS_PAGE = 300
 
 
 def _decide_agent_action(action_id, decision, db, current_user):
@@ -56,13 +67,34 @@ def _decide_agent_action(action_id, decision, db, current_user):
         # NULL-status hardening the stats endpoint above and the maintenance-overdue
         # query (factory_ops_routes) already apply.
         raise HTTPException(status_code=400, detail=f"Already {(action.status or 'decided').lower()}")
-    ai.agents.apply_decision(
-        db, action, decision,
-        decided_by=current_user.get("sub") or current_user.get("username"),
-        # The actor is re-verified against the DATABASE here: the JWT alone
-        # cannot say whether the approver still exists, is still active, is
-        # still in this tenant, or still holds an approving role.
-        actor={**current_user, "tenant": tenant})
+    approver = approvals.actor_name(current_user)
+    try:
+        ai.agents.apply_decision(
+            db, action, decision,
+            decided_by=approver,
+            # The actor is re-verified against the DATABASE here: the JWT alone
+            # cannot say whether the approver still exists, is still active, is
+            # still in this tenant, or still holds an approving role.
+            actor={**current_user, "tenant": tenant})
+    except approvals.ProposalWithdrawn as refusal:
+        # The item this proposal would move is gone, moved, or elsewhere, so no
+        # decision may be recorded against it. Withdraw it instead -- with a
+        # compare-and-set, so a decision a concurrent request already recorded
+        # is never overwritten (ADR-0015 addendum). Orphans are withdrawn here,
+        # lazily, rather than by a boot-time sweep. The withdrawal's AuditLog row
+        # names this approver and commits with it (approvals.withdraw).
+        db.rollback()
+        withdrawn = approvals.withdraw(db, action_id, tenant, by=approver,
+                                       reason=refusal.detail)
+        db.commit()
+        if not withdrawn:
+            current = db.query(models.AgentAction.status).filter(
+                models.AgentAction.id == action_id,
+                models.AgentAction.tenant_code == tenant).scalar()
+            raise HTTPException(status_code=400,
+                                detail=f"Already {(current or 'decided').lower()}")
+        raise HTTPException(status_code=409,
+                            detail=f"{refusal.detail} It has been withdrawn.")
     db.commit()
     db.refresh(action)
     return _agent_action_dict(action)
@@ -72,14 +104,23 @@ router = APIRouter(tags=["Agents"])
 
 
 @router.get("/agent-actions")
-def list_agent_actions(status: str = None, db: Session = Depends(_get_db), current_user: dict = Depends(get_current_user)):
-    # Agent activity log + approval queue (ADR-0005), tenant-scoped.
+def list_agent_actions(status: str = None, limit: int = AGENT_ACTIONS_PAGE, offset: int = 0,
+                       db: Session = Depends(_get_db), current_user: dict = Depends(get_current_user)):
+    # Agent activity log + approval queue (ADR-0005), tenant-scoped, newest first,
+    # one page at a time. Measured before paging: a held Draft PO whose proposal
+    # was older than 300 newer Proposed rows never appeared here, while its own
+    # PATCH answered 409 "decide it in Approvals" -- locked with no way out.
+    # id breaks created_at ties, so consecutive pages neither repeat nor skip.
+    limit = max(1, min(limit, AGENT_ACTIONS_PAGE))
+    offset = max(0, offset)
     tenant = request_tenant(current_user)
     q = db.query(models.AgentAction).filter(models.AgentAction.tenant_code == tenant)
     if status:
         q = q.filter(models.AgentAction.status == status)
-    rows = q.order_by(models.AgentAction.created_at.desc()).limit(300).all()
-    return [_agent_action_dict(a) for a in rows]
+    rows = (q.order_by(models.AgentAction.created_at.desc(), models.AgentAction.id.desc())
+            .offset(offset).limit(limit).all())
+    now = datetime.utcnow()
+    return [_agent_action_dict(a, now) for a in rows]
 
 
 @router.get("/agent-actions/stats")

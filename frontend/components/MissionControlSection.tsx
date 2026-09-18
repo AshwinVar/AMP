@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import { apiGet, apiPatch, apiPost } from "../lib/api";
 import FactoryPulse from "./FactoryPulse";
 import { parseApiDate } from "../lib/apiDate";
+import { EXPIRED_PROPOSAL_NOTE } from "../lib/agent-actions";
 
 // Mirrors the backend Insight shape (ai/insights.py build_feed).
 type Insight = {
@@ -15,6 +16,8 @@ type Insight = {
   occurred_at: string;       // ISO-8601
   related_machine_id: number | null;
   ref_id: number | null;     // recommendation id (for actioning); null for events
+  // Agent actions only: past expiry, so it can only be rejected (approvals.is_expired).
+  expired?: boolean | null;
 };
 
 function severityStyle(sev: string) {
@@ -77,7 +80,12 @@ export default function MissionControlSection() {
       await apiPost(`/agent-actions/${id}/${decision}`, {});
       await load();
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Failed to update the agent action");
+      // Reload even on a refusal, as the Approvals inbox does: a proposal the
+      // server withdrew (409) or someone already decided leaves the feed, and
+      // must not keep offering Approve / Reject until the next poll.
+      const message = e instanceof Error ? e.message : "Failed to update the agent action";
+      await load();
+      setError(message);
     }
   }, [load]);
 
@@ -160,10 +168,13 @@ export default function MissionControlSection() {
                     </button>
                   </div>
                 )}
+                {i.source === "action" && i.expired === true && (
+                  <p role="note" className="mt-3 text-sm text-amber-300">{EXPIRED_PROPOSAL_NOTE}</p>
+                )}
                 {i.source === "action" && i.ref_id != null && (
                   <div className="mt-4 flex gap-2">
-                    <button onClick={() => decideAction(i.ref_id as number, "approve")}
-                      className="rounded-lg bg-emerald-500/90 text-slate-950 font-semibold px-3 py-1.5 text-sm hover:bg-emerald-400">
+                    <button onClick={() => decideAction(i.ref_id as number, "approve")} disabled={i.expired === true}
+                      className="rounded-lg bg-emerald-500/90 text-slate-950 font-semibold px-3 py-1.5 text-sm hover:bg-emerald-400 disabled:cursor-not-allowed disabled:opacity-40">
                       Approve
                     </button>
                     <button onClick={() => decideAction(i.ref_id as number, "reject")}

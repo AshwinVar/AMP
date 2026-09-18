@@ -322,6 +322,17 @@ class ProductionPlanResponse(BaseModel):
 
 
 
+class AwaitingApproval(BaseModel):
+    """Present on a task / purchase order / escalation that an agent proposed and
+    that is held until an Admin or Supervisor decides it (ADR-0015 addendum).
+    Computed per request by approvals.awaiting_decision -- the same predicate
+    that enforces the lock -- so the UI never re-derives it from status strings.
+    ``expired``: the proposal can no longer be approved, only rejected."""
+    agent_action_id: int
+    agent: str
+    expired: bool
+
+
 class EscalationCreate(BaseModel):
     machine_id: Optional[int] = None
     title: str
@@ -353,6 +364,8 @@ class EscalationResponse(BaseModel):
     resolution_notes: Optional[str] = None
     created_at: Optional[datetime] = None
     resolved_at: Optional[datetime] = None
+    # Additive: null unless an agent proposal holds this row (see AwaitingApproval).
+    awaiting_approval: Optional[AwaitingApproval] = None
 
     # status (default="Open") and source (default="Manual") are Column(String,
     # default=...) WITHOUT nullable=False, so a raw-SQL / migration / cleared-field
@@ -716,6 +729,8 @@ class PurchaseOrderResponse(BaseModel):
     status: str
     notes: Optional[str] = None
     created_at: Optional[datetime] = None
+    # Additive: null unless an agent proposal holds this row (see AwaitingApproval).
+    awaiting_approval: Optional[AwaitingApproval] = None
 
     # received_quantity is Column(Integer, default=0) WITHOUT nullable=False (the exact
     # sibling of CustomerOrder.dispatched_quantity above), so a raw-SQL / migration /
@@ -839,6 +854,8 @@ class MaintenanceTaskResponse(BaseModel):
     status: str
     notes: Optional[str] = None
     created_at: Optional[datetime] = None
+    # Additive: null unless an agent proposal holds this row (see AwaitingApproval).
+    awaiting_approval: Optional[AwaitingApproval] = None
 
     # status (default="Open"), priority (default="Medium") and downtime_minutes
     # (default=0) are declared Column(..., default=...) WITHOUT nullable=False, so

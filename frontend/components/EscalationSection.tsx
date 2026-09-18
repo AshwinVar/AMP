@@ -1,9 +1,11 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { isHeld } from "../lib/awaiting-approval";
 import type { Escalation, EscalationAnalytics } from "../lib/phase12-types";
 import { statusOptions } from "../lib/status-vocab";
 import { LiveInput } from "../lib/useLiveField";
+import AwaitingApprovalNotice from "./AwaitingApprovalNotice";
 
 type Machine = {
   id: number;
@@ -237,7 +239,9 @@ export default function EscalationSection({
                   <td className="py-3 px-4">
                     <LiveInput
                       className="w-32 bg-slate-950 border border-slate-700 rounded-lg px-2 py-1"
+                      aria-label={`Owner of ${row.title}`}
                       value={row.owner}
+                      disabled={isHeld(row)}
                       onCommit={(raw) =>
                         updateEscalation(
                           row.id,
@@ -253,7 +257,9 @@ export default function EscalationSection({
                   <td className="py-3 px-4">
                     <LiveInput
                       className="w-32 bg-slate-950 border border-slate-700 rounded-lg px-2 py-1"
+                      aria-label={`Department of ${row.title}`}
                       value={row.department}
+                      disabled={isHeld(row)}
                       onCommit={(raw) =>
                         updateEscalation(
                           row.id,
@@ -268,8 +274,10 @@ export default function EscalationSection({
 
                   <td className="py-3 px-4">
                     <select
-                      className={`rounded-full px-3 py-1 text-xs border bg-slate-950 ${statusStyle(row.status)}`}
+                      className={`rounded-full px-3 py-1 text-xs border bg-slate-950 disabled:opacity-60 ${statusStyle(row.status)}`}
+                      aria-label={`Status of ${row.title}`}
                       value={row.status}
+                      disabled={isHeld(row)}
                       onChange={(e) =>
                         updateEscalation(
                           row.id,
@@ -282,6 +290,7 @@ export default function EscalationSection({
                     >
                       {statusOptions("Escalation", "status", row.status).map((option) => <option key={option}>{option}</option>)}
                     </select>
+                    <AwaitingApprovalNotice hold={row.awaiting_approval} />
                   </td>
 
                   <td className="py-3 px-4">{row.source}</td>
@@ -290,7 +299,9 @@ export default function EscalationSection({
                     <LiveInput
                       className="w-52 bg-slate-950 border border-slate-700 rounded-lg px-2 py-1"
                       placeholder="Resolution notes"
+                      aria-label={`Resolution notes of ${row.title}`}
                       value={row.resolution_notes || ""}
+                      disabled={isHeld(row)}
                       onCommit={(raw) =>
                         updateEscalation(
                           row.id,
@@ -304,12 +315,14 @@ export default function EscalationSection({
                   </td>
 
                   <td className="py-3 px-4">
-                    <button
-                      onClick={() => deleteEscalation?.(row.id)}
-                      className="text-red-400 border border-red-500/40 rounded-lg px-3 py-1 hover:bg-red-500/10"
-                    >
-                      Delete
-                    </button>
+                    {deleteEscalation && !isHeld(row) && (
+                      <button
+                        onClick={() => deleteEscalation(row.id)}
+                        className="text-red-400 border border-red-500/40 rounded-lg px-3 py-1 hover:bg-red-500/10"
+                      >
+                        Delete
+                      </button>
+                    )}
                   </td>
                 </tr>
               ))}

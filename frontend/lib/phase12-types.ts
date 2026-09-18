@@ -1,3 +1,5 @@
+import type { AwaitingApproval } from "./awaiting-approval";
+
 export type Escalation = {
   id: number;
   machine_id?: number | null;
@@ -11,6 +13,8 @@ export type Escalation = {
   resolution_notes?: string | null;
   created_at?: string;
   resolved_at?: string | null;
+  /** Set only while an agent proposal holds this escalation (see lib/awaiting-approval). */
+  awaiting_approval?: AwaitingApproval | null;
 };
 
 export type EscalationAnalytics = {

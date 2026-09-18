@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import { apiGet, apiPost } from "../lib/api";
 import { useModalFocus } from "../lib/useModalFocus";
 import { parseApiDate } from "../lib/apiDate";
+import { EXPIRED_PROPOSAL_NOTE } from "../lib/agent-actions";
 
 // Mirrors the backend agent detail read-model (ai/roster.py build_agent_detail).
 type RecentAction = {
@@ -18,6 +19,8 @@ type RecentAction = {
   created_at: string | null;
   decided_by: string | null;
   decided_at: string | null;
+  /** Undecided and past its expiry: it can only be rejected (approvals.is_expired). */
+  expired?: boolean | null;
 };
 
 type AgentDetail = {
@@ -117,7 +120,13 @@ export default function AgentDetailDrawer({
         await load(); // refresh the drawer
         onChanged(); // and the section behind it
       } catch (e) {
-        setError(e instanceof Error ? e.message : "Failed to update the action");
+        // Reload even on a refusal, as the Approvals inbox and Mission Control do:
+        // a proposal the server withdrew (409) or someone already decided must not
+        // keep offering Approve / Reject until the drawer is reopened.
+        const message = e instanceof Error ? e.message : "Failed to update the action";
+        await load();
+        onChanged();
+        setError(message);
       }
     },
     [load, onChanged],
@@ -248,11 +257,15 @@ export default function AgentDetailDrawer({
                         {a.related_machine_id != null && <span>· machine #{a.related_machine_id}</span>}
                         {a.decided_by && <span>· by {a.decided_by}</span>}
                       </div>
+                      {a.status === "Proposed" && a.expired === true && (
+                        <p role="note" className="mt-3 text-sm text-amber-300">{EXPIRED_PROPOSAL_NOTE}</p>
+                      )}
                       {a.status === "Proposed" && (
                         <div className="mt-3 flex gap-2">
                           <button
                             onClick={() => decide(a.id, "approve")}
-                            className="rounded-lg bg-emerald-500/90 text-slate-950 font-semibold px-3 py-1.5 text-sm hover:bg-emerald-400"
+                            disabled={a.expired === true}
+                            className="rounded-lg bg-emerald-500/90 text-slate-950 font-semibold px-3 py-1.5 text-sm hover:bg-emerald-400 disabled:cursor-not-allowed disabled:opacity-40"
                           >
                             Approve
                           </button>

@@ -18,6 +18,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 import ai.supply
+import approvals
 import models
 from csv_safe import import_row_error, read_upload_text
 import schemas
@@ -475,7 +476,8 @@ def get_purchase_orders(
     db: Session = Depends(_get_db),
     current_user: dict = Depends(get_current_user),
 ):
-    return db.query(models.PurchaseOrder).order_by(models.PurchaseOrder.id.desc()).limit(500).all()
+    rows = db.query(models.PurchaseOrder).order_by(models.PurchaseOrder.id.desc()).limit(500).all()
+    return approvals.annotate_awaiting_decision(db, models.PurchaseOrder, rows)
 
 
 @router.post("/purchase-orders", response_model=schemas.PurchaseOrderResponse)
@@ -484,6 +486,9 @@ def create_purchase_order(
     db: Session = Depends(_get_db),
     current_user: dict = Depends(require_roles(["Admin", "Supervisor"])),
 ):
+    # "Draft" is written only by the reorder agent's proposal (ADR-0015).
+    approvals.refuse_manual_pending_status(models.PurchaseOrder, po.status)
+
     existing = db.query(models.PurchaseOrder).filter(models.PurchaseOrder.po_no == po.po_no).first()
     if existing:
         raise HTTPException(status_code=400, detail="PO number already exists")
@@ -539,6 +544,12 @@ def update_purchase_order(
     po = db.query(models.PurchaseOrder).filter(models.PurchaseOrder.id == po_id).first()
     if not po:
         raise HTTPException(status_code=404, detail="Purchase order not found")
+
+    # An agent proposal holds this PO until it is decided (ADR-0015): no status
+    # change, and no receipt booking stock against a draft nobody approved.
+    approvals.refuse_if_awaiting_decision(db, po, current_user)
+    # ...and only the agent puts one back into "Draft".
+    approvals.refuse_manual_pending_status(models.PurchaseOrder, payload.status, po.status)
 
     # received_quantity is Column(Integer, default=0) WITHOUT nullable=False, so a
     # row written by raw SQL / a migration / a cleared update can hold a true NULL,
@@ -619,6 +630,9 @@ def update_purchase_order(
 
     db.commit()
     db.refresh(po)
+    # No awaiting_approval annotation: a PATCH that got here left the row unheld
+    # (a held row is refused 409 above, and nothing may move a row INTO its pending
+    # status by hand), so the response's flag is null by construction.
     return po
 
 
@@ -631,6 +645,8 @@ def delete_purchase_order(
     po = db.query(models.PurchaseOrder).filter(models.PurchaseOrder.id == po_id).first()
     if not po:
         raise HTTPException(status_code=404, detail="Purchase order not found")
+
+    approvals.refuse_if_awaiting_decision(db, po, current_user)
 
     db.delete(po)
     db.commit()

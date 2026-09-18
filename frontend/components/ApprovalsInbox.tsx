@@ -3,20 +3,12 @@
 import { useCallback, useEffect, useState } from "react";
 import { apiGet, apiPost, apiPatch } from "../lib/api";
 import { parseApiDate } from "../lib/apiDate";
-
-// Mirrors the backend AgentAction (main.py _agent_action_dict).
-type AgentAction = {
-  id: number;
-  agent: string;
-  action_type: string;
-  summary: string;
-  ref_kind: string;
-  ref_id: number | null;
-  severity: string;
-  status: string;
-  related_machine_id: number | null;
-  created_at: string;
-};
+import {
+  AGENT_ACTIONS_PAGE,
+  EXPIRED_PROPOSAL_NOTE,
+  loadAgentActions,
+  type AgentAction,
+} from "../lib/agent-actions";
 
 // Mirrors the backend NotificationResponse (schemas.py).
 type Notif = {
@@ -57,6 +49,10 @@ function fmt(iso: string | null) {
 // — fetches its own data and refreshes.
 export default function ApprovalsInbox() {
   const [approvals, setApprovals] = useState<AgentAction[]>([]);
+  // Paged (lib/agent-actions): a held item's only way out is this list, so a
+  // proposal older than the first page must still be reachable.
+  const [depth, setDepth] = useState(AGENT_ACTIONS_PAGE);
+  const [more, setMore] = useState(false);
   const [notifs, setNotifs] = useState<Notif[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -66,17 +62,18 @@ export default function ApprovalsInbox() {
     setError(null);
     try {
       const [a, n] = await Promise.all([
-        apiGet<AgentAction[]>("/agent-actions?status=Proposed"),
+        loadAgentActions((path) => apiGet<AgentAction[]>(path), "Proposed", depth),
         apiGet<Notif[]>("/notifications"),
       ]);
-      setApprovals(a);
+      setApprovals(a.rows);
+      setMore(a.more);
       setNotifs(n);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to load the inbox");
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [depth]);
 
   useEffect(() => {
     load();
@@ -90,7 +87,11 @@ export default function ApprovalsInbox() {
         await apiPost(`/agent-actions/${id}/${decision}`, {});
         await load();
       } catch (e) {
-        setError(e instanceof Error ? e.message : "Failed to update the action");
+        // Reload even on a refusal: a withdrawn proposal (409) leaves the
+        // queue, and the inbox must not keep offering it.
+        const message = e instanceof Error ? e.message : "Failed to update the action";
+        await load();
+        setError(message);
       }
     },
     [load],
@@ -121,7 +122,8 @@ export default function ApprovalsInbox() {
       </div>
 
       <div className="grid grid-cols-2 gap-4">
-        <Kpi title="Pending approvals" value={approvals.length} highlight={approvals.length > 0} />
+        <Kpi title="Pending approvals" value={more ? `${approvals.length}+` : approvals.length}
+          highlight={approvals.length > 0} />
         <Kpi title="Unread notifications" value={unread.length} />
       </div>
 
@@ -153,9 +155,12 @@ export default function ApprovalsInbox() {
                   proposed {fmt(a.created_at)}
                   {a.related_machine_id != null && <> · machine #{a.related_machine_id}</>}
                 </div>
+                {a.expired && (
+                  <p role="note" className="mt-2 text-sm text-amber-300">{EXPIRED_PROPOSAL_NOTE}</p>
+                )}
                 <div className="mt-4 flex gap-2">
-                  <button onClick={() => decide(a.id, "approve")}
-                    className="rounded-lg bg-emerald-500/90 text-slate-950 font-semibold px-3 py-1.5 text-sm hover:bg-emerald-400">
+                  <button onClick={() => decide(a.id, "approve")} disabled={a.expired === true}
+                    className="rounded-lg bg-emerald-500/90 text-slate-950 font-semibold px-3 py-1.5 text-sm hover:bg-emerald-400 disabled:cursor-not-allowed disabled:opacity-40">
                     Approve
                   </button>
                   <button onClick={() => decide(a.id, "reject")}
@@ -165,6 +170,12 @@ export default function ApprovalsInbox() {
                 </div>
               </div>
             ))}
+            {more && (
+              <button onClick={() => setDepth((d) => d + AGENT_ACTIONS_PAGE)}
+                className="w-full rounded-xl border border-slate-700 px-4 py-2 text-sm text-slate-300 hover:bg-slate-800">
+                Load older proposals
+              </button>
+            )}
           </div>
         )}
       </div>
@@ -202,7 +213,7 @@ export default function ApprovalsInbox() {
   );
 }
 
-function Kpi({ title, value, highlight }: { title: string; value: number; highlight?: boolean }) {
+function Kpi({ title, value, highlight }: { title: string; value: number | string; highlight?: boolean }) {
   return (
     <div className={`rounded-2xl border p-5 ${highlight ? "border-amber-500/40 bg-amber-500/10" : "border-slate-800 bg-slate-900"}`}>
       <p className="text-slate-400 text-sm">{title}</p>

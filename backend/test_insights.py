@@ -186,6 +186,30 @@ def test_limit_returns_the_globally_most_recent_across_sources():
     print("  limit returns the global most-recent across sources: OK")
 
 
+def test_an_action_says_whether_it_can_still_be_approved():
+    # Mission Control offers Approve / Reject on each proposed action. Measured
+    # (verifier round 2): the feed carried no expiry, so Approve was offered on a
+    # proposal the server refuses as expired (409). Each action now says
+    # `expired` from the gate's own rule (approvals.is_expired); recommendations
+    # and events carry None, because nothing about them can be approved.
+    db = _fresh_session()
+    now = datetime.utcnow()
+    db.add_all([
+        _action("fresh proposal", now - timedelta(hours=1)),
+        _action("stale proposal", now - timedelta(days=30)),
+        _rec("a recommendation", now - timedelta(minutes=5)),
+        _event("DowntimeStarted", now - timedelta(minutes=4), {"machine_id": 7}),
+    ])
+    db.commit()
+    feed = {i["title"]: i for i in insights.build_feed(db, "DEFAULT")}
+    assert feed["fresh proposal"]["expired"] is False, feed["fresh proposal"]
+    assert feed["stale proposal"]["expired"] is True, feed["stale proposal"]
+    assert feed["a recommendation"]["expired"] is None, feed["a recommendation"]
+    event = next(i for i in feed.values() if i["source"] == "event")
+    assert event["expired"] is None, event
+    print("  each proposed action says whether it has expired (the gate's rule): OK")
+
+
 def test_empty_database_is_empty_safe():
     db = _fresh_session()
     assert insights.build_feed(db, "DEFAULT") == []
@@ -197,6 +221,7 @@ if __name__ == "__main__":
     test_tenant_isolation_across_all_three_sources()
     test_malformed_and_missing_payloads_do_not_crash_the_feed()
     test_limit_returns_the_globally_most_recent_across_sources()
+    test_an_action_says_whether_it_can_still_be_approved()
     test_empty_database_is_empty_safe()
     print("INSIGHTS OK: three-source feed; per-source filtering; tenant isolation; "
           "malformed/non-dict/NULL payloads survive; global most-recent limit; empty-safe")

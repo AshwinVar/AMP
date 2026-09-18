@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import { apiGet, apiPost } from "../lib/api";
 import { useModalFocus } from "../lib/useModalFocus";
 import { parseApiDate } from "../lib/apiDate";
+import { EXPIRED_PROPOSAL_NOTE } from "../lib/agent-actions";
 
 // Mirrors the backend detail read-model (ai/twin.py build_machine_detail).
 type OpenAction = {
@@ -13,6 +14,8 @@ type OpenAction = {
   summary: string;
   severity: string;
   created_at: string | null;
+  /** Past its expiry: it can only be rejected (approvals.is_expired). */
+  expired?: boolean | null;
 };
 
 type TimelineEvent = {
@@ -195,7 +198,13 @@ export default function MachineDetailDrawer({
         await load(); // refresh the drawer
         onChanged(); // and the list behind it
       } catch (e) {
-        setError(e instanceof Error ? e.message : "Failed to update the action");
+        // Reload even on a refusal, as the Approvals inbox and Mission Control do:
+        // a proposal the server withdrew (409) or someone already decided must not
+        // keep offering Approve / Reject until the drawer is reopened.
+        const message = e instanceof Error ? e.message : "Failed to update the action";
+        await load();
+        onChanged();
+        setError(message);
       }
     },
     [load, onChanged],
@@ -364,10 +373,14 @@ export default function MachineDetailDrawer({
                         <span>{a.action_type}</span>
                       </div>
                       <p className="text-sm font-medium mt-2">{a.summary}</p>
+                      {a.expired === true && (
+                        <p role="note" className="mt-2 text-sm text-amber-300">{EXPIRED_PROPOSAL_NOTE}</p>
+                      )}
                       <div className="mt-3 flex gap-2">
                         <button
                           onClick={() => decide(a.id, "approve")}
-                          className="rounded-lg bg-emerald-500/90 text-slate-950 font-semibold px-3 py-1.5 text-sm hover:bg-emerald-400"
+                          disabled={a.expired === true}
+                          className="rounded-lg bg-emerald-500/90 text-slate-950 font-semibold px-3 py-1.5 text-sm hover:bg-emerald-400 disabled:cursor-not-allowed disabled:opacity-40"
                         >
                           Approve
                         </button>

@@ -63,6 +63,17 @@ jobs:
           DEMO_PASSWORD: ci-demo-password
         run: python audit_oem_demo_journey.py
 
+      # THE ASSUMPTIONS THE OEM BOUNDARY RESTS ON (ADR-0017, ADR-0019): one code
+      # path puts a machine at a factory, every grant is validated before it is
+      # stored, no /oem handler writes a factory link. It ran only by hand, and
+      # two of its checks went stale within a day of the changes that broke them
+      # (#614, #616), reporting findings while the product was correct. Nobody saw,
+      # because nothing ran it. It reads the code and builds in-memory databases,
+      # so it takes seconds and touches nothing the suites share.
+      - name: The OEM boundary's assumptions still hold (specialist audit)
+        working-directory: backend
+        run: python audit_oem_specialist.py
+
   # THE MIGRATION GATE (ADR-0018). A separate job because it needs a real
   # PostgreSQL server, and because its answer is a different question from "do
   # the tests pass".

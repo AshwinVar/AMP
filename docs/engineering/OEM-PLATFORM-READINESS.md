@@ -36,7 +36,7 @@ dimension; the factory experience is unchanged except for one new screen.
 | Harness | Scope | Result |
 |---|---|---|
 | `audit_oem_adversarial.py` | 2 OEMs × 3 factories on **PostgreSQL 18.3** — HTTP, WebSocket, MQTT, CSV exports, read models, every write verb, and the claim | **140 checks, NO BREACH** |
-| `audit_oem_specialist.py` | attacks the *assumptions* the boundary rests on, not the API | **151 checks, NO FINDING** (after two real fixes — below) |
+| `audit_oem_specialist.py` | attacks the *assumptions* the boundary rests on, not the API; runs in CI on every push | **160 checks, NO FINDING** (after two real fixes — below). On 2026-09-18 two checks had gone stale and reported findings while the product was correct: one read wording that #616 moved into `oem_sharing.refused_grants`, one counted a response dict as a write after #614. Both were rewritten to test the property, and the write detector now also sees constructor keywords, Core `.values()`, raw SQL and the `ai/` and `amp_ai/` packages; 12 planted defects caught, 3 harmless controls clean |
 | `audit_oem_pilot_journey.py` | the whole business journey on PostgreSQL 18.3, every step an HTTP request, telemetry through the real MQTT handler | **41 steps, no developer, nothing seeded but the founder and the catalogue** |
 | `audit_oem_demo_journey.py` | the ten-minute AERON sales demo, walked end to end; runs in CI on every push | **54 steps** |
 | `test_mqtt_installation_reporting.py` | telemetry reaching the OEM's installation record, and the tenant it must not reach | 13 checks; 5 of 6 mutations caught, 1 shadowed and proven so |

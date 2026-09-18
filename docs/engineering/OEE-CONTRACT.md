@@ -64,14 +64,20 @@ shorter window swings on one bad shift.
 **Week over week is built from one anchor.** `oee_contract.prior_window(current)`
 is the window that ends exactly where `current` starts, so every record is in at
 most one of the two weeks at any time of day, and "this week" is the same set of
-records as the headline's. The scorecard's Plant OEE arrow, the recovery card's
-badge and `/oee-trend` all build their weeks this way. Calendar halves are the
-recurring defect here: `[midnight(today-13), midnight(today-6))` overlapped the
-rolling week by up to a day (`test_week_halves_tile.py`), and `/oee-trend`'s
-"this week" of dates `today-6 … today` left a record from late on the eighth date
-in the headline's week and in the trend's prior one, so the trend's current OEE
-and the headline beside it were different numbers
-(`test_oee_trend_uses_the_contract_windows.py`).
+records as the headline's. The scorecard's Plant OEE and Cost of losses arrows,
+the recovery card's badge, `/oee-trend` and `/cost-trend` all build their weeks
+this way. Calendar halves are the recurring defect here:
+`[midnight(today-13), midnight(today-6))` overlapped the rolling week by up to a
+day (`test_week_halves_tile.py`), and a trend's "this week" of dates
+`today-6 … today` left a record from late on the eighth date in the headline's
+week and in the trend's prior one. The OEE trend's current figure and the
+headline beside it were different numbers
+(`test_oee_trend_uses_the_contract_windows.py`); the Costing card printed
+"Total lost £110" beside "Losses down £140 to £30 week on week", a fall reported
+inside a week whose losses had risen (`test_cost_trend_uses_the_contract_windows.py`).
+A trend's daily series spans every date its fortnight touches: the oldest is
+flagged `partial` when the window opens mid-day, and the seam date shows both
+weeks' share, so the series still sums to the two weeks.
 
 `days=None` means all time. It is correct only for an explicit "since
 commissioning" view and is **never** the default.

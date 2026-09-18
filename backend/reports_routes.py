@@ -24,6 +24,7 @@ from analytics_engine import (
     build_shift_kpis,
     build_smart_alerts,
     calculate_oee_from_record,
+    shift_attainment,
 )
 from analytics_routes import get_management_dashboard
 from auth import get_current_user, require_roles
@@ -86,7 +87,7 @@ def export_shifts_csv(db: Session = Depends(_get_db), current_user: dict = Depen
         # TypeError and 500 the whole export instead of yielding a row.
         target = shift.target_output or 0
         actual = shift.actual_output or 0
-        efficiency = round((actual / target) * 100) if target else 0
+        efficiency = shift_attainment(actual, target)     # an empty cell without a target
         return [shift.id, shift.shift_name, target, actual,
                 efficiency, shift.created_at]
 

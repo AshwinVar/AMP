@@ -65,8 +65,10 @@ def build_daily_summary_text(summary: dict, shift_kpis: list, alerts: list):
 
     if shift_kpis:
         for shift in shift_kpis:
+            # A shift with no target has no efficiency (analytics_engine.shift_attainment).
+            eff = "no target" if shift["efficiency"] is None else f"{shift['efficiency']}%"
             lines.append(
-                f"{shift['shift_name']}: Target={shift['target_output']} | Actual={shift['actual_output']} | Efficiency={shift['efficiency']}% | Gap={shift['gap']}"
+                f"{shift['shift_name']}: Target={shift['target_output']} | Actual={shift['actual_output']} | Efficiency={eff} | Gap={shift['gap']}"
             )
     else:
         lines.append("No shift data available.")

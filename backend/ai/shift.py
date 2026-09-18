@@ -9,18 +9,12 @@ from collections import defaultdict
 from datetime import datetime, timedelta
 
 import models
+# The one formula (None without a target), shared with every other shift figure.
+from analytics_engine import shift_attainment as _attainment
 
 name = "shift"
 
 WINDOW_DAYS = 7
-
-
-def _attainment(actual, target):
-    """Actual as a % of target, or None when there's no target to measure
-    against. A shift with no planned output has no attainment — scoring it 0%
-    would flag an unplanned shift as the "worst" performer (ADR-0007: never
-    present a metric the data can't support)."""
-    return round(actual / target * 100) if target else None
 
 
 def _base_shift(shift_name: str) -> str:

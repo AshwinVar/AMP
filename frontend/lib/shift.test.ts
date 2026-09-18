@@ -1,11 +1,11 @@
 import { describe, expect, it } from "vitest";
 
-import { pooledShiftEfficiency, shiftAttainment, type ShiftLike } from "./shift";
+import { plottableShifts, pooledShiftEfficiency, shiftAttainment, type ShiftLike } from "./shift";
 
 /**
  * The reference oracle is the shipped Python, transcribed:
  *
- *   ai/shift.py           _attainment(actual, target)
+ *   analytics_engine.py   shift_attainment(actual, target)   (ai/shift.py's _attainment)
  *                           -> round(actual / target * 100) if target else None
  *   analytics_routes.py   avg_shift_efficiency
  *                           -> round((total_actual / total_target) * 100) if total_target else 0
@@ -160,5 +160,24 @@ describe("the empty and degenerate cases", () => {
 
     const nulls = [{ target_output: null, actual_output: 40 }, shift(500, 400)] as unknown as ShiftLike[];
     expect(pooledShiftEfficiency(nulls)).toBe(88);
+  });
+});
+
+describe("plottableShifts", () => {
+  // The Executive OEE shift chart. The API sends efficiency null for a shift
+  // with no target (backend test_no_target_no_shift_efficiency.py); such a shift
+  // gets no bar, rather than the 0% bar it used to get.
+  const rows = [
+    { shift_name: "Morning", efficiency: 90 },
+    { shift_name: "Weekend", efficiency: null },
+    { shift_name: "Short", efficiency: 0 },
+  ];
+
+  it("drops shifts with no figure", () => {
+    expect(plottableShifts(rows).map((r) => r.shift_name)).toEqual(["Morning", "Short"]);
+  });
+
+  it("keeps a measured 0%: a planned shift that made nothing is a fact", () => {
+    expect(plottableShifts(rows).find((r) => r.shift_name === "Short")?.efficiency).toBe(0);
   });
 });

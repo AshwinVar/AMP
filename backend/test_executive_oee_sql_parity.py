@@ -35,7 +35,7 @@ import os
 os.environ.setdefault("DATABASE_URL", "sqlite:///./ci.db")
 
 from duration import parse_duration_to_minutes
-from analytics_engine import pooled_oee
+from analytics_engine import pooled_oee, shift_attainment
 import models
 import oee_contract
 
@@ -177,7 +177,10 @@ def reference_executive_oee(db):
 
     shift_rows = []
     for shift in shifts:
-        efficiency = round((shift.actual_output / shift.target_output) * 100) if shift.target_output else 0
+        # The shared formula since test_no_target_no_shift_efficiency.py: a shift
+        # with no target has no efficiency (None), not 0%. This reference is
+        # compared key-for-key, so it grows with the endpoint.
+        efficiency = shift_attainment(shift.actual_output, shift.target_output)
         shift_rows.append(
             {
                 "shift_name": shift.shift_name,

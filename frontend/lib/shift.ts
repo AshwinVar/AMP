@@ -59,8 +59,9 @@ export function shiftAttainment(actual: number, target: number): number | null {
 
 /**
  * The plant's attainment across a set of shifts: one ratio of the summed
- * totals, matching analytics_routes.py's `avg_shift_efficiency` and
- * ai/shift.py's top-level `attainment`.
+ * totals, matching ai/shift.py's top-level `attainment` and, when anything had a
+ * target, analytics_routes.py's `avg_shift_efficiency` (which keeps an integer
+ * 0 otherwise and says so in `shift_efficiency_measured`).
  *
  * Returns null when nothing in the set had a target — no plan, no attainment.
  */
@@ -72,4 +73,14 @@ export function pooledShiftEfficiency(shifts: readonly ShiftLike[]): number | nu
     actual += s.actual_output || 0;
   }
   return shiftAttainment(actual, target);
+}
+
+/**
+ * The rows a per-shift efficiency chart can plot: those with a figure. A shift
+ * with no target has `efficiency: null` from the API (backend
+ * analytics_engine.shift_attainment) and gets no bar, as a machine with no OEE
+ * gets none in the ranking beside it. It used to be drawn as a 0% bar.
+ */
+export function plottableShifts<T extends { efficiency: number | null }>(rows: readonly T[]): T[] {
+  return rows.filter((r) => r.efficiency != null);
 }

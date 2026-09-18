@@ -9,8 +9,10 @@ is a claim, not a measurement. This suite reruns the FULL build (400 machines x
 before the committed run) in-process and compares it with the committed files:
 
   1  TIME        the full build finishes within 90 s; if it ever does not, the
-                 fleet is shrunk and the model rebuilt - the check is never
-                 skipped
+                 fleet is shrunk and the model rebuilt - the budget is never
+                 relaxed. Under a line tracer (CI's coverage job) the time is
+                 printed, not judged: the tracer dominates it. The backend job
+                 runs this file bare on every PR and enforces the budget there.
   2  METRICS     every metric, interval, count and calibration row equals the
                  committed value within 1e-6 (floats may differ in the last
                  bits across platforms' maths libraries; the pinned hash, not
@@ -29,6 +31,7 @@ Run: DATABASE_URL="sqlite:///./ci.db" python backend/test_amp_ai_failure_risk_re
 import json
 import math
 import os
+import sys
 import time
 
 from amp_ai.core import artifact as A
@@ -45,6 +48,19 @@ def check(label, condition, detail=""):
         failures.append(f"{label}: {detail}")
     print(f"  {'PASS' if condition else 'FAIL'}  {label}"
           + (f"   [{detail}]" if detail and not condition else ""))
+
+
+def traced():
+    """Is a line tracer (coverage, a debugger) instrumenting this process?
+
+    CI's coverage job runs every suite under one, and it slows this pure-Python
+    arithmetic several-fold: the committed build recorded 31 s, and the same
+    build took 108 s under coverage on a CI runner (PR #610). A wall-clock
+    figure taken there measures the tracer, not the build.
+    """
+    monitoring = getattr(sys, "monitoring", None)   # Python 3.12+: coverage's sysmon core
+    return sys.gettrace() is not None or bool(
+        monitoring and monitoring.get_tool(monitoring.COVERAGE_ID))
 
 
 def differences(a, b, path="$", out=None, limit=10):
@@ -76,7 +92,7 @@ def differences(a, b, path="$", out=None, limit=10):
     return out
 
 
-def main():
+def main(judge_time=True):
     print("=" * 74)
     print("AMP-native AI failure risk: reproduce the shipped model and its numbers")
     print("=" * 74)
@@ -90,7 +106,12 @@ def main():
     rebuilt = B.build(B.FULL, created_at=committed["created_at"], prior_ledger=committed_eval["ledger_before"])
     elapsed = time.perf_counter() - started
     print(f"     full build: {elapsed:.1f} s (committed build recorded {committed_eval['build_seconds']:.1f} s)")
-    check(f"the full build finishes within {BUDGET_SECONDS:.0f} s", elapsed <= BUDGET_SECONDS, f"{elapsed:.1f} s")
+    if judge_time:
+        check(f"the full build finishes within {BUDGET_SECONDS:.0f} s", elapsed <= BUDGET_SECONDS,
+              f"{elapsed:.1f} s")
+    else:
+        print(f"     NOT judged against the {BUDGET_SECONDS:.0f} s budget: a line tracer is running "
+              "(the backend job runs this file bare and enforces it)")
 
     art = rebuilt.artifact
     print("\n2. Metrics")
@@ -130,8 +151,12 @@ def main():
 
 
 def test_amp_ai_failure_risk_reproduce():
-    """pytest entry point; CI runs this file as a standalone script."""
-    assert main() == 0, "see the FAIL lines above"
+    """pytest entry point; CI runs this file as a standalone script.
+
+    Only this entry asks traced(): CI's coverage job reaches the suite through it.
+    The standalone run below always judges the budget, so no mistake in the
+    tracer check can quietly stop the backend job from enforcing it."""
+    assert main(judge_time=not traced()) == 0, "see the FAIL lines above"
 
 
 if __name__ == "__main__":

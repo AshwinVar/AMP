@@ -109,37 +109,37 @@ MUTATIONS = [
       ("    tenant = request_tenant(current_user)\n"
        "    actor = current_user.get(\"sub\") or current_user.get(\"username\") or \"?\"\n"
        "\n"
-       "    unknown = [g for g in payload.grants if g not in oem_sharing.ALL_GRANTS]",
+       "    refusal = oem_sharing.refused_grants(payload.grants)",
        "    tenant = payload.tenant or request_tenant(current_user)\n"
        "    actor = current_user.get(\"sub\") or current_user.get(\"username\") or \"?\"\n"
        "\n"
-       "    unknown = [g for g in payload.grants if g not in oem_sharing.ALL_GRANTS]")],
+       "    refusal = oem_sharing.refused_grants(payload.grants)")],
      None),
 
     # --- consent -------------------------------------------------------------
+    # The union moved into oem_sharing.widen_grants (#614: accepting a service
+    # contract widens the same agreement) and the refusal into
+    # oem_sharing.refused_grants (#616). Both anchors named the in-line code they
+    # replaced and applied to nothing from then on; they now mutate where the rule
+    # lives, and the claim's own suites still have to catch it.
     ("accepting a machine OVERWRITES the standing agreement instead of widening it",
-     "connected_equipment_routes.py",
-     "    policy.grants = \",\".join(sorted(existing | set(payload.grants)))",
-     "    policy.grants = \",\".join(sorted(set(payload.grants)))"),
-    # Anchored to the ACCEPT path: the same two lines appear in update_sharing,
-    # so the unanchored pattern matched twice and was skipped.
+     "oem_sharing.py",
+     "    policy.grants = \",\".join(sorted(existing | wanted))",
+     "    policy.grants = \",\".join(sorted(wanted))"),
+    # Anchored to the ACCEPT path: the same refusal appears in update_sharing.
     ("an unknown grant is silently dropped rather than refused",
      "connected_equipment_routes.py",
-     "    unknown = [g for g in payload.grants if g not in oem_sharing.ALL_GRANTS]\n"
-     "    if unknown:\n"
-     "        raise HTTPException(\n"
-     "            status_code=400,\n"
-     '            detail=f"Unknown sharing grants: {\', \'.join(sorted(unknown))}")\n'
+     "    refusal = oem_sharing.refused_grants(payload.grants)\n"
+     "    if refusal:\n"
+     "        raise HTTPException(status_code=400, detail=refusal)\n"
      "\n"
      "    claim = oem_claims.find_by_code(db, code)",
-     "    unknown = []\n"
-     "    if unknown:\n"
-     "        raise HTTPException(\n"
-     "            status_code=400,\n"
-     '            detail=f"Unknown sharing grants: {\', \'.join(sorted(unknown))}")\n'
-     "\n"
      "    payload.grants = [g for g in payload.grants\n"
-     "                      if g in oem_sharing.ALL_GRANTS]\n"
+     "                      if g in oem_sharing.OFFERED_GRANTS]\n"
+     "    refusal = None\n"
+     "    if refusal:\n"
+     "        raise HTTPException(status_code=400, detail=refusal)\n"
+     "\n"
      "    claim = oem_claims.find_by_code(db, code)"),
 
     # --- the refusal becomes an oracle ---------------------------------------

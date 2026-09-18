@@ -75,9 +75,13 @@ MUTATIONS = [
     ("database identity constraint dropped", "models.py",
      '        UniqueConstraint("tenant_code", "site", "name", name="uq_machine_identity"),\n',
      ""),
+    # Anchored on the line before it: MachineInstallation (#509) declares the same
+    # site column, the bare line matched twice, and this entry reported SKIP.
     ("site column made nullable (NULL != NULL defeats the constraint)", "models.py",
-     'site = Column(String, nullable=False, default="", server_default="")',
-     'site = Column(String, nullable=True)'),
+     '    tenant_code = Column(String, index=True, nullable=False, default="DEFAULT")\n'
+     '    site = Column(String, nullable=False, default="", server_default="")',
+     '    tenant_code = Column(String, index=True, nullable=False, default="DEFAULT")\n'
+     '    site = Column(String, nullable=True)'),
 ]
 
 

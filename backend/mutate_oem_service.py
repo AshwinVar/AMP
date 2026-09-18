@@ -91,9 +91,11 @@ MUTATIONS = [
      '    return {"ready": True, "checks": out}'),
 
     # --- the queue stops leading with the worst ------------------------------
+    # The sort became the function's whole job (it returns sorted(recs) since the
+    # fleet entry point moved to oem_sharing.fleet_recommendations).
     ("the fleet queue is returned unsorted", "oem_service.py",
-     '    out.sort(key=lambda r: (rank.get(r["severity"], 9), r["machine"]))',
-     "    out.reverse()"),
+     '    return sorted(recs, key=lambda r: (rank.get(r["severity"], 9), r["machine"]))',
+     "    return list(reversed(recs))"),
 
     # --- telemetry: a broken profile stops being an error --------------------
     ("an unparseable profile silently becomes 'reports nothing'",

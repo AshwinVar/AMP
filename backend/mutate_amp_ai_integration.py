@@ -92,17 +92,21 @@ MUTATIONS = [
      "    return str(action).startswith(AUDIT_ACTION_PREFIX) or entity_type == AUDIT_ENTITY", CONSENT),
 
     # --- consent: who may write ---------------------------------------------------------------
+    # #614 moved the preview test into tenancy.is_preview, the one rule the contract routes
+    # share. These three anchored on the inline `tenant != _claim_tenant(...)` it replaced,
+    # matched nothing from then on, and reported NOT APPLIED to nobody, because nothing ran
+    # this harness (test_mutation_anchors_apply.py now fails the PR that strands one).
     ("route: a founder preview may consent on the customer's behalf", ROUTE,
-     "    if tenant != _claim_tenant(current_user):\n        raise HTTPException(status_code=403,",
+     "    if tenancy.is_preview(current_user):\n        raise HTTPException(status_code=403,",
      "    if False:\n        raise HTTPException(status_code=403,", CONSENT),
     ("route: a founder preview may run the consented learning step (anomaly check)", ROUTE,
-     "    if tenant != _claim_tenant(current_user):\n        # The consent covers",
+     "    if tenancy.is_preview(current_user):\n        # The consent covers",
      "    if False:\n        # The consent covers", ROUTES),
     ("route: the preview refusal reads consent and telemetry first", ROUTE,
-     "    tenant = request_tenant(current_user)\n    if tenant != _claim_tenant(current_user):\n        # The consent covers",
+     "    tenant = request_tenant(current_user)\n    if tenancy.is_preview(current_user):\n        # The consent covers",
      "    tenant = request_tenant(current_user)\n"
      "    consent.DbConsentGate().check(SessionLocal(), tenant, 'telemetry_baseline')\n"
-     "    if tenant != _claim_tenant(current_user):\n        # The consent covers", ROUTES),
+     "    if tenancy.is_preview(current_user):\n        # The consent covers", ROUTES),
     ("route: Supervisors and Operators may toggle consent", ROUTE,
      'CONSENT_EDITOR_ROLES = ["Admin"]', 'CONSENT_EDITOR_ROLES = ["Admin", "Supervisor", "Operator"]', CONSENT),
     ("route: the writer's refusal of an unknown capability becomes a 500", ROUTE,

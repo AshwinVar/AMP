@@ -49,15 +49,19 @@ MUTATIONS = [
      "    if inst is None:\n"
      '        raise HTTPException(status_code=404, detail="Machine not found")\n\n'
      "    model = _models_by_id"),
+    # The service-hours consent check now sits between the lookup and the hours
+    # (grants_for, then `supplied`); the anchor named the adjacency it replaced.
     ("a competitor's machine is a 403 (an existence oracle)", "oem_routes.py",
      '    inst = oem_sharing.get_installation(db, principal["oem"], installation_id)\n'
      "    if inst is None:\n"
-     '        raise HTTPException(status_code=404, detail="Machine not found")\n\n'
-     "    hours = payload.service_hours",
+     '        raise HTTPException(status_code=404, detail="Machine not found")\n'
+     '    grants = oem_sharing.grants_for(db, principal["oem"], inst.factory_tenant_code)\n\n'
+     "    supplied = payload.service_hours is not None",
      '    inst = oem_sharing.get_installation(db, principal["oem"], installation_id)\n'
      "    if inst is None:\n"
-     '        raise HTTPException(status_code=403, detail="Not your machine")\n\n'
-     "    hours = payload.service_hours"),
+     '        raise HTTPException(status_code=403, detail="Not your machine")\n'
+     '    grants = oem_sharing.grants_for(db, principal["oem"], inst.factory_tenant_code)\n\n'
+     "    supplied = payload.service_hours is not None"),
 
     # --- capabilities -------------------------------------------------------
     ("commissioning needs no capability at all", "oem_routes.py",

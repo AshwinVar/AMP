@@ -1614,11 +1614,11 @@ How AMP stays correct while one person changes it fast — and the clever techni
 | **PostgreSQL parity / schema** | it works on *real* Postgres, not just SQLite | `test_schema_guard.py`, `test_boot_migrations.py`, `verify_pg_deploy.py` |
 | **Null-safety / edge** | NULL/empty/zero-denominator can't 500 | many `test_*_null_safe.py`, `test_create_paths_409.py` |
 | **Adversarial / security** | isolation & consent can't be bypassed | `audit_isolation.py`, `audit_oem_adversarial.py`, `audit_three_customers.py` |
-| **Mutation** | *the tests actually test* | 12 `mutate_*.py` + `frontend/mutate-oem-ui.mjs` |
+| **Mutation** | *the tests actually test* | 25 `mutate_*.py` + `frontend/mutate-oem-ui.mjs`; `test_mutation_anchors_apply.py` checks in CI that every mutation still applies |
 | **Performance / load** | it holds up under scale | `loadtest.py`, `load/` harness |
 | **Frontend** | UI logic + user journeys | Vitest over `lib/` (92.6% branch) + Playwright `e2e/` |
 
-**The contract:** every `backend/test_*.py` is a **standalone script** (`python test_X.py`, exit 0 = pass); pytest was layered on top for coverage. Counts: **193 `test_*.py`, 8 `audit_*.py`, 12 `mutate_*.py`.** Coverage floors are **ratchets that never drop** (backend 78%, frontend 89%), and they use **branch** coverage deliberately — the NULL/zero arcs are the ones that crash in front of a customer.
+**The contract:** every `backend/test_*.py` is a **standalone script** (`python test_X.py`, exit 0 = pass); pytest was layered on top for coverage. Counts on 2026-09-18: **about 320 `test_*.py`, 9 `audit_*.py`, 25 `mutate_*.py`.** Coverage floors are **ratchets that never drop** (backend 78%, frontend 89%), and they use **branch** coverage deliberately — the NULL/zero arcs are the ones that crash in front of a customer.
 
 ### Mutation testing, explained simply (the clever bit)
 A passing test suite can be **worthless** if it doesn't actually check the thing that matters. Mutation testing proves it does: **deliberately break the source, and confirm a test goes red.** If the suite stays green after you broke the rule, the suite has a hole.
@@ -1630,11 +1630,13 @@ A passing test suite can be **worthless** if it doesn't actually check the thing
 
 **Security example (`mutate_oem_sharing.py`):** remove the `oem_code` filter, or disable the bisection guard — the OEM isolation suites must catch each. Two documented "survivors" are defence-in-depth layers behind the sentinel (belt *and* braces). The source is restored after each mutation.
 
+**The weak spot, and its guard.** A harness finds the line to break by its *text*. A refactor that rewrites that line strands the mutation: it applies to nothing, reports SKIP or NOT APPLIED, and the guard it was proving goes unproven. Nothing notices, because the harnesses take minutes and CI does not run them. On 2026-09-18 a run of every harness found 11 stranded this way. The refactors that stranded them (#509, #522, #614, #616, #631) were all correct; only the proof had stopped. They were retargeted, each shown caught again, and `test_mutation_anchors_apply.py` now reads every harness in seconds on every push. Every anchor must match exactly once, or a pinned count with a stated reason.
+
 ### If you want to change testing
 Add a feature → add a `backend/test_<feature>.py` (standalone script style) and, for a security rule, a `mutate_<feature>.py` that breaks the rule and asserts red. Frontend logic → a Vitest in `frontend/`; a user journey → a Playwright spec in `frontend/e2e/`.
 
 ### Quick recap
-AMP has unit, API, Postgres-parity, null-safety, adversarial, **mutation**, and load tests — 193 backend scripts, each runnable alone, with never-dropping coverage floors. Mutation tests break the source on purpose to prove the tests actually protect the rule (a `SURVIVED` line = an untested guarantee). This is what lets a solo founder refactor without fear.
+AMP has unit, API, Postgres-parity, null-safety, adversarial, **mutation**, and load tests — over 300 backend scripts, each runnable alone, with never-dropping coverage floors. Mutation tests break the source on purpose to prove the tests actually protect the rule (a `SURVIVED` line = an untested guarantee). This is what lets a solo founder refactor without fear.
 
 ---
 

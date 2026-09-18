@@ -37,17 +37,18 @@ MUTATIONS = [
      "    oem_code = None\n"
      "    if oem_code:\n"
      "        return oem_auth.sentinel_tenant(oem_code)"),
+    # #631 put the reserved-namespace test, and its comment, between the two
+    # branches, so the reorder no longer matched as one block. The same defect
+    # as a condition on the OEM branch, equivalent on every input: an OEM token
+    # that also carries a founder-preview header binds the header.
     ("the OEM branch runs AFTER the founder preview (X-Tenant wins)",
      "tenancy.py",
      "    oem_code = oem_auth.oem_of_claims(claims)\n"
      "    if oem_code:\n"
-     "        return oem_auth.sentinel_tenant(oem_code)\n"
-     '    if claim_tenant == DEFAULT_TENANT and header_tenant and claim_role == "Admin":\n'
-     "        return header_tenant",
-     '    if claim_tenant == DEFAULT_TENANT and header_tenant and claim_role == "Admin":\n'
-     "        return header_tenant\n"
+     "        return oem_auth.sentinel_tenant(oem_code)",
      "    oem_code = oem_auth.oem_of_claims(claims)\n"
-     "    if oem_code:\n"
+     '    if oem_code and not (claim_tenant == DEFAULT_TENANT and header_tenant and claim_role == "Admin"\n'
+     "                         and not is_reserved_tenant_code(header_tenant)):\n"
      "        return oem_auth.sentinel_tenant(oem_code)"),
 
     # --- who the token is ---------------------------------------------------
@@ -96,11 +97,13 @@ MUTATIONS = [
      '    if org is None:\n        pass'),
 
     # --- capabilities -------------------------------------------------------
+    # The contract capabilities (#614) joined the viewer's set; the anchor still
+    # named the set without them.
     ("a viewer gains every capability", "oem_auth.py",
-     '    OEM_VIEWER: {"read_fleet"},',
-     '    OEM_VIEWER: {"read_fleet", "manage_users", "manage_branding",\n'
+     '    OEM_VIEWER: {"read_fleet", "read_contracts"},',
+     '    OEM_VIEWER: {"read_fleet", "read_contracts", "manage_users", "manage_branding",\n'
      '                 "manage_service", "commission", "manage_models",\n'
-     '                 "manage_installations"},'),
+     '                 "manage_installations", "manage_contracts", "sign_contracts"},'),
 ]
 
 

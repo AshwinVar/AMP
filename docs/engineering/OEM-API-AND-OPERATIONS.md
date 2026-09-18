@@ -302,7 +302,7 @@ These are **factory** routes and reject OEM tokens.
 
 ```jsonc
 // PUT /connected-equipment/sharing
-{ "oem_code": "OEM_ALPHA", "grants": ["SHARE_OPERATING_HOURS", "SHARE_ALARMS"] }
+{ "oem_code": "OEM_ALPHA", "grants": ["SHARE_OPERATING_HOURS", "SHARE_SERVICE_STATUS"] }
 ```
 
 The list is **absolute, not additive** — it replaces what was granted, so
@@ -313,6 +313,7 @@ Refusals, and why each one is a refusal rather than a shrug:
 | Condition | Status | Why |
 |---|---|---|
 | unknown grant key | **400** | dropping it silently lets an admin believe they shared something they did not — or, after a rename, something they did |
+| a reserved grant (`SHARE_ALARMS`, `SHARE_TELEMETRY`, `SHARE_MAINTENANCE_HISTORY`) | **400** | nothing in AMP reads it, so granting it would share nothing; the factory is offered only `oem_sharing.OFFERED_GRANTS` |
 | OEM has no equipment here | **404** | granting to a manufacturer never on the shop floor is a typo or a third-party hand-off |
 | blank `oem_code` | **400** | — |
 | non-Admin | **403** | consent is an administrative act |
@@ -542,9 +543,9 @@ Open **Connected Equipment**. It answers three questions: which machines here
 came from an OEM, what that OEM can see, and how to change it.
 
 Grant the least that makes the manufacturer useful. A reasonable start for a
-compressor supplier is `SHARE_OPERATING_HOURS` + `SHARE_SERVICE_STATUS` +
-`SHARE_ALARMS` — enough to service the machine, nothing about what you make on
-it.
+compressor supplier is `SHARE_OPERATING_HOURS` + `SHARE_SERVICE_STATUS` —
+enough to service the machine, nothing about what you make on it. Alarms,
+telemetry and maintenance history are not offered: AMP does not share them yet.
 
 **Withdrawal is immediate.** Grants are read at query time and never cached, so
 the next request the manufacturer makes returns less. There is no projection

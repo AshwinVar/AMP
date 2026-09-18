@@ -180,7 +180,7 @@ def machine_detail(installation_id: int, db: Session = Depends(_get_db),
     # What the customer has NOT shared is stated, not silently omitted: an
     # engineer who cannot tell "no data" from "not shared" will read a blank as
     # a broken machine and send somebody to site.
-    row["not_shared"] = sorted(set(oem_sharing.ALL_GRANTS) - set(grants))
+    row["not_shared"] = oem_sharing.not_shared(grants)
     return row
 
 
@@ -197,7 +197,7 @@ def sharing_summary(db: Session = Depends(_get_db),
     return {"policies": [{
         "customer": t,
         "granted": sorted(oem_sharing.grants_for(db, principal["oem"], t)),
-        "available": list(oem_sharing.ALL_GRANTS),
+        "available": list(oem_sharing.OFFERED_GRANTS),   # what a customer CAN share
     } for t in tenants],
         "grant_labels": oem_sharing.GRANT_LABELS}
 
@@ -270,7 +270,7 @@ def machine_service(installation_id: int, db: Session = Depends(_get_db),
         "telemetry_profile_error": profile_error,
         "recommendations": oem_sharing.visible_recommendations(
             oem_service.recommendations(inst, model), grants),
-        "not_shared": sorted(set(oem_sharing.ALL_GRANTS) - set(grants)),
+        "not_shared": oem_sharing.not_shared(grants),
     }
 
 

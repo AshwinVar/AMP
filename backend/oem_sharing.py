@@ -61,6 +61,45 @@ GRANT_LABELS = {
     SHARE_DOWNTIME: "Downtime events recorded against this machine",
 }
 
+# The grants a factory is OFFERED: exactly those something in AMP reads (the fleet
+# and service views, the service recommendations, the service-contract statements).
+# SHARE_ALARMS, SHARE_TELEMETRY and SHARE_MAINTENANCE_HISTORY stay in the vocabulary,
+# so a policy that already holds one still parses, but nothing reads them: AMP
+# stores no alarms, keeps no per-installation readings for a manufacturer and
+# builds no maintenance-history view (docs/sales/REAL-OEM-INPUT-REQUIRED.md).
+# Offering them asked a factory to consent to sharing that never happened.
+# test_sharing_grants_offered_only_if_read.py keeps this list and the readers equal.
+OFFERED_GRANTS = (SHARE_MACHINE_HEALTH, SHARE_OPERATING_HOURS, SHARE_SERVICE_STATUS,
+                  SHARE_DOWNTIME)
+
+
+def refused_grants(grants):
+    """Why `grants` cannot be given, or None. The one check for every place a
+    factory grants (the Connected Equipment toggles, a machine claim, a service
+    contract's acceptance): an unknown token, or a grant nothing reads."""
+    unknown = sorted(g for g in set(grants) if g not in ALL_GRANTS)
+    if unknown:
+        return f"Unknown sharing grants: {', '.join(unknown)}"
+    unread = sorted(g for g in set(grants) if g not in OFFERED_GRANTS)
+    if unread:
+        return (f"Not offered: {', '.join(unread)}. Nothing in AMP reads it yet, so "
+                "granting it would share nothing.")
+    return None
+
+
+def offered_grant_choices():
+    """The offer a factory chooses from: key and plain-English label, in order."""
+    return [{"key": g, "label": GRANT_LABELS[g]} for g in OFFERED_GRANTS]
+
+
+def not_shared(grants):
+    """What the manufacturer is told this customer has NOT shared: the offered
+    grants it has not given. Never the reserved ones, which no customer can give:
+    listing them told a manufacturer 'this customer has not shared alarms', which
+    blamed the customer for data AMP does not hold."""
+    return sorted(set(OFFERED_GRANTS) - set(grants))
+
+
 # What is visible with NO policy at all. Deliberately only facts the OEM already
 # holds in its own records — never anything derived from factory operations.
 ALWAYS_VISIBLE = ("serial_number", "model", "status", "customer", "site",
@@ -177,17 +216,17 @@ def widen_grants(db, oem_code, tenant_code, grants, actor, *, context):
     every other machine from this manufacturer. Withdrawal stays where it has
     always been, the Admin-only control under Connected Equipment.
 
-    An unknown grant raises ValueError before anything is written. The
-    `oem_sharing_changed` audit row is written in the factory's tenant inside
-    the CALLER's transaction (platform_routes.add_audit), always, with the wording
-    the claim path has always used. The caller commits.
+    An unknown grant, or one nothing reads (refused_grants), raises ValueError
+    before anything is written. The `oem_sharing_changed` audit row is written in
+    the factory's tenant inside the CALLER's transaction (platform_routes.add_audit),
+    always, with the wording the claim path has always used. The caller commits.
     """
     import platform_routes
 
     wanted = set(grants)
-    unknown = sorted(g for g in wanted if g not in ALL_GRANTS)
-    if unknown:
-        raise ValueError(f"Unknown sharing grants: {', '.join(unknown)}")
+    refusal = refused_grants(wanted)
+    if refusal:
+        raise ValueError(refusal)
     policy = (db.query(models.OemDataSharingPolicy)
                 .filter(models.OemDataSharingPolicy.oem_code == oem_code,
                         models.OemDataSharingPolicy.tenant_code == tenant_code).first())

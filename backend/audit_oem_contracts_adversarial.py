@@ -226,7 +226,7 @@ def attack_consent():
     seen = GET(f"/oem/contracts/{cid}/statements/{s1['id']}", TOKENS["alpha"])
     control("the OEM reads the statement while downtime is shared", seen.status == 200, seen)
     r = H.PUT("/connected-equipment/sharing", TOKENS["fa"],
-              {"oem_code": "OEM_ALPHA", "grants": ["SHARE_ALARMS"]})
+              {"oem_code": "OEM_ALPHA", "grants": ["SHARE_OPERATING_HOURS"]})
     control("the factory withdraws SHARE_DOWNTIME", r.status == 200, r)
     n = _rows(models.ContractStatementAcceptance, statement_id=s1["id"])
     r = H.accept_statement(cid, s1["id"], seen.body["content_hash"], seen.body["revision"])
@@ -235,7 +235,7 @@ def attack_consent():
     r = GET(f"/oem/contracts/{cid}/statements/{s1['id']}/download", TOKENS["alpha"])
     refused("the OEM downloading it", r.status == 403 and b"intervals" not in r.raw, r.status)
     H.PUT("/connected-equipment/sharing", TOKENS["fa"],
-          {"oem_code": "OEM_ALPHA", "grants": ["SHARE_ALARMS", "SHARE_DOWNTIME"]})
+          {"oem_code": "OEM_ALPHA", "grants": ["SHARE_OPERATING_HOURS", "SHARE_DOWNTIME"]})
 
 
 def attack_races():

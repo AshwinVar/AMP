@@ -813,12 +813,12 @@ def main():
 
         # CONTROL: the intended customer CAN take it, so the refusals above are
         # about who is asking and not about the code being dead.
-        c_ok, _, _ = await accept(fac["FACTORY_C"], beta_code, ["SHARE_ALARMS"])
+        c_ok, _, _ = await accept(fac["FACTORY_C"], beta_code, ["SHARE_SERVICE_STATUS"])
         ok("CONTROL: the intended customer accepts the same code", c_ok == 200,
            str(c_ok))
 
         # --- replay, reuse, and the spent code ------------------------------
-        c1, _, _ = await accept(fac["FACTORY_A"], real, ["SHARE_ALARMS"])
+        c1, _, _ = await accept(fac["FACTORY_A"], real, ["SHARE_SERVICE_STATUS"])
         ok("CONTROL: FACTORY_A accepts a valid offer", c1 == 200, str(c1))
         for who in ("FACTORY_A", "FACTORY_B"):
             c, _, _ = await accept(fac[who], real)
@@ -837,7 +837,7 @@ def main():
             check(f"{label} cannot accept a machine into a factory",
                   c in (401, 403, 404), str(c))
         # CONTROL: an Admin still can — the refusals are about authority.
-        c, _, _ = await accept(fac["FACTORY_B"], fresh, ["SHARE_ALARMS"])
+        c, _, _ = await accept(fac["FACTORY_B"], fresh, ["SHARE_SERVICE_STATUS"])
         ok("CONTROL: a factory Admin can", c == 200, str(c))
 
         # --- the OEM's own claim list is its own ----------------------------

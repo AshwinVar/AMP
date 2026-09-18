@@ -104,6 +104,21 @@ SHARE_ALARMS          SHARE_TELEMETRY        SHARE_MAINTENANCE_HISTORY
 SHARE_DOWNTIME
 ```
 
+**Offered only when read** (added 2026-09-18). A factory is offered, and may
+give, only the grants something in AMP reads: `oem_sharing.OFFERED_GRANTS`,
+which is the first three plus `SHARE_DOWNTIME` (read by service-contract
+statements, ADR-0021). `SHARE_ALARMS`, `SHARE_TELEMETRY` and
+`SHARE_MAINTENANCE_HISTORY` are reserved: AMP stores no alarms, keeps no
+per-installation readings for a manufacturer and has no maintenance-history
+view, so granting one would share nothing. They stay in the vocabulary so a
+stored policy that holds one still parses, and a manufacturer is never told a
+customer "has not shared" one. `test_sharing_grants_offered_only_if_read.py`
+keeps the offered list and the readers equal. Until then they were offered so
+consent could be recorded in advance, but the screen never said nothing flowed.
+**When one gains a reader**, decide deliberately whether policies that already
+hold it count: they were given when nothing flowed, and the safe default is to
+ask again rather than start sharing on them.
+
 No row means **nothing is shared** beyond what the OEM already knows from having
 sold the machine: its own serial, model, and which customer/site it went to.
 Never `"OEM has a relationship with Factory A, therefore OEM may query Factory A"`.

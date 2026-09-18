@@ -294,8 +294,10 @@ def case_the_factory_is_the_one_who_decides():
           str(body))
     check("...the serial", body.get("serial_number") == "SN-001", str(body))
     check("...the model", body.get("model_code") == "X200", str(body))
-    check("...and the sharing vocabulary to choose from",
-          len(body.get("available_grants", [])) == 7, str(body.get("available_grants")))
+    check("...and the grants AMP reads to choose from, and no others",
+          [g["key"] for g in body.get("available_grants", [])] == ["SHARE_MACHINE_HEALTH",
+           "SHARE_OPERATING_HOURS", "SHARE_SERVICE_STATUS", "SHARE_DOWNTIME"],
+          str(body.get("available_grants")))
 
     # PREVIEWING IS NOT CLAIMING. A URL is not consent.
     db, tok = unscoped()
@@ -685,13 +687,26 @@ def case_consent_is_separate_and_minimal():
     st, body = register(alpha, "OEM_ALPHA", "SN-WIDEN")
     _, body = issue(alpha, body["installation_id"])
     st, body = POST(f"/connected-equipment/claim/{body['claim_code']}", a,
-                    {"grants": ["SHARE_ALARMS"]})
+                    {"grants": ["SHARE_MACHINE_HEALTH"]})
     check("accepting with a new grant WIDENS the agreement", st == 200,
           f"{st} {body}")
     widened = policy_for("OEM_ALPHA", "FACTORY_A")
-    check("...adding the new category", "SHARE_ALARMS" in widened, str(widened))
+    check("...adding the new category", "SHARE_MACHINE_HEALTH" in widened, str(widened))
     check("...and keeping the old ones",
           widened >= {"SHARE_OPERATING_HOURS", "SHARE_SERVICE_STATUS"}, str(widened))
+
+    # A grant nothing in AMP reads is refused at claim time too, BEFORE anything
+    # is claimed: consenting to it would share nothing.
+    st, body = register(alpha, "OEM_ALPHA", "SN-RESERVED")
+    _, body = issue(alpha, body["installation_id"])
+    reserved_code = body["claim_code"]
+    st, body = POST(f"/connected-equipment/claim/{reserved_code}", a,
+                    {"grants": ["SHARE_TELEMETRY"]})
+    check("accepting with a grant nothing reads is refused, and says so",
+          st == 400 and "share nothing" in str(body), f"{st} {body}")
+    st, body = POST(f"/connected-equipment/claim/{reserved_code}", a, {"grants": []})
+    check("...and the refused attempt claimed nothing: the machine can still be accepted",
+          st == 200, f"{st} {body}")
 
     # ONE FACTORY'S DECISION NEVER MOVES ANOTHER'S. Give FACTORY_C a distinctive
     # agreement, then have FACTORY_A withdraw everything, and check C is untouched
@@ -701,10 +716,10 @@ def case_consent_is_separate_and_minimal():
     _, body = issue(alpha, body["installation_id"])
     c = fac_token("factory_c_admin", "FACTORY_C")
     st, _ = POST(f"/connected-equipment/claim/{body['claim_code']}", c,
-                 {"grants": ["SHARE_TELEMETRY"]})
-    check("FACTORY_C accepts a machine and grants telemetry", st == 200, str(st))
+                 {"grants": ["SHARE_DOWNTIME"]})
+    check("FACTORY_C accepts a machine and grants downtime", st == 200, str(st))
     check("...so C's agreement is exactly that",
-          policy_for("OEM_ALPHA", "FACTORY_C") == {"SHARE_TELEMETRY"},
+          policy_for("OEM_ALPHA", "FACTORY_C") == {"SHARE_DOWNTIME"},
           str(policy_for("OEM_ALPHA", "FACTORY_C")))
 
     # CONTROL: withdrawal still works — it just lives on the deliberate control,
@@ -717,7 +732,7 @@ def case_consent_is_separate_and_minimal():
           policy_for("OEM_ALPHA", "FACTORY_A") == set(),
           str(policy_for("OEM_ALPHA", "FACTORY_A")))
     check("...while FACTORY_C's is EXACTLY as it was",
-          policy_for("OEM_ALPHA", "FACTORY_C") == {"SHARE_TELEMETRY"},
+          policy_for("OEM_ALPHA", "FACTORY_C") == {"SHARE_DOWNTIME"},
           str(policy_for("OEM_ALPHA", "FACTORY_C")))
 
 
@@ -765,7 +780,7 @@ def case_a_machine_moves_only_by_release():
     st, body = issue(alpha, S["a1"])
     check("the OEM can now issue a fresh invitation", st == 200, f"{st} {body}")
     st, body = POST(f"/connected-equipment/claim/{body['claim_code']}", b,
-                    {"grants": ["SHARE_ALARMS"]})
+                    {"grants": ["SHARE_SERVICE_STATUS"]})
     check("FACTORY_B accepts it EXPLICITLY", st == 200, f"{st} {body}")
 
     db, tok = unscoped()

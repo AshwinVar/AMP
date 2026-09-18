@@ -330,7 +330,7 @@ def seed():
         # FACTORY_A already shares alarms with ALPHA: accepting a contract must
         # WIDEN this, never replace it.
         db.add(models.OemDataSharingPolicy(oem_code="OEM_ALPHA", tenant_code="FACTORY_A",
-                                           grants="SHARE_ALARMS", updated_by="fa"))
+                                           grants="SHARE_OPERATING_HOURS", updated_by="fa"))
         db.add(models.OemDataSharingPolicy(oem_code="OEM_ALPHA", tenant_code="FACTORY_B",
                                            grants="", updated_by="fb"))
         for t, mid in (("FACTORY_A", machines["A1"]), ("FACTORY_B", machines["AB"])):

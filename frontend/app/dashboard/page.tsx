@@ -299,7 +299,7 @@ export default function DashboardPage() {
   const [reports, setReports] = useState<ReportRequest[]>([]);
   const [systemHealth, setSystemHealth] = useState<SystemHealth | null>(null);
   const [finalSummary, setFinalSummary] = useState<FinalExecutiveSummary | null>(null);
-  const [reportForm, setReportForm] = useState({ report_no: "", report_type: "Executive Summary", requested_by: "Admin", format: "PDF", status: "Generated", notes: "" });
+  const [reportForm, setReportForm] = useState({ report_no: "", report_type: "Executive Summary", requested_by: "Admin", format: "PDF", notes: "" });
 
   const [tenants, setTenants] = useState<CompanyTenant[]>([]);
   const [saasAnalytics, setSaasAnalytics] = useState<SaaSAnalytics | null>(null);
@@ -1758,8 +1758,10 @@ export default function DashboardPage() {
       // client-supplied actor let anyone attribute an action to anyone. The
       // typed "Requested By" is still a real business field — it rides on the
       // /reports payload above, and goes in `details` so the trail keeps it.
-      await apiPost<AuditLog>("/audit-logs", { action: "Generated report request", entity_type: "Report", details: `${reportForm.report_type} · requested by ${reportForm.requested_by}` });
-      setReportForm({ report_no: "", report_type: "Executive Summary", requested_by: "Admin", format: "PDF", status: "Generated", notes: "" });
+      // "Logged", not "Generated": nothing in AMP produces the report file, and
+      // the server stores the request as Logged whatever a client sends.
+      await apiPost<AuditLog>("/audit-logs", { action: "Logged report request", entity_type: "Report", details: `${reportForm.report_type} · requested by ${reportForm.requested_by}` });
+      setReportForm({ report_no: "", report_type: "Executive Summary", requested_by: "Admin", format: "PDF", notes: "" });
       fetchAll();
     } catch (error) { report(error, "create report"); }
     });

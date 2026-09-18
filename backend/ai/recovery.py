@@ -147,6 +147,10 @@ def build_recovery_summary(db, tenant: str) -> dict:
     return {
         "has_data": True,
         "oee": o["oee"],
+        # How much of the plant `oee` measured (OEE contract s4). A silent poor
+        # machine narrows the gap to world class and shrinks the per-year upside,
+        # so the card must be able to say the figure is partial.
+        "coverage": oee_contract.coverage(db, tenant, window),
         "world_class": WORLD_CLASS_OEE,
         "gap_points": max(0, WORLD_CLASS_OEE - o["oee"]),
         "at_world_class": at_wc,

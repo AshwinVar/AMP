@@ -166,3 +166,27 @@ describe("ExecutiveOeeSection — an unrun week", () => {
     expect(screen.queryAllByText("Not run").length).toBe(0);
   });
 });
+
+describe("ExecutiveOeeSection — a Plant OEE from part of the plant says so", () => {
+  // OEE contract s4: a machine that stops reporting leaves the pooled figure, so
+  // the tile reads HIGHER the week it goes silent. The tile says "from 2 of 3
+  // machines" then (backend test_exec_oee_and_recovery_state_coverage.py).
+  const partial = { machines_expected: 3, machines_reporting: 2, coverage_pct: 67, complete: false };
+
+  it("says the figure came from part of the plant", () => {
+    render(<ExecutiveOeeSection data={payload({ plant_oee: 81, coverage: partial })} />);
+    expect(screen.getByText("from 2 of 3 machines")).toBeTruthy();
+  });
+
+  it("says nothing extra when every machine reported", () => {
+    render(<ExecutiveOeeSection data={payload({
+      plant_oee: 81, coverage: { ...partial, machines_reporting: 3, coverage_pct: 100, complete: true },
+    })} />);
+    expect(screen.queryByText(/ of 3 machine/)).toBeNull();
+  });
+
+  it("says nothing about coverage for a week that was not run", () => {
+    render(<ExecutiveOeeSection data={payload({ has_data: false, coverage: partial })} />);
+    expect(screen.queryByText(/ of 3 machine/)).toBeNull();
+  });
+});

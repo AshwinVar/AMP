@@ -7,6 +7,7 @@ import {
   YAxis,
 } from "recharts";
 
+import { coveragePhrase } from "../lib/coverage";
 import type { ExecutiveOee } from "../lib/phase15-types";
 
 /**
@@ -77,7 +78,8 @@ export default function ExecutiveOeeSection({ data }: { data: ExecutiveOee | nul
             is dropped when there is nothing to measure — colouring an unmeasured
             week red is the loudest way to state a number you do not have. */}
         <Kpi title="Plant OEE" value={pooled(data, data?.plant_oee)}
-             highlight={measured(data) ? data?.plant_oee ?? 0 : undefined} />
+             highlight={measured(data) ? data?.plant_oee ?? 0 : undefined}
+             note={measured(data) ? coveragePhrase(data?.coverage) : ""} />
         <Kpi title="Availability" value={pooled(data, data?.plant_availability)} />
         <Kpi title="Performance" value={pooled(data, data?.plant_performance)} />
         <Kpi title="Quality" value={pooled(data, data?.plant_quality)} />
@@ -219,10 +221,14 @@ function Kpi({
   title,
   value,
   highlight,
+  note,
 }: {
   title: string;
   value: string | number;
   highlight?: number;
+  // A qualifier under the figure: the Plant OEE tile says "from 2 of 3
+  // machines" when a machine reported nothing (OEE contract s4).
+  note?: string;
 }) {
   return (
     <div className={`rounded-2xl bg-slate-900 border p-5 ${
@@ -230,6 +236,7 @@ function Kpi({
     }`}>
       <p className="text-sm opacity-80">{title}</p>
       <h3 className="text-2xl font-bold mt-2">{value}</h3>
+      {note && <p className="text-[11px] mt-1 text-amber-300/90">{note}</p>}
     </div>
   );
 }

@@ -83,31 +83,63 @@ export function isOemSession(): boolean {
  */
 export class OemRequestError extends Error {
   readonly status: number;
+  /** The server's `detail` as sent: a sentence, or a structured refusal. */
+  readonly detail: unknown;
 
-  constructor(status: number, message: string) {
+  constructor(status: number, message: string, detail: unknown = message) {
     super(message);
     this.name = "OemRequestError";
     this.status = status;
+    this.detail = detail;
   }
 }
 
-async function get<T>(path: string): Promise<T> {
+/**
+ * A refusal's `detail` as one readable sentence.
+ *
+ * Most routes refuse with a sentence. The service-contract routes (ADR-0020)
+ * refuse with an object — {field, message} for a term, {message, problems} for
+ * coverage, {withheld, reason, message} when a factory has withdrawn consent —
+ * and String() of an object is "[object Object]", which tells nobody what to
+ * fix. null when there is nothing readable.
+ */
+export function refusalText(detail: unknown): string | null {
+  if (typeof detail === "string") return detail;
+  if (!detail || typeof detail !== "object") return null;
+  const d = detail as Record<string, unknown>;
+  const said = typeof d.message === "string" ? d.message
+    : typeof d.reason === "string" ? d.reason : null;
+  if (said === null) return null;
+  const field = typeof d.field === "string" ? `${d.field}: ` : "";
+  const problems = Array.isArray(d.problems) && d.problems.length
+    ? `: ${d.problems.map(String).join("; ")}` : "";
+  return field + said + problems;
+}
+
+async function refusal(response: Response): Promise<OemRequestError> {
+  // The backend's own reason, not a generic one. "Your session is not an OEM
+  // session" and "that machine is not yours" need different reactions, and a
+  // swallowed message makes both look like an outage.
+  let message = `Request failed (${response.status})`;
+  let detail: unknown = message;
+  try {
+    const body = await response.json();
+    if (body?.detail) {
+      detail = body.detail;
+      message = refusalText(body.detail) ?? message;
+    }
+  } catch {
+    /* a non-JSON error body is still an error; keep the status */
+  }
+  return new OemRequestError(response.status, message, detail);
+}
+
+/** GET from /oem. Exported for the other OEM clients (lib/oemContracts). */
+export async function get<T>(path: string): Promise<T> {
   const response = await fetch(`${API_URL}${path}`, {
     headers: getAuthHeaders(),
   });
-  if (!response.ok) {
-    // The backend's own reason, not a generic one. "Your session is not an OEM
-    // session" and "that machine is not yours" need different reactions, and a
-    // swallowed message makes both look like an outage.
-    let detail = `Request failed (${response.status})`;
-    try {
-      const body = await response.json();
-      if (body?.detail) detail = String(body.detail);
-    } catch {
-      /* a non-JSON error body is still an error; keep the status */
-    }
-    throw new OemRequestError(response.status, detail);
-  }
+  if (!response.ok) throw await refusal(response);
   return response.json();
 }
 
@@ -173,22 +205,14 @@ export type OemClaimCreated = OemClaim & {
   note: string;
 };
 
-async function post<T>(path: string, body: unknown): Promise<T> {
+/** POST to /oem. Exported for the other OEM clients (lib/oemContracts). */
+export async function post<T>(path: string, body: unknown): Promise<T> {
   const response = await fetch(`${API_URL}${path}`, {
     method: "POST",
     headers: getAuthHeaders(),
     body: JSON.stringify(body ?? {}),
   });
-  if (!response.ok) {
-    let detail = `Request failed (${response.status})`;
-    try {
-      const parsed = await response.json();
-      if (parsed?.detail) detail = String(parsed.detail);
-    } catch {
-      /* a non-JSON error body is still an error; keep the status */
-    }
-    throw new OemRequestError(response.status, detail);
-  }
+  if (!response.ok) throw await refusal(response);
   return response.json();
 }
 

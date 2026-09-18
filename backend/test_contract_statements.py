@@ -67,9 +67,11 @@ def _require_shared_pieces():
     import telemetry_coverage
     for name in ("SPAN_GAP_SECONDS", "SETTLE_SECONDS"):
         assert hasattr(telemetry_coverage, name), f"telemetry_coverage.{name} is missing"
-    assert sum(p.model is models.MachineTelemetrySpan for p in retention.POLICIES) == 1,         "retention.py has no single policy for machine_telemetry_spans"
+    assert sum(p.model is models.MachineTelemetrySpan for p in retention.POLICIES) == 1, \
+        "retention.py has no single policy for machine_telemetry_spans"
     params = inspect.signature(platform_routes.log_audit).parameters
-    assert "commit" in params and "tenant_code" in params,         "platform_routes.log_audit(tenant_code=, commit=) is missing"
+    assert "commit" in params and "tenant_code" in params, \
+        "platform_routes.log_audit(tenant_code=, commit=) is missing"
 
 
 _require_shared_pieces()

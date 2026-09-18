@@ -7,7 +7,9 @@ import {
   fetchModels,
   fetchOemNotifications,
   fleetSummary,
+  get,
   isOemSession,
+  post,
   registerMachine,
   revokeClaim,
   shareable,
@@ -256,5 +258,36 @@ describe("talking to /oem", () => {
     await expect(fetchClaims()).rejects.toMatchObject({ status: 502 });
     await expect(registerMachine({ serial_number: "X", model_id: 1 }))
       .rejects.toMatchObject({ status: 502 });
+  });
+});
+
+describe("a structured refusal (ADR-0020 contract routes)", () => {
+  // The contract routes refuse with an OBJECT detail — {field, message} for a
+  // bad term, {withheld: true, reason} when the factory has withdrawn consent,
+  // {message, problems} for coverage. String(detail) of any of those is
+  // "[object Object]", which tells a manufacturer nothing about what to fix.
+  it("keeps the detail and reads its message", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      respond({ detail: { field: "sla_target_pct", message: "must be at most 100.00" } }, 422),
+    );
+    const refusal = await post("/oem/contracts", {}).catch((e: OemRequestError) => e) as OemRequestError;
+    expect(refusal).toBeInstanceOf(OemRequestError);
+    expect(refusal.status).toBe(422);
+    expect(refusal.message).toBe("sla_target_pct: must be at most 100.00");
+    expect(refusal.detail).toEqual({ field: "sla_target_pct", message: "must be at most 100.00" });
+  });
+
+  it("names the withheld reason, and lists coverage problems", async () => {
+    vi.spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(respond({ detail: { withheld: true, reason: "sharing withdrawn by factory",
+                                                 message: "withheld until it does" } }, 403))
+      .mockResolvedValueOnce(respond({ detail: { message: "Coverage cannot be accepted",
+                                                 problems: ["SN-1 is not linked"] } }, 409));
+    const withheld = await get("/oem/contracts/1/statements/2").catch((e: OemRequestError) => e) as OemRequestError;
+    expect(withheld.status).toBe(403);
+    expect((withheld.detail as { withheld: boolean }).withheld).toBe(true);
+    expect(withheld.message).toBe("withheld until it does");
+    const coverage = await post("/oem/contracts/1/propose", {}).catch((e: OemRequestError) => e) as OemRequestError;
+    expect(coverage.message).toBe("Coverage cannot be accepted: SN-1 is not linked");
   });
 });

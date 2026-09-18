@@ -15,7 +15,9 @@ const apiGet = vi.fn();
 const apiPost = vi.fn();
 const onAdded = vi.fn();
 
-vi.mock("../lib/api", () => ({
+vi.mock("../lib/api", async (importOriginal) => ({
+  // errorDetail stays real: it is the rule that reads the backend's sentence.
+  errorDetail: (await importOriginal<typeof import("../lib/api")>()).errorDetail,
   apiGet: (p: string) => apiGet(p),
   apiPost: (p: string, b: unknown) => apiPost(p, b),
 }));

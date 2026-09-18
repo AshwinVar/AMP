@@ -1,7 +1,8 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { apiGet, apiPatch } from "../lib/api";
+import { apiGet, apiPatch, errorDetail } from "../lib/api";
+import BrandMark from "./BrandMark";
 
 type TenantConfig = {
   brand_name: string | null;
@@ -52,9 +53,11 @@ export default function BrandingSettingsCard({ onSaved }: { onSaved?: () => void
       });
       setNotice("Branding saved — it now fronts this workspace.");
       onSaved?.();
-    } catch {
+    } catch (err) {
+      // The server's own reason: a refused colour or logo address says which
+      // and why, where "check your permissions" sent people the wrong way.
       setError(true);
-      setNotice("Could not save branding — check your permissions.");
+      setNotice(`Could not save branding: ${errorDetail(err)}`);
     } finally {
       setBusy(false);
     }
@@ -65,7 +68,8 @@ export default function BrandingSettingsCard({ onSaved }: { onSaved?: () => void
       <div>
         <h3 className="text-lg font-semibold">Workspace branding</h3>
         <p className="text-slate-400 mt-1 text-sm">
-          White-label this workspace — the name and colour front the whole dashboard.
+          White-label this workspace: the name, accent colour and logo head the dashboard&apos;s
+          sidebar. A logo must be an https:// address.
         </p>
       </div>
 
@@ -112,9 +116,10 @@ export default function BrandingSettingsCard({ onSaved }: { onSaved?: () => void
         >
           {busy ? "Saving…" : "Save branding"}
         </button>
-        {/* live preview of how the sidebar header will read */}
-        <span className="inline-flex items-center gap-2 rounded-xl border border-slate-800 bg-slate-950 px-3 py-2">
-          <span className="inline-block h-3 w-3 rounded-full" style={{ backgroundColor: color }} />
+        {/* Live preview: the sidebar's own mark, so what you see is what applies. */}
+        <span className="inline-flex items-center gap-2 rounded-xl border border-slate-800 bg-slate-950 px-3 py-2"
+              data-testid="branding-preview">
+          <BrandMark name={name.trim() || "AMP"} color={color} logoUrl={logo.trim() || null} />
           <span className="text-sm font-semibold">{name.trim() || "AMP"}</span>
         </span>
         {notice && (

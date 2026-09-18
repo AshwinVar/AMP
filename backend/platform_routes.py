@@ -13,7 +13,9 @@ users and the GMATS inventory — so a company's licence and branding follow it
 everywhere. Registered from main.py at import time via register(app).
 """
 import os
+import re
 from datetime import datetime, timedelta
+from urllib.parse import urlparse
 
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import JSONResponse
@@ -150,6 +152,37 @@ def _config_dict(c):
         "trial_ends_at": c.trial_ends_at,
         "unit_value_gbp": c.unit_value_gbp,
     }
+
+
+# What a tenant's branding may store. The dashboard applies it (frontend
+# components/BrandMark.tsx), so what is stored is what a user's browser renders.
+BRAND_COLOR = re.compile(r"\A#[0-9a-fA-F]{6}\Z")
+BRAND_LOGO_URL_MAX = 2048
+
+
+def set_branding(c, payload):
+    """Apply the branding fields present in ``payload`` to config ``c``, or 400.
+
+    The one rule for both writers: a tenant Admin's PATCH /tenant-config and the
+    founder's PATCH /tenant-configs/{code}. brand_color is #rrggbb, which is what
+    the settings card's colour picker sends. brand_logo_url is an https://
+    address, or empty/null to remove the logo: the page's CSP loads images only
+    from https: and data:, and a data: logo would put an image in the database.
+    Nothing is written unless every present field is valid."""
+    color = payload.get("brand_color", c.brand_color)
+    if "brand_color" in payload and not (isinstance(color, str) and BRAND_COLOR.match(color)):
+        raise HTTPException(status_code=400, detail="brand_color must be a colour like #1d4ed8")
+    logo = payload.get("brand_logo_url", c.brand_logo_url)
+    if "brand_logo_url" in payload and logo not in (None, ""):
+        parsed = urlparse(logo) if isinstance(logo, str) else None
+        if (parsed is None or parsed.scheme != "https" or not parsed.netloc
+                or len(logo) > BRAND_LOGO_URL_MAX):
+            raise HTTPException(status_code=400, detail="brand_logo_url must be an https:// address "
+                                                        "(or empty, to remove the logo)")
+    if "brand_name" in payload:
+        c.brand_name = payload["brand_name"]
+    c.brand_color = color
+    c.brand_logo_url = logo or None
 
 
 def get_or_create_config(db, tenant_code):
@@ -326,9 +359,7 @@ def update_tenant_config(payload: dict, db: Session = Depends(get_db),
     tenant = tenancy.current_tenant() or current_user.get("tenant", "DEFAULT")
     is_platform_owner = current_user.get("tenant", "DEFAULT") == "DEFAULT"
     c = get_or_create_config(db, tenant)
-    for f in ("brand_name", "brand_color", "brand_logo_url"):
-        if f in payload:
-            setattr(c, f, payload[f])
+    set_branding(c, payload)
     # £ per good unit — a tenant Admin sets their own margin so the recovery
     # read-model can value the OEE gap. null/"" clears it (back to units-only).
     if "unit_value_gbp" in payload:
@@ -371,7 +402,8 @@ def update_any_tenant(tenant_code: str, payload: dict, db: Session = Depends(get
     if current_user.get("tenant", "DEFAULT") != "DEFAULT":
         raise HTTPException(status_code=403, detail="Platform owner only")
     c = get_or_create_config(db, tenant_code)
-    for f in ("plan", "brand_name", "brand_color", "brand_logo_url", "subscription_status"):
+    set_branding(c, payload)
+    for f in ("plan", "subscription_status"):
         if f in payload:
             setattr(c, f, payload[f])
     if "enabled_modules" in payload:

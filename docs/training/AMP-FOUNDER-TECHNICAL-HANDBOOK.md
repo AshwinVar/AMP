@@ -974,7 +974,7 @@ An **agent** is a bus subscriber that watches events, applies a rule, and **prop
 |---|---|---|---|---|---|
 | **Maintenance** | ProductionCompleted, DowntimeStarted | risk ≥ **75** (`CRITICAL_RISK`) | `MaintenanceTask` (Proposed) | No | **Yes** |
 | **Quality** | QualityInspectionFailed | fail rate ≥ **10%** | `MaintenanceTask` (Proposed) | No | **Yes** |
-| **Reorder** | InventoryLow | any low-stock; qty ≈ refill to 2× reorder | `PurchaseOrder` (**Draft**) | **Yes** (reversible draft) | No (but stays Draft) |
+| **Reorder** | InventoryLow | any low-stock; qty ≈ refill to 2× reorder | `PurchaseOrder` (**Draft**) | **Yes** — the PO moves Draft → **Approved** (`AUTO_APPROVE_AGENTS`, default `reorder`; an Admin can withdraw the trust per tenant in `AgentPolicy`) | No, unless the tenant withdraws auto-approval |
 | **Escalation** | DowntimeStarted (+ morning briefing) | ≥ **3** downtimes in **30 days** | `Escalation` (Proposed) | No | **Yes** |
 | **Yield** | ProductionCompleted | good-rate < **85%** over ≥ **50** units | `MaintenanceTask` (Proposed) | No | **Yes** |
 
@@ -1819,7 +1819,7 @@ The key end-to-end flows in one glance each. *(The complete set is its own file:
 - **LOGIN:** browser `POST /login` → `core_routes.login` → bcrypt verify → JWT(sub,role,tenant) → localStorage → `Bearer` on every call. (Ch.5)
 - **MQTT:** machine → `flowmes/{tenant}/{site}/machines` → `mqtt_service.on_message` → identity (tenant,site,name) → DB (Machine/MachineEvent/ProductionRecord/DowntimeLog) → broadcast → owning-tenant browsers. (Ch.15)
 - **WORK ORDER → BOM:** `PATCH /work-orders/{id}=Completed` → publish `ProductionCompleted` → `move_bom_on_production_completed` consumes components + receives finished (atomic) → maybe `InventoryLow`. (Ch.10)
-- **INVENTORY LOW → REORDER:** issue below reorder → `InventoryLow` → Reorder agent drafts PO (Draft) + AgentAction(Proposed) → auto-approved but stays Draft. (Ch.9/13)
+- **INVENTORY LOW → REORDER:** any stock drop across the reorder level (`stock_events.stock_dropped`) → `InventoryLow` → Reorder agent drafts PO (Draft) + AgentAction(Proposed) → auto-approved by default, so `apply_decision` moves the PO **Draft → Approved** (a tenant that withdraws the trust gets a notification and approves by hand). (Ch.9/13)
 - **AGENT APPROVAL:** event → agent proposes (pending) + AgentAction(Proposed) → human `POST /agent-actions/{id}/approve` → `approvals.authorise` (tenant/status/expiry/actor re-checked vs DB) → `apply_decision` executes. (Ch.13)
 - **WEBSOCKET:** open `/ws/live?token=` → `ws_auth.resolve` before accept → `(socket,tenant)` → broadcast filtered by `tenant_code`. (Ch.16)
 - **OEM CLAIM:** OEM `POST /oem/machines` (Manufactured) → `/claim` (one-time hashed code) → factory Admin previews → accepts (atomic conditional UPDATE sets `factory_tenant_code`) → link → commission → Active → fleet. (Ch.20)

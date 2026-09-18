@@ -3,17 +3,22 @@
 > Handover file. A new session should be able to read only this and continue.
 > Keep it short. Update it at the end of every completed task.
 
-**Updated:** 2026-09-18 (#609–#616: the approval lock, AMP-native AI, agreed
-downtime attribution for service contracts, and the sweep queue's tail; see the
-section of that date below)
-**Master SHA:** `7803711` (#616). A docs-only merge on top of it changes nothing
+**Updated:** 2026-09-18 (#617–#630: figures that claimed more than was measured —
+two trends, an invented OEE, the scorecard's arrows and coverage, a fake
+"Generated", a lifetime report, founder-only diagnostics, machine history, shift
+efficiency and goods receipts; see the section of that date below)
+**Master SHA:** `08abe31` (#630). A docs-only merge on top of it changes nothing
 that runs.
-**Production SHA:** `7803711` — verified live, not assumed:
-`{"status":"ok","database":"ok","schema":"ok","version":"7803711"}` from
-`https://flowmes-production.up.railway.app/health`, read at 12:57 UTC; `/readiness`
-200 at `0010_outcome_contracts` (migration 0010 ran on production with #614).
-Master and production are in step. Railway auto-deploys master, so prod tracks
-HEAD; re-check `/health` rather than trusting this line's age.
+**Production SHA:** `08abe31` — verified live, not assumed:
+`{"status":"ok","database":"ok","schema":"ok","version":"08abe31"}` from
+`https://flowmes-production.up.railway.app/health`, read at 17:46 UTC; `/readiness`
+200 at `0010_outcome_contracts`; the frontend (`https://flow-mes.vercel.app`)
+answers 200. Master and production are in step. Railway auto-deploys master, so
+prod tracks HEAD; re-check `/health` rather than trusting this line's age.
+
+**Awaiting review:** #631 (the founder's `X-Tenant` preview could bind an OEM's
+sentinel namespace; `effective_tenant` no longer binds a reserved code, and a new
+guard refuses such a request with a readable 403 on every route).
 
 > This header was twenty PRs stale when it was found (`040d30a`/#539 while master
 > was `208f564`/#559). A handover whose own first three lines are wrong teaches a
@@ -150,6 +155,97 @@ Two lessons worth keeping:
 - **A guard can be blind in one syntax.** `test_currency_single` caught `$${` and
   `$<digit>` but not a JSX-text `${m.cost}`, which is exactly how two components
   printed dollars. Both missed lines are now pinned verbatim as a probe.
+
+### 2026-09-18 — figures that claimed more than was measured (#617–#630)
+
+Every one of these published a number or a status the data did not support. Each
+was reproduced first (a failing test, or a 20-line probe through the real
+read-model), fixed, mutation-tested, swept (per-file, all suites) and merged with
+production verified on `/health`.
+
+| PR | What | Evidence |
+|---|---|---|
+| #617 | The handover brought up to #616 | docs |
+| #618 | **InventoryLow came only from the ledger.** Issue slips, cycle counts, PATCH, CSV imports, PO receipt corrections and the BOM subscriber all dropped stock silently, so the Reorder agent never heard. One rule now (`stock_events.stock_dropped`), called by every writer | 10/10 mutations |
+| #619 | `/oee-trend`'s "this week" was calendar dates, the headline's is `[now-7d, now)`: **trend 38% beside headline 23%**, one plant, one moment | 7/7 mutations |
+| #620 | `/analytics/summary` replaced an unmeasured week's OEE with `utilization × 0.9 × 0.95`: **"OEE 47%" from A 0 × P 0 × Q 0**, printed by `daily-summary.txt`. Fired in every idle week once the summary moved to the 7-day window. The backend helper is deleted | 5/5 mutations |
+| #621 | The Costing card printed **"Total lost £110" beside "Losses down £140 to £30 week on week"**: the cost trend's calendar halves. Its series now spans every date of the fortnight, with the oldest flagged `partial`, and the seam date shows both weeks | 12/12 mutations |
+| #622 | The scorecard showed **OEE "—" beside "▼72 pts"**. A change was computed from the raw 0 under a None, the prior week counted rows (`bool(records)`), and a plant that did not run had losses of 0 in green. A change now needs two measured weeks | 7/7 mutations |
+| #623 | **Every report request read "Generated", and nothing generates a report.** The dashboard sent the status, the API stored it, and the audit trail said so too. The server owns the status now ("Logged") and the view says no file is produced | 5/5 mutations |
+| #624 | The downloadable intelligence report printed **all-time** downtime, OEE, top loss reason and worst machine under the 7-day dashboard's labels (330 min vs the week's 30). It now prints the dashboard's own summary, with its window named | 7/7 mutations |
+| #625 | **The exec home's Plant OEE rose, with a green arrow, the week the worst machine went silent, and said nothing** (OEE contract §4: every plant OEE states its coverage). The scorecard tile, the briefing headline, the copilot's answer and the weekly report now say "from N of M machines" (`oee_contract.coverage_phrase`, one wording) | 12/12 mutations |
+| #626 | The same on the **Executive OEE page's tile** and the **money-story card**, whose upside a silent poor machine also shrinks; `frontend/lib/coverage.ts` mirrors the backend wording | 10/10 mutations |
+| #627 | **Every login in the founder's workspace saw the founder-only diagnostics** (`/platform/status`'s sim allowlist, which names other tenants; `/ai/status`'s process-wide last copilot error). Gated on the workspace, not the role. `tenancy.is_founder` is now the one rule | 5/5 mutations |
+| #628 | A **machine CSV import could mark a machine Breakdown and leave no trace** in its status history (the timeline, the risk scorer and the failure-risk model all read it). It now writes a `MachineEvent` with source "import", inside the row's savepoint | 5/5 mutations |
+| #629 | **A shift nobody planned was scored 0% efficiency** on four surfaces (shift KPIs, the Executive shift chart's 0% bar, `shifts.csv`, `daily-summary.txt`) though `ai/shift.py` already said it has none. `analytics_engine.shift_attainment` is now the one formula | 10/10 mutations |
+| #630 | **A goods receipt line could read "Rejected" while its whole quantity went into stock.** The form had no rejected input and a status dropdown; the server stored both as sent. The quantities now decide: rejected = received − accepted, the status follows, and accepting more than arrived is refused | 8/8 mutations |
+
+Lessons worth keeping:
+
+- **A defect found in passing is worth a probe, not a note.** #620, #622 and #623
+  were each found while fixing something adjacent. Each was confirmed in minutes
+  by driving the real read-model before any code was changed.
+- **The count-the-rows rule survives in pairs.** #585 fixed the current week's
+  KPIs. The prior week's `has: bool(records)`, and a delta computed from the 0
+  under a None, survived until one assertion was stated over the whole payload:
+  *no KPI publishes a change without a value*.
+- **CI tests each PR on the base it was opened against.** Before merging two PRs
+  that CI tested on different bases, merge master and both locally and sweep:
+  master + #622 + #623 was 312/312.
+- **Parallel CI polls exceed the unauthenticated API limit (60/hour).** One
+  poller for every open PR, at 240 s, stays under it.
+- **A worktree whose `node_modules` is a junction to the main checkout's** must
+  have the junction unlinked (`rmdir` without `/s`) before `git worktree remove`,
+  or the recursive delete can reach through it.
+- **A harness that pins a payload grows with it.** Adding `coverage` to two
+  payloads broke `test_executive_oee_sql_parity.py` (a key-for-key reference)
+  and `test_recovery.py` (stubs every DB read). Both designs are deliberate; the
+  fix was to extend them (the reference gains the same call, recovery gains a
+  `_coverage` seam), not to loosen them. The full sweep found both before CI did.
+- **A PR stacked on another** (#626 on #625): after the base squash-merges,
+  `git rebase --onto origin/master <old base commit>` moves only the stacked
+  commits.
+- **GitHub's compare page reflows after it loads**, and "GitHub Community
+  Guidelines" sits just under "Create pull request". Two coordinate clicks landed
+  on the link. Click the right half of the button, clear of the link's span.
+
+**Founder decisions added** (1–6 are in the #609–#616 section below):
+
+7. **Machine cards' "Estimated OEE"** (`utilization × 0.9 × 0.95`, labelled) is now
+   the only OEE estimate in AMP. Keep a labelled estimate for a machine with no
+   production, or show "—"?
+8. **Report Requests is a log;** nothing generates the file a request names.
+   - Keep it as a log, remove the form, or build report generation?
+   - Rows already in production still say "Generated": rewrite them to "Logged" (a change to stored data), or leave them?
+9. **The production card's week is calendar dates** (`[midnight(today-6), now]`),
+   while OEE and cost use the rolling contract window. So the scorecard's
+   good-rate change compares a calendar week with a rolling prior week, and a
+   record late on date `today-7` is in neither. Move the production card to the
+   contract window?
+10. **Smart alerts, and "Generate escalations from smart alerts",** judge a
+    machine's OEE from its latest record however old: *"critically low at 25%"*
+    for a machine that last ran 20 days ago, and a Critical escalation from it.
+    Judge over the contract window, or state the run's date? (There are two alert
+    generators, `build_smart_alerts` and `generate_alerts`, with different
+    thresholds and severities; choosing the basis is a chance to make them one.)
+11. **Goods receipt lines already stored** keep the status and rejected count they
+    were given, which can contradict their quantities (#630). Recompute them from
+    received and accepted (a change to stored data), or leave them?
+
+**Fixed in this handover's own PR:** the founder handbook said twice that an
+auto-approved reorder PO "stays a Draft". With `AUTO_APPROVE_AGENTS=reorder` (the
+default) `apply_decision` moves it **Draft → Approved**; the handbook now says so.
+
+**Next** (verified in passing unless marked):
+- decision 10 above, once chosen;
+- the remaining plant-OEE text surfaces the audit listed (`/oee-trend`, `/analytics/summary`, `/analytics/management`, the `.txt` reports) carry no coverage yet. The scorecard, briefing, copilot, weekly report, Executive tile and money card now do;
+- six frontend spots write "£" literally instead of `money()` / `CURRENCY` (`MoneyStorySnapshot`, `NextBestActionCard`, `RecoverySnapshot`). They render the same as `money()` today, so this is a single-source tidy, not a visible defect;
+- the OEM sentinel namespace via `X-Tenant`: verified and fixed in #631, awaiting review;
+- `audit_oem_specialist.py` reports two open findings (unknown sharing grants are not refused by the vocabulary check; four code paths assign a factory tenant to a machine). Not CI gates; not yet triaged.
+
+Checked and not a defect:
+- **PLC signal mappings** are stored and never applied, but `docs/sales/REAL-OEM-INPUT-REQUIRED.md` already says so, and no screen claims otherwise.
+- **OEM tokens and the founder check.** An OEM token carries no `tenant` claim, but `get_current_user` refuses OEM principals on every factory route before any founder check runs.
 
 ### 2026-09-18 — AMP-native AI, service contracts, and the queue's tail (#609–#616)
 

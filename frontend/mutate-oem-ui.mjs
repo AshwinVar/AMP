@@ -174,9 +174,12 @@ const MUTATIONS = [
     to: "      setChosen([]);",
   },
   {
+    // #612 moved the component's private detailOf() into lib/api as errorDetail();
+    // this and the confirmation entry below named the old call and applied to
+    // nothing until lib/mutation-anchors.test.ts caught them.
     label: "a refused lookup is swallowed into a generic message",
     file: "components/AddConnectedEquipment.tsx",
-    from: "      setError(detailOf(err));\n    } finally {\n      setBusy(false);\n    }\n  }\n\n  async function confirm()",
+    from: "      setError(errorDetail(err));\n    } finally {\n      setBusy(false);\n    }\n  }\n\n  async function confirm()",
     to: "      setError('Something went wrong.');\n    } finally {\n      setBusy(false);\n    }\n  }\n\n  async function confirm()",
   },
   // --- saying which machine on the floor a serial is (ADR-0019) ------------
@@ -261,7 +264,7 @@ const MUTATIONS = [
   {
     label: "a refused confirmation reports success anyway",
     file: "components/AddConnectedEquipment.tsx",
-    from: "    } catch (err) {\n      setError(detailOf(err));\n    } finally {\n      setBusy(false);\n    }\n  }\n\n  return (",
+    from: "    } catch (err) {\n      setError(errorDetail(err));\n    } finally {\n      setBusy(false);\n    }\n  }\n\n  return (",
     to: "    } catch (err) {\n      onAdded();\n    } finally {\n      setBusy(false);\n    }\n  }\n\n  return (",
   },
 ];

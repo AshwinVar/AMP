@@ -35,6 +35,7 @@ from analytics_engine import (
     build_shift_kpis,
     build_smart_alerts,
     calculate_oee_from_record,
+    shift_attainment,
     downtime_aggregates,
     generate_alerts,
     normalize_downtime_reason,
@@ -208,6 +209,10 @@ def analytics_summary(db: Session = Depends(_get_db), current_user: dict = Depen
         "downtime_events": downtime["total_events"],
         "total_downtime_minutes": total_downtime_minutes,
         "avg_shift_efficiency": avg_shift_efficiency,
+        # Was any shift planned? The same integer convention as has_data beside
+        # avg_oee: 0 with no target anywhere is "not measured", not "produced
+        # nothing", and only this tells them apart.
+        "shift_efficiency_measured": total_shift_target > 0,
         "top_reason": top_reason,
         "top_machine": top_machine_name,
         "reason_counts": reason_counts,
@@ -966,7 +971,9 @@ def get_executive_oee(
         # unrecorded output, matching the pooled headline just computed.
         target = shift.target_output or 0
         actual = shift.actual_output or 0
-        efficiency = round((actual / target) * 100) if target else 0
+        # None for a shift with no target, which the chart does not plot: it
+        # used to draw a 0% bar for a shift nobody planned.
+        efficiency = shift_attainment(actual, target)
         shift_rows.append(
             {
                 "shift_name": shift.shift_name,

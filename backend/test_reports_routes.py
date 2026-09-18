@@ -126,8 +126,10 @@ def test_shifts_csv_content_and_efficiency():
     by_name = {r[1]: r for r in rows}
     assert by_name["Morning"][4] == "90", by_name["Morning"]
     assert by_name["Night"][4] == "75", by_name["Night"]
-    assert by_name["Unplanned"][4] == "0", by_name["Unplanned"]   # 0 target -> 0, not a crash
-    print("PASS shifts.csv content: header, id order, and efficiency (incl. 0-target guard)")
+    # 0 target -> an empty cell: not a crash, and not a 0% for a shift nobody
+    # planned (test_no_target_no_shift_efficiency.py)
+    assert by_name["Unplanned"][4] == "", by_name["Unplanned"]
+    print("PASS shifts.csv content: header, id order, and efficiency (a 0-target shift has none)")
 
 
 def _seed_machine(db, tenant, name, status="Running", utilization=85):

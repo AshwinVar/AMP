@@ -361,7 +361,7 @@ The intelligence layer is built from **read‑models** (ADR‑0007): pure functi
 
 ### `backend/analytics_engine.py` — the maths brain
 - **Plain English:** Turns raw numbers into the meaningful scores managers care about — OEE, shift efficiency, the executive summary, and smart alerts.
-- **Technical:** `calculate_oee_from_record` (A×P×Q), `build_shift_kpis`, `build_oee_trends`, `build_management_summary` (top loss reason, worst machine, downtime cost, target achievement), and `build_smart_alerts` (breakdown / low‑utilisation / low‑OEE / high‑reject / downtime‑escalation rules).
+- **Technical:** `calculate_oee_from_record` (A×P×Q), `build_shift_kpis` (per-shift efficiency by `shift_attainment`, the one formula: `None` for a shift with no target, never 0%), `build_oee_trends`, `build_management_summary` (top loss reason, worst machine, downtime cost, target achievement), and `build_smart_alerts` (breakdown / low‑utilisation / low‑OEE / high‑reject / downtime‑escalation rules).
 
 ### `backend/predictive_engine.py` — the "will it break?" scorer
 - **Plain English:** Gives each machine a health‑risk score and a recommendation, so you fix things before they fail.
@@ -556,7 +556,7 @@ GET    /analytics/things  → summary/KPIs for that module
 | `GET` | `/analytics/oee-trends` | OEE trend series for the charts. |
 | `GET` | `/analytics/machine-timeline` | Per‑machine status timeline. |
 | `GET` | `/analytics/machine-state-summary` | Time spent Running/Idle/Down per machine. |
-| `GET` | `/analytics/shift-kpis` | Shift efficiency (actual vs target). |
+| `GET` | `/analytics/shift-kpis` | Shift efficiency (actual vs target); `null` for a shift with no target. |
 | `GET` | `/analytics/management` | Executive management summary (top loss, worst machine, cost). |
 | `GET` | `/analytics/executive-oee` | Deep executive OEE breakdown. |
 | `GET` | `/analytics/predictive-maintenance` | Per‑machine failure‑risk scores. |
@@ -620,7 +620,7 @@ GET    /analytics/things  → summary/KPIs for that module
 | `GET` | `/reports/downtime.csv` | Downtime CSV export. |
 | `GET` | `/reports/shifts.csv` | Shifts CSV export. |
 | `GET` | `/reports/oee.csv` | OEE CSV export. |
-| `GET` | `/reports/daily-summary.txt` | Plain-text factory summary: machine census, plant OEE and downtime over the last 7 days (OEE reads "not measured" when no production was recorded), shift efficiency over all shifts. |
+| `GET` | `/reports/daily-summary.txt` | Plain-text factory summary: machine census, plant OEE and downtime over the last 7 days (OEE reads "not measured" when no production was recorded), shift efficiency over all shifts ("not measured" when no shift has a target). |
 | `GET` | `/reports/intelligence-summary.txt` | Plain-text intelligence report: the management dashboard's own last-7-days summary (plant OEE reads "not measured" when no production was recorded), per-shift KPIs over all recorded shifts, and the smart-alert feed. |
 | `GET`/`POST` | `/audit-logs` | The audit trail of who did what. |
 

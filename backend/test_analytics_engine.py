@@ -86,8 +86,10 @@ def test_build_shift_kpis():
     ])
     assert rows[0] == {"shift_name": "A", "target_output": 100, "actual_output": 90,
                        "efficiency": 90, "gap": 10}, rows[0]
-    assert rows[1]["efficiency"] == 0, rows[1]  # zero target -> 0, not a crash
-    print("PASS build_shift_kpis computes efficiency + gap (zero target guarded)")
+    # zero target -> no efficiency (None): not a crash, and not a 0% for a shift
+    # nobody planned (test_no_target_no_shift_efficiency.py)
+    assert rows[1]["efficiency"] is None, rows[1]
+    print("PASS build_shift_kpis computes efficiency + gap (zero target has none)")
 
 
 def test_build_shift_kpis_null_outputs_are_safe_and_honest():
@@ -103,11 +105,13 @@ def test_build_shift_kpis_null_outputs_are_safe_and_honest():
     # NULL actual with a real target: 0/100 -> 0% efficiency, gap = full target.
     assert rows[0] == {"shift_name": "null-actual", "target_output": 100,
                        "actual_output": 0, "efficiency": 0, "gap": 100}, rows[0]
-    # NULL target: divisor guard holds -> 0% (never a crash); gap = 0 - 40 = -40.
+    # NULL target: never a crash, and no efficiency (None) rather than a 0% for
+    # a shift with nothing to measure against (test_no_target_no_shift_efficiency.py);
+    # gap = 0 - 40 = -40.
     assert rows[1] == {"shift_name": "null-target", "target_output": 0,
-                       "actual_output": 40, "efficiency": 0, "gap": -40}, rows[1]
+                       "actual_output": 40, "efficiency": None, "gap": -40}, rows[1]
     assert rows[2] == {"shift_name": "both-null", "target_output": 0,
-                       "actual_output": 0, "efficiency": 0, "gap": 0}, rows[2]
+                       "actual_output": 0, "efficiency": None, "gap": 0}, rows[2]
     print("PASS build_shift_kpis coalesces NULL outputs to 0 (no 500, honest gap)")
 
 

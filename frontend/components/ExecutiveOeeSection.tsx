@@ -8,6 +8,7 @@ import {
 } from "recharts";
 
 import { coveragePhrase } from "../lib/coverage";
+import { plottableShifts } from "../lib/shift";
 import type { ExecutiveOee } from "../lib/phase15-types";
 
 /**
@@ -131,7 +132,8 @@ export default function ExecutiveOeeSection({ data }: { data: ExecutiveOee | nul
 
         <ChartCard title="Shift Production Efficiency">
           <ResponsiveContainer width="100%" height="100%">
-            <BarChart data={shiftRows}>
+            {/* Shifts with a figure: one with no target has none, and no bar. */}
+            <BarChart data={plottableShifts(shiftRows)}>
               <XAxis dataKey="shift_name" stroke="#94a3b8" />
               <YAxis stroke="#94a3b8" />
               <Tooltip

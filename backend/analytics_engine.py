@@ -264,6 +264,19 @@ def pooled_oee_from_sums(planned, runtime, total, good, ideal_seconds, has_data)
     }
 
 
+def shift_attainment(actual, target):
+    """Actual as a % of target, or None when there's no target to measure
+    against. A shift with no planned output has no attainment -- scoring it 0%
+    would read an unplanned shift as one that produced nothing, and flag it the
+    "worst" performer (ADR-0007: never present a metric the data can't support).
+
+    THE formula for a shift's efficiency / attainment. ai/shift.py stated it
+    first; build_shift_kpis, the Executive OEE shift chart and shifts.csv each
+    kept a copy that scored a no-target shift 0% and now call this
+    (test_no_target_no_shift_efficiency.py)."""
+    return round(actual / target * 100) if target else None
+
+
 def build_shift_kpis(shifts):
     rows = []
 
@@ -282,7 +295,7 @@ def build_shift_kpis(shifts):
         # RECONCILES the two: a NULL row contributes 0 to both paths (rule-3).
         target = shift.target_output or 0
         actual = shift.actual_output or 0
-        efficiency = round((actual / target) * 100) if target else 0
+        efficiency = shift_attainment(actual, target)     # None without a target
         rows.append({
             "shift_name": shift.shift_name,
             "target_output": target,

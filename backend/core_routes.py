@@ -232,6 +232,11 @@ def daily_summary_report(db: Session = Depends(_get_db), current_user: dict = De
     else:
         oee_lines = (f"Plant OEE, last {days} days: not measured "
                      "(no production recorded in this window)")
+    # No shift had a target: the pooled efficiency is not measured, not 0%
+    # (test_no_target_no_shift_efficiency.py).
+    shift_line = (f"Shift Efficiency, all shifts: {summary['avg_shift_efficiency']}%"
+                  if summary.get("shift_efficiency_measured")
+                  else "Shift Efficiency, all shifts: not measured (no shift has a target)")
     report = f"""
 AMP Daily Factory Summary
 Generated: {datetime.utcnow().isoformat()} UTC
@@ -243,7 +248,7 @@ Avg Utilization: {summary["avg_utilization"]}%
 {oee_lines}
 Downtime Events, last {days} days: {summary["downtime_events"]}
 Total Downtime, last {days} days: {summary["total_downtime_minutes"]} minutes
-Shift Efficiency, all shifts: {summary["avg_shift_efficiency"]}%
+{shift_line}
 Top Downtime Reason, last {days} days: {summary["top_reason"]}
 Top Downtime Machine, last {days} days: {summary["top_machine"]}
 

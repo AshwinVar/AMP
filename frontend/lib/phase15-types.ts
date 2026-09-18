@@ -28,7 +28,8 @@ export type ShiftOeeRow = {
   shift_name: string;
   target_output: number;
   actual_output: number;
-  efficiency: number;
+  /** null for a shift with no target: nothing to measure against, not 0%. */
+  efficiency: number | null;
 };
 
 export type QualityTrendRow = {

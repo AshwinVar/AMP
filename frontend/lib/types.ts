@@ -69,6 +69,9 @@ export type Summary = {
   downtime_events: number;
   total_downtime_minutes: number;
   avg_shift_efficiency: number;
+  /** false when no shift had a target: avg_shift_efficiency is then 0 by
+   *  convention, and means "not measured", not "produced nothing". */
+  shift_efficiency_measured?: boolean;
   top_reason: string;
   top_machine: string;
   reason_counts: Record<string, number>;

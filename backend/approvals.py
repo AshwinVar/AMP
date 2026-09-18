@@ -323,7 +323,7 @@ def _written_before(item, proposal):
     proposal be about it: every agent flushes its item before recording the
     proposal that names the item's id. Measured on SQLite (verifier round 2),
     which reuses the highest deleted id: purchase orders bulk-deleted (as
-    reseed_inventory.py does), a new agent Draft PO took the old id, and the OLD
+    reseed_inventory.py did until #606), a new agent Draft PO took the old id, and the OLD
     proposal held it -- approving that proposal moved the new PO. PostgreSQL
     sequences do not reuse ids, but an explicit id or a restarted sequence would.
     A row or proposal with no creation time cannot be shown to be the

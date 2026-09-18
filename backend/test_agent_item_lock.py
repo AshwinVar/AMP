@@ -1339,7 +1339,7 @@ def test_a_proposal_never_holds_a_newer_row_with_its_id():
     banner("15. A PROPOSAL NEVER HOLDS A NEWER ROW THAT REUSES ITS ITEM'S ID")
     # Measured through main.app on SQLite (verifier round 2). A Draft PO (id 1)
     # and its proposal #2 "Draft a PO for Steel (90 kg)"; purchase orders
-    # bulk-deleted, as reseed_inventory.py does (agent_actions untouched); a new
+    # bulk-deleted, as reseed_inventory.py did until #606 (agent_actions untouched); a new
     # Copper Draft PO took id 1 again with proposal #3. GET /purchase-orders showed
     # the Copper PO held by #2, and approving #2 answered 200: #2 recorded
     # Approved and the Copper PO moved, while #3 was left orphaned. SQLite

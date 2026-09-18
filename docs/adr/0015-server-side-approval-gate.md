@@ -266,7 +266,7 @@ reproduces all of it (34 failures on master).
 10. **A proposal names only a row written no later than itself** (verifier
     round 2). Measured on SQLite through `main.app`: a Draft PO (id 1) and its
     proposal #2 "Draft a PO for Steel (90 kg)"; purchase orders bulk-deleted,
-    as `reseed_inventory.py` does (agent actions untouched); a new Copper Draft
+    as `reseed_inventory.py` did until #606 (agent actions untouched; it now deletes them with their POs); a new Copper Draft
     PO took id 1 again with proposal #3. `GET /purchase-orders` showed it held
     by #2, and approving #2 answered 200 and moved the Copper PO, orphaning #3.
     SQLite reuses the highest deleted rowid; PostgreSQL sequences do not (the

@@ -130,6 +130,12 @@ assistant's context does so in prose:
 > PLANT OEE (last 7 days, pooled): 95% … — measured from 1 of 3 machines
 > (33% coverage); the rest reported nothing in this window
 
+On screen, the dashboard's OEE card says "2 of 3 machines reporting", and the
+scorecard's Plant OEE tile says "from 2 of 3 machines" under the figure whenever
+coverage is incomplete. The tile's arrow can turn green the week the worst
+machine goes silent; the line under it is what says why
+(`backend/test_scorecard_oee_states_coverage.py`, `ScorecardStrip.test.tsx`).
+
 ---
 
 ## 5. Every surface, one contract

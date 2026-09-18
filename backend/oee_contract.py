@@ -363,6 +363,19 @@ def coverage(db, tenant, window):
     }
 
 
+def coverage_phrase(cov) -> str:
+    """How a sentence about a plant OEE states its coverage (s4).
+
+    "" when the figure came from every machine, or there is no machine to speak
+    of; otherwise "from N of M machines". ONE wording, so the briefing, the
+    copilot and the weekly report say it as the scorecard tile does."""
+    if not cov or cov.get("complete") or not cov.get("machines_expected"):
+        return ""
+    expected = cov["machines_expected"]
+    return (f"from {cov['machines_reporting']} of {expected} "
+            f"machine{'s' if expected != 1 else ''}")
+
+
 def plant_oee(db, tenant, window=None):
     """THE plant OEE. Every user-facing plant figure calls this.
 

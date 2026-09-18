@@ -93,7 +93,8 @@ def build_scorecard(db, tenant: str) -> dict:
     # ONE anchor for the whole request: the headline and the "last week" it is
     # subtracted from must abut, not be built from two separate utcnow() calls.
     window = oee_contract.OeeWindow(WINDOW_DAYS)
-    oee = build_oee_summary(db, tenant, now=window.end)["plant"]
+    oee_summary = build_oee_summary(db, tenant, now=window.end)
+    oee = oee_summary["plant"]
     prod = build_production_summary(db, tenant)
     delivery = build_delivery_summary(db, tenant)
     cost = build_cost_summary(db, tenant, now=window.end)
@@ -179,8 +180,14 @@ def build_scorecard(db, tenant: str) -> dict:
                              tone=("good" if loss_now == 0 else "warn"))
 
     kpis = [
+        # How much of the plant the figure measured (OEE contract s4), the same
+        # coverage /oee-summary states for this window. A machine that stops
+        # reporting leaves the pooled figure, so the tile read higher, with a
+        # green arrow, the week the worst machine went silent -- and said nothing
+        # (test_scorecard_oee_states_coverage.py).
         {"key": "oee", "label": "Plant OEE", "value": oee_v, "unit": "%",
-         "tone": oee_tone, "delta": oee_d, "delta_tone": oee_dt},
+         "tone": oee_tone, "delta": oee_d, "delta_tone": oee_dt,
+         "coverage": oee_summary["coverage"]},
         {"key": "good_rate", "label": "Good rate", "value": good_v, "unit": "%",
          "tone": good_tone, "delta": good_d, "delta_tone": good_dt},
         # key stays "on_time" so the strip still drills into the orders view; the

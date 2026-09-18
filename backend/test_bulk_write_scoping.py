@@ -46,7 +46,10 @@ SKIP_FILES = {
     # disposable engine to count SQL statements. Its deletes are the teardown
     # between scales, not a product write path.
     "dashboard_perf.py",
-    "reseed_inventory.py",   # local dev reseed
+    # reseed_inventory.py is deliberately NOT here any more. It was exempt as a
+    # "local dev reseed" while its three unfiltered deletes ran on import and
+    # emptied every tenant's inventory. Every delete in it now filters the one
+    # --tenant it was given, so this guard checks it like product code.
     "reset_factory.py",      # founder's factory reset (RESEED_FACTORY=1)
     # The AERON sales demo, rebuilt behind RESEED_DEMO_OEM. Exactly the
     # reset_factory precedent: a one-shot operator rebuild reached only through

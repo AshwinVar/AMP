@@ -401,7 +401,7 @@ The intelligence layer is built from **read‑models** (ADR‑0007): pure functi
 | `mqtt_machine_publisher.py` | An earlier/simpler MQTT machine‑telemetry publisher for testing. | Standalone paho‑mqtt publisher to `flowmes/<tenant>/<site>/machines`. |
 | `mqtt_listener.py` | A standalone MQTT debug listener. | Subscribes and prints incoming messages. |
 | `live_simulator.py` | Older standalone live‑data simulator (predecessor of `factory_simulator.py`). | Loops and writes rows directly. |
-| `reseed_inventory.py` | Resets/reloads inventory demo data. | Deletes and re‑seeds inventory rows. |
+| `reseed_inventory.py` | Wipes and reloads demo inventory for **one** named company, on a development database only. Refuses to run in production, and does nothing unless you name the company and confirm. | `python backend/reseed_inventory.py --tenant <code> --yes`. Refuses when `schema_guard.is_production()` is true (`RAILWAY_ENVIRONMENT` or `PRODUCTION=1`), without `--tenant`, or without `--yes`. In one transaction it deletes that tenant's inventory transactions, purchase orders and items, plus the `AgentAction` proposals pointing at those POs. It then reseeds via `factory_simulator._inventory` / `_inventory_transactions` with the tenant bound. It refuses if another row (a GRN line, an issue slip, another tenant's movement) still references the items. Importing it does nothing. Pinned by `test_reseed_inventory_scoped.py`. |
 | `reset_machines.py` | Resets machine rows to a clean state. | Utility DB script. |
 | `generate_pdf.py` *(repo root)* | Builds the printable "AMP Complete Guide" PDF walkthrough. | Uses a PDF library to render `docs/AMP_Complete_Guide.pdf`. |
 

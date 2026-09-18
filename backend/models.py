@@ -7,6 +7,7 @@ from sqlalchemy import true as sa_true
 from sqlalchemy.orm import relationship
 
 import industrial_demo
+import module_manifest
 from database import Base
 
 # Trial length for new companies (days from tenant creation).
@@ -487,7 +488,9 @@ class TenantConfig(Base):
     id = Column(Integer, primary_key=True, index=True)
     tenant_code = Column(String, unique=True, index=True, nullable=False)
     plan = Column(String, default="enterprise")                 # starter / growth / enterprise / demo
-    enabled_modules = Column(String, default="core,operations,factory,intelligence,admin")  # CSV of module keys
+    # CSV of module keys. The default is the enterprise plan's bundle as modules.json
+    # says it, read at insert time: a Python-side default, so no DDL and no migration.
+    enabled_modules = Column(String, default=lambda: module_manifest.plan_modules("enterprise"))
     brand_name = Column(String, default="AMP")
     brand_color = Column(String, default="#6366f1")
     brand_logo_url = Column(String, nullable=True)

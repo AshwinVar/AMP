@@ -23,6 +23,7 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 import models
+import module_manifest
 import schema_guard
 import schemas
 from auth import get_current_user, require_roles
@@ -37,24 +38,21 @@ BUILD_SHA = (os.environ.get("RAILWAY_GIT_COMMIT_SHA")
 
 # Defaults applied the first time we see a tenant. DEFAULT is the founder/demo
 # workspace (everything on); GMATS is the first client (growth plan, own brand).
+# A tenant's modules are its plan's bundle, read from modules.json
+# (module_manifest.plan_modules), never spelled out here.
 _TENANT_DEFAULTS = {
-    "DEFAULT": dict(plan="demo",   enabled_modules="core,operations,factory,intelligence,admin",
-                    brand_name="AMP",            brand_color="#6366f1"),
-    "GMATS":   dict(plan="growth", enabled_modules="core,operations,factory",
-                    brand_name="GMATS Compressors",  brand_color="#e11d2a"),
+    "DEFAULT": dict(plan="demo",   brand_name="AMP",               brand_color="#6366f1"),
+    "GMATS":   dict(plan="growth", brand_name="GMATS Compressors", brand_color="#e11d2a"),
 }
+_NEW_TENANT_DEFAULT = dict(plan="enterprise", brand_name="AMP", brand_color="#6366f1")
 
 
-# SaaS plan (CompanyTenant.plan_name, what the founder picks in SaaS Admin) →
-# licence tier (TenantConfig.plan + enabled_modules, what the frontend obeys).
-# "admin" stays in every tier — the frontend force-enables core+admin anyway so
-# no tenant is locked out of account management.
-PLAN_MODULE_TIERS = {
-    "starter": ("starter", "core"),
-    "growth": ("growth", "core,operations,factory"),
-    "professional": ("growth", "core,operations,factory"),
-    "enterprise": ("enterprise", "core,operations,factory,intelligence,admin"),
-}
+# SaaS plan names (CompanyTenant.plan_name, what the founder picks in SaaS Admin)
+# that are not plans in modules.json. Every other name IS a manifest plan, and an
+# unknown one fails open to FALLBACK_PLAN. The packs each plan bundles live in
+# modules.json alone (test_plan_bundles_one_rule.py).
+SAAS_PLAN_ALIASES = {"professional": "growth"}
+FALLBACK_PLAN = "enterprise"
 
 
 def commit_tenant_config(db, tenant_code):
@@ -89,11 +87,13 @@ def commit_tenant_config(db, tenant_code):
 def apply_plan_tier(db, tenant_code, plan_name):
     """Sync a tenant's licence to its SaaS plan. Called when the founder creates
     a tenant or changes its plan; unknown plan names fail open to enterprise."""
-    tier, modules = PLAN_MODULE_TIERS.get((plan_name or "").strip().lower(),
-                                          PLAN_MODULE_TIERS["enterprise"])
+    name = (plan_name or "").strip().lower()
+    tier = SAAS_PLAN_ALIASES.get(name, name)
+    if tier not in module_manifest.plan_bundles():
+        tier = FALLBACK_PLAN
     c = get_or_create_config(db, tenant_code)
     c.plan = tier
-    c.enabled_modules = modules
+    c.enabled_modules = module_manifest.plan_modules(tier)
     commit_tenant_config(db, tenant_code)
     return c
 
@@ -189,16 +189,14 @@ def get_or_create_config(db, tenant_code):
     """Return a tenant's config, creating it from defaults (30-day trial) on first sight."""
     c = db.query(models.TenantConfig).filter(models.TenantConfig.tenant_code == tenant_code).first()
     if not c:
-        d = _TENANT_DEFAULTS.get(tenant_code, dict(
-            plan="enterprise",
-            enabled_modules="core,operations,factory,intelligence,admin",
-            brand_name="AMP", brand_color="#6366f1",
-        ))
+        d = _TENANT_DEFAULTS.get(tenant_code, _NEW_TENANT_DEFAULT)
         c = models.TenantConfig(
             tenant_code=tenant_code, subscription_status="trial",
-            trial_ends_at=datetime.utcnow() + timedelta(days=30), **d,
+            trial_ends_at=datetime.utcnow() + timedelta(days=30),
+            enabled_modules=module_manifest.plan_modules(d["plan"]), **d,
         )
-        db.add(c); db.commit(); db.refresh(c)
+        # A first licence is a licence write: it commits the one way they all do.
+        db.add(c); commit_tenant_config(db, tenant_code); db.refresh(c)
     return c
 
 
@@ -335,7 +333,6 @@ def list_modules(db: Session = Depends(get_db), current_user: dict = Depends(get
     module appears in a tenant's AMP only when its pack is in their plan — the
     single, editable source of truth for the plug-and-play plugin system. Follows
     the founder's company switcher (effective tenant), like /tenant-config."""
-    import module_manifest
     import tenancy
     tenant = tenancy.current_tenant() or current_user.get("tenant", "DEFAULT")
     cfg = get_or_create_config(db, tenant)
@@ -424,7 +421,6 @@ def apply_plan(tenant_code: str, payload: dict, db: Session = Depends(get_db),
     audits it. Founder (DEFAULT) only: it licenses another company."""
     if current_user.get("tenant", "DEFAULT") != "DEFAULT":
         raise HTTPException(status_code=403, detail="Platform owner only")
-    import module_manifest
     plan = (payload.get("plan") or "").strip().lower()
     bundles = module_manifest.plan_bundles()
     if plan not in bundles:
@@ -432,7 +428,7 @@ def apply_plan(tenant_code: str, payload: dict, db: Session = Depends(get_db),
                             detail=f"Unknown plan '{plan}'. Choose one of: {', '.join(sorted(bundles))}")
     c = get_or_create_config(db, tenant_code)
     c.plan = plan
-    c.enabled_modules = ",".join(bundles[plan])
+    c.enabled_modules = module_manifest.plan_modules(plan)
     commit_tenant_config(db, tenant_code)
     log_audit(db, current_user.get("sub"), "apply_plan", "tenant", None, f"{tenant_code}:{plan}")
     return _config_dict(c)

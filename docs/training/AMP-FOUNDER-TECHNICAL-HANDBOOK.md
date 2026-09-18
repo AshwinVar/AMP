@@ -724,7 +724,7 @@ A concrete trace: *a factory receives 100 bearings, then issues 30 to a job* —
 ### The two buckets
 AMP has **two** inventory surfaces (both real):
 - **Basic** (`inventory_routes.py`, `/inventory`) — `InventoryItem` (with `current_stock`, `reorder_level`) + an `InventoryTransaction` ledger. This is the generic path and the one the BOM/agents use.
-- **Enterprise** (`enterprise_inventory_routes.py`) — GRN (goods receipt), issue slips, remnants (offcuts), cycle counts, variance report, Tally CSV import, with tenant-scoped document numbers (ADR-0012). For factories that run a formal stores process.
+- **Enterprise** (`enterprise_inventory_routes.py`) — GRN (goods receipt), issue slips, remnants (offcuts), cycle counts, variance report, Tally CSV import, with tenant-scoped document numbers (ADR-0012). For factories that run a formal stores process. A GRN line's received and accepted quantities are the truth: rejected = received − accepted, and the inspection result (Accepted / Partial / Rejected) is derived from them, never chosen; accepting the GRN puts the accepted quantity into stock.
 
 ### Trace: receive 100 bearings → issue 30
 

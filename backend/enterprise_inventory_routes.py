@@ -363,19 +363,35 @@ def create_grn(payload: dict, db: Session = Depends(get_db), current_user: dict 
     supplier_name = str_field(payload, "supplier_name")
 
     # Validate every line first — nothing is written until all of them parse.
+    #
+    # THE QUANTITIES ARE THE TRUTH. accept_grn adds accepted_qty to stock
+    # whatever else the line says, so everything else on the line is derived
+    # from it: rejected = received - accepted, and the inspection result is
+    # Accepted / Rejected / Partial by those numbers. They used to be stored as
+    # sent -- and the form has no rejected input (it always sends 0) and a status
+    # dropdown defaulting to "Accepted" -- so 20 rejected units of 100 vanished
+    # from the record, and a line marked "Rejected" put all 100 into stock
+    # (test_grn_quantities_decide_inspection.py).
     parsed = []
     for i, line in enumerate(payload.get("items", []), start=1):
         where = f"Line {i}"
         if not isinstance(line, dict):
             raise HTTPException(status_code=400, detail=f"{where}: expected an object")
+        received = int_field(line, "received_qty", where)
+        accepted = int_field(line, "accepted_qty", where)
+        if accepted > received:
+            raise HTTPException(
+                status_code=400,
+                detail=f"{where}: accepted quantity ({accepted}) cannot exceed the quantity received ({received})")
         parsed.append(dict(
             item_id=int_field(line, "item_id", where),
             lot_no=line.get("lot_no", ""),
             ordered_qty=int_field(line, "ordered_qty", where, required=False),
-            received_qty=int_field(line, "received_qty", where),
-            accepted_qty=int_field(line, "accepted_qty", where),
-            rejected_qty=int_field(line, "rejected_qty", where, required=False),
-            inspection_status=line.get("inspection_status", "Accepted"),
+            received_qty=received,
+            accepted_qty=accepted,
+            rejected_qty=received - accepted,
+            inspection_status=("Accepted" if accepted == received
+                               else "Rejected" if accepted == 0 else "Partial"),
         ))
 
     g = models.GoodsReceiptNote(

@@ -13,6 +13,7 @@ from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
 import ai
+import ai_copilot
 from auth import get_current_user
 from database import SessionLocal
 from tenancy import request_tenant
@@ -436,7 +437,13 @@ def get_weekly_report(db: Session = Depends(_get_db), current_user: dict = Depen
 def copilot_ask(payload: dict, db: Session = Depends(_get_db), current_user: dict = Depends(get_current_user)):
     # Answers a plant question from the read-models, no API key required.
     # Returns the answer text and the view that drills into it.
-    return ai.assistant.answer(db, request_tenant(current_user), payload.get("question", ""))
+    #
+    # ADR-0020: when (and only when) the AMP-native intent model is ADOPTED and no
+    # LLM is configured, it may PROPOSE the pillar. The tenant is still this
+    # request's; the model sees the question and nothing else. Not adopted (the
+    # committed v1) -> no proposer -> the response is exactly the keyword answer.
+    return ai.assistant.answer(db, request_tenant(current_user), payload.get("question", ""),
+                               proposer=ai_copilot.native_proposer())
 
 
 @router.get("/copilot/digest")

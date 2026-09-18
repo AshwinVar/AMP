@@ -71,6 +71,16 @@ MANUALLY_SCOPED = {
         "ai/handover, ai/insights)",
     "AgentPolicy":
         "one autonomy policy per tenant, always fetched by tenant_code as the key",
+    "AiLearningConsent":
+        "a tenant's learning consent for AMP-native AI (ADR-0020), one row per "
+        "(tenant_code, capability) and always read by that key with the tenant "
+        "passed in EXPLICITLY (amp_ai/consent.py), like AgentPolicy. Explicit "
+        "because the answer must be this tenant's even with no request binding: "
+        "the gate is consulted inside the anomaly service, and a missing ambient "
+        "tenant must read as 'no consent', never as every tenant's rows. The UNIQUE "
+        "(tenant_code, capability) constraint makes a wrong pair a miss. The "
+        "package lives under amp_ai/, which this sweep does not scan, so "
+        "test_amp_ai_integration_structural.py applies _unguarded_reads there",
     # The GMATS inventory module predates the hook and guards by hand: the parent
     # row is fetched then _guard_record'd, and children are reached by parent id.
     "GmatsItem": "GMATS module guards by hand via _guard_record on the fetched row",

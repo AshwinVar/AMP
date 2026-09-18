@@ -134,6 +134,87 @@ def _resolve_provider():
     return None
 
 
+class AmpNativeProvider(AIProvider):
+    """The AMP-native copilot intent model (ADR-0020). NOT an LLM, and NOT in PROVIDERS.
+
+    It writes no prose: `ask()` refuses. What it does is PROPOSE which of the
+    copilot's fixed pillars answers a question (`route()` -> RouteDecision), and
+    `ai.assistant.answer(..., proposer=)` decides whether to use the proposal.
+    It is kept out of PROVIDERS on purpose: that tuple is the LLM precedence
+    list, and `_provider()` / `_ai_enabled()` mean "an LLM is configured" to
+    every caller and to two pinned suites (test_ai_provider_registry,
+    test_ai_copilot_fallback).
+
+    SWITCHED ON ONLY WHEN EARNED. `is_configured()` is true only when ALL hold:
+      * the artifact verifies against the hash pinned in
+        amp_ai.copilot_intent.classifier (tampering -> off, never an exception);
+      * its evaluated adoption gate says `adopted: true` (the committed v1 says
+        false: it did not beat the keyword router on held-out questions);
+      * AMP_NATIVE_COPILOT is not "off" (an operator's kill switch).
+    The model sees a question string only: no session, tenant, user or role.
+    """
+
+    name = "amp-native"
+    env_key = ""
+    SWITCH = "AMP_NATIVE_COPILOT"
+
+    @staticmethod
+    def _load():
+        from amp_ai.copilot_intent import classifier   # stdlib-only; cached after the first verified load
+        return classifier.load()
+
+    def switched_off(self) -> bool:
+        return os.environ.get(self.SWITCH, "").strip().lower() == "off"
+
+    def status(self) -> dict:
+        """{available, adopted, version, reason, switched_off}. Never raises."""
+        try:
+            clf = self._load()
+        except Exception as e:   # noqa: BLE001 - an unusable artifact is "unavailable", fail closed
+            return {"available": False, "adopted": None, "version": None,
+                    "reason": getattr(e, "reason", None) or str(e)[:300], "switched_off": self.switched_off()}
+        return {"available": True, "adopted": clf.adopted is True, "version": clf.model_version,
+                "reason": None, "switched_off": self.switched_off()}
+
+    def is_configured(self) -> bool:
+        if self.switched_off():
+            return False
+        st = self.status()
+        return st["available"] is True and st["adopted"] is True
+
+    def model(self):
+        st = self.status()
+        return f"amp-native-intent@{st['version']}" if st["available"] else None
+
+    def ask(self, system, user):
+        raise NotImplementedError("amp-native proposes a route; it does not write answers")
+
+    def route(self, question):
+        return self._load().route(question)
+
+
+NATIVE = AmpNativeProvider()
+
+
+def _answer_engine() -> str:
+    """Who answers a copilot question: "llm", "amp-native" (an ADOPTED intent model) or "rules"."""
+    if _ai_enabled():
+        return "llm"
+    if NATIVE.is_configured():
+        return "amp-native"
+    return "rules"
+
+
+def native_proposer():
+    """The proposer /copilot/ask passes to ai.assistant.answer, or None.
+
+    Only when the engine IS amp-native: with an LLM configured the copilot's
+    questions go to /ai/ask, and the model is used there (below) only for the
+    drill-in view and the rules fallback.
+    """
+    return NATIVE.route if _answer_engine() == "amp-native" else None
+
+
 def _provider():
     """Active LLM provider NAME, or None when no key is configured.
     Explicit AI_PROVIDER wins; otherwise auto-detect, Anthropic first."""
@@ -479,6 +560,12 @@ def ai_status(current_user: dict = Depends(get_current_user)):
     """Lets the UI show 'connect to enable' vs the live copilot."""
     result = {"enabled": _ai_enabled(), "provider": _provider() if _ai_enabled() else None,
               "model": _current_model() if _ai_enabled() else None}
+    # ADR-0020: which engine answers, and the native model's verdict. The model
+    # card (/ai/models/copilot_intent) carries the numbers; this is the switch.
+    native = NATIVE.status()
+    result["engine"] = _answer_engine()
+    result["native"] = {"available": native["available"], "adopted": native["adopted"],
+                        "version": native["version"]}
     # The last LLM failure is founder-only: error strings can carry
     # upstream details a client workspace shouldn't see.
     if current_user.get("tenant", "DEFAULT") == "DEFAULT":
@@ -510,7 +597,10 @@ def ai_ask(payload: dict, db: Session = Depends(get_db), current_user: dict = De
         # labelled — the factory data is all local, so this always works.
         log.info(f"[AI COPILOT] LLM failed, answering from rules: {e}")
         import ai
-        fallback = ai.assistant.answer(db, tenant, question)
+        # An ADOPTED native model may propose the pillar here too (ADR-0020);
+        # otherwise this is exactly the keyword router it always was.
+        fallback = ai.assistant.answer(db, tenant, question,
+                                       proposer=NATIVE.route if NATIVE.is_configured() else None)
         return {
             "answer": fallback.get("answer", "I couldn't reach the AI model just now — try again shortly."),
             "view": fallback.get("view"),
@@ -525,8 +615,15 @@ def ai_ask(payload: dict, db: Session = Depends(get_db), current_user: dict = De
     # same routing table with NO queries — measured, running the pillar instead
     # would cost up to 116% of this endpoint's context build (ai/assistant.py).
     import ai
-    return {"answer": answer, "view": ai.assistant.route_view(question),
-            "model": _current_model(), "source": "llm"}
+    view = ai.assistant.route_view(question)
+    if NATIVE.is_configured():
+        # ADR-0020: an adopted native model may pick the drill-in view instead.
+        # Still zero queries: the proposal is a NAME, and the view is read off
+        # the allowlisted pillar AMP looks up; a refused proposal keeps route_view's.
+        fn, _decision = ai.assistant._proposed_pillar(NATIVE.route, question)
+        if fn is not None:
+            view = fn.view
+    return {"answer": answer, "view": view, "model": _current_model(), "source": "llm"}
 
 
 @router.post("/report")

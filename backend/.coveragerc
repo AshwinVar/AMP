@@ -134,6 +134,9 @@ omit =
     # even while it is doing its job. The behaviour it proves IS measured — via
     # schema_guard.py, which is application code and stays in the total.
     verify_pg_deploy.py
+    # AMP-native AI (ADR-0020): migration 0009 and the atomic consent write
+    # against a disposable PostgreSQL database. Same category, same rule.
+    verify_pg_native_ai.py
     # Alembic migration scripts: exercised by running a migration, not by the
     # unit suites, and each version file is dead the moment it has been applied.
     alembic/*

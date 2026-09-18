@@ -4,6 +4,8 @@ import { useCallback, useEffect, useState } from "react";
 import { apiGet, apiPost } from "../lib/api";
 import AgentDetailDrawer from "./AgentDetailDrawer";
 import AgentPolicyPanel from "./AgentPolicyPanel";
+import AILearningConsentCard from "./AILearningConsentCard";
+import AINativeModelsPanel from "./AIModelCard";
 import { parseApiDate } from "../lib/apiDate";
 import {
   AGENT_ACTIONS_PAGE,
@@ -186,6 +188,11 @@ export default function AgentActivitySection() {
       )}
 
       <AgentPolicyPanel />
+
+      {/* ADR-0020: what AMP-native AI may learn from this company's own data, and
+          the models themselves, each shown against the rule it would replace. */}
+      <AILearningConsentCard />
+      <AINativeModelsPanel />
 
       {roster.length > 0 && (
         <div>

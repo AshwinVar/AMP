@@ -2,6 +2,7 @@ import os
 from datetime import datetime
 from sqlalchemy import (Boolean, Column, Integer, String, ForeignKey, DateTime, Date,
                         Text, Float, UniqueConstraint)
+from sqlalchemy import false as sa_false
 from sqlalchemy import true as sa_true
 from sqlalchemy.orm import relationship
 
@@ -1234,3 +1235,43 @@ class MachineClaim(Base):
     claimed_tenant_code = Column(String, index=True, nullable=True)
     revoked_at = Column(DateTime, nullable=True)
     revoked_by = Column(String, nullable=True)
+
+
+class AiLearningConsent(Base):
+    """A tenant's explicit, revocable consent for AMP-native AI to LEARN from its own data (ADR-0020).
+
+    AMP's models ship trained on synthetic data only. Anything that fits a
+    statistic to a tenant's own operational records - today, the per-machine
+    telemetry baseline behind the anomaly check - is learning from that tenant's
+    data, and the code refuses to do it unless this row says ``granted``.
+
+    NO ROW MEANS NO. There is no default grant, no env switch and no plan that
+    implies one. A row is written only by ``amp_ai.consent.set_consent``, which
+    commits it in the SAME transaction as its AuditLog record, so consent cannot
+    change without the audit trail saying who changed it.
+
+    NOT AUTO-SCOPED (the AgentPolicy precedent): every read filters
+    ``tenant_code`` explicitly, so a founder previewing a customer, or a job with
+    no request context, still reads exactly one tenant's answer. See
+    test_unscoped_model_reads.MANUALLY_SCOPED.
+
+    ``granted_by``/``granted_at`` record the latest grant and survive a
+    revocation; ``revoked_by``/``revoked_at`` record the latest withdrawal and are
+    cleared by a new grant. The full history is the AuditLog.
+    """
+
+    __tablename__ = "ai_learning_consents"
+    __table_args__ = (
+        UniqueConstraint("tenant_code", "capability", name="uq_ai_learning_consent"),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    tenant_code = Column(String, index=True, nullable=False)
+    # One of amp_ai.core.contracts.LEARNING_CAPABILITIES, e.g. "telemetry_baseline".
+    capability = Column(String, nullable=False)
+    granted = Column(Boolean, nullable=False, default=False, server_default=sa_false())
+    granted_by = Column(String, nullable=True)
+    granted_at = Column(DateTime, nullable=True)
+    revoked_by = Column(String, nullable=True)
+    revoked_at = Column(DateTime, nullable=True)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)

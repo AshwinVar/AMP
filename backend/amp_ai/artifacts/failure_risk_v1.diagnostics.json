@@ -1,0 +1,345 @@
+{
+  "artifact_sha256": "ad30970f3ac1fca60c955b352939f42152c5e9a0b03f42dfb01047565f90f821",
+  "config": {
+    "days": 400,
+    "n_boot": 1000,
+    "n_machines": 400,
+    "name": "full",
+    "precision_k_frac": 0.1,
+    "test_start": 300
+  },
+  "evaluation_scope": {
+    "as_of_times": [
+      "10:00"
+    ],
+    "as_of_weekdays": [
+      "Tuesday"
+    ],
+    "note": "every training, validation and test row is a snapshot at this weekday and time; the failure-risk endpoint scores at whatever moment it is called",
+    "snapshots": 39,
+    "step_days": 7
+  },
+  "generator": "amp_ai.failure_risk.synthetic@v1",
+  "generator_sha256": "1a648e0fb1470aa8a77a7de1746d656218ec61d3f4d3eaf99278eb5f52c11139",
+  "made_after": "failure_risk v1 was adopted by its build; these diagnostics change no verdict and gate nothing",
+  "model_name": "failure_risk",
+  "notes": [
+    "Measured on synthetic machines from amp_ai/failure_risk/synthetic.py; not evidence about real plants.",
+    "Intervals: 95% percentile cluster bootstrap by machine, the build's resample count and seed."
+  ],
+  "post_hoc": true,
+  "report": "amp_ai.failure_risk post-hoc diagnostics",
+  "rule": {
+    "always": [
+      "high accumulated downtime",
+      "frequent downtime events"
+    ],
+    "components": [
+      {
+        "fires_on_rows": 0,
+        "fires_on_share": 0.0,
+        "reason": "machine currently in breakdown"
+      },
+      {
+        "fires_on_rows": 0,
+        "fires_on_share": 0.0,
+        "reason": "machine currently in maintenance"
+      },
+      {
+        "fires_on_rows": 0,
+        "fires_on_share": 0.0,
+        "reason": "low utilization below 40%"
+      },
+      {
+        "fires_on_rows": 191,
+        "fires_on_share": 0.14714946070878274,
+        "reason": "high utilization above 90%"
+      },
+      {
+        "fires_on_rows": 1298,
+        "fires_on_share": 1.0,
+        "reason": "high accumulated downtime"
+      },
+      {
+        "fires_on_rows": 0,
+        "fires_on_share": 0.0,
+        "reason": "moderate accumulated downtime"
+      },
+      {
+        "fires_on_rows": 1298,
+        "fires_on_share": 1.0,
+        "reason": "frequent downtime events"
+      },
+      {
+        "fires_on_rows": 57,
+        "fires_on_share": 0.04391371340523883,
+        "reason": "repeated breakdown transitions"
+      },
+      {
+        "fires_on_rows": 77,
+        "fires_on_share": 0.059322033898305086,
+        "reason": "high reject rate"
+      },
+      {
+        "fires_on_rows": 184,
+        "fires_on_share": 0.14175654853620956,
+        "reason": "moderate reject rate"
+      },
+      {
+        "fires_on_rows": 0,
+        "fires_on_share": 0.0,
+        "reason": "high active work-order load"
+      }
+    ],
+    "counters": {
+      "breakdown_events": {
+        "max": 5,
+        "min": 0
+      },
+      "downtime_events": {
+        "max": 273,
+        "min": 23
+      },
+      "downtime_minutes": {
+        "max": 3745,
+        "min": 280
+      },
+      "reject_rate": {
+        "max": 27.8,
+        "min": 0.1
+      },
+      "utilization": {
+        "max": 100,
+        "min": 43
+      }
+    },
+    "never": [
+      "machine currently in breakdown",
+      "machine currently in maintenance",
+      "low utilization below 40%",
+      "moderate accumulated downtime",
+      "high active work-order load"
+    ],
+    "rows_with_no_component": 0,
+    "score_distribution": {
+      "distinct_scores": 10,
+      "modal_rows": 880,
+      "modal_score": 40.0,
+      "modal_share": 0.6779661016949152
+    },
+    "sometimes": [
+      "high utilization above 90%",
+      "repeated breakdown transitions",
+      "high reject rate",
+      "moderate reject rate"
+    ],
+    "work_orders": "not part of a machine history: baseline_rule passes work_orders=[], so 'high active work-order load' cannot fire in this evaluation"
+  },
+  "seed": 20260917,
+  "sha256": "c06b9e9f52e181b35891b0848b38317deb3f9f1a2a71d9bc2ac5c85f08fb1904",
+  "single_feature": {
+    "method": "direction (sign of training ROC-AUC - 0.5) and missing-value median from TRAINING rows; the feature with the highest VALIDATION PR-AUC is selected; scored once on the test rows",
+    "reviewer_pick": {
+      "chosen_on": "the TEST set, by scanning all 18 features (post hoc; not a gate)",
+      "feature": "reject_rate_7d",
+      "feature_minus_rule": {
+        "pr_auc": {
+          "estimate": 0.09642104472974816,
+          "hi": 0.18042534239554972,
+          "lo": 0.021759884894053394,
+          "n_boot": 1000,
+          "n_valid": 1000
+        }
+      },
+      "model_minus_feature": {
+        "pr_auc": {
+          "estimate": 0.0029860726201222376,
+          "hi": 0.047769309746307706,
+          "lo": -0.03395924891590136,
+          "n_boot": 1000,
+          "n_valid": 1000
+        },
+        "precision_at_k": {
+          "estimate": 0.007692307692307693,
+          "hi": 0.07692307692307693,
+          "lo": -0.038461538461538464,
+          "n_boot": 1000,
+          "n_valid": 1000
+        },
+        "roc_auc": {
+          "estimate": 0.04081135580931661,
+          "hi": 0.1048774963671105,
+          "lo": -0.02343153360414431,
+          "n_boot": 1000,
+          "n_valid": 1000
+        }
+      },
+      "pr_auc": 0.1907435245852692,
+      "precision_at_k": 0.15384615384615385,
+      "roc_auc": 0.6572016041326808,
+      "sign": 1.0,
+      "train_median": 0.029117603586736956,
+      "val_pr_auc": 0.09492736729777433
+    },
+    "selected_on_validation": {
+      "chosen_on": "validation",
+      "feature": "reject_rate_drift",
+      "feature_minus_rule": {
+        "pr_auc": {
+          "estimate": 0.07640824960762016,
+          "hi": 0.14557442330252893,
+          "lo": 0.01229367520556635,
+          "n_boot": 1000,
+          "n_valid": 1000
+        }
+      },
+      "model_minus_feature": {
+        "pr_auc": {
+          "estimate": 0.02299886774225024,
+          "hi": 0.07784588009510343,
+          "lo": -0.03428187732997316,
+          "n_boot": 1000,
+          "n_valid": 1000
+        },
+        "precision_at_k": {
+          "estimate": 0.007692307692307693,
+          "hi": 0.07692307692307693,
+          "lo": -0.038461538461538464,
+          "n_boot": 1000,
+          "n_valid": 1000
+        },
+        "roc_auc": {
+          "estimate": 0.08758156606851542,
+          "hi": 0.18044371261448883,
+          "lo": -0.007290982984468507,
+          "n_boot": 1000,
+          "n_valid": 1000
+        }
+      },
+      "pr_auc": 0.1707307294631412,
+      "precision_at_k": 0.15384615384615385,
+      "roc_auc": 0.610431393873482,
+      "sign": 1.0,
+      "train_median": 0.0005709289817249288,
+      "val_pr_auc": 0.2193612425380357
+    },
+    "validation": [
+      {
+        "feature": "breakdowns_7d",
+        "sign": 1.0,
+        "train_median": 0.0,
+        "val_pr_auc": 0.047619047619047616
+      },
+      {
+        "feature": "breakdowns_30d",
+        "sign": 1.0,
+        "train_median": 0.0,
+        "val_pr_auc": 0.048440065681444995
+      },
+      {
+        "feature": "days_since_breakdown",
+        "sign": -1.0,
+        "train_median": 89.78680555555556,
+        "val_pr_auc": 0.06551107507233653
+      },
+      {
+        "feature": "never_broken_in_lookback",
+        "sign": -1.0,
+        "train_median": 0.0,
+        "val_pr_auc": 0.0644078144078144
+      },
+      {
+        "feature": "downtime_min_7d",
+        "sign": 1.0,
+        "train_median": 270.5,
+        "val_pr_auc": 0.08057096571642525
+      },
+      {
+        "feature": "downtime_min_30d",
+        "sign": 1.0,
+        "train_median": 1176.0,
+        "val_pr_auc": 0.07259836026825371
+      },
+      {
+        "feature": "stoppages_7d",
+        "sign": 1.0,
+        "train_median": 21.0,
+        "val_pr_auc": 0.09188421943196923
+      },
+      {
+        "feature": "stoppage_accel",
+        "sign": 1.0,
+        "train_median": 0.967741935483871,
+        "val_pr_auc": 0.1881661628460598
+      },
+      {
+        "feature": "availability_7d",
+        "sign": -1.0,
+        "train_median": 0.955,
+        "val_pr_auc": 0.07125726402677544
+      },
+      {
+        "feature": "performance_7d",
+        "sign": -1.0,
+        "train_median": 0.8503165203185624,
+        "val_pr_auc": 0.11903855297555863
+      },
+      {
+        "feature": "performance_drift",
+        "sign": -1.0,
+        "train_median": -0.0016023113997818417,
+        "val_pr_auc": 0.11891597936746597
+      },
+      {
+        "feature": "reject_rate_7d",
+        "sign": 1.0,
+        "train_median": 0.029117603586736956,
+        "val_pr_auc": 0.09492736729777433
+      },
+      {
+        "feature": "reject_rate_drift",
+        "sign": 1.0,
+        "train_median": 0.0005709289817249288,
+        "val_pr_auc": 0.2193612425380357
+      },
+      {
+        "feature": "inspection_fail_rate_14d",
+        "sign": 1.0,
+        "train_median": 0.04,
+        "val_pr_auc": 0.05677602932844936
+      },
+      {
+        "feature": "runtime_h_since_maint",
+        "sign": 1.0,
+        "train_median": 257.20000000000005,
+        "val_pr_auc": 0.11532663405068164
+      },
+      {
+        "feature": "no_maint_in_lookback",
+        "sign": -1.0,
+        "train_median": 0.0,
+        "val_pr_auc": 0.047619047619047616
+      },
+      {
+        "feature": "days_since_maint",
+        "sign": 1.0,
+        "train_median": 19.416666666666668,
+        "val_pr_auc": 0.0739556179209664
+      },
+      {
+        "feature": "overdue_maint_open",
+        "sign": 1.0,
+        "train_median": 1.0,
+        "val_pr_auc": 0.06495886180096706
+      }
+    ]
+  },
+  "test": {
+    "model_pr_auc": 0.19372959720539143,
+    "positives": 72,
+    "prevalence": 0.05546995377503852,
+    "rows": 1298,
+    "rule_pr_auc": 0.09432247985552103
+  },
+  "version": "v1"
+}

@@ -23,6 +23,7 @@ Guiding principles: incremental (strangler) evolution, never a rewrite; backward
 | [0015](0015-server-side-approval-gate.md) | The backend is authoritative about approvals | Accepted |
 | [0016](0016-authenticated-live-websocket.md) | The live WebSocket authenticates before it accepts | Accepted |
 | [0017](0017-oem-fleet-and-cross-tenant-equipment.md) | OEM fleet and cross-tenant equipment relationships | Accepted |
+| [0020](0020-amp-native-ai.md) | AMP-native AI: standard-library models, pinned artifacts, per-tenant learning consent | Accepted |
 
 **Recommended order:** 0001 first (smaller, proves the pattern; events carry `tenant_code`), then 0002.
 

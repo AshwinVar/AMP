@@ -127,7 +127,32 @@ RATE_LIMITS = {
     "/ai/ask": (_env_int("RATE_LIMIT_AI", 20), 60),
     "/ai/report": (_env_int("RATE_LIMIT_AI", 20), 60),
     "/copilot/ask": (_env_int("RATE_LIMIT_AI", 20), 60),
+    # AMP-native AI (ADR-0020). Both are the COST target and the second is also a
+    # probing target: failure-risk loads 120 days of every machine's history and
+    # re-verifies the model artifact per call; the anomaly check reads up to 50k
+    # telemetry rows and fits a baseline per call. The anomaly entry is a PREFIX
+    # (/ai/native/anomaly/machines/{id}) and the bucket is keyed on the prefix,
+    # not the full path, so walking machine ids does not buy a fresh budget per id.
+    "/ai/native/failure-risk": (_env_int("RATE_LIMIT_AI", 20), 60),
+    "/ai/native/anomaly": (_env_int("RATE_LIMIT_AI", 20), 60),
+    # The model cards verify each artifact against its pinned hash on every call
+    # (about 0.1 s of CPU for all three, the copilot's artifact is ~0.9 MB).
+    "/ai/models": (_env_int("RATE_LIMIT_AI", 20), 60),
 }
+
+# Entries whose every route requires a signed-in user (ADR-0020). Their bucket is
+# the VERIFIED token's principal, not the client address, because the address is
+# whatever the client writes in X-Forwarded-For:
+#   * keyed on the address, a new X-Forwarded-For per request bought a fresh
+#     budget, so the cost and probing control held only for polite clients;
+#   * and requests with no valid token were counted against the address they
+#     claimed, so anyone who knew a factory's egress address could spend its
+#     Admins' and Supervisors' budget with 401s and lock them out.
+# A request without a validly signed, unexpired token is NOT counted here: the
+# route refuses it in authentication before any history or telemetry is read.
+# /ai/ask, /ai/report and /copilot/ask keep the address key (pre-existing; not
+# changed by ADR-0020).
+PRINCIPAL_KEYED_PREFIXES = frozenset({"/ai/native/failure-risk", "/ai/native/anomaly", "/ai/models"})
 
 
 class _SlidingWindow:
@@ -186,12 +211,35 @@ def _client_key(scope):
     return client[0] if client else "unknown"
 
 
-def _limit_for(path):
+def _principal_key(scope):
+    """``principal:<kind>:<sub>@<tenant claim>`` for a request carrying a validly signed, unexpired
+    bearer token; None otherwise. The token's own claims only, never X-Tenant or X-Forwarded-For."""
+    from auth import decode_token_optional   # local: keeps this module importable without the auth stack
+    token = None
+    for k, v in scope.get("headers", []):
+        if k == b"authorization":
+            parts = v.decode("latin-1").split(" ", 1)
+            if len(parts) == 2 and parts[0].lower() == "bearer":
+                token = parts[1].strip()
+    claims = decode_token_optional(token)
+    if not isinstance(claims, dict) or not claims.get("sub"):
+        return None
+    kind = claims.get("principal") or "factory"
+    return f"principal:{kind}:{claims.get('sub')}@{claims.get('tenant') or claims.get('oem') or ''}"
+
+
+def _rate_limit_entry(path):
+    """(prefix, (limit, window)) of the longest RATE_LIMITS prefix covering path, or None."""
     match = None
     for prefix, conf in RATE_LIMITS.items():
         if path == prefix or path.startswith(prefix + "/"):
             if match is None or len(prefix) > len(match[0]):
                 match = (prefix, conf)
+    return match
+
+
+def _limit_for(path):
+    match = _rate_limit_entry(path)
     return match[1] if match else None
 
 
@@ -213,14 +261,29 @@ class RateLimitMiddleware:
             await self.app(scope, receive, send)
             return
 
-        conf = _limit_for(scope.get("path", ""))
-        if conf is None:
+        entry = _rate_limit_entry(scope.get("path", ""))
+        if entry is None:
             await self.app(scope, receive, send)
             return
 
-        limit, window = conf
+        # Keyed on the matched PREFIX, not the raw path: every path under one entry
+        # shares one budget. Before, /ai/ask/stream and /ai/ask were separate
+        # buckets despite the docstring of test_prefix_matching_is_boundary_safe,
+        # and a parameterised path (/ai/native/anomaly/machines/{id}) would have
+        # handed out a fresh budget per id.
+        prefix, (limit, window) = entry
+        if prefix in PRINCIPAL_KEYED_PREFIXES:
+            caller = _principal_key(scope)
+            if caller is None:
+                # Not counted: authentication refuses it before any work (see
+                # PRINCIPAL_KEYED_PREFIXES), and counting it would let a stranger
+                # spend a signed-in user's budget.
+                await self.app(scope, receive, send)
+                return
+        else:
+            caller = _client_key(scope)
         allowed, retry_after = _window.hit(
-            f"{_client_key(scope)}:{scope['path']}", limit, window, time.monotonic()
+            f"{caller}:{prefix}", limit, window, time.monotonic()
         )
         if allowed:
             await self.app(scope, receive, send)

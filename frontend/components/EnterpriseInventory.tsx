@@ -1,6 +1,6 @@
 "use client";
 import React, { useEffect, useState, useRef } from "react";
-import { apiGet, apiPost, apiPatch, API_URL, getAuthHeaders, getDownloadHeaders } from "../lib/api";
+import { apiGet, apiPost, apiPatch, API_URL, errorDetail, getAuthHeaders, getDownloadHeaders } from "../lib/api";
 import { LoadError, useLoadError } from "../lib/useLoadError";
 
 // How many history rows to fetch at a time. The GRN and cycle-count endpoints
@@ -342,12 +342,33 @@ function IssueSlipsTab({ items }: { items: InventoryItem[] }) {
 
 // ── GRN ──────────────────────────────────────────────────────────
 
+// What the server records for a GRN line (enterprise_inventory_routes.create_grn):
+// the quantities are the truth -- rejected = received - accepted, and the
+// inspection result follows from them. The form shows it rather than asking for
+// it: it used to offer a status dropdown (defaulting to "Accepted") and send a
+// rejected count of 0 whatever happened, so 20 rejected units of 100 vanished
+// and a line marked "Rejected" put everything into stock
+// (backend test_grn_quantities_decide_inspection.py).
+function grnLineOutcome(received: string, accepted: string): string {
+  if (received === "" || accepted === "") return "";
+  const r = Number(received);
+  const a = Number(accepted);
+  if (!Number.isFinite(r) || !Number.isFinite(a)) return "";
+  if (a > r) return "More accepted than received";
+  if (a === r) return "Accepted";
+  if (a === 0) return `Rejected (all ${r})`;
+  return `Partial · ${r - a} rejected`;
+}
+
+const blankGrnLine = () => ({ item_id: "", received_qty: "", accepted_qty: "", lot_no: "" });
+
 function GRNTab({ items }: { items: InventoryItem[] }) {
   const [rows, setRows] = useState<GRN[]>([]);
   const [supplier, setSupplier] = useState("");
   const [poRef, setPoRef] = useState("");
-  const [grnItems, setGrnItems] = useState([{ item_id: "", received_qty: "", accepted_qty: "", rejected_qty: "0", lot_no: "", inspection_status: "Accepted" }]);
+  const [grnItems, setGrnItems] = useState([blankGrnLine()]);
   const [loading, setLoading] = useState(false);
+  const [writeError, setWriteError] = useState<string | null>(null);
 
   const [shown, setShown] = useState(PAGE);
   const { error, track } = useLoadError();
@@ -359,20 +380,30 @@ function GRNTab({ items }: { items: InventoryItem[] }) {
 
   const loadMore = () => { const next = shown + PAGE; setShown(next); load(next); };
 
-  const addLine = () => setGrnItems(prev => [...prev, { item_id: "", received_qty: "", accepted_qty: "", rejected_qty: "0", lot_no: "", inspection_status: "Accepted" }]);
+  const addLine = () => setGrnItems(prev => [...prev, blankGrnLine()]);
   const updateLine = (i: number, field: string, val: string) => setGrnItems(prev => prev.map((row, idx) => idx === i ? { ...row, [field]: val } : row));
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
     setLoading(true);
-    await apiPost("/grns", {
-      supplier_name: supplier, purchase_order_ref: poRef,
-      items: grnItems.map(l => ({ ...l, item_id: Number(l.item_id), received_qty: Number(l.received_qty), accepted_qty: Number(l.accepted_qty), rejected_qty: Number(l.rejected_qty) })),
-    });
-    setSupplier(""); setPoRef("");
-    setGrnItems([{ item_id: "", received_qty: "", accepted_qty: "", rejected_qty: "0", lot_no: "", inspection_status: "Accepted" }]);
-    await load();
-    setLoading(false);
+    setWriteError(null);
+    try {
+      await apiPost("/grns", {
+        supplier_name: supplier, purchase_order_ref: poRef,
+        // No rejected count and no inspection status: the server derives both.
+        items: grnItems.map(l => ({ item_id: Number(l.item_id), lot_no: l.lot_no,
+                                    received_qty: Number(l.received_qty), accepted_qty: Number(l.accepted_qty) })),
+      });
+      setSupplier(""); setPoRef("");
+      setGrnItems([blankGrnLine()]);
+      await load();
+    } catch (err) {
+      // A refused line (e.g. more accepted than received) says why, and the
+      // button comes back; it used to stay on "Creating…" with no message.
+      setWriteError(`Could not create the GRN: ${errorDetail(err)}`);
+    } finally {
+      setLoading(false);
+    }
   }
 
   return (
@@ -399,12 +430,13 @@ function GRNTab({ items }: { items: InventoryItem[] }) {
               <input className="bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-sm" placeholder="Received qty" type="number" value={line.received_qty} onChange={e => updateLine(i, "received_qty", e.target.value)} required />
               <input className="bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-sm" placeholder="Accepted qty" type="number" value={line.accepted_qty} onChange={e => updateLine(i, "accepted_qty", e.target.value)} required />
               <input className="bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-sm" placeholder="Lot no." value={line.lot_no} onChange={e => updateLine(i, "lot_no", e.target.value)} />
-              <select className="bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-sm" value={line.inspection_status} onChange={e => updateLine(i, "inspection_status", e.target.value)}>
-                <option>Accepted</option><option>Rejected</option><option>Partial</option>
-              </select>
+              <span className="px-3 py-2 text-sm text-slate-400" aria-label={`Line ${i + 1} inspection result`}>
+                {grnLineOutcome(line.received_qty, line.accepted_qty)}
+              </span>
             </div>
           ))}
         </div>
+        {writeError && <p role="alert" className="text-sm text-red-400">{writeError}</p>}
         <div className="flex gap-3">
           <button type="button" onClick={addLine} className="text-sm text-slate-400 border border-slate-700 rounded-xl px-4 py-2 hover:border-slate-500">+ Add Line</button>
           <button type="submit" disabled={loading} className="rounded-xl bg-white text-slate-950 font-semibold px-5 py-2 text-sm">{loading ? "Creating…" : "Create GRN"}</button>

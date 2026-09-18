@@ -36,7 +36,9 @@ requests must pass through, never in per-endpoint code that can be forgotten.
 - **Commercial states are enforced at login and at the API.** `Cancelled` and
   expired `Trial` (a `TRIAL_DAYS` clock from the registry row's `created_at`)
   block sign-in with honest messages. Plan tiers map to module packs
-  (`apply_plan_tier`), padlocked in the UI and enforced by
+  (`apply_plan_tier`; which packs a plan bundles is read from `modules.json`
+  through `module_manifest.plan_modules` and nowhere else,
+  `test_plan_bundles_one_rule.py`), padlocked in the UI and enforced by
   `PlanGateMiddleware` — a path→pack table gating by effective tenant, with a
   briefly-cached licence (dropped by `commit_tenant_config`, the one way a
   tenant config is written, so a revocation bites at once) that **fails open**:

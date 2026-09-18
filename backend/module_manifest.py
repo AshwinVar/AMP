@@ -90,6 +90,14 @@ def plan_bundles():
     }
 
 
+def plan_modules(plan):
+    """A manifest plan's bundle as a TenantConfig.enabled_modules CSV. The one
+    place a plan's packs are read: SaaS Admin (platform_routes.apply_plan_tier),
+    the founder's apply-plan, first-seen tenants and the model default all come
+    through here (test_plan_bundles_one_rule.py). KeyError for an unknown plan."""
+    return ",".join(plan_bundles()[plan])
+
+
 def packs_for_tenant(enabled_ids):
     """Every pack annotated ``enabled`` for a tenant whose subscription is
     ``enabled_ids`` (the pack ids from TenantConfig.enabled_modules). This is the

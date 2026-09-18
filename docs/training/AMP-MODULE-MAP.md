@@ -95,7 +95,7 @@ Every module follows the same skeleton:
 - **Tests:** `test_analytics_engine.py`, `test_oee_contract.py`, `test_costing_routes.py`, `test_reports_routes.py`
 
 ### Industrial IoT
-- **Frontend:** `components/IoTCommandSection.tsx`, `IndustrialConnectivity.tsx`, `IndustrialGatewaySection.tsx`
+- **Frontend:** `components/IoTCommandSection.tsx`, `IndustrialConnectivity.tsx`
 - **Routes:** `industrial_iot_routes.py` (no prefix)
 - **Logic:** `industrial_adapters.py` (simulator framework), `mqtt_service.py`, `mqtt_identity.py`
 - **Tables:** `IoTTelemetry`, `IndustrialDevice`, `IndustrialSignal`, `PlcSignalMapping`

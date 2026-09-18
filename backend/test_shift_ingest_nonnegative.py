@@ -80,14 +80,15 @@ def test_create_accepts_zero_target_unplanned_shift():
     # A shift with target 0 is a legitimate UNPLANNED shift, not an impossible row —
     # the pooled efficiency treats it as such (adds real output, no fabricated 0%).
     # Only negatives are rejected, so this must go through, and its per-shift
-    # efficiency is the guarded 0 (0/0 -> 0), never a crash.
+    # efficiency is None -- nothing to measure against, never a crash, and not a
+    # 0% (test_no_target_no_shift_efficiency.py).
     db = _sess()
     r = machines_routes.create_shift(_shift(target_output=0, actual_output=0),
                                      db=db, current_user=_ADMIN)
     assert r.target_output == 0 and r.actual_output == 0, (r.target_output, r.actual_output)
     kpi = build_shift_kpis([r])[0]
-    assert kpi["efficiency"] == 0 and kpi["gap"] == 0, kpi
-    print("PASS create accepts a zero-target unplanned shift (efficiency 0, no crash)")
+    assert kpi["efficiency"] is None and kpi["gap"] == 0, kpi
+    print("PASS create accepts a zero-target unplanned shift (no efficiency, no crash)")
 
 
 if __name__ == "__main__":

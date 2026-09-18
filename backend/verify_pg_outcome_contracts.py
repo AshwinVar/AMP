@@ -1,11 +1,11 @@
-"""Migration 0009_outcome_contracts on real PostgreSQL, from a populated database.
+"""Migration 0010_outcome_contracts on real PostgreSQL, from a populated database.
 
 WHY POSTGRESQL AND NOT ONLY SQLITE
 ----------------------------------
 SQLite ignores VARCHAR lengths, does not enforce foreign keys by default, and
 stores NUMERIC as REAL. The agreed-downtime-attribution tables (ADR-0021) lean on
 exactly those: a 64-character hash column, foreign keys that decide offboarding
-order, and a NOT NULL tenant with no default. test_migration_0009_outcome_contracts
+order, and a NOT NULL tenant with no default. test_migration_0010_outcome_contracts
 pins the shape on SQLite; this proves it on the engine production runs.
 
 WHAT IT PROVES, IN PRODUCTION'S OWN ORDER
@@ -59,7 +59,7 @@ def check(label, ok, detail=""):
 
 
 def previous_revision():
-    src = io.open(os.path.join(HERE, "alembic", "versions", "0009_outcome_contracts.py"),
+    src = io.open(os.path.join(HERE, "alembic", "versions", "0010_outcome_contracts.py"),
                   encoding="utf-8").read()
     return re.search(r'^down_revision = "([^"]+)"', src, re.M).group(1)
 
@@ -151,7 +151,7 @@ def main():
     check("all eight tables exist", set(NEW_TABLES) <= tables(),
           str(sorted(set(NEW_TABLES) - tables())))
     rc, out = alembic(env, "current")
-    check("the database reports the head revision", "0009_outcome_contracts" in out
+    check("the database reports the head revision", "0010_outcome_contracts" in out
           or "(head)" in out, out[-200:])
 
     # --- 3. models and migration agree ---------------------------------------
@@ -375,7 +375,7 @@ def main():
         for f in failures:
             print("   *", f)
         return 1
-    print("MIGRATION 0009 HOLDS ON POSTGRESQL")
+    print("MIGRATION 0010 HOLDS ON POSTGRESQL")
     return 0
 
 

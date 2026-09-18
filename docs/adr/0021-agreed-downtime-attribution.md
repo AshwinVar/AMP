@@ -229,7 +229,7 @@ minute linked to evidence they can inspect, and each accepts an exact revision.
 Missing data is visible as No data instead of being argued about. The existing
 consent model governs what the manufacturer sees.
 
-**Negative.** Eight new tables (migration `0009_outcome_contracts`), a new
+**Negative.** Eight new tables (migration `0010_outcome_contracts`), a new
 per-message write on ingest, a listener on every flush that touches an
 installation, and a product whose inputs a determined party can distort, with
 disputes as the only remedy.

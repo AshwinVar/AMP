@@ -1,4 +1,4 @@
-"""Mutation harness for the statement-integrity primitives and the 0009 schema (ADR-0021).
+"""Mutation harness for the statement-integrity primitives and the 0010 schema (ADR-0021).
 
 Each mutation is a plausible edit that would let an acceptance count for content
 nobody accepted, let one statement content hash two ways, or let the schema stop
@@ -29,9 +29,9 @@ import subprocess
 import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-MIGRATION = os.path.join("alembic", "versions", "0009_outcome_contracts.py")
+MIGRATION = os.path.join("alembic", "versions", "0010_outcome_contracts.py")
 
-SQLITE_SUITES = ["test_canonical.py", "test_migration_0009_outcome_contracts.py",
+SQLITE_SUITES = ["test_canonical.py", "test_migration_0010_outcome_contracts.py",
                  "test_tenancy.py"]
 PG_SUITE = "verify_pg_outcome_contracts.py"
 

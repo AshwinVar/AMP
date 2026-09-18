@@ -1,4 +1,4 @@
-"""Migration 0009_outcome_contracts and the agreed-downtime-attribution schema.
+"""Migration 0010_outcome_contracts and the agreed-downtime-attribution schema.
 
 WHAT THIS PINS
 --------------
@@ -30,7 +30,7 @@ testing "the revision before this one" whatever that turns out to be.
 Each database scenario runs in its own subprocess with its own DATABASE_URL, for
 the reason test_migrate.py gives: database.py binds the engine at import.
 
-Run: DATABASE_URL="sqlite:///./ci.db" python test_migration_0009_outcome_contracts.py
+Run: DATABASE_URL="sqlite:///./ci.db" python test_migration_0010_outcome_contracts.py
 """
 import io
 import os
@@ -44,7 +44,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 VERSIONS = os.path.join(HERE, "alembic", "versions")
-REVISION = "0009_outcome_contracts"
+REVISION = "0010_outcome_contracts"
 
 CONTRACT_TABLES = [
     "service_contracts", "service_contract_term_versions",
@@ -156,7 +156,7 @@ def _migration_source():
 
 def _previous_revision():
     m = re.search(r'^down_revision = "([^"]+)"', _migration_source(), re.M)
-    assert m, "0009 declares no down_revision"
+    assert m, "0010 declares no down_revision"
     return m.group(1)
 
 
@@ -170,7 +170,7 @@ def test_the_revision_is_in_the_chain_and_fits_the_version_column():
     assert m and m.group(1) == REVISION, m and m.group(1)
     assert len(REVISION) <= 32, len(REVISION)
     prev = _previous_revision()
-    assert prev.startswith("0008") or prev.startswith("0009"), prev
+    assert prev == "0009_native_ai_consent", prev
 
     from alembic.script import ScriptDirectory
     import migrate
@@ -187,10 +187,10 @@ def test_the_revision_is_in_the_chain_and_fits_the_version_column():
     assert "def upgrade" in upgrade_side
     for forbidden in ("op.add_column", "op.alter_column", "op.drop_column",
                       "op.drop_table", "op.execute", "op.bulk_insert"):
-        assert forbidden not in upgrade_side, f"0009 upgrade side uses {forbidden}"
+        assert forbidden not in upgrade_side, f"0010 upgrade side uses {forbidden}"
     for table in NEW_TABLES:
         assert f'op.create_table(\n            "{table}"' in upgrade_side, \
-            f"0009 does not create {table}"
+            f"0010 does not create {table}"
     print(f"PASS {REVISION} follows {prev}, is the single head's ancestor, fits "
           "VARCHAR(32) and only creates tables")
 
@@ -496,7 +496,7 @@ for item in d:
 
 def test_the_migration_is_a_no_op_when_boot_already_created_the_tables():
     """main.py runs create_all at import; on a deploy the tables can exist
-    before `alembic upgrade` reaches 0009."""
+    before `alembic upgrade` reaches 0010."""
     body = r'''
 Base.metadata.create_all(bind=engine)
 seed_previous_revision_rows()
@@ -701,4 +701,4 @@ if __name__ == "__main__":
              if k.startswith("test_") and callable(v)]
     for t in tests:
         t()
-    print(f"ALL {len(tests)} MIGRATION 0009 TESTS PASSED")
+    print(f"ALL {len(tests)} MIGRATION 0010 TESTS PASSED")

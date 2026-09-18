@@ -1,7 +1,7 @@
 """agreed downtime attribution: service contracts, statements, acceptances, spans (ADR-0021)
 
-Revision ID: 0009_outcome_contracts
-Revises: 0008_machine_claim
+Revision ID: 0010_outcome_contracts
+Revises: 0009_native_ai_consent
 Create Date: 2026-09-17
 
 WHY
@@ -69,8 +69,8 @@ table is guarded: boot's create_all may already have created it.
 import sqlalchemy as sa
 from alembic import op
 
-revision = "0009_outcome_contracts"
-down_revision = "0008_machine_claim"
+revision = "0010_outcome_contracts"
+down_revision = "0009_native_ai_consent"
 branch_labels = None
 depends_on = None
 

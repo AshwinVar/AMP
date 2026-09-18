@@ -23,9 +23,10 @@ export type MachineOeeReading = {
 };
 
 /**
- * The estimate. Deliberately identical to
- * `backend/analytics_engine.py:calculate_fallback_oee`, which the API uses for
- * the same "no production data" case — the two must not drift.
+ * The estimate, shown only as "Estimated OEE". It is the last OEE estimate in
+ * AMP: the backend's copy (`analytics_engine.calculate_fallback_oee`) published
+ * it unlabelled as the plant OEE of a week with no production, and was removed
+ * (backend `test_summary_never_invents_oee.py`).
  */
 export function fallbackOee(utilization: number) {
   return Math.round((utilization / 100) * 0.9 * 0.95 * 100);

@@ -73,7 +73,7 @@ def test_analytics_summary_is_module_level_and_shared():
 def test_module_has_no_relocated_helper_copies():
     import analytics_routes
     src = inspect.getsource(analytics_routes)
-    for helper in ("def generate_alerts", "def calculate_fallback_oee",
+    for helper in ("def generate_alerts",
                    "def parse_duration_to_minutes", "def calculate_oee_from_record"):
         assert helper not in src, f"{helper} must be imported from analytics_engine, not redefined"
     print("PASS analytics_routes imports its compute from analytics_engine (no local copies)")
@@ -423,8 +423,9 @@ def test_analytics_summary_null_utilization_averages_only_readings():
     # can have a NULL reading. The old sum(m.utilization ...) did int + None and
     # 500'd the whole dashboard summary. Only machines WITH a reading are averaged,
     # so one unset row neither crashes nor drags the mean toward 0. No production
-    # records -> the OEE fallback also runs (over machines with a reading). Numbers
-    # are derived by hand.
+    # records -> the OEE is unmeasured; utilization is a gauge, not an OEE, and is
+    # never turned into one (test_summary_never_invents_oee.py). Numbers are derived
+    # by hand.
     db = _fresh_session()
     db.add(models.Machine(id=1, name="Unset", status="Running", utilization=0))
     db.add(models.Machine(id=2, name="Good", status="Running", utilization=80))
@@ -435,15 +436,15 @@ def test_analytics_summary_null_utilization_averages_only_readings():
     out = analytics_routes.analytics_summary(db=db, current_user={})
     # avg over readings only: (80 + 30) / 2 = 55 — NOT (80+30+0)/3 = 37, NOT a crash.
     assert out["avg_utilization"] == 55, out["avg_utilization"]
-    # no production -> fallback OEE = mean of calculate_fallback_oee over readings:
-    # round(80*0.855)=68, round(30*0.855)=26 -> round((68+26)/2)=47.
-    assert out["avg_oee"] == 47, out["avg_oee"]
+    # no production -> unmeasured: has_data False and the pooled 0, NOT the old
+    # utilization estimate round((80*0.855 + 30*0.855) / 2) = 47.
+    assert out["has_data"] is False and out["avg_oee"] == 0, (out["has_data"], out["avg_oee"])
     # alerts (generate_alerts, DB-backed) don't crash and don't invent a low-util
     # alert for the unset machine; the genuine 30% one still fires (<50 -> Medium).
     alert_pairs = {(a["machine"], a["type"]) for a in out["alerts"]}
     assert ("Unset", "Low Utilization") not in alert_pairs, alert_pairs
     assert ("Low", "Low Utilization") in alert_pairs, alert_pairs
-    print("PASS analytics-summary averages only machines with a utilization reading (NULL-safe, 55% / OEE 47%)")
+    print("PASS analytics-summary averages only machines with a utilization reading (NULL-safe, 55%; OEE unmeasured)")
 
 
 def test_analytics_summary_all_null_utilization_is_zero_not_a_crash():
@@ -584,18 +585,19 @@ def test_analytics_summary_plant_oee_is_pooled_in_sql_not_a_whole_table_scan():
     print("PASS analytics-summary plant OEE is pooled in SQL (a50/p51/q80/oee21), no whole-table scan")
 
 
-def test_analytics_summary_plant_oee_empty_production_falls_back_not_a_crash():
-    # No production records at all: pooled has_data is False (record COUNT is 0), so
-    # OEE falls back to the per-machine utilization estimate rather than dividing by
-    # an empty aggregate. Pins that the SQL count, not a hydrated list, drives the
-    # `if record_count == 0` fallback branch.
+def test_analytics_summary_plant_oee_empty_production_is_unmeasured_not_a_crash():
+    # No production records at all: the SQL sums over an empty window are 0, pooled
+    # has_data is False, and nothing divides by the empty aggregate. This used to
+    # substitute a utilization estimate -- round(100/100 * 0.9 * 0.95 * 100) = 86 --
+    # which is an OEE nobody measured (test_summary_never_invents_oee.py).
     db = _fresh_session()
     db.add(models.Machine(id=1, name="M", status="Running", utilization=100))
     db.commit()
     out = analytics_routes.analytics_summary(db=db, current_user={})
-    # fallback = calculate_fallback_oee(100) = round(100/100 * 0.9 * 0.95 * 100) = 86.
-    assert out["avg_oee"] == 86, out["avg_oee"]
-    print("PASS analytics-summary: empty production -> utilization fallback (86%), no empty-aggregate crash")
+    assert out["has_data"] is False, out["has_data"]
+    assert (out["avg_oee"], out["avg_availability"], out["avg_performance"], out["avg_quality"]) \
+        == (0, 0, 0, 0), out
+    print("PASS analytics-summary: empty production -> unmeasured (has_data False, no 86% estimate), no crash")
 
 
 def test_executive_oee_null_utilization_fallback_is_zero_not_a_crash():
@@ -1825,7 +1827,7 @@ if __name__ == "__main__":
     test_analytics_summary_shift_efficiency_is_pooled_in_sql_not_a_whole_table_scan()
     test_analytics_summary_shift_efficiency_empty_table_is_zero_not_a_crash()
     test_analytics_summary_plant_oee_is_pooled_in_sql_not_a_whole_table_scan()
-    test_analytics_summary_plant_oee_empty_production_falls_back_not_a_crash()
+    test_analytics_summary_plant_oee_empty_production_is_unmeasured_not_a_crash()
     test_executive_oee_null_utilization_fallback_is_zero_not_a_crash()
     test_final_executive_summary_null_columns_are_zero_not_a_crash()
     test_final_executive_summary_empty_tables_are_zero_not_a_crash()

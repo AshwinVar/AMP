@@ -176,6 +176,22 @@ performance is undefined and a product needs all three (§3). If the business
 would rather read that machine as OEE 0%, that is a change to §3, and it must be
 made in the contract so every surface changes with it — not re-introduced here.
 
+### The plant figure on `/analytics/summary` with no production (2026-09)
+
+The same constants survived one level up. When the window held no production
+records, `/analytics/summary` replaced the plant OEE with the mean of
+`utilization × 0.9 × 0.95` over the machines, and `/reports/daily-summary.txt`
+printed it: *"Avg OEE: 47%"* above *"Availability: 0%, Performance: 0%, Quality:
+0%"* in the same report, with `has_data: false` in the JSON beside it. It was
+written for a tenant before its first record; once the summary moved to the
+7-day window it fired in every week a plant did not run.
+
+It is gone. With nothing measured the response keeps this endpoint's integer
+convention (the pooled 0 with `has_data: false`, as its components already
+did), and the text report prints *"not measured (no production recorded in this
+window)"* instead of any percentage, and names the window on every windowed
+line (`backend/test_summary_never_invents_oee.py`).
+
 ---
 
 ## 6. Known limitations

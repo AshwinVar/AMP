@@ -94,6 +94,7 @@ commissioning" view and is **never** the default.
 | **Offline** | A machine whose telemetry has stopped. It cannot be measured, so it contributes nothing to numerator or denominator. It must **not** vanish silently — see coverage. |
 | **Undefined component** | Returned as `None`, never `0.0`. `as_percentages()` renders it as `None` unless a caller explicitly asks otherwise. A caller cannot accidentally display "not measurable" as "measured zero". |
 | **OEE when a component is undefined** | Also `None`. OEE is a product; it needs all three. |
+| **Change between two windows** | Exists only when **both** windows were measured, each by its own rule (OEE and losses: `has_data` above; a good rate: units inspected). A delta beside an unmeasured value is the same invented figure one step removed: the scorecard once printed OEE "—" beside "▼72 pts", and read a last week whose only row recorded nothing as 0%, so an ordinary week rose 72 points (`test_scorecard_deltas_need_two_measured_weeks.py`). |
 
 ---
 

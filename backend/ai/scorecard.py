@@ -36,18 +36,26 @@ def _tone(value, good, warn, higher_is_better=True) -> str:
 def _period_kpis(records, unit_value) -> dict:
     """OEE, good rate and losses over a set of production records — the three
     windowed KPIs, computed the same way as the live cards so the current and
-    prior periods compare like-for-like."""
+    prior periods compare like-for-like.
+
+    A KPI these records did not measure is None, judged by the rule the current
+    week's KPI is judged by: OEE and losses need measurable production
+    (oee_contract.is_measurable, which pooled_oee applies), a good rate needs
+    units inspected. It used to be `has: bool(records)`, the count-the-rows rule
+    is_measurable replaced: a last week whose only row recorded nothing was a 0%
+    OEE and a 0% good rate, and an ordinary week read "up 72 points"."""
     total = sum(r.total_count or 0 for r in records)
     good = sum(r.good_count or 0 for r in records)
     # ai.cost.loss_totals is the live cost card's own computation, so the current
     # period (from build_cost_summary) and this prior period compare like-for-like.
     losses = loss_totals(records, unit_value)
+    oee = _oee_from_records(records)
+    measured = oee["has_data"]
     return {
-        "has": bool(records),
-        "oee": _oee_from_records(records)["oee"],
-        "good_rate": round(good / total * 100) if total else 0,
-        "loss_cost": losses["loss_cost"],
-        "lost_units": losses["lost_units"],
+        "oee": oee["oee"] if measured else None,
+        "good_rate": round(good / total * 100) if total else None,
+        "loss_cost": losses["loss_cost"] if measured else None,
+        "lost_units": losses["lost_units"] if measured else None,
     }
 
 
@@ -65,10 +73,10 @@ def _prior_records(db, current):
                               now=oee_contract.prior_window(current).end)
 
 
-def _delta(cur, prior, has_prior, lower_is_better=False):
+def _delta(cur, prior, lower_is_better=False):
     """Signed change vs the prior period and its tone (good/bad/flat), or
-    (None, None) when there's no prior period to compare against."""
-    if not has_prior or cur is None:
+    (None, None) unless BOTH periods were measured."""
+    if cur is None or prior is None:
         return None, None
     d = cur - prior
     if d == 0:
@@ -88,7 +96,7 @@ def build_scorecard(db, tenant: str) -> dict:
     oee = build_oee_summary(db, tenant, now=window.end)["plant"]
     prod = build_production_summary(db, tenant)
     delivery = build_delivery_summary(db, tenant)
-    cost = build_cost_summary(db, tenant)
+    cost = build_cost_summary(db, tenant, now=window.end)
     prior = _period_kpis(_prior_records(db, window), cost["unit_value_gbp"])
 
     # Delivery reliability — of the orders that have come due (delivered or late),
@@ -99,20 +107,6 @@ def build_scorecard(db, tenant: str) -> dict:
     # at-risk) orders are held out of the denominator rather than counted as
     # successes. None when no order has come due yet -> the strip shows "—".
     reliability = delivery["reliability_rate"] if delivery["resolved"] else None
-    # OEE week-over-week uses the SHARED direction (with its dead-band), so a small
-    # move can't read "down"/red here while the recovery card's badge says "flat".
-    if prior["has"] and oee["oee"] is not None:
-        oee_d = oee["oee"] - prior["oee"]
-        oee_dt = {"up": "good", "down": "bad", "flat": "flat"}[oee_direction(oee["oee"], prior["oee"])]
-    else:
-        oee_d, oee_dt = None, None
-    good_d, good_dt = _delta(prod["good_rate"], prior["good_rate"], prior["has"])
-    # Losses are £ only with the tenant's own rate (ADR-0010); without it the KPI is
-    # good units not made, on the same basis for this week and last.
-    loss_key = "loss_cost" if cost["priced"] else "lost_units"
-    loss_now, loss_prior = cost[loss_key], prior[loss_key]
-    cost_d, cost_dt = _delta(loss_now, loss_prior, prior["has"] and loss_prior is not None,
-                             lower_is_better=True)
 
     # A KPI WITH NO DATA UNDER IT PUBLISHES None, NOT ZERO.
     #
@@ -139,7 +133,32 @@ def build_scorecard(db, tenant: str) -> dict:
     # fixture held a row that recorded nothing.
     measured_oee = oee["has_data"]
     measured_prod = prod["total"] > 0
-    measured_cost = cost["has_data"]
+    # Losses are measured when this window's PRODUCTION is (is_measurable, the
+    # rule OEE's has_data already applied to these same records), not when a row
+    # exists: cost["has_data"] is true for a week whose only row recorded
+    # nothing, and published losses of 0 in green for a plant that did not run.
+    measured_cost = oee["has_data"]
+    # Losses are £ only with the tenant's own rate (ADR-0010); without it the KPI is
+    # good units not made, on the same basis for this week and last.
+    loss_key = "loss_cost" if cost["priced"] else "lost_units"
+    loss_now = cost[loss_key]
+
+    # A CHANGE NEEDS TWO MEASURED WEEKS. Each delta is taken between the value the
+    # tile publishes and the prior week's value judged by the same rule, so a tile
+    # can never read "—" beside "▼72 pts": the change used to be computed from the
+    # raw 0 under the None (test_scorecard_deltas_need_two_measured_weeks.py).
+    oee_now = oee["oee"] if measured_oee else None
+    good_now = prod["good_rate"] if measured_prod else None
+    loss_now_measured = loss_now if measured_cost else None
+    # OEE week-over-week uses the SHARED direction (with its dead-band), so a small
+    # move can't read "down"/red here while the recovery card's badge says "flat".
+    if oee_now is not None and prior["oee"] is not None:
+        oee_d = oee_now - prior["oee"]
+        oee_dt = {"up": "good", "down": "bad", "flat": "flat"}[oee_direction(oee_now, prior["oee"])]
+    else:
+        oee_d, oee_dt = None, None
+    good_d, good_dt = _delta(good_now, prior["good_rate"])
+    cost_d, cost_dt = _delta(loss_now_measured, prior[loss_key], lower_is_better=True)
 
     def _kpi(value, measured, lo=None, hi=None, tone=None):
         """value+tone when the pillar was measured; (None, "none") when it was not.

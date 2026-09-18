@@ -20,6 +20,7 @@ from sqlalchemy.orm import sessionmaker
 
 import analytics_routes
 import models
+import oee_contract
 from analytics_engine import build_management_summary, downtime_aggregates
 from database import Base
 
@@ -64,6 +65,12 @@ def test_management_dashboard_matches_list_summary_and_pools_in_sql():
     shifts = db.query(models.ShiftData).all()
     records = db.query(models.ProductionRecord).all()
     expected = build_management_summary(machines, downtime, shifts, records, unit_value_gbp=None)
+    # The route adds one field the list-based engine has no inputs for: how much of
+    # the plant avg_oee measured (OEE contract s4). It is the contract's own figure
+    # for the same window, and here both machines reported.
+    expected["coverage"] = oee_contract.coverage(
+        db, "DEFAULT", oee_contract.OeeWindow(oee_contract.DEFAULT_WINDOW_DAYS))
+    assert expected["coverage"]["complete"] is True, expected["coverage"]
     assert out == expected, (out, expected)
 
     # 2) Independently-derived numbers (not just "equal to the other code path").

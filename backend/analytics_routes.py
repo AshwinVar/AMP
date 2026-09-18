@@ -196,6 +196,11 @@ def analytics_summary(db: Session = Depends(_get_db), current_user: dict = Depen
         # loss. The dashboard still renders 0% until it uses this; the flag is
         # the half that belongs in the API.
         "has_data": pooled["has_data"],
+        # How much of the plant avg_oee measured over the same window (OEE
+        # contract s4): a machine that stops reporting leaves the pooled figure,
+        # and daily_summary.txt printed it as the whole plant
+        # (test_every_plant_oee_states_coverage.py).
+        "coverage": oee_contract.coverage(db, request_tenant(current_user), _oee_window),
         "running": running,
         "idle": idle,
         "breakdown": breakdown,
@@ -413,11 +418,16 @@ def get_management_dashboard(db: Session = Depends(_get_db), current_user: dict 
     ).one()
 
     rate = tenant_unit_value(db, request_tenant(current_user))
-    return build_management_summary(
+    summary = build_management_summary(
         machines, [], [], [], unit_value_gbp=rate, downtime_agg=downtime,
         production_sums=tuple(int(v) for v in production_sums),
         shift_sums=tuple(int(v) for v in shift_sums),
     )
+    # How much of the plant avg_oee measured over the same window (OEE contract
+    # s4); the intelligence report prints it from here
+    # (test_every_plant_oee_states_coverage.py).
+    summary["coverage"] = oee_contract.coverage(db, request_tenant(current_user), _oee_window)
+    return summary
 
 
 @router.get("/alerts/smart")

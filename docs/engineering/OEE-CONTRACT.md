@@ -141,6 +141,18 @@ X% → 85%") say it the same way: `/analytics/executive-oee` and
 serves both ends (`oee_contract.coverage_phrase`, `frontend/lib/coverage.ts`;
 `backend/test_exec_oee_and_recovery_state_coverage.py`).
 
+Five more surfaces said nothing until 2026-09-18. The Trends card's OEE verdict
+read "OEE up 16 pts to 72% week on week" in green the week the worst machine went
+silent, and both downloadable reports printed "Plant OEE, last 7 days (pooled):
+72%" as the plant. Now `/oee-trend` carries `coverage` and `prior_coverage`, one per
+week, and every figure its verdict states is qualified ("… week on week. This
+week's figure is from 2 of 3 machines."). `/analytics/summary` and
+`/analytics/management` carry `coverage` for their window, and the daily summary
+and intelligence reports print "72% (from 2 of 3 machines)"
+(`backend/test_every_plant_oee_states_coverage.py`). The change is still
+reported: the missing machine's data does not exist, so the verdict can say
+what it measured but cannot say what the missing machine did.
+
 ---
 
 ## 5. Every surface, one contract
@@ -150,8 +162,9 @@ serves both ends (`oee_contract.coverage_phrase`, `frontend/lib/coverage.ts`;
 | `/oee-summary` (dashboard) | last 7 days | last 7 days, **+ coverage** |
 | AI copilot LLM context | **last 10 records** | last 7 days, + coverage |
 | `plant_oee()` / `machine_oee()` | — | last 7 days |
-| `/oee-trend` (this week vs last) | dates `today-6 … today` vs the 7 dates before | last 7 days vs `prior_window` of it |
-| `/reports/intelligence-summary.txt` | **all history**, under the dashboard's labels | last 7 days: `/analytics/management`'s own summary, window named on every line |
+| `/oee-trend` (this week vs last) | dates `today-6 … today` vs the 7 dates before | last 7 days vs `prior_window` of it, **+ coverage of each** |
+| `/analytics/summary`, `/analytics/management` | all history | last 7 days, + coverage |
+| `/reports/intelligence-summary.txt` | **all history**, under the dashboard's labels | last 7 days: `/analytics/management`'s own summary, window named on every line, + coverage |
 
 Measured before, on one factory at one moment:
 

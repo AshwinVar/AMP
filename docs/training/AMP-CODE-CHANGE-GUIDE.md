@@ -65,6 +65,7 @@
 - £ money story: `TenantConfig.unit_value_gbp` + `tenancy.tenant_unit_value`.
 - Tests: `test_oee_contract.py` (golden datasets) + `mutate_oee_contract.py`.
 - Week on week (OEE trend, cost trend, scorecard, recovery): `current = OeeWindow(7)`, `prior = oee_contract.prior_window(current)`, one anchor per request. Never calendar halves (`test_week_halves_tile.py`, `test_oee_trend_uses_the_contract_windows.py`, `test_cost_trend_uses_the_contract_windows.py`).
+- A new surface that states a plant OEE, whether a tile, a sentence or a report line, carries `oee_contract.coverage(db, tenant, window)` for the same window, and its words add `oee_contract.coverage_phrase(...)` (`frontend/lib/coverage.ts` on screen). A machine that stops reporting raises the pooled figure. A week-on-week comparison states each week's coverage (`test_every_plant_oee_states_coverage.py`).
 
 ## Recipe: change inventory / BOM
 - Reorder trigger: `stock_events.py stock_dropped` (`InventoryLow`), called by every writer of `current_stock`.

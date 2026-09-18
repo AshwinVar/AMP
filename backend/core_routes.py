@@ -223,8 +223,12 @@ def daily_summary_report(db: Session = Depends(_get_db), current_user: dict = De
     # as a plant that ran and lost everything (test_summary_never_invents_oee.py).
     days = oee_contract.DEFAULT_WINDOW_DAYS
     if summary["has_data"]:
+        # "from N of M machines" when the figure is not the whole plant (OEE
+        # contract s4; test_every_plant_oee_states_coverage.py).
+        partial = oee_contract.coverage_phrase(summary.get("coverage"))
         oee_lines = "\n".join([
-            f"Plant OEE, last {days} days (pooled): {summary['avg_oee']}%",
+            f"Plant OEE, last {days} days (pooled): {summary['avg_oee']}%"
+            + (f" ({partial})" if partial else ""),
             f"Availability: {summary['avg_availability']}%",
             f"Performance: {summary['avg_performance']}%",
             f"Quality: {summary['avg_quality']}%",

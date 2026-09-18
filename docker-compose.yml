@@ -122,6 +122,12 @@ services:
       # or replayed against, a real environment.
       SECRET_KEY: local-development-only-not-a-real-secret
 
+      # main.py seeds the GMATS tenant's Supervisor login (`gmats`) only when this
+      # is set: no password is written in source. Without it a fresh stack had no
+      # login at all and the quick start in docs/DOCKER.md answered 401. Local
+      # only, like SECRET_KEY above; never the production login's password.
+      GMATS_PASSWORD: local-development-only
+
       # main.py's CORS allowlist. localhost:3000 is where `npm run dev` serves
       # the Next.js frontend.
       ALLOWED_ORIGINS: http://localhost:3000,http://127.0.0.1:3000

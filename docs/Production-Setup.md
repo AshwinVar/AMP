@@ -99,10 +99,18 @@ migration ran, the server boots, and a **POST** round-trips — not just a GET:
     # 2. Liveness, and the running build's git sha.
     curl -s $BASE/health          # -> {"status":"ok","schema":"ok","version":"..."}
 
-    # 3. A real write path.
-    curl -s -X POST $BASE/login \  # -> 200 + access_token (NOT a hang)
+    # 3. A real write path: -> 200 + access_token (NOT a hang). The password is
+    #    the smoke-test login's, from the password manager; it is never written
+    #    in this repository.
+    curl -s -X POST $BASE/login \
       -H "Content-Type: application/json" \
-      -d '{"username":"gmats","password":"gmats@2026"}'
+      -d "{\"username\":\"gmats\",\"password\":\"$GMATS_PASSWORD\"}"
+
+This step used to print the login's password. That password is in this public
+repository's history and must be treated as compromised until the stored hash is
+changed in production. Setting `GMATS_PASSWORD` on Railway does not change it:
+the seed skips a user who already exists (see
+`backend/test_no_hardcoded_credentials.py`). Rotating it is the owner's action.
 
 `/health` alone is **not** a sufficient check and never was: during #513 it
 answered `{"status":"ok"}` for a day while every login returned 500, because a

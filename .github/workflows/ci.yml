@@ -74,6 +74,24 @@ jobs:
         working-directory: backend
         run: python audit_oem_specialist.py
 
+      # THE TWO ADVERSARIAL AUDITS THAT NEED NO SERVER. Each plays the attacker
+      # with inputs no happy path produces: a tenant claim that is a list, a
+      # topic with path traversal, a replayed acceptance, an id that probes for a
+      # 500. Both passed when this step was added, and both ran only by hand,
+      # which is how the specialist audit above and 13 mutation tests went stale
+      # unseen (#633, #635, #638). They take seconds. Each drops and recreates
+      # its database's schema, so each gets its own file, not ci.db.
+      - name: Six shipped fixes survive adversarial input (audit)
+        working-directory: backend
+        env:
+          DATABASE_URL: "sqlite:///./audit_adversarial_final.db"
+        run: python audit_adversarial_final.py
+      - name: Service contracts refuse every attack on their boundary (audit)
+        working-directory: backend
+        env:
+          DATABASE_URL: "sqlite:///./audit_contracts_adversarial.db"
+        run: python audit_oem_contracts_adversarial.py
+
   # THE MIGRATION GATE (ADR-0018). A separate job because it needs a real
   # PostgreSQL server, and because its answer is a different question from "do
   # the tests pass".

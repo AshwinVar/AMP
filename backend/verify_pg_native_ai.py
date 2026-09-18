@@ -145,8 +145,12 @@ def main():
           f"{machines_before} {audits_before}")
     r = alembic(env, "stamp", "0008_machine_claim")
     check("stamped at 0008 (the previous head)", r.returncode == 0, r.stderr[-300:])
-    r = alembic(env, "upgrade", "head")
-    check("alembic upgrade head", r.returncode == 0, r.stderr[-400:])
+    # The revision under test, by name. This said "head", which was 0009 when it
+    # was written. #614's 0010 moved head, and the stamp check below then failed
+    # on a migration that was still correct. A verification of one migration
+    # upgrades to that migration.
+    r = alembic(env, "upgrade", "0009_native_ai_consent")
+    check("alembic upgrade to 0009_native_ai_consent", r.returncode == 0, r.stderr[-400:])
 
     # --- 2. additive -----------------------------------------------------------------
     print("\n2. THE CONSENT TABLE IS ADDITIVE")
@@ -234,8 +238,8 @@ def main():
               == machines_before)
         kept = c.execute(text("SELECT count(*) FROM audit_logs WHERE entity_type='ai_learning_consent'")).scalar()
         check("...and the record of who granted what is kept", kept == 1, str(kept))
-    r = alembic(env, "upgrade", "head")
-    check("alembic upgrade head (0009 re-applied)", r.returncode == 0, r.stderr[-400:])
+    r = alembic(env, "upgrade", "0009_native_ai_consent")
+    check("alembic upgrade to 0009 (re-applied)", r.returncode == 0, r.stderr[-400:])
     with engine.begin() as c:
         back = c.execute(text(f"SELECT count(*) FROM information_schema.tables WHERE table_name='{TABLE}'")).scalar()
         check("the consent table is back", back == 1, str(back))

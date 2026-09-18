@@ -338,6 +338,34 @@ jobs:
           psql -h localhost -U postgres -c "CREATE DATABASE amp_isolation"
           python audit_isolation.py
 
+      # 6. THE MIGRATION VERIFICATIONS THAT RAN ONLY BY HAND. Each migrates a
+      #    populated scratch database on this service through one migration and
+      #    asks PostgreSQL itself to refuse what the migration forbids: per-tenant
+      #    BOM and document numbers, the machine identity constraint, the OEM
+      #    foundation (0006-0008) against a live fleet, the AI-consent table
+      #    (0009), and 25 two-thread races for one claim code. One had already
+      #    gone stale: verify_pg_native_ai upgraded to "head", and failed when
+      #    0010 moved head, on a migration that was still correct. It now names
+      #    its revision. Together they take under a minute.
+      - name: Per-tenant BOM migration on PostgreSQL
+        working-directory: backend
+        run: python verify_pg_bom.py
+      - name: Per-tenant document-number migration on PostgreSQL
+        working-directory: backend
+        run: python verify_pg_docnumbers.py
+      - name: Machine identity migration on a database with duplicates
+        working-directory: backend
+        run: python verify_pg_migration.py
+      - name: OEM foundation migrations (0006-0008) against a live fleet
+        working-directory: backend
+        run: python verify_pg_oem.py 5432
+      - name: The AI-consent table (0009) on PostgreSQL
+        working-directory: backend
+        run: python verify_pg_native_ai.py 5432
+      - name: Exactly one factory wins a raced claim code
+        working-directory: backend
+        run: python verify_pg_claim.py 5432
+
   # Branch-coverage floor. A SEPARATE job from `backend` on purpose.
   #
   # The `backend` job's answer is "do the tests pass", and that answer must not

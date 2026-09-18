@@ -74,6 +74,7 @@
 - Gate an endpoint: `require_roles(["Admin","Supervisor"])`.
 - Add a role: `VALID_ROLES` in `users_routes.py` + view-gating sets in `frontend/lib/modules.ts`.
 - Agent-approval roles: `approvals.APPROVER_ROLES`.
+- Founder-only data on a route any role may call: `tenancy.is_founder(current_user)` — the token's own tenant is the platform workspace AND its role is Admin (fail-closed). Never the workspace alone: that let every Operator demo login inside it see what only the founder may (`test_founder_diagnostics_need_the_founder.py`).
 
 ## Recipe: change tenancy (rare, load-bearing)
 - New scoped table: `tenant_code` column + add to `SCOPED_MODELS` **and** `CORE_TENANT_TABLES` + migration.

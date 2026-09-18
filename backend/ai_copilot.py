@@ -32,6 +32,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
 import models
+import tenancy
 from auth import get_current_user
 from currency import money
 from database import SessionLocal
@@ -566,9 +567,11 @@ def ai_status(current_user: dict = Depends(get_current_user)):
     result["engine"] = _answer_engine()
     result["native"] = {"available": native["available"], "adopted": native["adopted"],
                         "version": native["version"]}
-    # The last LLM failure is founder-only: error strings can carry
-    # upstream details a client workspace shouldn't see.
-    if current_user.get("tenant", "DEFAULT") == "DEFAULT":
+    # The last LLM failure is founder-only: error strings can carry upstream
+    # details a client workspace shouldn't see, and it is process-wide, so it may
+    # come from any tenant's request. The founder, not the founder's workspace:
+    # this used to show it to every login there (tenancy.is_founder).
+    if tenancy.is_founder(current_user):
         result["last_error"] = _LAST_LLM_ERROR
     return result
 

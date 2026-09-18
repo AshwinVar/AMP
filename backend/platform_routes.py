@@ -355,7 +355,9 @@ def update_tenant_config(payload: dict, db: Session = Depends(get_db),
     stay gated on the raw claim — platform owner only."""
     import tenancy
     tenant = tenancy.current_tenant() or current_user.get("tenant", "DEFAULT")
-    is_platform_owner = current_user.get("tenant", "DEFAULT") == "DEFAULT"
+    # The same rule as every founder-only answer (the route already requires
+    # Admin; is_founder also fails closed on a token with no tenant claim).
+    is_platform_owner = tenancy.is_founder(current_user)
     c = get_or_create_config(db, tenant)
     set_branding(c, payload)
     # £ per good unit — a tenant Admin sets their own margin so the recovery

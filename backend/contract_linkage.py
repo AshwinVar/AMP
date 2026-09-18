@@ -101,9 +101,8 @@ def end_coverage(session, installation_id, reason, now=None):
                        f"coverage_ended_at={canonical.ts(now)} reason={reason}")
             for tenant in (contract.factory_tenant_code,
                            oem_auth.sentinel_tenant(contract.oem_code)):
-                platform_routes.log_audit(session, "system", AUDIT_ACTION, "service_contract",
-                                          contract.id, details, tenant_code=tenant,
-                                          commit=False)
+                platform_routes.add_audit(session, "system", AUDIT_ACTION, "service_contract",
+                                          contract.id, details, tenant_code=tenant)
             oem_events.publish(event_bus, session, oem_events.CoverageEnded(
                 tenant_code=contract.factory_tenant_code, oem_code=contract.oem_code,
                 contract_id=contract.id, contract_ref=contract.contract_ref,

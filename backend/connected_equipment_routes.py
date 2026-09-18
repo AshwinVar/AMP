@@ -34,7 +34,7 @@ import oem_sharing
 from auth import get_current_user, require_roles
 from database import SessionLocal
 from events import event_bus
-from platform_routes import log_audit
+from platform_routes import add_audit, log_audit
 from tenancy import request_tenant
 
 router = APIRouter(prefix="/connected-equipment", tags=["Connected Equipment"])
@@ -311,10 +311,10 @@ def accept_claim(code: str, payload: ClaimAcceptance,
     # accepting a service contract also uses (ADR-0021). The claim, the widened
     # policy and both audit rows now commit together: an audit row can no longer
     # be lost after the claim it records was committed.
-    log_audit(db, actor, "claim_accepted", "machine_installation", inst.id,
+    add_audit(db, actor, "claim_accepted", "machine_installation", inst.id,
               f"oem={claim.oem_code} serial={inst.serial_number} "
               f"hint={claim.code_hint} Manufactured -> Assigned tenant={tenant}",
-              tenant_code=tenant, commit=False)
+              tenant_code=tenant)
     policy = oem_sharing.widen_grants(db, claim.oem_code, tenant, payload.grants,
                                       actor, context="at claim")
     db.commit()

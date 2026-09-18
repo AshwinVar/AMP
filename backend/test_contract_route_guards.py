@@ -14,7 +14,8 @@ so a rename cannot turn a guard into a check of nothing.
   3. Every statement-content or statement-action function in service_contracts
      calls require_statement_access (consent) before anything else it does.
   4. Every UPDATE in service_contracts is conditional on the state it read, and
-     every audit goes through the one two-party helper with commit=False.
+     every audit goes through the one two-party helper, into the caller's
+     transaction (platform_routes.add_audit).
   5. One clock: service_contracts.utcnow is the only reader of the wall clock.
   6. The service imports the engine lazily, so the app boots without it.
   7. Both routers are mounted on the real app, exactly once.
@@ -239,15 +240,17 @@ def case_transitions_are_conditional_and_audited_once():
                 unconditional.append(n.lineno)
     check("every UPDATE's WHERE names the status (or hash and revision) it read",
           not unconditional, unconditional)
+    add_calls = [n for n in ast.walk(tree) if isinstance(n, ast.Call)
+                 and isinstance(n.func, ast.Attribute) and n.func.attr == "add_audit"]
     log_calls = [n for n in ast.walk(tree) if isinstance(n, ast.Call)
                  and isinstance(n.func, ast.Attribute) and n.func.attr == "log_audit"]
-    check("log_audit is called in exactly one place (the _audit helper)",
-          len(log_calls) == 1, len(log_calls))
-    if log_calls:
-        kw = {k.arg: k.value for k in log_calls[0].keywords}
-        check("...with commit=False and an explicit tenant_code",
-              isinstance(kw.get("commit"), ast.Constant) and kw["commit"].value is False
-              and "tenant_code" in kw)
+    check("add_audit is called in exactly one place (the _audit helper)",
+          len(add_calls) == 1, len(add_calls))
+    check("...and log_audit, which commits on its own, is never called here",
+          not log_calls, [n.lineno for n in log_calls])
+    if add_calls:
+        kw = {k.arg: k.value for k in add_calls[0].keywords}
+        check("...with an explicit tenant_code", "tenant_code" in kw)
     check("no db.commit() sits before an _audit call in the same function "
           "(audit rows join the business transaction)",
           _audits_after_commit(tree) == [], _audits_after_commit(tree))

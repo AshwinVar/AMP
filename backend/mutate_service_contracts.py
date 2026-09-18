@@ -365,10 +365,8 @@ MUTATIONS = [
         "           f\"installations={len(installations)} grant=SHARE_DOWNTIME\","
         " sides=(FACTORY,))")),
     ("the audit commits on its own, outside the business transaction", _one(SVC,
-        "                                  entity_id, details, tenant_code=tenant,\n"
-        "                                  commit=False)",
-        "                                  entity_id, details, tenant_code=tenant,\n"
-        "                                  commit=True)")),
+        "        platform_routes.add_audit(db, party.audit_actor, action, entity_type,",
+        "        platform_routes.log_audit(db, party.audit_actor, action, entity_type,")),
     ("accepting a contract publishes no event", _one(SVC,
         "    _publish(db, oem_events.ContractAccepted(",
         "    (lambda *a: None)(db, oem_events.ContractAccepted(")),

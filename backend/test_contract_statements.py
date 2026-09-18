@@ -30,7 +30,7 @@ per contract period, against a real database:
 
 SHARED PIECES. SPAN_GAP_SECONDS and SETTLE_SECONDS belong to telemetry_coverage,
 the span retention days to retention.py's policy table, and
-log_audit(tenant_code=, commit=False) to platform_routes. The suite uses the
+add_audit(tenant_code=) to platform_routes. The suite uses the
 real ones, never a stand-in, and refuses to start if one is missing.
 
 POSTGRESQL. With DATABASE_URL=postgresql://... the suite runs on a disposable
@@ -60,7 +60,7 @@ from sqlalchemy.orm import close_all_sessions, sessionmaker  # noqa: E402
 
 def _require_shared_pieces():
     """The real shared pieces or nothing: a stand-in here once leaked into every
-    later suite of a one-process pytest run (a log_audit that refused commit=True)."""
+    later suite of a one-process pytest run (an add_audit that committed on its own)."""
     import models
     import platform_routes
     import retention
@@ -69,9 +69,9 @@ def _require_shared_pieces():
         assert hasattr(telemetry_coverage, name), f"telemetry_coverage.{name} is missing"
     assert sum(p.model is models.MachineTelemetrySpan for p in retention.POLICIES) == 1, \
         "retention.py has no single policy for machine_telemetry_spans"
-    params = inspect.signature(platform_routes.log_audit).parameters
-    assert "commit" in params and "tenant_code" in params, \
-        "platform_routes.log_audit(tenant_code=, commit=) is missing"
+    assert hasattr(platform_routes, "add_audit") and \
+        "tenant_code" in inspect.signature(platform_routes.add_audit).parameters, \
+        "platform_routes.add_audit(tenant_code=) is missing"
 
 
 _require_shared_pieces()

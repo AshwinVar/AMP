@@ -260,9 +260,9 @@ def _close_service_contracts(db, code: str, now=None) -> dict:
                    f"hashes and acceptances kept")
         for tenant in (contract.factory_tenant_code,
                        oem_auth.sentinel_tenant(contract.oem_code)):
-            platform_routes.log_audit(db, "system:offboarding", CLOSED_AT_OFFBOARDING,
+            platform_routes.add_audit(db, "system:offboarding", CLOSED_AT_OFFBOARDING,
                                       "service_contract", contract.id, details,
-                                      tenant_code=tenant, commit=False)
+                                      tenant_code=tenant)
     db.flush()
     return {k: v for k, v in counts.items() if v}
 

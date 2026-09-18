@@ -179,7 +179,7 @@ def widen_grants(db, oem_code, tenant_code, grants, actor, *, context):
 
     An unknown grant raises ValueError before anything is written. The
     `oem_sharing_changed` audit row is written in the factory's tenant inside
-    the CALLER's transaction (log_audit commit=False), always, with the wording
+    the CALLER's transaction (platform_routes.add_audit), always, with the wording
     the claim path has always used. The caller commits.
     """
     import platform_routes
@@ -199,10 +199,10 @@ def widen_grants(db, oem_code, tenant_code, grants, actor, *, context):
     policy.grants = ",".join(sorted(existing | wanted))
     policy.updated_by = actor
     db.flush()
-    platform_routes.log_audit(
+    platform_routes.add_audit(
         db, actor, "oem_sharing_changed", "oem_data_sharing_policy", policy.id,
         f"oem={oem_code} before={before!r} after={policy.grants!r} ({context})",
-        tenant_code=tenant_code, commit=False)
+        tenant_code=tenant_code)
     return policy
 
 

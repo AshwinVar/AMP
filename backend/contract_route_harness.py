@@ -15,7 +15,7 @@ The routes run against the REAL engine (contract_terms, contract_periods,
 contract_statements, attribution_engine) and the REAL shared pieces
 (telemetry_coverage, retention's span policy, oem_auth's contract capabilities,
 oem_sharing.widen_grants / bound_factory_read / contract_statement_visible,
-platform_routes.log_audit(tenant_code=, commit=)). None of it is patched.
+platform_routes.add_audit(tenant_code=)). None of it is patched.
 `require_integrated()` checks each piece is present before a suite starts and
 fails the suite, naming what is missing, if one is not: a green run is a claim
 about the integrated system and nothing less.
@@ -104,9 +104,9 @@ def require_integrated():
     for cap in ("read_contracts", "manage_contracts", "sign_contracts"):
         if not any(cap in caps for caps in oem_auth.ROLE_CAPABILITIES.values()):
             missing.append(f"oem_auth capability {cap}")
-    params = inspect.signature(platform_routes.log_audit).parameters
-    if "commit" not in params or "tenant_code" not in params:
-        missing.append("platform_routes.log_audit(tenant_code=, commit=)")
+    if not hasattr(platform_routes, "add_audit") or \
+            "tenant_code" not in inspect.signature(platform_routes.add_audit).parameters:
+        missing.append("platform_routes.add_audit(tenant_code=)")
     for name in ("contract_statement_visible", "bound_factory_read", "widen_grants"):
         if not hasattr(oem_sharing, name):
             missing.append(f"oem_sharing.{name}")

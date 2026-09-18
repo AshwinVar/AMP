@@ -66,7 +66,7 @@ retention) and reports whether it still matches.
 
 SHARED SETTINGS are read where they are owned, never copied: telemetry_coverage
 (SPAN_GAP_SECONDS, SETTLE_SECONDS), retention.POLICIES (span retention, read at
-call time), platform_routes.log_audit(tenant_code=, commit=False).
+call time), platform_routes.add_audit(tenant_code=).
 
 Run the tests: DATABASE_URL="sqlite:///./ci.db" python backend/test_contract_statements.py
 """
@@ -430,8 +430,8 @@ def _audit(db, contract, actor, statement, old_hash, old_revision):
         details = (f"revision {old_revision} -> {statement.revision}; content_hash "
                    f"{old_hash} -> {statement.content_hash}")
     for tenant in (contract.factory_tenant_code, oem_auth.sentinel_tenant(contract.oem_code)):
-        platform_routes.log_audit(db, actor, COMPUTED_ACTION, "contract_statement",
-                                  statement.id, details, tenant_code=tenant, commit=False)
+        platform_routes.add_audit(db, actor, COMPUTED_ACTION, "contract_statement",
+                                  statement.id, details, tenant_code=tenant)
 
 
 # ── compute ─────────────────────────────────────────────────────────────────

@@ -3,7 +3,7 @@
 The engine (mutate_contract_engine.py) and the routes (mutate_service_contracts.py)
 have their own harnesses. This one covers what joins them to the rest of AMP:
 
-    platform_routes.log_audit(tenant_code=, commit=)     test_audit_explicit_tenant
+    platform_routes.add_audit(tenant_code=)             test_audit_explicit_tenant
     oem_sharing.contract_statement_visible / bound_factory_read / widen_grants
                                                           test_oem_sharing_helpers
     telemetry_coverage and its writers                    test_telemetry_coverage
@@ -57,17 +57,21 @@ def _one(path, old, new):
 
 
 MUTATIONS = [
-    # --- log_audit ------------------------------------------------------------------
-    ("commit=False swallows a failure and rolls back", _one(AUDIT,
-        "    if not commit:\n        db.add(_row())\n        return\n",
-        "    if not commit:\n        try:\n            db.add(_row())\n        except Exception:\n"
-        "            db.rollback()\n        return\n")),
-    ("commit=False commits on its own", _one(AUDIT,
-        "    if not commit:\n        db.add(_row())\n        return\n",
-        "    if not commit:\n        db.add(_row())\n        db.commit()\n        return\n")),
+    # --- add_audit (the audit row inside the caller's transaction) ------------------
+    ("add_audit swallows a failure and rolls back", _one(AUDIT,
+        "    row = build_audit_row(actor, action, entity_type, entity_id, details, tenant_code)\n"
+        "    db.add(row)\n    return row\n",
+        "    row = build_audit_row(actor, action, entity_type, entity_id, details, tenant_code)\n"
+        "    try:\n        db.add(row)\n    except Exception:\n        db.rollback()\n    return row\n")),
+    ("add_audit commits on its own", _one(AUDIT,
+        "    row = build_audit_row(actor, action, entity_type, entity_id, details, tenant_code)\n"
+        "    db.add(row)\n    return row\n",
+        "    row = build_audit_row(actor, action, entity_type, entity_id, details, tenant_code)\n"
+        "    db.add(row)\n    db.commit()\n    return row\n")),
     ("the explicit tenant is dropped", _one(AUDIT,
-        "            tenant_code=tenant_code,\n        )",
-        "        )")),
+        "        entity_type=entity_type, entity_id=entity_id, details=details,\n"
+        "        tenant_code=tenant_code,\n    )",
+        "        entity_type=entity_type, entity_id=entity_id, details=details,\n    )")),
 
     # --- oem_sharing helpers -------------------------------------------------------
     ("any grant counts as consent to see statements", _one(SHARING,
@@ -89,11 +93,11 @@ MUTATIONS = [
         "    if unknown:\n        raise ValueError(f\"Unknown sharing grants: {', '.join(unknown)}\")",
         "    if False:\n        raise ValueError(f\"Unknown sharing grants: {', '.join(unknown)}\")")),
     ("widen_grants commits its own audit row", _one(SHARING,
-        "        tenant_code=tenant_code, commit=False)\n    return policy",
-        "        tenant_code=tenant_code, commit=True)\n    return policy")),
+        "    platform_routes.add_audit(\n        db, actor, \"oem_sharing_changed\"",
+        "    platform_routes.log_audit(\n        db, actor, \"oem_sharing_changed\"")),
     ("widen_grants files its audit row under whatever tenant is bound", _one(SHARING,
-        "        tenant_code=tenant_code, commit=False)\n    return policy",
-        "        commit=False)\n    return policy")),
+        "        tenant_code=tenant_code)\n    return policy",
+        "        )\n    return policy")),
     ("visible_machine binds the tenant by hand again", _one(SHARING,
         "    with bound_factory_read(installation.factory_tenant_code):\n"
         "        machine = (db.query(models.Machine)",

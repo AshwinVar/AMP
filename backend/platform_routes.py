@@ -129,14 +129,11 @@ def add_audit(db, actor, action, entity_type=None, entity_id=None, details=None,
     return row
 
 
-def log_audit(db, actor, action, entity_type=None, entity_id=None, details=None, tenant_code=None,
-              *, commit=True):
+def log_audit(db, actor, action, entity_type=None, entity_id=None, details=None, tenant_code=None):
     """Append an audit record on its own. Safe to call anywhere — never raises.
 
     add_audit plus a commit: use it for a record that stands on its own, and
     add_audit when the row must share the caller's transaction."""
-    if not commit:
-        return add_audit(db, actor, action, entity_type, entity_id, details, tenant_code)
     try:
         add_audit(db, actor, action, entity_type, entity_id, details, tenant_code)
         db.commit()

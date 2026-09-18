@@ -47,7 +47,7 @@ THE RULES, IN ONE PLACE EACH
     proposes with a hash and the other party accepts with the same hash.
   * ROW COUNTS DECIDE. Every transition is a conditional UPDATE on the state it
     was read in; zero rows is a 409, never a silent overwrite.
-  * AUDIT IN THE SAME TRANSACTION. log_audit(commit=False) writes one row in the
+  * AUDIT IN THE SAME TRANSACTION. platform_routes.add_audit writes one row in the
     factory's tenant and one in the OEM's sentinel tenant, inside the business
     transaction, so a failed commit leaves neither the change nor its record.
   * TIME. Naive UTC, whole seconds, half-open. `utcnow` below is the ONLY clock
@@ -262,9 +262,8 @@ def _audit(db, party, contract, action, entity_type, entity_id, details,
     for side in sides:
         tenant = (contract.factory_tenant_code if side == FACTORY
                   else oem_auth.sentinel_tenant(contract.oem_code))
-        platform_routes.log_audit(db, party.audit_actor, action, entity_type,
-                                  entity_id, details, tenant_code=tenant,
-                                  commit=False)
+        platform_routes.add_audit(db, party.audit_actor, action, entity_type,
+                                  entity_id, details, tenant_code=tenant)
 
 
 def _publish(db, event):

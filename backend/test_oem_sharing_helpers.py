@@ -21,7 +21,7 @@ consent layer already did in-line, so they were extracted rather than copied:
       The union the claim handler wrote in-line: add grants, never remove one,
       create the policy when there is none, refuse an unknown grant before
       writing anything, and write the `oem_sharing_changed` audit row in the
-      factory's tenant inside the caller's transaction (log_audit commit=False).
+      factory's tenant inside the caller's transaction (platform_routes.add_audit).
       The claim handler now calls it, and the audit rows a claim leaves are
       pinned here to exactly what the in-line code wrote.
 

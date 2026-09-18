@@ -3,11 +3,13 @@
 > Handover file. A new session should be able to read only this and continue.
 > Keep it short. Update it at the end of every completed task.
 
-**Updated:** 2026-09-18 (the sweep queue cleared: #596–#605, ten merges, each
-verified live; three larger branches built in worktrees and awaiting review)
-**Master SHA:** `0f3c889` (#605)
-**Production SHA:** `0f3c889` — verified live, not assumed: read back from
-`https://flowmes-production.up.railway.app/health` after the merge.
+**Updated:** 2026-09-18 (#606: a dev reseed script could wipe every tenant's
+inventory, now one-tenant and refused in production; #607 was this header)
+**Master SHA:** `11d05f9` (#607). A docs-only merge on top of it changes nothing
+that runs.
+**Production SHA:** `11d05f9` — verified live, not assumed:
+`{"status":"ok","database":"ok","schema":"ok","version":"11d05f9"}` from
+`https://flowmes-production.up.railway.app/health`, read at 08:42 UTC.
 Master and production are in step. Railway auto-deploys master, so prod tracks
 HEAD; re-check `/health` rather than trusting this line's age.
 
@@ -151,9 +153,32 @@ Two lessons worth keeping:
 
 | Branch | What it is | State |
 |---|---|---|
-| `fix/agent-proposals-locked-until-decided` | Queue item 2: an agent proposal **holds its item** until an approver decides it; 409 on every PATCH/DELETE bypass, withdraw-on-decide, audited | 13 commits, rebased on `0f3c889`; worktree gates green (248 backend suites, 380 frontend tests); adversarial review in progress |
+| `fix/agent-proposals-locked-until-decided` | Queue item 2: an agent proposal **holds its item** until an approver decides it; 409 on every PATCH/DELETE bypass, withdraw-on-decide, audited | 13 commits, rebased on `0f3c889`; worktree gates green (248 backend suites, 380 frontend tests). **Review fixes in progress in `AMP-wt/approval-lock`**: 13 files uncommitted, last edited 08:41 UTC 2026-09-18 by a live session. Leave that worktree alone. **Before merging:** it is 2 behind master, and #606 touched its neighbourhood. `reseed_inventory` now deletes `AgentAction` rows alongside their POs, and is no longer exempt from `test_bulk_write_scoping` / `test_unscoped_model_reads`. Rebase and re-run both guards. |
 | `feat/amp-native-ai` | AMP's own models (failure risk, telemetry anomaly, copilot intent), pure Python, no external LLM | 16 commits, ~25k lines; needs review + gates |
 | `feat/verified-outcome-contracts` | Agreed **downtime attribution** for OEM service contracts (OEM / factory / disputed / unmeasured, SLA credits, two-party accepted statements) | 20 commits; needs review + gates; **freedom-to-operate review required before launch** — Rockwell US10747201B2 is live to 2038 and covers metered subscription billing on a shared tamper-proof ledger |
+
+### 2026-09-18 — importing a dev script deleted every tenant's inventory (#606)
+
+`backend/reseed_inventory.py` did its work at module level: three bulk DELETEs
+with no filter and no tenant bound. The ADR-0002 hook scopes SELECTs, never a
+bulk DELETE. So `import reseed_inventory`, or running it, removed every tenant's
+items, stock movements and POs. The reorder agent's PO proposals stayed
+`Proposed` in the approval queue, pointing at nothing. Only `backend/.env`
+naming localhost kept it off production. It was exempt from both guards built
+for exactly this (`test_bulk_write_scoping`, `test_unscoped_model_reads`) as
+"local dev reseed".
+
+| | |
+|---|---|
+| Reproduced | On a throwaway SQLite file with two tenants: a bare import, a run with no `--tenant`, and a run under `RAILWAY_ENVIRONMENT=production` each emptied both tenants, and the runs exited 0 |
+| Fix | Work only under `__main__`. Refuses production first via `schema_guard.is_production()`, with no new definition. Requires `--tenant` and `--yes`. Every delete filters `tenant_code`; the seed runs with the tenant bound. PO proposals are deleted with their POs in one transaction. Refuses if a row it keeps (GRN line, issue slip, another tenant's movement) points at an item |
+| Guards | Removed from both `SKIP_FILES`: they now pass on it and check it like product code |
+| Evidence | 8 tests, all red first; 19/19 mutations; 246 suites; never run against a real database |
+
+Lesson worth keeping: **an exemption comment is a claim nobody re-checks.**
+"local dev reseed" was true only because of what one `.env` file contained,
+not because of anything in the code. When an allowlisted file changes, test
+whether it still needs the exemption before editing the comment.
 
 ### 2026-09-16 — the sweep, and the first thing it found (#595)
 
@@ -480,6 +505,27 @@ those ties.
 built and tested (28 checks, hostile inputs, tenant isolation both ways); the
 instrument to judge a model router exists and has a recorded baseline. What is
 missing is a key to measure a model against 58%.
+
+**Superseded 2026-09-17, by founder directive: no dependency on external AI
+models.** A key is no longer the missing piece. The router candidate is
+`feat/amp-native-ai`'s trained intent classifier (pure Python, no network call;
+see "Branches awaiting review"). It enters through a new `proposer` seam in
+`assistant.answer`. That seam is narrower than `chosen_route`: it uses the same
+`_pillar` allowlist, but only after the machine-name lookup.
+
+**It has not yet beaten the bar.** Per the branch's own
+`amp_ai/artifacts/copilot_intent_v1.eval.json` (read, not re-run), on the odd
+halves of the two held-out sets:
+
+| Held-out set | Keywords | Hybrid (model + keywords) | Model alone |
+|---|---|---|---|
+| set one | 15/26 | 17/26 | 15/26 |
+| set two | 15/26 | **15/26** | 14/26 |
+
+McNemar gives p=0.5 on set one and p=1.0 on set two. That is a possible +2 on
+one set and nothing on the fresh one, which is the same plateau signature
+recorded above. Review the branch with that in mind. It proves the model is
+safe to wire in; it does not prove it answers better.
 
 Phases 2, 4–6 not started. Note before starting Phase 2: the LLM is already read-only and is handed a pre-built text context (`_build_factory_context`), which is the correct shape — do not rebuild it.
 

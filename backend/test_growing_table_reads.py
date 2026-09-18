@@ -85,7 +85,9 @@ ALLOWED = {
     "reports_routes.py::export_maintenance_csv":
         "GET /maintenance.csv — full CSV export",
     "reports_routes.py::export_intelligence_summary":
-        "GET /intelligence-summary.txt — a whole-history narrative report",
+        "GET /intelligence-summary.txt — an on-demand download whose per-shift section "
+        "covers every recorded shift, and whose alert feed takes the downtime list; its "
+        "summary is /analytics/management's own, pooled in SQL over the window",
 
     # ---- POST generators. Run on demand by an operator or an agent, never on a
     # poll, and each is a sweep whose job is to consider every row.

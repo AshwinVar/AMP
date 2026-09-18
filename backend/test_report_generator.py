@@ -37,7 +37,7 @@ def test_loss_value_is_comma_grouped_not_bare_digits():
     # The bug: "£49740" (no separator). The fix: "£49,740" — the SAME string every
     # other money surface prints. The expected literal is hand-written, not money().
     text = build_daily_summary_text(_full_summary(), [], [])
-    assert "Estimated Downtime Loss: £49,740" in text, text
+    assert "Estimated Downtime Loss, last 7 days: £49,740" in text, text
     assert "£49740" not in text, "loss printed without a thousands separator"
 
 
@@ -46,7 +46,7 @@ def test_large_loss_value_gets_every_thousands_separator():
     summary = _full_summary()
     summary["estimated_loss_value"] = 1234567
     text = build_daily_summary_text(summary, [], [])
-    assert "Estimated Downtime Loss: £1,234,567" in text, text
+    assert "Estimated Downtime Loss, last 7 days: £1,234,567" in text, text
 
 
 def test_loss_value_matches_the_shared_money_helper():
@@ -55,22 +55,22 @@ def test_loss_value_matches_the_shared_money_helper():
     summary = _full_summary()
     summary["estimated_loss_value"] = 802115
     text = build_daily_summary_text(summary, [], [])
-    assert f"Estimated Downtime Loss: {money(802115)}" in text, text
+    assert f"Estimated Downtime Loss, last 7 days: {money(802115)}" in text, text
 
 
 def test_zero_loss_renders_a_real_zero():
     summary = _full_summary()
     summary["estimated_loss_value"] = 0
     text = build_daily_summary_text(summary, [], [])
-    assert "Estimated Downtime Loss: £0" in text, text
+    assert "Estimated Downtime Loss, last 7 days: £0" in text, text
 
 
 def test_no_unit_value_prints_units_and_never_a_pound():
     # No unit value set (ADR-0010): the summary carries lost units and a None value.
     # This used to print "£0" -- or, before that, £8 a minute the customer never set.
     text = build_daily_summary_text({"estimated_loss_value": None, "estimated_loss_units": 133}, [], [])
-    assert "Estimated Downtime Loss: 133 good units" in text, text
-    assert "£" not in text.split("Estimated Downtime Loss:")[1].splitlines()[0], text
+    assert "Estimated Downtime Loss, last 7 days: 133 good units" in text, text
+    assert "£" not in text.split("Estimated Downtime Loss, last 7 days:")[1].splitlines()[0], text
 
 
 def test_missing_and_unknown_loss_say_unknown_not_zero():
@@ -78,19 +78,29 @@ def test_missing_and_unknown_loss_say_unknown_not_zero():
     # convert (units None), is not a £0 loss. It must not KeyError or print "£None".
     for summary in ({}, {"estimated_loss_value": None, "estimated_loss_units": None}):
         text = build_daily_summary_text(summary, [], [])
-        assert "Estimated Downtime Loss: unknown" in text, text
+        assert "Estimated Downtime Loss, last 7 days: unknown" in text, text
         assert "£0" not in text and "None" not in text, text
 
 
 def test_empty_summary_uses_honest_defaults():
-    # No summary data at all: percentages fall to 0, labels to "No data" — never a
-    # raw None or a KeyError.
+    # No summary data at all: the OEE is "not measured" (a 0% would read as a plant
+    # that ran and lost everything), counts fall to 0 and labels to "No data" —
+    # never a raw None or a KeyError.
     text = build_daily_summary_text({}, [], [])
-    assert "Average OEE: 0%" in text
-    assert "Availability: 0%" in text
-    assert "Total Downtime: 0 minutes" in text
-    assert "Top Loss Reason: No data" in text
-    assert "Worst Machine: No data" in text
+    assert "Plant OEE, last 7 days: not measured" in text, text
+    assert "Availability:" not in text, text
+    assert "Total Downtime, last 7 days: 0 minutes" in text
+    assert "Top Loss Reason, last 7 days: No data" in text
+    assert "Worst Machine, last 7 days: No data" in text
+
+
+def test_a_measured_summary_prints_its_figures_and_window():
+    text = build_daily_summary_text({**_full_summary(), "has_data": True}, [], [])
+    assert "Plant OEE, last 7 days (pooled): 72%" in text, text
+    assert "Availability: 88%" in text and "Quality: 96%" in text, text
+    # has_data False wins over any figures a summary happens to carry.
+    text = build_daily_summary_text({**_full_summary(), "has_data": False}, [], [])
+    assert "Plant OEE, last 7 days: not measured" in text and "72%" not in text, text
 
 
 def test_empty_shift_kpis_and_alerts_render_placeholders():
@@ -141,6 +151,7 @@ if __name__ == "__main__":
     test_no_unit_value_prints_units_and_never_a_pound()
     test_missing_and_unknown_loss_say_unknown_not_zero()
     test_empty_summary_uses_honest_defaults()
+    test_a_measured_summary_prints_its_figures_and_window()
     test_empty_shift_kpis_and_alerts_render_placeholders()
     test_shift_kpis_render_each_row()
     test_alerts_render_severity_type_machine_and_message()

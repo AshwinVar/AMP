@@ -14,7 +14,6 @@ from datetime import datetime
 from typing import List
 
 from fastapi import APIRouter, Depends, HTTPException, Response
-from sqlalchemy import func
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -22,14 +21,13 @@ import models
 import schemas
 from csv_safe import csv_response
 from analytics_engine import (
-    build_management_summary,
     build_shift_kpis,
     build_smart_alerts,
     calculate_oee_from_record,
 )
+from analytics_routes import get_management_dashboard
 from auth import get_current_user, require_roles
 from database import SessionLocal
-from tenancy import request_tenant, tenant_unit_value
 from report_generator import build_daily_summary_text
 
 
@@ -223,48 +221,33 @@ def export_oee_csv(db: Session = Depends(_get_db), current_user: dict = Depends(
 
 @router.get("/intelligence-summary.txt")
 def export_intelligence_summary(db: Session = Depends(_get_db), current_user: dict = Depends(require_roles(["Admin", "Supervisor"]))):
-    # Plant OEE is POOLED from SQL sums, not by hydrating the whole (growing)
-    # production_records table into Python just to sum it (rule-4; production_records
-    # is the fastest-growing table on the platform and was pulled in FULL here — once
-    # for the OEE summary and AGAIN for the smart-alert feed below). The pooled result
-    # is byte-for-byte identical to summing every hydrated row, because
-    # build_management_summary delegates the pooling to pooled_oee_from_sums either
-    # way — the exact same fix /analytics/management already carries (#411/#419).
-    # ProductionRecord is in SCOPED_MODELS, so the do_orm_execute hook (ADR-0002)
-    # tenant-scopes this aggregate exactly as it scoped the old .all() scan.
-    machines = db.query(models.Machine).all()
-    # Downtime stays a full row scan — its durations are free text ("2 hrs 15 min"),
-    # so only Python's parse_duration_to_minutes can total them (the same accepted
-    # exception /analytics/management makes). shift_data drives the per-shift KPI
-    # breakdown below, which needs every row, and is not one of the rule-4
-    # unbounded-growth tables — so both keep their list read and the summary's shift
-    # attainment stays all-shift, unchanged from before.
-    downtime_logs = db.query(models.DowntimeLog).all()
+    # THE MANAGEMENT DASHBOARD'S OWN SUMMARY, not a second computation of it.
+    #
+    # This report prints the management summary's figures under the management
+    # dashboard's labels (OEE, availability, performance, quality, downtime, top
+    # loss reason, worst machine, estimated loss). /analytics/management pools
+    # them over THE window, oee_contract.OeeWindow (#591); this export kept its
+    # own copy of the aggregation with no date filter, so the download reported
+    # ALL history under the same names -- a breakdown from last quarter stayed
+    # its "Top Loss Reason" forever, and a week with no production read the
+    # lifetime OEE. Calling the dashboard's function makes the two one figure;
+    # report_generator names the window on every line
+    # (test_intelligence_report_is_the_management_week.py).
+    summary = get_management_dashboard(db=db, current_user=current_user)
+    # The per-shift breakdown covers every recorded shift (the report says so),
+    # which needs every row: shift_data is read whole, the accepted exception
+    # test_growing_table_reads.py records for this on-demand download.
     shifts = db.query(models.ShiftData).all()
-    production_sums = db.query(
-        func.coalesce(func.sum(models.ProductionRecord.planned_minutes), 0),
-        func.coalesce(func.sum(models.ProductionRecord.runtime_minutes), 0),
-        func.coalesce(func.sum(models.ProductionRecord.total_count), 0),
-        func.coalesce(func.sum(models.ProductionRecord.good_count), 0),
-        func.coalesce(func.sum(
-            models.ProductionRecord.ideal_cycle_time_seconds
-            * models.ProductionRecord.total_count
-        ), 0),
-        func.count(models.ProductionRecord.id),
-    ).one()
-    rate = tenant_unit_value(db, request_tenant(current_user))
-    summary = build_management_summary(
-        machines, downtime_logs, shifts, [], unit_value_gbp=rate,
-        production_sums=tuple(int(v) for v in production_sums),
-    )
     shift_kpis = build_shift_kpis(shifts)
     # The smart-alert feed reads the SAME recent window its live sibling does —
     # /alerts/smart bounds production to the most-recent 100 records — rather than
-    # scanning the whole growing table a second time. The alerts are about CURRENT
-    # machine state (latest record per machine, recent downtime), so the recent
-    # window is the correct basis and this export's alerts now match the dashboard's
-    # exactly. build_smart_alerts windows downtime to its own recent slice internally,
-    # so the full downtime list above feeds it without a second query.
+    # scanning the whole growing table. The alerts are about CURRENT machine state
+    # (latest record per machine, recent downtime), so the recent window is the
+    # correct basis and this export's alerts match the dashboard's exactly.
+    # build_smart_alerts windows downtime to its own recent slice internally, so
+    # the downtime list feeds it without a second query.
+    machines = db.query(models.Machine).all()
+    downtime_logs = db.query(models.DowntimeLog).all()
     recent_production = (
         db.query(models.ProductionRecord)
         .order_by(models.ProductionRecord.id.desc())

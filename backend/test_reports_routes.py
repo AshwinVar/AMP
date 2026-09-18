@@ -191,13 +191,13 @@ def test_intelligence_summary_content_and_hour_format_downtime():
 
     report = _intelligence_report(db, "TA")
 
-    assert "Average OEE: 72%" in report, report
+    assert "Plant OEE, last 7 days (pooled): 72%" in report, report
     assert "Availability: 80%" in report, report
     assert "Performance: 100%" in report, report
     assert "Quality: 90%" in report, report
     # The hour-format pin: 135, not 2.
-    assert "Total Downtime: 135 minutes" in report, report
-    assert "Top Loss Reason: Breakdown" in report, report
+    assert "Total Downtime, last 7 days: 135 minutes" in report, report
+    assert "Top Loss Reason, last 7 days: Breakdown" in report, report
     # Per-shift KPI line reconciles with shifts.csv (same build_shift_kpis basis).
     assert "Morning: Target=1000 | Actual=900 | Efficiency=90% | Gap=100" in report, report
     print("PASS intelligence-summary content: OEE 72%, hour-format downtime 135 min, shift KPI")
@@ -205,39 +205,42 @@ def test_intelligence_summary_content_and_hour_format_downtime():
 
 def test_intelligence_summary_empty_tables():
     # An empty tenant must yield a clean header-only report, never a crash on an empty
-    # sequence / zero denominator: no production -> OEE 0%, no shifts -> the "no data"
-    # line, no alerts -> the "no alerts" line.
+    # sequence / zero denominator: no production -> the week's OEE is "not measured"
+    # (a 0% would read as a plant that ran and lost everything), no shifts -> the "no
+    # data" line, no alerts -> the "no alerts" line.
     db = _iso_session()
     report = _intelligence_report(db, "EMPTY")
-    assert "Average OEE: 0%" in report, report
-    assert "Total Downtime: 0 minutes" in report, report
+    assert "Plant OEE, last 7 days: not measured" in report, report
+    assert "Total Downtime, last 7 days: 0 minutes" in report, report
     assert "No shift data available." in report, report
     assert "No active alerts." in report, report
-    print("PASS intelligence-summary empty tenant: 0% OEE, no-data/no-alert lines, no crash")
+    print("PASS intelligence-summary empty tenant: OEE not measured, no-data/no-alert lines, no crash")
 
 
 def test_intelligence_summary_bounds_production_in_sql():
-    # The rule-4 guard this change adds: the export must NOT hydrate the whole growing
-    # production_records table into Python. Plant OEE is pooled from SQL sums
-    # (production_sums) and the smart-alert feed reads only the recent-100 window its
-    # /alerts/smart sibling uses — so a bare full-table ProductionRecord scan must be
-    # gone from the source entirely.
+    # The rule-4 guard: the export must NOT hydrate the whole growing
+    # production_records table into Python. The summary is /analytics/management's
+    # own, which pools in SQL over its window, and the smart-alert feed reads only
+    # the recent-100 window its /alerts/smart sibling uses — so a bare full-table
+    # ProductionRecord scan must be gone from the source entirely.
     src = inspect.getsource(RR.export_intelligence_summary)
-    assert "production_sums" in src, "OEE summary must pool from SQL sums, not a full hydrate"
+    assert "get_management_dashboard(" in src, (
+        "the summary must be the management dashboard's own, not a second aggregation")
     assert ".limit(100)" in src, "smart-alert production feed must be bounded to the recent window"
     assert "db.query(models.ProductionRecord).all()" not in src, \
         "the growing production_records table must not be hydrated whole"
-    print("PASS intelligence-summary bounds production_records (SQL sums + recent-100 alert window)")
+    print("PASS intelligence-summary bounds production_records (the dashboard's SQL summary + recent-100 alert window)")
 
 
-def test_intelligence_summary_oee_covers_whole_table_not_just_alert_window():
-    # The summary OEE is all-time (SQL sums over the WHOLE table), while the alert feed
-    # is the recent-100 window — two different, deliberate bases. Prove the summary
-    # still reflects records BEYOND the 100-row alert window: seed 100 flawless records
-    # (quality 100%) then a single earlier terrible one, and the pooled quality must
-    # drop below 100 (the old full-hydrate summed all; the SQL sum must too). If the
-    # summary had been bounded to 100 like the alerts, the 101st (oldest) record would
-    # be excluded and quality would read a clean 100%.
+def test_intelligence_summary_oee_covers_the_window_not_just_alert_window():
+    # The summary OEE is the management dashboard's window (SQL sums over every record
+    # in it), while the alert feed is the recent-100 window — two different,
+    # deliberate bases. Prove the summary still reflects records BEYOND the 100-row
+    # alert window: seed 100 flawless records (quality 100%) then a single earlier
+    # terrible one, all inside the window, and the pooled quality must drop below 100.
+    # If the summary had been bounded to 100 like the alerts, the 101st (oldest)
+    # record would be excluded and quality would read a clean 100%. (That records
+    # OUTSIDE the window are excluded is test_intelligence_report_is_the_management_week.py.)
     db = _iso_session()
     mid = _seed_machine(db, "TB", "CNC-02")
     # One terrible record first (oldest id): 100 good of 1000 -> quality 10%.
@@ -247,11 +250,11 @@ def test_intelligence_summary_oee_covers_whole_table_not_just_alert_window():
         _seed_production(db, "TB", mid, planned=100, runtime=100, ideal=60, total=100, good=100, rejected=0)
 
     report = _intelligence_report(db, "TB")
-    # Pooled quality over ALL 101 records = total good / total total
+    # Pooled quality over all 101 records = total good / total total
     #   = (100 + 100*100) / (1000 + 100*100) = 10100 / 11000 = 0.918... -> 92%.
     # If the oldest record were dropped (bounded to 100 like alerts) it would be 100%.
     assert "Quality: 92%" in report, report
-    print("PASS intelligence-summary OEE pools the WHOLE table (92%), not just the recent-100 alert window")
+    print("PASS intelligence-summary OEE pools the whole window (92%), not just the recent-100 alert window")
 
 
 if __name__ == "__main__":
@@ -263,5 +266,5 @@ if __name__ == "__main__":
     test_intelligence_summary_content_and_hour_format_downtime()
     test_intelligence_summary_empty_tables()
     test_intelligence_summary_bounds_production_in_sql()
-    test_intelligence_summary_oee_covers_whole_table_not_just_alert_window()
+    test_intelligence_summary_oee_covers_the_window_not_just_alert_window()
     print("ALL REPORTS ROUTE TESTS PASSED")

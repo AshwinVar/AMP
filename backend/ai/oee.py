@@ -12,6 +12,7 @@ from collections import defaultdict
 from datetime import datetime, timedelta
 
 import models
+import oee_contract
 from analytics_engine import (OEE_TREND_DEAD_BAND, WORLD_CLASS_OEE, biggest_lever,
                               oee_direction)
 from ai.twin import _oee_from_records, _oee_by_machine, _recent_production
@@ -112,7 +113,6 @@ def build_oee_summary(db, tenant: str, now=None) -> dict:
     # that made a plant look 27 points better (67% -> 94%) the moment its worst
     # machine went offline. The number cannot be corrected (the data is gone),
     # but it must not be presented as a whole-plant figure when it is not.
-    import oee_contract
     coverage = oee_contract.coverage(db, tenant,
                                      oee_contract.OeeWindow(WINDOW_DAYS, now=now))
 
@@ -134,22 +134,6 @@ def build_oee_summary(db, tenant: str, now=None) -> dict:
     }
 
 
-def _split_halves(records, today):
-    """Split production records into the current WINDOW_DAYS (including today) and
-    the WINDOW_DAYS before it, dropping anything outside the 14-day window. Mirrors
-    the half-split the downtime / quality / cost trends use."""
-    current, prior = [], []
-    for r in records:
-        if not r.created_at:
-            continue
-        age = (today - r.created_at.date()).days
-        if 0 <= age < WINDOW_DAYS:
-            current.append(r)
-        elif WINDOW_DAYS <= age < TREND_WINDOW_DAYS:
-            prior.append(r)
-    return current, prior
-
-
 def _by_machine(records):
     grouped: dict = defaultdict(list)
     for r in records:
@@ -158,7 +142,7 @@ def _by_machine(records):
     return grouped
 
 
-def build_oee_trend(db, tenant: str) -> dict:
+def build_oee_trend(db, tenant: str, now=None) -> dict:
     """Which way is the plant's OEE going, and what moved it? Compares this week's
     pooled OEE against last week's — same pooled basis as build_oee_summary (ratio
     of summed inputs, so output-weighted, never a mean of per-record ratios) — and
@@ -172,9 +156,18 @@ def build_oee_trend(db, tenant: str) -> dict:
     dead-band (±2 pts) so the same weekly pair can't read 'down' here and 'flat' on
     another surface. A week with no production can't be scored, so it is reported
     ('unknown') rather than shown as a crash to 0%."""
-    today = datetime.utcnow().date()
-    records = _recent_production(db, days=TREND_WINDOW_DAYS)
-    cur_recs, pri_recs = _split_halves(records, today)
+    # One anchor, two adjacent windows: `current` is THE window /oee-summary pools
+    # (oee_contract.OeeWindow) and `prior` tiles against it exactly
+    # (oee_contract.prior_window), so "this week" is one set of records on every
+    # surface. The calendar-day split this replaces put [midnight(today-6), now)
+    # beside /oee-summary's [now-7d, now): a record from late on day 7 was in the
+    # headline's week and in this trend's PRIOR week, and the trend's 'current'
+    # OEE was a different figure from the headline beside it
+    # (test_oee_trend_uses_the_contract_windows.py).
+    current_window = oee_contract.OeeWindow(WINDOW_DAYS, now=now)
+    prior_window = oee_contract.prior_window(current_window)
+    cur_recs = _recent_production(db, days=WINDOW_DAYS, now=current_window.end)
+    pri_recs = _recent_production(db, days=WINDOW_DAYS, now=prior_window.end)
     current = _oee_from_records(cur_recs)   # {oee, availability, performance, quality, has_data}
     prior = _oee_from_records(pri_recs)
     names = {m.id: m.name for m in db.query(models.Machine).all()}
@@ -223,7 +216,7 @@ def build_oee_trend(db, tenant: str) -> dict:
     declining_machines = sorted((m for m in movers if m["delta"] <= -OEE_TREND_DEAD_BAND),
                                 key=lambda m: m["delta"])[:TOP_N]
 
-    now = current["oee"]
+    oee_now = current["oee"]
     if not has_cur and not has_prior:
         direction, verdict, tone = "none", "No production recorded in the last 14 days.", "warn"
     elif not has_cur:
@@ -231,20 +224,20 @@ def build_oee_trend(db, tenant: str) -> dict:
         verdict = f"No production recorded this week (OEE was {prior['oee']}% last week)."
     elif not has_prior:
         direction, tone = "unknown", "warn"
-        verdict = f"Only one week of production — OEE {now}%, nothing to compare yet."
+        verdict = f"Only one week of production — OEE {oee_now}%, nothing to compare yet."
     else:
         dir_raw = oee_direction(current["oee"], prior["oee"])   # up / down / flat
         if dir_raw == "up":
             direction, tone = "improving", "good"
-            verdict = f"OEE up {delta} pts to {now}% week on week."
+            verdict = f"OEE up {delta} pts to {oee_now}% week on week."
         elif dir_raw == "down":
             direction, tone = "worsening", "bad"
             blame = (f" — {worst_comp['label']} fell {abs(worst_comp['delta'])} pts"
                      if worst_comp and worst_comp["delta"] < 0 else "")
-            verdict = f"OEE down {abs(delta)} pts to {now}%{blame} week on week."
+            verdict = f"OEE down {abs(delta)} pts to {oee_now}%{blame} week on week."
         else:
             direction, tone = "steady", "good"
-            verdict = f"OEE steady at {now}% ({delta:+} pts week on week)."
+            verdict = f"OEE steady at {oee_now}% ({delta:+} pts week on week)."
 
     return {
         "days": TREND_WINDOW_DAYS,

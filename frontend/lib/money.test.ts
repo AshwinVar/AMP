@@ -53,6 +53,8 @@ describe("lossFigure", () => {
 
   it("says nothing it cannot know", () => {
     expect(lossFigure(null, null)).toBe("—");
+  });
+});
 
 /**
  * Contract money (ADR-0021) arrives as DECIMAL TEXT ("40000.00") because the

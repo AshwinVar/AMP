@@ -17,11 +17,10 @@ from sqlalchemy.orm import Session
 
 import models
 import schemas
+import stock_events
 from auth import get_current_user, require_roles
 from payload_fields import MAX_QTY
 from database import SessionLocal
-from events import event_bus, InventoryLow
-from tenancy import request_tenant
 import ai.escalations
 
 
@@ -111,6 +110,7 @@ def update_inventory_item(
         raise HTTPException(status_code=404, detail="Inventory item not found")
 
     data = payload.model_dump(exclude_unset=True)
+    before = item.current_stock
 
     for key, value in data.items():
         setattr(item, key, value)
@@ -130,6 +130,7 @@ def update_inventory_item(
 
     # A NULL heals to 0 above; a NEGATIVE patch value is refused (check_stock_levels).
     check_stock_levels(item.current_stock, item.reorder_level)
+    stock_events.stock_dropped(db, item, before)
 
     db.commit()
     db.refresh(item)
@@ -226,25 +227,10 @@ def create_inventory_transaction(
 
     db.add(new_transaction)
 
-    # Widen the event stream: signal when stock crosses its reorder level so the
-    # AI platform can react with a reorder recommendation (ADR-0003). Only when a
-    # reorder level is actually configured: reorder_level can be NULL (see above)
-    # and `stock <= None` is undefined — a NULL level can't say whether the item is
-    # low, so skip the crossing rather than crash or fabricate one (matching the
-    # SQL `current_stock <= reorder_level` low-stock filter, which excludes NULL
-    # levels). `current_stock` is the healthy-before value; item.current_stock is
-    # the post-transaction level, both concrete ints here.
-    if item.reorder_level is not None:
-        was_above_reorder = current_stock > item.reorder_level
-        if was_above_reorder and item.current_stock <= item.reorder_level:
-            event_bus.publish(InventoryLow(
-                tenant_code=request_tenant(current_user),
-                item_id=item.id,
-                item_code=item.item_code,
-                item_name=item.item_name,
-                current_stock=item.current_stock,
-                reorder_level=item.reorder_level,
-            ), db)
+    # Tell the Reorder agent if this took the item across its reorder level
+    # (ADR-0005): the one rule every stock writer calls. `current_stock` is the
+    # value before this transaction.
+    stock_events.stock_dropped(db, item, current_stock)
 
     db.commit()
     db.refresh(new_transaction)

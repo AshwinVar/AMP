@@ -22,6 +22,7 @@ import approvals
 import models
 from csv_safe import import_row_error, read_upload_text
 import schemas
+import stock_events
 from auth import get_current_user, require_roles
 from database import SessionLocal
 import ai.escalations
@@ -612,6 +613,7 @@ def update_purchase_order(
             # and the ledger records what ACTUALLY moved so the two still reconcile.
             applied = received_delta if received_delta > 0 else -min(-received_delta, on_hand)
             item.current_stock = on_hand + applied
+            stock_events.stock_dropped(db, item, on_hand)
 
             if applied:
                 transaction = models.InventoryTransaction(

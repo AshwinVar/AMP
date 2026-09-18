@@ -42,11 +42,16 @@ def test_inventory_paths_owned_by_module():
 
 
 def test_low_stock_still_publishes_inventory_low():
+    # The publish moved into stock_events.stock_dropped, the one rule every stock
+    # writer calls; that it actually publishes, from the ledger and every other
+    # writer, is proved behaviourally in test_inventory_low_every_drop.py.
+    import ast
     import inspect
     import inventory_routes
-    src = inspect.getsource(inventory_routes)
-    assert "InventoryLow(" in src, "InventoryLow publish lost in extraction"
-    assert "event_bus.publish" in src, "event_bus.publish lost in extraction"
+    fn = next(n for n in ast.walk(ast.parse(inspect.getsource(inventory_routes)))
+              if isinstance(n, ast.FunctionDef) and n.name == "create_inventory_transaction")
+    assert any(isinstance(c, ast.Call) and getattr(c.func, "attr", None) == "stock_dropped"
+               for c in ast.walk(fn)), "the ledger no longer tells the Reorder agent"
     print("PASS recording a transaction still publishes InventoryLow")
 
 

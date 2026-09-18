@@ -630,7 +630,10 @@ def update_purchase_order(
 
     db.commit()
     db.refresh(po)
-    return approvals.annotate_awaiting_decision(db, models.PurchaseOrder, [po])[0]
+    # No awaiting_approval annotation: a PATCH that got here left the row unheld
+    # (a held row is refused 409 above, and nothing may move a row INTO its pending
+    # status by hand), so the response's flag is null by construction.
+    return po
 
 
 @router.delete("/purchase-orders/{po_id}")

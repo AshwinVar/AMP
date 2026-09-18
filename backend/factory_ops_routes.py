@@ -111,7 +111,10 @@ def update_escalation(
     db.commit()
     db.refresh(escalation)
 
-    return approvals.annotate_awaiting_decision(db, models.Escalation, [escalation])[0]
+    # No awaiting_approval annotation: a PATCH that got here left the row unheld
+    # (a held row is refused 409 above, and nothing may move a row INTO its pending
+    # status by hand), so the response's flag is null by construction.
+    return escalation
 
 
 @router.delete("/escalations/{escalation_id}")
@@ -445,7 +448,10 @@ def update_maintenance_task(
 
     db.commit()
     db.refresh(task)
-    return approvals.annotate_awaiting_decision(db, models.MaintenanceTask, [task])[0]
+    # No awaiting_approval annotation: a PATCH that got here left the row unheld
+    # (a held row is refused 409 above, and nothing may move a row INTO its pending
+    # status by hand), so the response's flag is null by construction.
+    return task
 
 
 @router.delete("/maintenance/tasks/{task_id}")

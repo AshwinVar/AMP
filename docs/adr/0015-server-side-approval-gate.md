@@ -215,10 +215,14 @@ reproduces all of it (34 failures on master).
    (undecided and past expiry), and the Approvals inbox shows the same sentence
    and does not offer Approve on it.
 6. **Contract.** No schema change or migration. The task, PO and escalation
-   responses (lists and PATCH) gain an additive
+   list responses gain an additive
    `awaiting_approval: {agent_action_id, agent, expired} | null`. The screens read
    only that flag -- never status strings -- to disable controls, hide Delete and
-   say who decides.
+   say who decides. A PATCH response carries the field too, and it is null by
+   construction: a PATCH succeeds only on a row that is not held, and nothing may
+   move a row INTO its pending status by hand (point 7). The PATCH handlers used to
+   annotate it anyway; review round 3 found that call could never return anything
+   but null, so it was removed rather than tested.
 7. **Only an agent puts an item into its pending status** (verifier round 1).
    Lazy withdrawal leaves orphans: an item moved while its action stayed
    `Proposed`. Measured through `main.app`: an Operator PATCHed such an item's
@@ -298,9 +302,9 @@ reproduces all of it (34 failures on master).
 
 ### Guards
 
-`test_agent_item_lock_guard.py` walks `main.app.routes` (every PATCH/PUT/DELETE
-under the three URL families must call the lock; the six known handlers must be
-found by name), AST-scans the route modules for any write to a loaded
+`test_agent_item_lock_guard.py` walks `main.app.routes` (every PATCH/PUT/DELETE,
+and every POST on an item-addressed path, under the three URL families must call
+the lock; the six known handlers must be found by name), AST-scans the route modules for any write to a loaded
 task/PO/escalation not preceded by the lock, checks the `PENDING` table against
 what agents propose and what `apply_decision` moves, and probes itself by
 removing and moving the real call in memory; it also requires
@@ -331,6 +335,30 @@ CI did not run any of that -- the PostgreSQL job never called
 `verify_pg_approvals.py` -- so the race was proven only on a developer's
 machine. The migration gate job now runs it against its `postgres:18` service
 (`pg_scratch` falls back to the job's `DATABASE_URL` when there is no `.env`).
+
+### Review round 3 (2026-09-18)
+
+An adversarial review of the rebased branch confirmed seven findings. Each is
+fixed with a test that was run against the unfixed code and failed there:
+
+- **Two more screens decide proposals.** The agent drawer (Agent Activity) and the
+  machine cockpit drawer offered Approve on expired proposals and, after a refused
+  decision, kept offering Approve and Reject for a proposal the server had just
+  withdrawn. Both now read `expired` from their payloads (`ai/roster`,
+  `ai/twin._open_actions`, from `approvals.is_expired`), grey out Approve with the
+  same sentence, and reload after a refusal, like the inbox and Mission Control.
+- **The route inventory skipped POST.** A new `POST /escalations/{id}/resolve` that
+  resolved through a helper passed the whole guard, and through the real handler an
+  Operator resolved a held escalation with 200. POST on an item-addressed path is
+  now inventoried; a probe shows that route caught, and green once it calls the lock.
+- **The withdrawal's commit was untested.** Every assertion read back through the
+  handler's own session, which sees its own uncommitted writes. Section 17 rolls
+  that session back and still finds the withdrawal and its audit row.
+- **The expired 409 check was vacuous.** It asserted only "reject", which the
+  generic held message also says. It now requires "has expired" and no "approve".
+- **A false cause on the record.** An item with no creation time was withdrawn as
+  though a newer row had reused its id. Fail-closed stays (it cannot be shown to be
+  the proposal's), but the refusal and the audit row now say what is actually true.
 
 ### Not addressed (open founder questions)
 

@@ -6,7 +6,9 @@ or a route module that loads a MaintenanceTask and writes to it, passes every
 behavioural test ever written -- because nobody wrote one for it -- and quietly
 reopens the bypass. So the guard reads the code:
 
-  1. ROUTE INVENTORY. Walk main.app.routes. Every PATCH / PUT / DELETE under
+  1. ROUTE INVENTORY. Walk main.app.routes. Every PATCH / PUT / DELETE, and
+     every POST on an item-addressed path (a transition such as
+     POST /escalations/{id}/resolve writes as surely as a PATCH), under
      /maintenance/tasks/, /escalations/ or /purchase-orders/ must call
      approvals.refuse_if_awaiting_decision before it writes. At least the six
      known handlers must be found, by name, or the walk has gone blind. Every
@@ -47,6 +49,7 @@ import textwrap
 from fastapi.routing import APIRoute
 
 import approvals
+import models
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 HELPER = "refuse_if_awaiting_decision"
@@ -170,6 +173,48 @@ def _read(path):
 
 
 # =====================================================================
+def route_problems(routes):
+    """Section 1 over any route list: (item routes found, creators, problems).
+
+    Every method on an item-addressed route counts, POST included. The first
+    version skipped POST, and a reviewer measured the cost: a new
+    POST /escalations/{id}/resolve that loads the row and resolves it through a
+    helper (``_mark_resolved``) passed this whole file, and through the real
+    handler an Operator resolved a HELD escalation with 200. The writer scan
+    (section 2) cannot see a write made inside a helper, so this inventory is the
+    net for that shape: the route must call the lock itself."""
+    found, creators, problems = {}, set(), []
+    roots = {path.rstrip("/") for path in ROUTE_FAMILIES.values()}
+    for route in routes:
+        if not isinstance(route, APIRoute):
+            continue
+        fn = route.endpoint
+        if "POST" in route.methods and route.path in roots:
+            creators.add(fn.__name__)
+            if not _calls(textwrap.dedent(inspect.getsource(fn)), STATUS_HELPER):
+                problems.append(f"POST {route.path} ({fn.__name__}) does not call {STATUS_HELPER}")
+            continue
+        # A POST counts only when it addresses an item ({id} in the path): the
+        # collection-level generators (/escalations/from-smart-alerts and the
+        # like) create new rows, they cannot change one an agent proposed.
+        item_post = "POST" in route.methods and "{" in route.path
+        if not (route.methods & {"PATCH", "PUT", "DELETE"} or item_post):
+            continue
+        if not route.path.startswith(tuple(ROUTE_FAMILIES.values())):
+            continue
+        src = textwrap.dedent(inspect.getsource(fn))
+        _is_writer, scan = scan_source(src)[fn.__name__]
+        calls_helper = any(_is_helper_call(n) for n in ast.walk(ast.parse(src)))
+        found[fn.__name__] = (sorted(route.methods), route.path)
+        if not calls_helper or scan:
+            problems.append(f"{sorted(route.methods)} {route.path} ({fn.__name__}) does not call "
+                            f"{HELPER} before writing: {scan or 'no call at all'}")
+        if route.methods & {"PATCH", "PUT"} and not _calls(src, STATUS_HELPER):
+            problems.append(f"{sorted(route.methods)} {route.path} ({fn.__name__}) does not call "
+                            f"{STATUS_HELPER}")
+    return found, creators, problems
+
+
 def test_route_inventory():
     print("=" * 74)
     print("1. EVERY ITEM-ADDRESSED WRITE ROUTE CALLS THE LOCK")
@@ -177,32 +222,11 @@ def test_route_inventory():
     import main
     check("every proposable kind has a URL family to inventory",
           set(ROUTE_FAMILIES) == set(approvals.PENDING), str(set(approvals.PENDING)))
-    found = {}
-    creators = set()
-    roots = {path.rstrip("/") for path in ROUTE_FAMILIES.values()}
-    for route in main.app.routes:
-        if not isinstance(route, APIRoute):
-            continue
-        if "POST" in route.methods and route.path in roots:
-            fn = route.endpoint
-            creators.add(fn.__name__)
-            check(f"POST {route.path} ({fn.__name__}) calls {STATUS_HELPER}",
-                  _calls(textwrap.dedent(inspect.getsource(fn)), STATUS_HELPER), "no call")
-            continue
-        if not route.methods & {"PATCH", "PUT", "DELETE"}:
-            continue
-        if not route.path.startswith(tuple(ROUTE_FAMILIES.values())):
-            continue
-        fn = route.endpoint
-        src = textwrap.dedent(inspect.getsource(fn))
-        is_writer, problems = scan_source(src)[fn.__name__]
-        calls_helper = any(_is_helper_call(n) for n in ast.walk(ast.parse(src)))
-        found[fn.__name__] = (sorted(route.methods), route.path)
-        check(f"{sorted(route.methods)} {route.path} ({fn.__name__}) calls {HELPER} before writing",
-              calls_helper and not problems, str(problems) or "no call at all")
-        if route.methods & {"PATCH", "PUT"}:
-            check(f"{sorted(route.methods)} {route.path} ({fn.__name__}) calls {STATUS_HELPER}",
-                  _calls(src, STATUS_HELPER), "no call")
+    found, creators, problems = route_problems(main.app.routes)
+    for name, (methods, path) in sorted(found.items()):
+        print(f"  seen  {methods} {path} ({name})")
+    check("every item-addressed write route (any method) calls the lock before writing",
+          not problems, "; ".join(problems))
     check(f"the inventory is not blind: found {len(found)} routes (>= 6)", len(found) >= 6,
           str(found))
     check("...including all six known handlers by name", KNOWN_HANDLERS <= set(found),
@@ -271,6 +295,47 @@ def test_registry_is_complete():
         system_only = vocab.get(model.__name__, {}).get("status", {}).get("systemOnly", [])
         check(f"{model.__name__}.status '{pending}' is systemOnly in status-vocab.json",
               pending in system_only, str(system_only))
+
+
+# Probe endpoints for section 1b. Module-level so inspect.getsource can read them.
+def _probe_mark_resolved(escalation):
+    escalation.status = "Resolved"
+
+
+def _probe_resolve_without_lock(escalation_id: int):
+    db = None
+    escalation = db.get(models.Escalation, escalation_id)
+    _probe_mark_resolved(escalation)
+    return {"ok": True}
+
+
+def _probe_resolve_with_lock(escalation_id: int):
+    db = None
+    escalation = db.get(models.Escalation, escalation_id)
+    approvals.refuse_if_awaiting_decision(db, escalation, None)
+    _probe_mark_resolved(escalation)
+    return {"ok": True}
+
+
+def test_the_inventory_sees_a_post_transition():
+    print()
+    print("=" * 74)
+    print("1b. A POST TRANSITION ROUTE IS INVENTORIED, NOT SKIPPED")
+    print("=" * 74)
+    from fastapi import APIRouter
+
+    bad = APIRouter()
+    bad.add_api_route("/escalations/{escalation_id}/resolve", _probe_resolve_without_lock, methods=["POST"])
+    found, _creators, problems = route_problems(bad.routes)
+    check("a POST /escalations/{id}/resolve that writes through a helper is found",
+          "_probe_resolve_without_lock" in found, str(found))
+    check("...and flagged for not calling the lock", any("_probe_resolve_without_lock" in p for p in problems),
+          str(problems))
+
+    good = APIRouter()
+    good.add_api_route("/escalations/{escalation_id}/resolve", _probe_resolve_with_lock, methods=["POST"])
+    _found, _creators, problems = route_problems(good.routes)
+    check("the same route calling the lock first passes", not problems, str(problems))
 
 
 def test_the_guard_can_fail():
@@ -391,6 +456,7 @@ def test_the_guard_can_fail():
 
 if __name__ == "__main__":
     test_route_inventory()
+    test_the_inventory_sees_a_post_transition()
     test_writer_scan()
     test_registry_is_complete()
     test_the_guard_can_fail()

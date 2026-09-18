@@ -10,6 +10,7 @@ from datetime import datetime, timedelta
 
 from sqlalchemy import func
 
+import approvals
 import models
 
 name = "roster"
@@ -130,6 +131,7 @@ def build_agent_detail(db, tenant: str, agent_key: str):
 
     # Most-recent actions as evidence — a LIMIT, not the whole history.
     rows = base.order_by(models.AgentAction.id.desc()).limit(15).all()
+    now = datetime.utcnow()
 
     return {
         **meta,
@@ -149,6 +151,10 @@ def build_agent_detail(db, tenant: str, agent_key: str):
             "created_at": a.created_at.isoformat() if a.created_at else None,
             "decided_by": a.decided_by,
             "decided_at": a.decided_at.isoformat() if a.decided_at else None,
+            # An undecided proposal past its expiry can only be rejected
+            # (approvals.is_expired, ADR-0015 addendum). The drawer offered
+            # Approve on it anyway, which the server then refused.
+            "expired": approvals.is_expired(a, now) if a.status == "Proposed" else None,
         } for a in rows],
     }
 

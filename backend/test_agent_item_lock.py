@@ -24,8 +24,9 @@ WHAT THIS SUITE PINS
      today's behaviour (nothing is held), a missing config row fails closed;
   5. an expired proposal still holds its item; approve is refused, reject is
      the recorded exit;
-  6. lists and PATCH responses carry awaiting_approval from the same predicate,
-     and a list with nothing pending costs zero agent_actions queries;
+  6. lists carry awaiting_approval from the same predicate, and a list with
+     nothing pending costs zero agent_actions queries (a successful PATCH
+     leaves its row unheld, so its response carries null by construction);
   7. the double-decide race, sequentially: a stale second decision -- even one
      whose session already holds the item -- cannot overwrite the first;
   8. withdraw_orphaned (a tested function, deliberately NOT wired to boot);
@@ -594,8 +595,12 @@ def test_expired_proposals():
         check(f"{kind}: ...and its flag says expired", flag is not None and flag["expired"] is True,
               str(flag))
         ok, code, detail = patch(db, kind, iid, MOVE[kind])
-        check(f"{kind}: ...the 409 says it must be rejected", "reject" in str(detail).lower(),
-              str(detail))
+        # "reject" alone could not tell the two messages apart: the generic held
+        # message says "approve or reject" too, so deleting the expired branch left
+        # this green. The expired message says it has expired and offers no approve.
+        text = str(detail).lower()
+        check(f"{kind}: ...the 409 says it has expired and must be rejected",
+              "has expired" in text and "reject" in text and "approve" not in text, str(detail))
         ok, code, detail = decide(db, aid, "approve")
         check(f"{kind}: approving it is refused as expired (409)", code == 409, str(code))
         # The agent cannot re-propose while the item is held (every dedup counts
@@ -650,7 +655,9 @@ def test_flags_on_lists_and_responses():
                 "purchase_order": schemas.PurchaseOrderResponse,
                 "escalation": schemas.EscalationResponse}[kind]
         ok, code, out = patch(db, kind, lookalike, OTHER_FIELD[kind])
-        check(f"{kind}: a PATCH response validates and carries the flag (null)",
+        # Null by construction, not by annotation: a PATCH succeeds only on a row
+        # that is not held, and none may be moved INTO its pending status by hand.
+        check(f"{kind}: a PATCH response validates against the response model (flag null)",
               ok and resp.model_validate(out).awaiting_approval is None, str(code))
 
         # A PATCH may not bring a moved item BACK into its pending status: that
@@ -1403,7 +1410,15 @@ def test_a_proposal_never_holds_a_newer_row_with_its_id():
         db.commit()
     check("an item with no created_at is not held",
           listing(db, "purchase_order")[iid]["awaiting_approval"] is None)
-    ok, code, _ = decide(db, aid, "approve")
+    ok, code, detail = decide(db, aid, "approve")
+    check("...and the refusal states the true cause, not an id reuse that never happened",
+          "no creation time" in str(detail) and "created after the proposal" not in str(detail),
+          str(detail))
+    audit = withdrawals(db, aid)
+    check("...and so does the withdrawal's audit row",
+          len(audit) == 1 and "no creation time" in (audit[0].details or "")
+          and "created after the proposal" not in (audit[0].details or ""),
+          str([a.details for a in audit]))
     check("...and no decision is recorded against it (409, withdrawn)",
           code == 409 and action_row(db, aid).status == "Cancelled"
           and item_row(db, "purchase_order", iid).status == "Draft",
@@ -1468,6 +1483,33 @@ def test_a_withdrawal_names_who_caused_it():
           str([(r.actor, r.tenant_code) for r in rows]))
 
 
+def test_a_withdrawal_is_committed_not_just_staged():
+    banner("17. A WITHDRAWAL SURVIVES A ROLLBACK OF THE SESSION THAT MADE IT")
+    # Review finding: every withdrawal assertion above reads back through the
+    # handler's own session, which sees its own UNCOMMITTED update and the
+    # autoflushed audit row. Deleting the route's db.commit() after
+    # approvals.withdraw left every suite green. Rolling the session back after
+    # the 409 discards anything uncommitted, so only a durable withdrawal and a
+    # durable audit row survive this check. (A second session is no help here:
+    # the test engine shares one SQLite connection, uncommitted writes included.)
+    for decision in ("approve", "reject"):
+        db = fresh_db()
+        aid, iid = propose(db, "maintenance_task")
+        with unbound():
+            db.query(MODEL["maintenance_task"]).filter(
+                MODEL["maintenance_task"].id == iid).first().status = "In Progress"
+            db.commit()
+        ok, code, detail = decide(db, aid, decision)
+        check(f"{decision} on a moved item is refused with 409", not ok and code == 409, f"{code} {detail}")
+        db.rollback()
+        act = action_row(db, aid)
+        check(f"...after a rollback the withdrawal is still there ({decision})",
+              act.status == "Cancelled" and act.decided_by == approvals.WITHDRAWN_BY,
+              f"{act.status}/{act.decided_by}")
+        check(f"...and so is its audit row ({decision})", len(withdrawals(db, aid)) == 1,
+              str(withdrawals(db, aid)))
+
+
 if __name__ == "__main__":
     test_every_bypass_is_refused()
     test_a_decision_never_contradicts_the_item()
@@ -1485,6 +1527,7 @@ if __name__ == "__main__":
     test_a_plan_change_cannot_rearm_an_edited_proposal()
     test_a_proposal_never_holds_a_newer_row_with_its_id()
     test_a_withdrawal_names_who_caused_it()
+    test_a_withdrawal_is_committed_not_just_staged()
     print()
     print("=" * 74)
     if failures:

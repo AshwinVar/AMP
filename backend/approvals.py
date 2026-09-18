@@ -304,6 +304,12 @@ def locate_pending_item(db, action, lock=False):
     if item is None:
         return None, f"the {noun} it would change no longer exists"
     if not _written_before(item, action):
+        # Two different facts, and the reason is written into the withdrawal's
+        # audit row, so it must say which. A missing timestamp is NOT evidence that
+        # the id was reused (review finding: it used to be recorded as if it were).
+        if item.created_at is None or action.created_at is None:
+            return None, (f"the {noun} it would change has no creation time on record, so it "
+                          "cannot be shown to be the one the agent proposed")
         return None, (f"the {noun} it would change no longer exists (a {noun} created "
                       "after the proposal now has its id)")
     if item.status != pending:

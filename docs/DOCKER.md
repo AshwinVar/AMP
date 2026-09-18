@@ -58,12 +58,14 @@ curl -s localhost:8000/health
 `"database":"ok"` is the whole point — the API is answering **from PostgreSQL**.
 
 Then log in the way the post-deploy smoke test does (see
-`docs/Production-Setup.md` §7):
+`docs/Production-Setup.md` §7). The `gmats` login exists because
+`docker-compose.yml` sets `GMATS_PASSWORD` to a local-only value; production's
+login has its own password, which is never written in this repository:
 
 ```bash
 curl -s -X POST localhost:8000/login \
   -H "Content-Type: application/json" \
-  -d '{"username":"gmats","password":"gmats@2026"}'
+  -d '{"username":"gmats","password":"local-development-only"}'
 ```
 
 Stop with `Ctrl+C`. `docker compose down` removes the containers and keeps your
@@ -159,9 +161,15 @@ deliberately excludes `test_*.py` (see `.dockerignore`). Two consequences:
 ## Seeding
 
 Startup seeding is automatic and idempotent — `main.py`'s startup event seeds the
-per-tenant config, the `gmats` client login, one demo PLC per industrial
+per-tenant config, the `gmats` client login (only when `GMATS_PASSWORD` is set,
+which compose does with a local-only value), one demo PLC per industrial
 protocol, and enough production records and machine events for OEE and the
 timeline to have something to show. Just bring the stack up.
+
+The seed only creates a login that does not exist; it never changes one. A
+volume from before the password left the source already has `gmats`, with the
+old password, and keeps it. `docker compose down -v` gives you a fresh one (and
+drops your local data).
 
 ### Rebuilding the demo factory (SMT → IC plant)
 

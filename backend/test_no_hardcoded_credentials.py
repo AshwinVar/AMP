@@ -38,8 +38,10 @@ Run: DATABASE_URL="sqlite:///./ci.db" python backend/test_no_hardcoded_credentia
 """
 import os
 import re
+import subprocess
 
 HERE = os.path.dirname(os.path.abspath(__file__))
+REPO = os.path.dirname(HERE)
 failures = []
 
 
@@ -58,6 +60,39 @@ def source_files():
         for n in names:
             if n.endswith(".py") and n != os.path.basename(__file__):
                 yield os.path.join(root, n)
+
+
+def tracked_files():
+    """Every file git tracks, except this one: docs, compose, workflows, frontend.
+
+    Section 2 used to read backend .py only, and two documents went on printing
+    the leaked password as the login to type (docs/DOCKER.md, and the production
+    smoke test in docs/Production-Setup.md)."""
+    try:
+        listed = subprocess.run(["git", "ls-files", "-z"], cwd=REPO, capture_output=True,
+                                text=True, check=True).stdout
+    except (OSError, subprocess.CalledProcessError) as e:
+        # e.g. the compose `tests` service, which mounts backend/ alone. Nothing
+        # is yielded, and section 2's reach check then fails and says so.
+        print(f"  (cannot list the repository's tracked files: {e})")
+        return
+    me = os.path.abspath(__file__)
+    for rel in listed.split("\0"):
+        path = os.path.join(REPO, rel)
+        if rel and os.path.abspath(path) != me and os.path.isfile(path):
+            yield path
+
+
+# A login body in a document: "password": "<value>". The value must be a
+# placeholder, a shell variable, or visibly local-only ("local-..."), like the
+# compose stack's. Anything else is a password somebody could type.
+DOC_PASSWORD = re.compile(r'"password"\s*:\s*"([^"]*)"', re.I)
+ALLOWED_DOC_PASSWORD = re.compile(r"^(\.\.\.|…|<[^>]*>|\$\{?[A-Za-z_][A-Za-z0-9_]*\}?|local-[a-z0-9-]+)$")
+
+
+def literal_doc_passwords(text):
+    return [m.group(1) for m in DOC_PASSWORD.finditer(text)
+            if not ALLOWED_DOC_PASSWORD.match(m.group(1))]
 
 
 # A credential-shaped default: NAME = os.environ.get("...", "<non-empty literal>")
@@ -93,12 +128,34 @@ def main():
     # this asserts only that it is no longer being RE-PUBLISHED on every commit.
     LEAKED = "gmats" + "@2026"          # split so this file is not itself a hit
     hits = []
-    for path in source_files():
+    scanned = set()
+    for path in tracked_files():
+        scanned.add(os.path.relpath(path, REPO).replace(os.sep, "/"))
         text = open(path, encoding="utf-8", errors="replace").read()
         if LEAKED in text:
             line = text[:text.index(LEAKED)].count("\n") + 1
-            hits.append(f"{os.path.relpath(path, HERE)}:{line}")
-    check("the leaked password appears in no .py file", not hits, "; ".join(hits))
+            hits.append(f"{os.path.relpath(path, REPO)}:{line}")
+    # Of the files the loop above READ, not of a list computed beside it: a check
+    # on a second list passed while the loop had gone back to backend .py only.
+    check(f"the scan read the whole repository ({len(scanned)} tracked files)",
+          {"docs/Production-Setup.md", "docs/DOCKER.md", "docker-compose.yml"} <= scanned,
+          str(len(scanned)))
+    check("the leaked password appears in no tracked file (code, docs, config)", not hits,
+          "; ".join(hits))
+
+    # And no document hands out ANY login password to type. The two that printed
+    # the leaked one were the local quick start and the production smoke test.
+    printed = []
+    for path in tracked_files():
+        if path.endswith(".md"):
+            for value in literal_doc_passwords(open(path, encoding="utf-8", errors="replace").read()):
+                printed.append(f"{os.path.relpath(path, REPO)} ({len(value)}-character literal)")
+    check("no document shows a literal login password", not printed, "; ".join(printed))
+    check("CONTROL: a typed password is caught; placeholders, $VARS and local- values are not",
+          literal_doc_passwords('{"password":"hunter2"}') == ["hunter2"]
+          and not literal_doc_passwords('{"password":"..."} {"password": "…"} {"password":"<yours>"}'
+                                        ' {"password":"$GMATS_PASSWORD"} {"password":"${PW}"}'
+                                        ' {"password":"local-development-only"}'))
 
     print()
     print("=" * 74)

@@ -12,7 +12,9 @@ WHAT IS ASSERTED
   3  SMALL BUILD ``--small`` with a fixed created_at runs in under 20 s, gives
                  the same payload hash twice (once in-process, once through
                  the CLI), opens NO database connection, and writes nothing
-                 to the shipped artifacts directory
+                 to the shipped artifacts directory. The 20 s is judged
+                 wherever the wall clock measures the build (wallclock.py):
+                 always standalone, not under the coverage job's tracer
   4  SPLIT       the small build's split is leak-free (entities disjoint,
                  label windows inside their period); the refit never trains
                  on a row after train_end; the test set is scored once and
@@ -50,6 +52,7 @@ from sqlalchemy import create_engine, event, text
 from sqlalchemy.engine import Engine
 from sqlalchemy.pool import Pool
 
+import wallclock
 from amp_ai.core import artifact as A
 from amp_ai.core import ledger as L
 from amp_ai.core import split as SP
@@ -203,13 +206,16 @@ class ConnectionSpy:
         return False
 
 
-def section_small_build():
+def section_small_build(judge_time=True):
     print("\n3/4. Small build: deterministic, offline, leak-free")
     with ConnectionSpy() as spy:
         started = time.perf_counter()
         first = B.build(B.SMALL, created_at=FIXED_CREATED_AT, prior_ledger={})
         elapsed = time.perf_counter() - started
-    check("the small build finishes in under 20 s", elapsed < 20.0, f"{elapsed:.1f} s")
+    if judge_time:
+        check("the small build finishes in under 20 s", elapsed < 20.0, f"{elapsed:.1f} s")
+    else:
+        print("     20 s budget NOT judged: a line tracer is running (the backend job enforces it)")
     print(f"     (small build: {elapsed:.1f} s)")
     check("the build opened no database connection", spy.events == [], str(spy.events))
     with ConnectionSpy() as probe:
@@ -560,13 +566,13 @@ def section_calibrated_path():
     check("predict refuses an artifact whose calibrator is decreasing", refused)
 
 
-def main():
+def main(judge_time=True):
     print("=" * 74)
     print("AMP-native AI failure risk: build, artifact and serving")
     print("=" * 74)
     section_gate()
     section_samples()
-    section_small_build()
+    section_small_build(judge_time)
     section_committed()
     section_serving()
     section_tamper()
@@ -584,8 +590,9 @@ def main():
 
 
 def test_amp_ai_failure_risk_build():
-    """pytest entry point; CI runs this file as a standalone script."""
-    assert main() == 0, "see the FAIL lines above"
+    """pytest entry point; CI runs this file as a standalone script. Only this
+    entry asks wallclock.traced(); the standalone run always judges the budget."""
+    assert main(judge_time=not wallclock.traced()) == 0, "see the FAIL lines above"
 
 
 if __name__ == "__main__":

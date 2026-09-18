@@ -31,9 +31,9 @@ Run: DATABASE_URL="sqlite:///./ci.db" python backend/test_amp_ai_failure_risk_re
 import json
 import math
 import os
-import sys
 import time
 
+import wallclock
 from amp_ai.core import artifact as A
 from amp_ai.failure_risk import build as B
 from amp_ai.failure_risk import predict as PR
@@ -48,19 +48,6 @@ def check(label, condition, detail=""):
         failures.append(f"{label}: {detail}")
     print(f"  {'PASS' if condition else 'FAIL'}  {label}"
           + (f"   [{detail}]" if detail and not condition else ""))
-
-
-def traced():
-    """Is a line tracer (coverage, a debugger) instrumenting this process?
-
-    CI's coverage job runs every suite under one, and it slows this pure-Python
-    arithmetic several-fold: the committed build recorded 31 s, and the same
-    build took 108 s under coverage on a CI runner (PR #610). A wall-clock
-    figure taken there measures the tracer, not the build.
-    """
-    monitoring = getattr(sys, "monitoring", None)   # Python 3.12+: coverage's sysmon core
-    return sys.gettrace() is not None or bool(
-        monitoring and monitoring.get_tool(monitoring.COVERAGE_ID))
 
 
 def differences(a, b, path="$", out=None, limit=10):
@@ -153,10 +140,10 @@ def main(judge_time=True):
 def test_amp_ai_failure_risk_reproduce():
     """pytest entry point; CI runs this file as a standalone script.
 
-    Only this entry asks traced(): CI's coverage job reaches the suite through it.
-    The standalone run below always judges the budget, so no mistake in the
-    tracer check can quietly stop the backend job from enforcing it."""
-    assert main(judge_time=not traced()) == 0, "see the FAIL lines above"
+    Only this entry asks wallclock.traced(): CI's coverage job reaches the suite
+    through it. The standalone run below always judges the budget, so no mistake
+    in the tracer check can quietly stop the backend job from enforcing it."""
+    assert main(judge_time=not wallclock.traced()) == 0, "see the FAIL lines above"
 
 
 if __name__ == "__main__":

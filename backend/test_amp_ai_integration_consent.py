@@ -71,12 +71,31 @@ def check(label, condition, detail=""):
         failures.append(f"{label}: {detail}")
 
 
+PATCHED = (database, main, native_ai_routes, plan_gate, platform_routes, saas_routes)
+_real_session_factories = {}
+
+
 def install():
     Base.metadata.drop_all(bind=engine)
     Base.metadata.create_all(bind=engine)
     tenancy.install_scoping()
-    for mod in (database, main, native_ai_routes, plan_gate, platform_routes, saas_routes):
+    for mod in PATCHED:
+        _real_session_factories.setdefault(mod, mod.SessionLocal)
         mod.SessionLocal = SessionLocal
+    plan_gate._licence_cache.clear()
+
+
+def uninstall():
+    """Give every module back the session factory install() replaced.
+
+    CI's coverage job runs every suite in ONE pytest process, and this file sorts
+    before test_boot_migrations.py. Left installed, this in-memory factory is what
+    that suite's User query reached, so the query "succeeded" on a database whose
+    column had never been dropped, and the job failed (PR #610's first CI run).
+    """
+    for mod, real in _real_session_factories.items():
+        mod.SessionLocal = real
+    _real_session_factories.clear()
     plan_gate._licence_cache.clear()
 
 
@@ -583,12 +602,17 @@ def section_consent_audit_not_forgeable():
 
 
 def main_():
-    section_gate()
-    section_audit_and_atomicity()
-    section_http()
-    section_offboarding()
-    section_company_deleted_without_purge()
-    section_consent_audit_not_forgeable()
+    try:
+        section_gate()
+        section_audit_and_atomicity()
+        section_http()
+        section_offboarding()
+        section_company_deleted_without_purge()
+        section_consent_audit_not_forgeable()
+    finally:
+        uninstall()
+    check("every module has its real session factory back (the coverage job shares one process)",
+          all(mod.SessionLocal is not SessionLocal for mod in PATCHED))
     print()
     if failures:
         print(f"{len(failures)} FAILED")

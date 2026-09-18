@@ -343,6 +343,26 @@ def section_committed():
           art["training_data_source"] == f"synthetic:{S.GENERATOR_ID} seed={B.SEED}")
     check("its generator_sha256 is the committed synthetic.py (rebuild after any generator change)",
           art["generator_sha256"] == B.generator_sha256(), f"{art['generator_sha256']} vs {B.generator_sha256()}")
+    # LINE ENDINGS, ON ANY PLATFORM. The check above can only see a hash that
+    # depends on line endings when the checkout HAS CRLF: on Windows it failed
+    # when the normalisation was removed, and on Linux, where CI runs, it passed.
+    # The weekly mutation fleet's first run showed that mutation surviving there
+    # (#642). So feed the generator both ways explicitly and require one hash.
+    source = open(S.__file__, "rb").read().replace(b"\r\n", b"\n")
+    hashes, original = {}, S.__file__
+    try:
+        for name, data in (("LF", source), ("CRLF", source.replace(b"\n", b"\r\n"))):
+            with tempfile.NamedTemporaryFile("wb", suffix=".py", delete=False) as fh:
+                fh.write(data)
+            S.__file__ = fh.name
+            try:
+                hashes[name] = B.generator_sha256()
+            finally:
+                os.remove(fh.name)
+    finally:
+        S.__file__ = original
+    check("the generator hash is the same for an LF and a CRLF checkout",
+          hashes["LF"] == hashes["CRLF"] == art["generator_sha256"], str(hashes))
     check("consent basis: no customer data", art["consent_basis"] == B.CONSENT_BASIS)
     ev = strict_json(os.path.join(os.path.dirname(PR.ARTIFACT_PATH), B.EVAL_FILE))
     check("the eval JSON names the pinned artifact", ev["artifact_sha256"] == PR.ARTIFACT_SHA256)

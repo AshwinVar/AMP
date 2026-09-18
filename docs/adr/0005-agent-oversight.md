@@ -56,4 +56,8 @@ ADR-0015 addendum an undecided proposal **holds** its item: every PATCH and
 DELETE on it is refused (409) until an Admin or Supervisor approves or rejects
 it, and no decision is recorded unless the item moves with it. The hold applies
 only where the tenant's plan includes the decision API (the Intelligence Pack);
-see ADR-0015 for the open question about agents proposing elsewhere.
+see ADR-0015 for the open question about agents proposing elsewhere. Where the
+plan does not include it, a human edit or delete of the proposed item still
+succeeds but withdraws the proposal, so a later plan upgrade cannot turn a
+human's rewrite into the agent's approved proposal; every withdrawal is in the
+audit log under the user who caused it (ADR-0015 addendum, points 9-11).

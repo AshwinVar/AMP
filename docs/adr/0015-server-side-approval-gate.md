@@ -173,8 +173,9 @@ reproduces all of it (34 failures on master).
    (`UPDATE agent_actions SET status='Cancelled', decided_by='system-withdrawn'
    WHERE id AND tenant AND status='Proposed'`), answering 409. If the update
    changes nothing, a concurrent request decided first, and the answer is 400
-   `Already <status>` -- the earlier decision is never overwritten. Orphans are
-   withdrawn **lazily**, when an approver tries to decide one.
+   `Already <status>` -- the earlier decision is never overwritten. A
+   withdrawal that changed the row also records who caused it (point 11).
+   Orphans are withdrawn **lazily**, when an approver tries to decide one.
    `approvals.withdraw_orphaned` exists and is tested, but nothing calls it at
    boot or from a script: rewriting production rows on deploy waits for the
    founder's go-ahead.
@@ -188,13 +189,18 @@ reproduces all of it (34 failures on master).
 4. **What "held" means** (one implementation, `approvals.awaiting_decision`,
    batched, zero queries when nothing is pending): the item is in its pending
    status **and** a `Proposed` AgentAction of the same tenant, kind and id points
-   at it **and** the tenant's plan can reach the decision API (the pack
+   at it, the item having been written no later than that action (point 10),
+   **and** the tenant's plan can reach the decision API (the pack
    `module_manifest` maps `/agent-actions` to is in `TenantConfig.enabled_modules`,
    using the plan gate's own rule; no config row counts as licensed, so the lock
    fails closed). Expiry is ignored. Human look-alikes (pending status, no
    Proposed action) and tenants without the Intelligence Pack keep today's
-   behaviour: nobody there can record a decision, so no record can contradict
-   the item.
+   behaviour: their items stay editable, because nobody there can reach
+   Approvals to release a hold. *Corrected in verifier round 2:* this point
+   first said that for such tenants "nobody there can record a decision, so no
+   record can contradict the item". That held only while the plan stayed put --
+   an upgrade makes a decision reachable over whatever was edited meanwhile.
+   Point 9 closes it.
 5. **Freshness now gates approve only.** Check 3 no longer applies to reject.
    The reason is the lock: an expired proposal still holds its item, and without
    an exit the item would be frozen for good. Rejecting is that exit: it needs a
@@ -233,6 +239,62 @@ reproduces all of it (34 failures on master).
    takes `limit` (1-300) and `offset` (>= 0), breaks `created_at` ties by id so
    pages neither repeat nor skip, and the inbox and the activity log load older
    pages on request (`frontend/lib/agent-actions.ts`).
+9. **A plan change cannot re-arm a proposal a human changed** (verifier round
+   2). Measured through `main.app`: a growth-plan tenant (no Intelligence Pack,
+   so nothing held); the maintenance agent proposed a Critical task; an
+   Operator PATCHed it to priority Low, assigned `nobody`, planned 2030, new
+   notes, re-sending status `Proposed` (200: unheld, and re-sending the pending
+   status is not a move); the founder's `apply-plan enterprise` made the task
+   held; a Supervisor's approval answered 200 and recorded `Approved` for "Open
+   a Critical maintenance task" over content the agent never proposed. The same
+   edits were open on escalations and Draft POs. This is point 7's defect by
+   another road. Now `refuse_if_awaiting_decision(db, item, actor)`, when a live
+   proposal points at the item but the item is unheld *only* because of the
+   licence clause, lets the PATCH or DELETE through as before and withdraws the
+   proposal in the **same transaction** (`approvals.withdraw`, compare-and-set;
+   a PATCH the handler refuses later rolls the withdrawal back with it),
+   recorded against the user who made the change. A proposal nobody touched is
+   still re-armed by an upgrade and decided normally. Rejected alternatives:
+   refusing at decision time an item edited after its proposal needs an
+   `updated_at` column the three tables do not have; withdrawing at plan-change
+   time would have to live in every path that changes `enabled_modules`, and
+   would also end proposals nobody edited.
+10. **A proposal names only a row written no later than itself** (verifier
+    round 2). Measured on SQLite through `main.app`: a Draft PO (id 1) and its
+    proposal #2 "Draft a PO for Steel (90 kg)"; purchase orders bulk-deleted,
+    as `reseed_inventory.py` does (agent actions untouched); a new Copper Draft
+    PO took id 1 again with proposal #3. `GET /purchase-orders` showed it held
+    by #2, and approving #2 answered 200 and moved the Copper PO, orphaning #3.
+    SQLite reuses the highest deleted rowid; PostgreSQL sequences do not (the
+    verifier's PostgreSQL run of the same probe answered 409 and withdrew #2),
+    but an explicit id or a restarted sequence would. Every agent flushes its
+    item before recording the proposal that names the item's id, so
+    `approvals._written_before`
+    (`item.created_at <= action.created_at`) now applies in both
+    `awaiting_decision` and `locate_pending_item` -- and so in the gate, the
+    lock, the list flag and `withdraw_orphaned`. A row or proposal with no
+    `created_at` cannot be shown to be the proposal's: not held, and a decision
+    on it is withdrawn rather than recorded. Test fixtures now write items
+    before their proposals as the agents do; `test_agents.py` had added both in
+    one flush, where SQLAlchemy inserts `agent_actions` first, and passed only
+    because this Windows machine's clock ticks once a millisecond (checked by
+    re-running every backend suite with a clock that gives each insert a
+    distinct, later reading, as a microsecond clock on Linux CI would).
+11. **Every withdrawal records who caused it** (verifier round 2). The route
+    withdrew with `decided_by='system-withdrawn'` and nothing else; only the
+    request log line named the approver. `approvals.withdraw(..., by, reason)`
+    now stages an `AuditLog` row (`withdraw_agent_action`, entity
+    `agent_action` #id, the reason, the action's tenant) through
+    `platform_routes.add_audit`, in the withdrawal's own transaction and only
+    when the compare-and-set changed the row. `by` is the approver on the decide
+    route, the editor on point 9's path, and `system` for `withdraw_orphaned`.
+    `decided_by` stays `system-withdrawn`: nobody *decided* it.
+12. **Mission Control is a decision surface too** (verifier round 2). It
+    offered Approve on expired proposals and, after a refusal, kept a
+    withdrawn proposal's buttons until the 30-second poll. Each `/insights`
+    action now carries `expired` (`approvals.is_expired`; `null` for
+    recommendations and events), the screen disables Approve with the inbox's
+    sentence, and it reloads after a refused decision.
 
 ### Guards
 
@@ -243,24 +305,40 @@ task/PO/escalation not preceded by the lock, checks the `PENDING` table against
 what agents propose and what `apply_decision` moves, and probes itself by
 removing and moving the real call in memory; it also requires
 `refuse_manual_pending_status` in every PATCH/PUT of the three families and in
-the three create handlers, with its own in-memory probe.
-`mutate_approval_gate.py` grows to 64 mutations across five suites, including:
+the three create handlers, with its own in-memory probe. The lock's call now
+passes the request's user (point 9), and the probes match that call.
+`mutate_approval_gate.py` grows to 77 mutations across six suites
+(`test_insights.py` joined for point 12), including:
 the item check removed or moved before the actor, the compare-and-set losing its
 status predicate, the reject exemption flipped either way, the lock ignoring
 status, decided actions, kind, tenant or licence, the lock removed from a
 handler, the pending-status rule dropped or removed from any of its six
 handlers, the list ignoring its offset or cap or tie order, the `expired` flag
 wrong either way, and the row lock removed three ways (`lock=False`,
-`FOR UPDATE` dropped, re-read dropped). Two of them only PostgreSQL can judge
+`FOR UPDATE` dropped, re-read dropped). Round 2 added: an edit on a plan
+without Approvals leaving the proposal live, that withdrawal committing on its
+own outside the edit's transaction, a held item's write withdrawing instead of
+refusing, either withdrawal path recording nobody, no audit row, an audit row
+when the compare-and-set lost, the audit row losing its tenant, the lock or the
+gate accepting a newer row with the item's id, an unknown `created_at` counting
+as earlier, a same-instant item not counting, and Mission Control never
+reporting `expired`. Two of them only PostgreSQL can judge
 (`FOR UPDATE` dropped; a negative offset reaching the database, which SQLite
 reads as 0): on SQLite the harness reports them `pg-only`, never `caught`, and
 `--postgresql` runs them with the other row-lock mutations against PostgreSQL,
-where `verify_pg_approvals.py` requires all four caught.
+where `verify_pg_approvals.py` requires all four caught. *Verifier round 2:*
+CI did not run any of that -- the PostgreSQL job never called
+`verify_pg_approvals.py` -- so the race was proven only on a developer's
+machine. The migration gate job now runs it against its `postgres:18` service
+(`pg_scratch` falls back to the job's `DATABASE_URL` when there is no `.env`).
 
 ### Not addressed (open founder questions)
 
 - Agents propose for tenants without the Intelligence Pack, who cannot decide.
-  Their items stay unlocked suggestions until that is decided.
+  Their items stay unlocked suggestions until that is decided. Since point 9 a
+  change or delete there withdraws the proposal, so choosing later to hold
+  those items (or upgrading such a tenant) re-arms only proposals nobody
+  touched; whether agents should propose there at all is still open.
 - Whether an unattended proposal should be cancelled automatically on expiry.
 - Whether "approve, then edit" is acceptable, or supervisors need a recorded
   "edit proposal" flow.

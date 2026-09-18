@@ -303,12 +303,12 @@ def test_the_guard_can_fail():
             def f(db, i):
                 po = db.query(models.PurchaseOrder).filter(models.PurchaseOrder.id == i).first()
                 po.status = "Open"
-                approvals.refuse_if_awaiting_decision(db, po)
+                approvals.refuse_if_awaiting_decision(db, po, user)
         """,
         "helper called on a different variable": """
             def f(db, i, other):
                 po = db.query(models.PurchaseOrder).filter(models.PurchaseOrder.id == i).first()
-                approvals.refuse_if_awaiting_decision(db, other)
+                approvals.refuse_if_awaiting_decision(db, other, user)
                 po.notes = "x"
         """,
         "bulk update": """
@@ -329,7 +329,7 @@ def test_the_guard_can_fail():
         "helper called before the write": """
             def f(db, i):
                 po = db.query(models.PurchaseOrder).filter(models.PurchaseOrder.id == i).first()
-                approvals.refuse_if_awaiting_decision(db, po)
+                approvals.refuse_if_awaiting_decision(db, po, user)
                 po.status = "Open"
         """,
         "a constructor, not a loaded row": """
@@ -356,7 +356,7 @@ def test_the_guard_can_fail():
     # The real source, mutated in memory.
     path = os.path.join(HERE, "factory_ops_routes.py")
     real = _read(path)
-    call = "    approvals.refuse_if_awaiting_decision(db, task)\n"
+    call = "    approvals.refuse_if_awaiting_decision(db, task, current_user)\n"
     check("setup: the real update_maintenance_task call is present", real.count(call) == 2,
           str(real.count(call)))
     removed = real.replace(call, "", 1)
@@ -371,7 +371,7 @@ def test_the_guard_can_fail():
     # ...and the route inventory's own check, on the mutated endpoint source.
     import factory_ops_routes
     ep_src = textwrap.dedent(inspect.getsource(factory_ops_routes.update_maintenance_task))
-    mutated = ep_src.replace("approvals.refuse_if_awaiting_decision(db, task)", "pass", 1)
+    mutated = ep_src.replace("approvals.refuse_if_awaiting_decision(db, task, current_user)", "pass", 1)
     check("setup: the endpoint source carries the call", mutated != ep_src)
     check("the route-inventory check goes red on the mutated endpoint",
           not any(_is_helper_call(n) for n in ast.walk(ast.parse(mutated))))

@@ -67,10 +67,11 @@ def _decide_agent_action(action_id, decision, db, current_user):
         # NULL-status hardening the stats endpoint above and the maintenance-overdue
         # query (factory_ops_routes) already apply.
         raise HTTPException(status_code=400, detail=f"Already {(action.status or 'decided').lower()}")
+    approver = approvals.actor_name(current_user)
     try:
         ai.agents.apply_decision(
             db, action, decision,
-            decided_by=current_user.get("sub") or current_user.get("username"),
+            decided_by=approver,
             # The actor is re-verified against the DATABASE here: the JWT alone
             # cannot say whether the approver still exists, is still active, is
             # still in this tenant, or still holds an approving role.
@@ -80,9 +81,11 @@ def _decide_agent_action(action_id, decision, db, current_user):
         # decision may be recorded against it. Withdraw it instead -- with a
         # compare-and-set, so a decision a concurrent request already recorded
         # is never overwritten (ADR-0015 addendum). Orphans are withdrawn here,
-        # lazily, rather than by a boot-time sweep.
+        # lazily, rather than by a boot-time sweep. The withdrawal's AuditLog row
+        # names this approver and commits with it (approvals.withdraw).
         db.rollback()
-        withdrawn = approvals.withdraw(db, action_id, tenant)
+        withdrawn = approvals.withdraw(db, action_id, tenant, by=approver,
+                                       reason=refusal.detail)
         db.commit()
         if not withdrawn:
             current = db.query(models.AgentAction.status).filter(

@@ -25,7 +25,7 @@ import subprocess
 import sys
 
 SUITES = ["test_approval_gate.py", "test_agents.py", "test_agent_decide.py",
-          "test_agent_item_lock.py", "test_agent_item_lock_guard.py"]
+          "test_agent_item_lock.py", "test_agent_item_lock_guard.py", "test_insights.py"]
 
 # The --postgresql mutations touch approvals._check_item / locate_pending_item
 # and the Approvals list's paging, all exercised by test_agent_item_lock.py.
@@ -176,11 +176,12 @@ MUTATIONS = [
      "        models.AgentAction.status.in_(DECIDABLE),\n    ).update(",
      "    ).update("),
     ("the route records nothing instead of withdrawing", "agent_routes.py",
-     "        withdrawn = approvals.withdraw(db, action_id, tenant)",
+     "        withdrawn = approvals.withdraw(db, action_id, tenant, by=approver,\n"
+     "                                       reason=refusal.detail)",
      "        withdrawn = 1"),
     ("the orphan sweep withdraws live proposals too", "approvals.py",
-     "        if locate_pending_item(db, proposal)[0] is None:",
-     "        if True:"),
+     "        if item is None:\n            withdrawn += withdraw(",
+     "        if True:\n            withdrawn += withdraw("),
     ("the orphan sweep ignores its tenant scope", "approvals.py",
      "    if tenant is not None:\n        query = query.filter(",
      "    if False:\n        query = query.filter("),
@@ -196,8 +197,8 @@ MUTATIONS = [
      "        models.AgentAction.ref_kind == kind,\n",
      ""),
     ("the lock ignores the action's tenant", "approvals.py",
-     "                         if p.tenant_code == row.tenant_code), None)",
-     "                         if True), None)"),
+     "                         if p.tenant_code == row.tenant_code\n",
+     "                         if True\n"),
     ("the lock ignores the licence clause", "approvals.py",
      "        if licensed[row.tenant_code]:",
      "        if True:"),
@@ -205,11 +206,66 @@ MUTATIONS = [
      "    if config is None:\n        return True",
      "    if config is None:\n        return False"),
     ("the lock is removed from update_purchase_order", "orders_routes.py",
-     "    approvals.refuse_if_awaiting_decision(db, po)\n    # ...and only the agent puts one back into \"Draft\".\n",
+     "    approvals.refuse_if_awaiting_decision(db, po, current_user)\n"
+     "    # ...and only the agent puts one back into \"Draft\".\n",
      "    # ...and only the agent puts one back into \"Draft\".\n"),
     ("the lock is removed from delete_maintenance_task", "factory_ops_routes.py",
-     "    approvals.refuse_if_awaiting_decision(db, task)\n\n    db.delete(task)",
+     "    approvals.refuse_if_awaiting_decision(db, task, current_user)\n\n    db.delete(task)",
      "\n    db.delete(task)"),
+
+    # --- a plan change cannot re-arm a proposal a human changed (round 2) ----
+    ("an edit on a plan without Approvals leaves the proposal live (re-armable)",
+     "approvals.py",
+     "        if rewritten is not None:",
+     "        if False:"),
+    ("the edit's withdrawal commits on its own, outside the edit's transaction",
+     "approvals.py",
+     "                             \"no longer be the agent's.\"))\n        return\n",
+     "                             \"no longer be the agent's.\"))\n        db.commit()\n        return\n"),
+    ("a held item's write withdraws its proposal instead of refusing (409 lost)",
+     "approvals.py",
+     "    proposal = held.get(item.id)\n    if proposal is None:\n"
+     "        rewritten = unlicensed.get(item.id)",
+     "    proposal = None\n    if proposal is None:\n"
+     "        rewritten = held.get(item.id) or unlicensed.get(item.id)"),
+    ("the edit's withdrawal is recorded against nobody", "approvals.py",
+     "            withdraw(db, rewritten.id, rewritten.tenant_code, by=actor_name(actor),",
+     "            withdraw(db, rewritten.id, rewritten.tenant_code, by=None,"),
+
+    # --- every withdrawal records who caused it (round 2) ---------------------
+    ("the route's withdrawal is recorded against nobody", "agent_routes.py",
+     "        withdrawn = approvals.withdraw(db, action_id, tenant, by=approver,",
+     "        withdrawn = approvals.withdraw(db, action_id, tenant, by=None,"),
+    ("a withdrawal writes no audit row", "approvals.py",
+     "    if changed:\n        import platform_routes",
+     "    if False:\n        import platform_routes"),
+    ("a compare-and-set that lost still writes an audit row", "approvals.py",
+     "    if changed:\n        import platform_routes",
+     "    if True:\n        import platform_routes"),
+    ("a withdrawal's audit row is left without its tenant", "approvals.py",
+     "                                  reason, tenant_code=tenant_code)",
+     "                                  reason)"),
+
+    # --- a proposal names only a row written no later than itself (round 2) --
+    ("the lock lets a stale proposal hold a newer row with its item's id", "approvals.py",
+     "                         and _written_before(row, p)), None)",
+     "                         ), None)"),
+    ("the gate decides a newer row that reuses the item's id", "approvals.py",
+     "    if not _written_before(item, action):",
+     "    if False:"),
+    ("an unknown creation time counts as written before the proposal", "approvals.py",
+     "    return (item.created_at is not None and proposal.created_at is not None\n"
+     "            and item.created_at <= proposal.created_at)",
+     "    return (item.created_at is None or proposal.created_at is None\n"
+     "            or item.created_at <= proposal.created_at)"),
+    ("a row written at the proposal's own instant is not the proposal's", "approvals.py",
+     "            and item.created_at <= proposal.created_at)",
+     "            and item.created_at < proposal.created_at)"),
+
+    # --- Mission Control says whether a proposal can still be approved --------
+    ("a Mission Control action never reports expired", "ai/insights.py",
+     "        expired=approvals.is_expired(a, now),",
+     "        expired=False,"),
     ("the purchase-order list loses its awaiting_approval flag", "orders_routes.py",
      "    return approvals.annotate_awaiting_decision(db, models.PurchaseOrder, rows)",
      "    return rows"),

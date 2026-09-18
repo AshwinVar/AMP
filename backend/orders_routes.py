@@ -547,7 +547,7 @@ def update_purchase_order(
 
     # An agent proposal holds this PO until it is decided (ADR-0015): no status
     # change, and no receipt booking stock against a draft nobody approved.
-    approvals.refuse_if_awaiting_decision(db, po)
+    approvals.refuse_if_awaiting_decision(db, po, current_user)
     # ...and only the agent puts one back into "Draft".
     approvals.refuse_manual_pending_status(models.PurchaseOrder, payload.status, po.status)
 
@@ -643,7 +643,7 @@ def delete_purchase_order(
     if not po:
         raise HTTPException(status_code=404, detail="Purchase order not found")
 
-    approvals.refuse_if_awaiting_decision(db, po)
+    approvals.refuse_if_awaiting_decision(db, po, current_user)
 
     db.delete(po)
     db.commit()

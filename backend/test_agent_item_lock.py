@@ -38,7 +38,13 @@ WHAT THIS SUITE PINS
  12. nobody moves an item INTO its pending status by hand (PATCH or POST, 400),
      so an orphaned proposal cannot be re-armed over rewritten content;
  13. every proposal is reachable from the Approvals list (it pages), and each
-     says whether it has expired.
+     says whether it has expired;
+ 14. a plan change cannot re-arm a proposal a human changed: on a plan that
+     cannot reach Approvals, a PATCH or DELETE withdraws the proposal in its
+     own transaction, recorded against the person who made it;
+ 15. a proposal never holds a newer row that reuses its item's id (SQLite
+     reuses deleted ids): it names only a row created no later than itself;
+ 16. every withdrawal records who caused it (an AuditLog row, same commit).
 
 Run: DATABASE_URL="sqlite:///./ci.db" python test_agent_item_lock.py
      DATABASE_URL=<local scratch postgresql> python test_agent_item_lock.py
@@ -59,6 +65,7 @@ import approvals
 import factory_ops_routes
 import models
 import orders_routes
+import platform_routes
 import schemas
 import tenancy
 from database import Base
@@ -145,8 +152,10 @@ def _machine(db, tenant):
         return db.query(models.Machine).filter(models.Machine.tenant_code == tenant).first().id
 
 
-def seed_item(db, kind, tenant=A, status=None, stock_item=False):
-    """A real item of `kind` in its pending status (or `status`)."""
+def seed_item(db, kind, tenant=A, status=None, stock_item=False, created_at=None, item_id=None):
+    """A real item of `kind` in its pending status (or `status`). ``created_at``
+    backdates it (an agent writes its item and its proposal at the same moment);
+    ``item_id`` forces its id, as SQLite does when it reuses a deleted row's id."""
     _seq[0] += 1
     n = _seq[0]
     with unbound():
@@ -174,6 +183,10 @@ def seed_item(db, kind, tenant=A, status=None, stock_item=False):
                 tenant_code=tenant, machine_id=_machine(db, tenant), title=f"Repeated downtime {n}",
                 severity="High", owner="Maintenance Lead", department="Maintenance",
                 status=status or "Proposed", source="Escalation agent")
+        if created_at is not None:
+            item.created_at = created_at
+        if item_id is not None:
+            item.id = item_id
         db.add(item)
         db.commit()
         return item.id
@@ -194,7 +207,10 @@ def seed_action(db, kind, ref_id, tenant=A, status="Proposed", created_at=None,
 
 
 def propose(db, kind, tenant=A, **kw):
-    iid = seed_item(db, kind, tenant, stock_item=kw.pop("stock_item", False))
+    """An agent's proposal: its item first, then the action, at one moment (a
+    backdated proposal backdates its item too, as ai.agents writes them)."""
+    iid = seed_item(db, kind, tenant, stock_item=kw.pop("stock_item", False),
+                    created_at=kw.get("created_at"))
     return seed_action(db, kind, iid, tenant, **kw), iid
 
 
@@ -1164,6 +1180,294 @@ def test_every_proposal_is_reachable_from_approvals():
           rows[decided].get("expired") is False, str(rows[decided].get("expired")))
 
 
+FOUNDER = {"sub": "founder", "role": "Admin", "tenant": "DEFAULT"}
+EARLIER = timedelta(hours=1)
+
+
+def apply_plan(db, tenant, plan):
+    """The founder's real apply-plan handler (sets enabled_modules from the manifest)."""
+    db.expire_all()
+    ok, code, out = call("DEFAULT", platform_routes.apply_plan, tenant, {"plan": plan},
+                         db=db, current_user=FOUNDER)
+    assert ok, (code, out)
+
+
+def withdrawals(db, aid=None):
+    """Audit rows recording a withdrawal (of agent action `aid`, or of any)."""
+    db.expire_all()
+    with unbound():
+        q = db.query(models.AuditLog).filter(
+            models.AuditLog.action == "withdraw_agent_action",
+            models.AuditLog.entity_type == "agent_action")
+        if aid is not None:
+            q = q.filter(models.AuditLog.entity_id == aid)
+        return q.order_by(models.AuditLog.id).all()
+
+
+REWRITE = {"maintenance_task": {"priority": "Low", "assigned_to": "nobody",
+                                "planned_date": (datetime.utcnow() + timedelta(days=30)).date()},
+           "purchase_order": {"expected_delivery_date": (datetime.utcnow() + timedelta(days=30)).date(),
+                              "notes": "rewritten"},
+           "escalation": {"owner": "nobody", "department": "Nowhere",
+                          "resolution_notes": "rewritten"}}
+
+
+def rewritten(kind, item):
+    return {"maintenance_task": lambda: item.priority == "Low" and item.assigned_to == "nobody",
+            "purchase_order": lambda: item.notes == "rewritten",
+            "escalation": lambda: item.owner == "nobody"}[kind]()
+
+
+def test_a_plan_change_cannot_rearm_an_edited_proposal():
+    banner("14. A PLAN CHANGE CANNOT RE-ARM A PROPOSAL A HUMAN HAS CHANGED")
+    # Measured through main.app (verifier round 2). Tenant on the growth plan:
+    # nothing is held, because nobody there can reach Approvals. The maintenance
+    # agent proposed a Critical task; an Operator PATCHed it to priority Low,
+    # assigned 'nobody', planned 2030, re-sending status Proposed (200). The
+    # founder applied the enterprise plan (the task was now held), and a
+    # Supervisor's approval answered 200: 'Approved' was recorded for "Open a
+    # Critical maintenance task" over content the agent never proposed. The same
+    # edits were open on escalations and Draft POs. A change or delete of an item
+    # that is unheld ONLY because of the licence clause now withdraws the
+    # proposal in the same transaction, recorded against whoever made it.
+    for kind in KINDS:
+        db = fresh_db()
+        apply_plan(db, A, "growth")
+        aid, iid = propose(db, kind)
+        listing(db, kind)
+        check(f"{kind}: growth plan: reading the list withdraws nothing",
+              action_row(db, aid).status == "Proposed", action_row(db, aid).status)
+        ok, code, _ = patch(db, kind, iid, {"status": PENDING[kind], **REWRITE[kind]})
+        check(f"{kind}: growth plan: an Operator's PATCH keeping '{PENDING[kind]}' still succeeds "
+              "(today's behaviour)", ok, str(code))
+        act = action_row(db, aid)
+        check(f"{kind}: ...and the proposal it rewrote is withdrawn by that same write",
+              act.status == "Cancelled" and act.decided_by == approvals.WITHDRAWN_BY
+              and act.decided_at is not None, f"{act.status}/{act.decided_by}")
+        rows = withdrawals(db, aid)
+        check(f"{kind}: ...recorded against the Operator who made the change, in this tenant",
+              len(rows) == 1 and rows[0].actor == OPER["sub"] and rows[0].tenant_code == A,
+              str([(r.actor, r.tenant_code) for r in rows]))
+        apply_plan(db, A, "enterprise")
+        check(f"{kind}: after the upgrade to enterprise the rewritten item is NOT held",
+              listing(db, kind)[iid]["awaiting_approval"] is None,
+              str(listing(db, kind)[iid]["awaiting_approval"]))
+        ok, code, detail = decide(db, aid, "approve", actor=SUP)
+        act, item = action_row(db, aid), item_row(db, kind, iid)
+        check(f"{kind}: ...so a Supervisor's approval records nothing (400 'Already cancelled')",
+              not ok and code == 400 and act.status == "Cancelled", f"{ok} {code} {detail} {act.status}")
+        check(f"{kind}: ...and the item keeps the human's content, unmoved",
+              item.status == PENDING[kind] and rewritten(kind, item), item.status)
+        ok, code, _ = patch(db, kind, iid, OTHER_FIELD[kind])
+        check(f"{kind}: ...and stays an ordinary, editable row", ok, str(code))
+
+    # A DELETE on the growth plan withdraws too (the proposal can no longer act).
+    db = fresh_db()
+    apply_plan(db, A, "growth")
+    for kind in KINDS:
+        aid, iid = propose(db, kind)
+        ok, code, _ = delete(db, kind, iid)
+        check(f"{kind}: growth plan: an Admin's DELETE succeeds and withdraws the proposal, "
+              "recorded against the Admin",
+              ok and action_row(db, aid).status == "Cancelled"
+              and [r.actor for r in withdrawals(db, aid)] == [ADMIN["sub"]],
+              f"{code} {action_row(db, aid).status} {[r.actor for r in withdrawals(db, aid)]}")
+
+    # The withdrawal belongs to the edit's own transaction: a PATCH refused after
+    # the lock (here the receipt check) leaves the proposal live.
+    db = fresh_db()
+    apply_plan(db, A, "growth")
+    aid, iid = propose(db, "purchase_order")
+    ok, code, detail = patch(db, "purchase_order", iid, {"received_quantity": 11})
+    db.rollback()   # what the request's session teardown does after the 400
+    check("growth plan: a PATCH refused later in the handler (400) withdraws nothing",
+          not ok and code == 400 and action_row(db, aid).status == "Proposed"
+          and not withdrawals(db, aid), f"{ok} {code} {detail} {action_row(db, aid).status}")
+
+    # Controls on the growth plan: nothing to withdraw, nothing written.
+    db = fresh_db()
+    apply_plan(db, A, "growth")
+    for kind in KINDS:
+        lookalike = seed_item(db, kind)
+        ok, code, _ = patch(db, kind, lookalike, OTHER_FIELD[kind])
+        check(f"{kind}: growth plan: a look-alike (no proposal) is edited with no withdrawal",
+              ok and not withdrawals(db), str(code))
+        decided_iid = seed_item(db, kind)
+        decided = seed_action(db, kind, decided_iid, status="Rejected")
+        ok, code, _ = patch(db, kind, decided_iid, OTHER_FIELD[kind])
+        check(f"{kind}: growth plan: a row whose proposal is already decided keeps that decision",
+              ok and action_row(db, decided).status == "Rejected" and not withdrawals(db),
+              f"{code} {action_row(db, decided).status}")
+        aid, iid = propose(db, kind)
+        ok, code, _ = patch(db, kind, iid, MOVE[kind], actor=B_ADMIN, tenant=B)
+        check(f"{kind}: another tenant's PATCH is 404 and withdraws nothing",
+              code == 404 and action_row(db, aid).status == "Proposed" and not withdrawals(db, aid),
+              f"{code} {action_row(db, aid).status}")
+
+    # A proposal nobody touched is still re-armed by the upgrade and decided
+    # normally: only human edits end a proposal.
+    db = fresh_db()
+    apply_plan(db, A, "growth")
+    aid, iid = propose(db, "maintenance_task")
+    apply_plan(db, A, "enterprise")
+    ok, code, _ = patch(db, "maintenance_task", iid, {"status": "Open"})
+    check("an untouched growth-plan proposal is held once the plan reaches Approvals (409)",
+          code == 409 and not withdrawals(db, aid), str(code))
+    ok, code, out = decide(db, aid, "approve", actor=SUP)
+    check("...and is approved normally, moving its item",
+          ok and out["status"] == "Approved" and item_row(db, "maintenance_task", iid).status == "Open",
+          f"{code} {out}")
+
+    # On a plan that reaches Approvals the lock refuses and withdraws nothing.
+    db = fresh_db()
+    apply_plan(db, A, "enterprise")
+    aid, iid = propose(db, "escalation")
+    ok, code, _ = patch(db, "escalation", iid, REWRITE["escalation"])
+    check("enterprise plan: the held item's PATCH is 409 and leaves the proposal live, unaudited",
+          code == 409 and action_row(db, aid).status == "Proposed" and not withdrawals(db, aid),
+          f"{code} {action_row(db, aid).status}")
+
+
+def test_a_proposal_never_holds_a_newer_row_with_its_id():
+    banner("15. A PROPOSAL NEVER HOLDS A NEWER ROW THAT REUSES ITS ITEM'S ID")
+    # Measured through main.app on SQLite (verifier round 2). A Draft PO (id 1)
+    # and its proposal #2 "Draft a PO for Steel (90 kg)"; purchase orders
+    # bulk-deleted, as reseed_inventory.py does (agent_actions untouched); a new
+    # Copper Draft PO took id 1 again with proposal #3. GET /purchase-orders showed
+    # the Copper PO held by #2, and approving #2 answered 200: #2 recorded
+    # Approved and the Copper PO moved, while #3 was left orphaned. SQLite
+    # reuses the highest deleted rowid; PostgreSQL sequences do not, so here the
+    # id is forced to make the case engine-independent. An agent writes its item
+    # before its proposal, so a proposal names only a row created no later than
+    # itself.
+    earlier = datetime.utcnow() - EARLIER
+    for kind in KINDS:
+        db = fresh_db()
+        old_aid, old_iid = propose(db, kind, created_at=earlier)
+        with unbound():
+            db.query(MODEL[kind]).filter(MODEL[kind].id == old_iid).delete(synchronize_session=False)
+            db.commit()
+        new_iid = seed_item(db, kind, item_id=old_iid)
+        new_aid = seed_action(db, kind, new_iid)
+        check(f"{kind}: setup: the new row carries the deleted row's id", new_iid == old_iid,
+              f"{new_iid} vs {old_iid}")
+        flag = listing(db, kind)[new_iid]["awaiting_approval"]
+        check(f"{kind}: the new row is flagged as held by ITS OWN proposal, not the stale one",
+              flag is not None and flag["agent_action_id"] == new_aid, f"{flag} (own #{new_aid})")
+        ok, code, detail = patch(db, kind, new_iid, MOVE[kind])
+        check(f"{kind}: ...and its 409 names its own proposal",
+              code == 409 and f"#{new_aid}" in str(detail), f"{code} {detail}")
+        ok, code, detail = decide(db, old_aid, "approve")
+        check(f"{kind}: approving the STALE proposal is refused (409) and withdraws it",
+              not ok and code == 409 and action_row(db, old_aid).status == "Cancelled",
+              f"{ok} {code} {detail} {action_row(db, old_aid).status}")
+        check(f"{kind}: ...the new row did not move and its own proposal is still live",
+              item_row(db, kind, new_iid).status == PENDING[kind]
+              and action_row(db, new_aid).status == "Proposed",
+              f"{item_row(db, kind, new_iid).status}/{action_row(db, new_aid).status}")
+        ok, code, out = decide(db, new_aid, "approve")
+        check(f"{kind}: ...and its own proposal still decides it",
+              ok and out["status"] == "Approved" and item_row(db, kind, new_iid).status == APPROVED[kind],
+              f"{code} {out}")
+
+    # The orphan sweep reads the same rule.
+    db = fresh_db()
+    old_aid, old_iid = propose(db, "purchase_order", created_at=earlier)
+    with unbound():
+        db.query(models.PurchaseOrder).filter(models.PurchaseOrder.id == old_iid).delete(
+            synchronize_session=False)
+        db.commit()
+    new_aid = seed_action(db, "purchase_order", seed_item(db, "purchase_order", item_id=old_iid))
+    with unbound():
+        n = approvals.withdraw_orphaned(db, tenant=A)
+        db.commit()
+    check("withdraw_orphaned withdraws the stale proposal and leaves the new one live",
+          n == 1 and action_row(db, old_aid).status == "Cancelled"
+          and action_row(db, new_aid).status == "Proposed", str(n))
+
+    # The agent's own write: item and proposal at the same instant still match.
+    db = fresh_db()
+    moment = datetime.utcnow() - timedelta(minutes=5)
+    iid = seed_item(db, "maintenance_task", created_at=moment)
+    aid = seed_action(db, "maintenance_task", iid, created_at=moment)
+    flag = listing(db, "maintenance_task")[iid]["awaiting_approval"]
+    check("an item created at the same instant as its proposal is held by it",
+          flag is not None and flag["agent_action_id"] == aid, str(flag))
+
+    # An item whose creation time is unknown cannot be shown to be the proposal's.
+    db = fresh_db()
+    aid, iid = propose(db, "purchase_order")
+    with unbound():
+        db.query(models.PurchaseOrder).filter(models.PurchaseOrder.id == iid).update(
+            {models.PurchaseOrder.created_at: None}, synchronize_session=False)
+        db.commit()
+    check("an item with no created_at is not held",
+          listing(db, "purchase_order")[iid]["awaiting_approval"] is None)
+    ok, code, _ = decide(db, aid, "approve")
+    check("...and no decision is recorded against it (409, withdrawn)",
+          code == 409 and action_row(db, aid).status == "Cancelled"
+          and item_row(db, "purchase_order", iid).status == "Draft",
+          f"{code} {action_row(db, aid).status}")
+
+
+def test_a_withdrawal_names_who_caused_it():
+    banner("16. EVERY WITHDRAWAL RECORDS WHO CAUSED IT")
+    # Verifier round 2: when an approver's decision found the item moved, the
+    # route withdrew the proposal with decided_by='system-withdrawn' and wrote
+    # nothing else; only the request log line named the user. The durable record
+    # could not say who. The withdrawal now stages an AuditLog row in its own
+    # transaction, only when the compare-and-set changed the row.
+    for kind in KINDS:
+        db = fresh_db()
+        aid, iid = propose(db, kind)
+        with unbound():
+            db.query(MODEL[kind]).filter(MODEL[kind].id == iid).first().status = "In Progress"
+            db.commit()
+        ok, code, detail = decide(db, aid, "reject", actor=SUP)
+        rows = withdrawals(db, aid)
+        check(f"{kind}: the Supervisor whose decision found the item moved is on the record",
+              code == 409 and len(rows) == 1 and rows[0].actor == SUP["sub"]
+              and rows[0].tenant_code == A and "Nothing was decided" in (rows[0].details or ""),
+              f"{code} {[(r.actor, r.tenant_code, r.details) for r in rows]}")
+        check(f"{kind}: ...and the action itself still reads as withdrawn, not as their decision",
+              action_row(db, aid).status == "Cancelled"
+              and action_row(db, aid).decided_by == approvals.WITHDRAWN_BY,
+              f"{action_row(db, aid).status}/{action_row(db, aid).decided_by}")
+
+    # Refusals before the item check cause no withdrawal and so no row.
+    db = fresh_db()
+    aid, iid = propose(db, "purchase_order")
+    with unbound():
+        db.query(models.PurchaseOrder).filter(models.PurchaseOrder.id == iid).first().status = "Open"
+        db.commit()
+    decide(db, aid, "approve", actor=OPER)
+    decide(db, aid, "approve", actor=B_ADMIN, tenant=B)
+    check("a refused Operator and another tenant's Admin write no withdrawal row",
+          action_row(db, aid).status == "Proposed" and not withdrawals(db), str(len(withdrawals(db))))
+
+    # The compare-and-set's loser writes no row: one withdrawal, one record.
+    with unbound():
+        first = approvals.withdraw(db, aid, A, by=SUP["sub"], reason="first")
+        db.commit()
+        second = approvals.withdraw(db, aid, A, by=ADMIN["sub"], reason="second")
+        db.commit()
+    rows = withdrawals(db, aid)
+    check("a second withdraw() changes nothing and records nothing",
+          first == 1 and second == 0 and [r.actor for r in rows] == [SUP["sub"]],
+          f"{first} {second} {[r.actor for r in rows]}")
+
+    # The sweep (not wired to boot) records itself as the system.
+    db = fresh_db()
+    orphan = seed_action(db, "purchase_order", None)
+    with unbound():
+        approvals.withdraw_orphaned(db, tenant=A)
+        db.commit()
+    rows = withdrawals(db, orphan)
+    check("withdraw_orphaned records 'system' against each proposal it withdraws, in its tenant",
+          [(r.actor, r.tenant_code) for r in rows] == [("system", A)],
+          str([(r.actor, r.tenant_code) for r in rows]))
+
+
 if __name__ == "__main__":
     test_every_bypass_is_refused()
     test_a_decision_never_contradicts_the_item()
@@ -1178,6 +1482,9 @@ if __name__ == "__main__":
     test_simultaneous_decisions_on_postgresql()
     test_no_hand_move_into_the_pending_status()
     test_every_proposal_is_reachable_from_approvals()
+    test_a_plan_change_cannot_rearm_an_edited_proposal()
+    test_a_proposal_never_holds_a_newer_row_with_its_id()
+    test_a_withdrawal_names_who_caused_it()
     print()
     print("=" * 74)
     if failures:

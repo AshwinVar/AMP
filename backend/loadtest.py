@@ -124,10 +124,12 @@ for i in range({n_machines}):
         # A real Draft PO behind each pending reorder proposal: that is what the
         # product holds (and what the purchase-order list flags as awaiting
         # approval), and an action with nothing behind it can never be decided.
+        # Stamped at the proposal's own moment: a proposal names only a row
+        # written no later than itself (approvals._written_before).
         po = models.PurchaseOrder(
             tenant_code={TENANT!r}, po_no=f"AUTO-PO-{{i:05d}}", supplier_id=None,
             item_name=f"Part {{i}}", order_quantity=20, unit="kg",
-            expected_delivery_date=now.date(), status="Draft")
+            expected_delivery_date=now.date(), status="Draft", created_at=now)
         db.add(po)
         db.flush()
         db.add(models.AgentAction(

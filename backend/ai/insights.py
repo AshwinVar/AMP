@@ -14,6 +14,7 @@ from dataclasses import dataclass, asdict
 from datetime import datetime
 from typing import Optional
 
+import approvals
 import models
 
 name = "insights"
@@ -37,6 +38,9 @@ class Insight:
     occurred_at: str                # ISO-8601
     related_machine_id: Optional[int] = None
     ref_id: Optional[int] = None    # row id to act on (recommendation / agent action); None for events
+    # Agent actions only: past its expiry, so it can no longer be approved, only
+    # rejected (approvals.is_expired, ADR-0015 addendum). None for the other sources.
+    expired: Optional[bool] = None
 
 
 def _describe_event(event_type: str, p: dict):
@@ -92,7 +96,7 @@ def _rec_to_insight(r) -> Insight:
     )
 
 
-def _action_to_insight(a) -> Insight:
+def _action_to_insight(a, now=None) -> Insight:
     """A proposed agent action — what the platform wants to do, awaiting approval."""
     return Insight(
         source="action",
@@ -103,6 +107,7 @@ def _action_to_insight(a) -> Insight:
         occurred_at=(a.created_at or datetime.utcnow()).isoformat(),
         related_machine_id=a.related_machine_id,
         ref_id=a.id,
+        expired=approvals.is_expired(a, now),
     )
 
 
@@ -132,8 +137,9 @@ def build_feed(db, tenant: str, limit: int = 50):
         .order_by(models.AgentAction.created_at.desc())
         .limit(limit).all()
     )
+    now = datetime.utcnow()
     insights = ([_rec_to_insight(r) for r in recs]
                 + [_event_to_insight(e) for e in events]
-                + [_action_to_insight(a) for a in actions])
+                + [_action_to_insight(a, now) for a in actions])
     insights.sort(key=lambda i: i.occurred_at, reverse=True)
     return [asdict(i) for i in insights[:limit]]

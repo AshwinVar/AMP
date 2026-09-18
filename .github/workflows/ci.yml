@@ -254,6 +254,20 @@ jobs:
           python test_boot_migrations.py
           python test_migrate.py
 
+      # 4. THE APPROVAL LOCK ON POSTGRESQL (ADR-0015 addendum). Two approvers
+      #    deciding one proposal at the same instant are held apart only by
+      #    SELECT ... FOR UPDATE on the item row, which SQLite cannot hold: in
+      #    the backend job test_agent_item_lock.py section 11 prints SKIP, and
+      #    mutate_approval_gate.py reports two row-lock mutations as pg-only.
+      #    verify_pg_approvals.py runs the gate and lock suites on scratch
+      #    databases of this service, fails if section 11 skipped, and requires
+      #    every PostgreSQL-only mutation to be caught.
+      - name: Approval gate and held-item lock on PostgreSQL
+        working-directory: backend
+        env:
+          PYTHONIOENCODING: utf-8
+        run: python verify_pg_approvals.py 5432
+
   # Branch-coverage floor. A SEPARATE job from `backend` on purpose.
   #
   # The `backend` job's answer is "do the tests pass", and that answer must not

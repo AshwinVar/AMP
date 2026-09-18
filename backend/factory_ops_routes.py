@@ -90,7 +90,7 @@ def update_escalation(
         raise HTTPException(status_code=404, detail="Escalation not found")
 
     # An agent proposal holds this escalation until it is decided (ADR-0015).
-    approvals.refuse_if_awaiting_decision(db, escalation)
+    approvals.refuse_if_awaiting_decision(db, escalation, current_user)
     # ...and only an agent puts one back into "Proposed".
     approvals.refuse_manual_pending_status(models.Escalation, payload.status, escalation.status)
 
@@ -129,7 +129,7 @@ def delete_escalation(
     if not escalation:
         raise HTTPException(status_code=404, detail="Escalation not found")
 
-    approvals.refuse_if_awaiting_decision(db, escalation)
+    approvals.refuse_if_awaiting_decision(db, escalation, current_user)
 
     db.delete(escalation)
     db.commit()
@@ -433,7 +433,7 @@ def update_maintenance_task(
         raise HTTPException(status_code=404, detail="Maintenance task not found")
 
     # An agent proposal holds this task until it is decided (ADR-0015).
-    approvals.refuse_if_awaiting_decision(db, task)
+    approvals.refuse_if_awaiting_decision(db, task, current_user)
     # ...and only an agent puts one back into "Proposed".
     approvals.refuse_manual_pending_status(models.MaintenanceTask, payload.status, task.status)
 
@@ -458,7 +458,7 @@ def delete_maintenance_task(
     if not task:
         raise HTTPException(status_code=404, detail="Maintenance task not found")
 
-    approvals.refuse_if_awaiting_decision(db, task)
+    approvals.refuse_if_awaiting_decision(db, task, current_user)
 
     db.delete(task)
     db.commit()

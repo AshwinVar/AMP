@@ -72,11 +72,18 @@ An item is HELD exactly when all of these are true (``awaiting_decision`` is the
 one implementation):
 
     its status is its kind's pending status (PENDING)
-    a Proposed AgentAction of the same tenant, kind and id points at it
+    a Proposed AgentAction of the same tenant, kind and id points at it,
+      and the item was written no later than that proposal (a newer row
+      that reuses a deleted item's id is not the proposal's)
     its tenant's plan can reach the decision API (else nobody could decide it)
 
 Expiry is ignored: an expired proposal still holds its item, and reject is the
 way out. Human look-alikes (pending status, no Proposed action) are ordinary.
+
+An item unheld ONLY by the licence clause stays writable, but a change or
+delete withdraws its proposal in the same transaction: otherwise a later plan
+upgrade would re-arm a proposal over content a human rewrote (verifier round
+2). Every withdrawal is recorded in the AuditLog against whoever caused it.
 
 Nobody moves an item INTO its pending status by hand
 (``refuse_manual_pending_status``, 400): that would re-arm an orphaned proposal
@@ -135,6 +142,8 @@ DECISION_API_PATH = "/agent-actions"
 
 # decided_by for a proposal withdrawn because it can no longer take effect.
 WITHDRAWN_BY = "system-withdrawn"
+# The AuditLog action naming who caused a withdrawal (``withdraw``).
+WITHDRAW_AUDIT_ACTION = "withdraw_agent_action"
 
 
 class ApprovalDenied(HTTPException):
@@ -193,10 +202,15 @@ def _check_freshness(action, now=None):
             "rejected, which releases the item it holds.")
 
 
+def actor_name(actor):
+    """The username a request's user mapping carries (``sub``, else ``username``)."""
+    return (actor or {}).get("sub") or (actor or {}).get("username")
+
+
 def _check_actor(db, action, actor):
     """The approver must still be a real, active, sufficiently-privileged user
     OF THIS TENANT — checked against the database, not the token."""
-    username = (actor or {}).get("sub") or (actor or {}).get("username")
+    username = actor_name(actor)
     if not username:
         raise ApprovalDenied(401, "Not authenticated")
 
@@ -289,10 +303,27 @@ def locate_pending_item(db, action, lock=False):
     item = query.first()
     if item is None:
         return None, f"the {noun} it would change no longer exists"
+    if not _written_before(item, action):
+        return None, (f"the {noun} it would change no longer exists (a {noun} created "
+                      "after the proposal now has its id)")
     if item.status != pending:
         return None, (f"the {noun} it would change is no longer waiting for approval "
                       f"(it is now {item.status or 'without a status'})")
     return item, None
+
+
+def _written_before(item, proposal):
+    """Was this row written no later than the proposal? Only then can the
+    proposal be about it: every agent flushes its item before recording the
+    proposal that names the item's id. Measured on SQLite (verifier round 2),
+    which reuses the highest deleted id: purchase orders bulk-deleted (as
+    reseed_inventory.py does), a new agent Draft PO took the old id, and the OLD
+    proposal held it -- approving that proposal moved the new PO. PostgreSQL
+    sequences do not reuse ids, but an explicit id or a restarted sequence would.
+    A row or proposal with no creation time cannot be shown to be the
+    proposal's, so it is not (no hold, and no decision recorded against it)."""
+    return (item.created_at is not None and proposal.created_at is not None
+            and item.created_at <= proposal.created_at)
 
 
 def pending_item(db, action):
@@ -324,11 +355,19 @@ def awaiting_decision(db, model, rows):
     in its pending status (the common case on every dashboard poll). A model
     that agents do not propose raises KeyError: a caller bug, loudly.
     """
+    return _live_proposals(db, model, rows)[0]
+
+
+def _live_proposals(db, model, rows):
+    """(held, unlicensed): {item_id: AgentAction} for the rows a live proposal
+    points at, split by the licence clause. ``held`` is awaiting_decision's
+    answer; ``unlicensed`` are the rows that would be held if the tenant's plan
+    could reach the decision API (the lock withdraws those on a write)."""
     kind = _KIND_FOR_MODEL[model]
     pending = PENDING[kind][1]
     candidates = [r for r in rows if r.status == pending and r.id is not None]
     if not candidates:
-        return {}
+        return {}, {}
     proposals = db.query(models.AgentAction).filter(
         models.AgentAction.tenant_code.in_({r.tenant_code for r in candidates}),
         models.AgentAction.ref_kind == kind,
@@ -338,27 +377,53 @@ def awaiting_decision(db, model, rows):
     by_ref = {}
     for proposal in proposals:
         by_ref.setdefault(proposal.ref_id, []).append(proposal)
-    held, licensed = {}, {}
+    held, unlicensed, licensed = {}, {}, {}
     for row in candidates:
         # The SQL tenant filter narrows the scan; THIS is the rule: a proposal
-        # holds only the item of its own tenant, even in a mixed batch.
+        # holds only the item of its own tenant, even in a mixed batch -- and
+        # only a row written no later than itself (_written_before).
         proposal = next((p for p in by_ref.get(row.id, ())
-                         if p.tenant_code == row.tenant_code), None)
+                         if p.tenant_code == row.tenant_code
+                         and _written_before(row, p)), None)
         if proposal is None:
             continue
         if row.tenant_code not in licensed:
             licensed[row.tenant_code] = decision_api_licensed(db, row.tenant_code)
         if licensed[row.tenant_code]:
             held[row.id] = proposal
-    return held
+        else:
+            unlicensed[row.id] = proposal
+    return held, unlicensed
 
 
-def refuse_if_awaiting_decision(db, item):
+def refuse_if_awaiting_decision(db, item, actor):
     """The lock. Call in every handler that changes or deletes a proposable
-    item, straight after its 404 lookup and before any write: a held item
-    refuses every change and every delete, for every role, with 409."""
-    proposal = awaiting_decision(db, type(item), [item]).get(item.id)
+    item, straight after its 404 lookup and before any write, with the
+    request's user as ``actor``:
+
+    * a HELD item refuses every change and every delete, for every role, 409;
+    * an item that a live proposal points at but that is unheld ONLY because
+      its tenant's plan cannot reach the decision API stays writable, as it
+      always was -- and the proposal is withdrawn in this same transaction
+      (it commits or rolls back with the write), recorded against ``actor``.
+
+    Why the second half (verifier round 2, through main.app): on the growth
+    plan an Operator rewrote an agent's Critical task to priority Low,
+    re-sending status Proposed (200); the founder applied the enterprise plan,
+    which made the task held; a Supervisor's approval then recorded the agent's
+    proposal over the Operator's content. A proposal a human has changed or
+    deleted is no longer the agent's, so no later plan change may re-arm it.
+    """
+    held, unlicensed = _live_proposals(db, type(item), [item])
+    proposal = held.get(item.id)
     if proposal is None:
+        rewritten = unlicensed.get(item.id)
+        if rewritten is not None:
+            noun = _NOUN[_KIND_FOR_MODEL[type(item)]]
+            withdraw(db, rewritten.id, rewritten.tenant_code, by=actor_name(actor),
+                     reason=(f"The {noun} (id {item.id}) was changed or deleted while the "
+                             "tenant's plan could not reach Approvals, so the proposal can "
+                             "no longer be the agent's."))
         return
     noun = _NOUN[_KIND_FOR_MODEL[type(item)]]
     if is_expired(proposal):
@@ -404,12 +469,20 @@ def annotate_awaiting_decision(db, model, rows):
     return rows
 
 
-def withdraw(db, action_id, tenant_code, now=None):
+def withdraw(db, action_id, tenant_code, now=None, by=None, reason=None):
     """Withdraw a proposal that can no longer take effect. A compare-and-set:
     it changes the row only while it is still Proposed, so it can never
     overwrite a decision a concurrent request already recorded. Returns the
-    number of rows changed (0 or 1). Does not commit."""
-    return db.query(models.AgentAction).filter(
+    number of rows changed (0 or 1). Does not commit.
+
+    A withdrawal that changed the row also stages an AuditLog entry
+    (WITHDRAW_AUDIT_ACTION) naming ``by`` -- the user whose request caused it;
+    None records "system" -- with ``reason``, in the same transaction, so the
+    record commits or rolls back with the withdrawal and a compare-and-set that
+    lost records nothing. decided_by stays WITHDRAWN_BY: nobody DECIDED it.
+    Measured before (verifier round 2): only the request log line said which
+    approver's decision caused a withdrawal."""
+    changed = db.query(models.AgentAction).filter(
         models.AgentAction.id == action_id,
         models.AgentAction.tenant_code == tenant_code,
         models.AgentAction.status.in_(DECIDABLE),
@@ -417,6 +490,12 @@ def withdraw(db, action_id, tenant_code, now=None):
               models.AgentAction.decided_by: WITHDRAWN_BY,
               models.AgentAction.decided_at: now or datetime.utcnow()},
              synchronize_session=False)
+    if changed:
+        import platform_routes  # lazy: it pulls in auth, which approvals must not need at import
+
+        platform_routes.add_audit(db, by, WITHDRAW_AUDIT_ACTION, "agent_action", action_id,
+                                  reason, tenant_code=tenant_code)
+    return changed
 
 
 def withdraw_orphaned(db, tenant=None, now=None):
@@ -442,8 +521,10 @@ def withdraw_orphaned(db, tenant=None, now=None):
         query = query.filter(models.AgentAction.tenant_code == tenant)
     withdrawn = 0
     for proposal in query.order_by(models.AgentAction.id).all():
-        if locate_pending_item(db, proposal)[0] is None:
-            withdrawn += withdraw(db, proposal.id, proposal.tenant_code, now)
+        item, why_not = locate_pending_item(db, proposal)
+        if item is None:
+            withdrawn += withdraw(db, proposal.id, proposal.tenant_code, now,
+                                  reason=f"Orphan sweep: {why_not}.")
     return withdrawn
 
 

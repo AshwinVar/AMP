@@ -216,6 +216,26 @@ def build_oee_trend(db, tenant: str, now=None) -> dict:
     declining_machines = sorted((m for m in movers if m["delta"] <= -OEE_TREND_DEAD_BAND),
                                 key=lambda m: m["delta"])[:TOP_N]
 
+    # How much of the plant each week's figure measured (OEE contract s4). A
+    # machine that stops reporting leaves the pooled figure, so the week its worst
+    # machine went silent read "OEE up 16 pts" in green with nothing saying the
+    # plant it described had shrunk (test_every_plant_oee_states_coverage.py). The
+    # change is still reported (the missing data cannot be recovered), but every
+    # figure the verdict states says when it did not come from every machine, in
+    # the one wording every other OEE surface uses.
+    cur_cov = oee_contract.coverage(db, tenant, current_window)
+    pri_cov = oee_contract.coverage(db, tenant, prior_window)
+    cur_from = oee_contract.coverage_phrase(cur_cov) if has_cur else ""
+    pri_from = oee_contract.coverage_phrase(pri_cov) if has_prior else ""
+    if cur_from and pri_from:
+        coverage_note = f" This week's figure is {cur_from}, last week's {pri_from}."
+    elif cur_from:
+        coverage_note = f" This week's figure is {cur_from}."
+    elif pri_from:
+        coverage_note = f" Last week's figure is {pri_from}."
+    else:
+        coverage_note = ""
+
     oee_now = current["oee"]
     if not has_cur and not has_prior:
         direction, verdict, tone = "none", "No production recorded in the last 14 days.", "warn"
@@ -238,12 +258,15 @@ def build_oee_trend(db, tenant: str, now=None) -> dict:
         else:
             direction, tone = "steady", "good"
             verdict = f"OEE steady at {oee_now}% ({delta:+} pts week on week)."
+    verdict += coverage_note
 
     return {
         "days": TREND_WINDOW_DAYS,
         "half_days": WINDOW_DAYS,
         "current": current,
         "prior": prior,
+        "coverage": cur_cov,                  # this week: {machines_expected, machines_reporting, coverage_pct, complete}
+        "prior_coverage": pri_cov,            # last week, the same shape
         "delta_pts": delta,
         "direction": direction,
         "dead_band_pts": OEE_TREND_DEAD_BAND,

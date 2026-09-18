@@ -27,8 +27,12 @@ def build_daily_summary_text(summary: dict, shift_kpis: list, alerts: list):
     # without has_data counts as measured only if it carries figures at all.
     days = oee_contract.DEFAULT_WINDOW_DAYS
     if summary.get("has_data", "avg_oee" in summary):
+        # "from N of M machines" when the figure is not the whole plant (OEE
+        # contract s4; test_every_plant_oee_states_coverage.py).
+        partial = oee_contract.coverage_phrase(summary.get("coverage"))
         oee_lines = [
-            f"Plant OEE, last {days} days (pooled): {summary.get('avg_oee', 0)}%",
+            f"Plant OEE, last {days} days (pooled): {summary.get('avg_oee', 0)}%"
+            + (f" ({partial})" if partial else ""),
             f"Availability: {summary.get('avg_availability', 0)}%",
             f"Performance: {summary.get('avg_performance', 0)}%",
             f"Quality: {summary.get('avg_quality', 0)}%",

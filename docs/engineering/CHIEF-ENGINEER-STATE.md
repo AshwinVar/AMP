@@ -3,12 +3,11 @@
 > Handover file. A new session should be able to read only this and continue.
 > Keep it short. Update it at the end of every completed task.
 
-**Updated:** 2026-09-16 (promises the code does not keep: #593, #594, then a
-43-agent sweep of the whole family — 11 verified defects queued, #595 first)
-**Master SHA:** `29c0cf8` (#594)
-**Production SHA:** `29c0cf8` — verified live, not assumed:
-`{"status":"ok","database":"ok","schema":"ok","version":"29c0cf8"}` from
-`https://flowmes-production.up.railway.app/health`, read at 22:06 UTC.
+**Updated:** 2026-09-18 (the sweep queue cleared: #596–#605, ten merges, each
+verified live; three larger branches built in worktrees and awaiting review)
+**Master SHA:** `0f3c889` (#605)
+**Production SHA:** `0f3c889` — verified live, not assumed: read back from
+`https://flowmes-production.up.railway.app/health` after the merge.
 Master and production are in step. Railway auto-deploys master, so prod tracks
 HEAD; re-check `/health` rather than trusting this line's age.
 
@@ -120,6 +119,42 @@ seven. This PR closes the worst face of it; the rest are listed below.
 
 **All window findings are now closed (#584, #586, #587, #589, #590, #591), and the last recorded follow-up with them (#592).** The audit is fully worked through.
 
+### 2026-09-17/18 — the queue cleared, and what the queue did not know (#596–#605)
+
+Ten merges, each with a failing test first, mutation-tested, and **verified live
+on production** (`/health` version read back) rather than assumed. In order:
+
+| PR | What was actually wrong | Evidence it is fixed |
+|---|---|---|
+| #596 | The Purchasing list 500'd once the reorder agent had fired (`supplier_id` not nullable in the response model) | 2 suites, frontend test |
+| #597 | An idle machine topped the OEE ranking on an invented 68% | contract-driven rows, 11/11 mutations |
+| #598 | A founder previewing a customer imported their CSV into the **wrong workspace** | `getDownloadHeaders` at both import sites |
+| #599 | Cancelling an escalation silenced that alert **forever**, on seven generators | one `open_clause()`, 17/17 mutations |
+| #600 | **No tenant that had ever used GMATS could be offboarded** (tenant-less child tables) | 4 tests, ADR-0008 corrected |
+| #601 | An admin could promote an account or reset its password with **no audit trail** | 5/5 mutations |
+| #602 | A GMATS stock correction, delete or void left **no trace of who did it**; 13 write handlers, 0 audit rows | 33/34 mutations, the survivor investigated and kept |
+| #603 | After a void, **two live GMATS tax invoices could carry the same number** (`count()+1` with hard deletes) | moved onto `doc_numbers.allocate`, 18/18 |
+| #604 | One deleted inspection **jammed a simulated factory's live activity for good** (same `count()+1` class, third copy) | repo-wide `*_no` guard, 24/24 |
+| #605 | The cost-of-losses cards **invented every tenant's money**: £12/downtime-minute, £25/scrapped unit, £8/min in the management summary | one `loss_value` conversion, 27/27 backend + 10/10 frontend |
+
+Two lessons worth keeping:
+
+- **The same defect had three copies.** `count()+1` as a document number was fixed
+  once in ADR-0012 for the enterprise routes; GMATS and the simulator still had it.
+  The guard is now repo-wide (`test_document_numbers_one_rule.py`) rather than a
+  third local fix.
+- **A guard can be blind in one syntax.** `test_currency_single` caught `$${` and
+  `$<digit>` but not a JSX-text `${m.cost}`, which is exactly how two components
+  printed dollars. Both missed lines are now pinned verbatim as a probe.
+
+**Branches awaiting review (built in worktrees, not merged):**
+
+| Branch | What it is | State |
+|---|---|---|
+| `fix/agent-proposals-locked-until-decided` | Queue item 2: an agent proposal **holds its item** until an approver decides it; 409 on every PATCH/DELETE bypass, withdraw-on-decide, audited | 13 commits, rebased on `0f3c889`; worktree gates green (248 backend suites, 380 frontend tests); adversarial review in progress |
+| `feat/amp-native-ai` | AMP's own models (failure risk, telemetry anomaly, copilot intent), pure Python, no external LLM | 16 commits, ~25k lines; needs review + gates |
+| `feat/verified-outcome-contracts` | Agreed **downtime attribution** for OEM service contracts (OEM / factory / disputed / unmeasured, SLA credits, two-party accepted statements) | 20 commits; needs review + gates; **freedom-to-operate review required before launch** — Rockwell US10747201B2 is live to 2038 and covers metered subscription billing on a shared tamper-proof ledger |
+
 ### 2026-09-16 — the sweep, and the first thing it found (#595)
 
 **The sweep.** Rather than pick off the next known item, a read-only Workflow
@@ -137,15 +172,20 @@ not facts). Full result: session scratchpad `tasks/sweep_result.json` (not in gi
 |---|---|---|---|
 | 1 | **Founder-workspace non-Admins locked to GMATS, not their own tenant** — read GMATS's stock/rates/customers; Supervisor could write it | P2 (cross-tenant WRITE) | **fixed #595** |
 | 2 | Agent approval gate bypassed by generic PATCH — an Operator opens/cancels a Proposed maintenance task from the CMMS dropdown; AgentAction stays Proposed, a later decision contradicts reality (`approvals.py:1`, ADR-0005) | P2 | queued |
-| 3 | `/analytics/executive-oee` ranks machines with **fabricated** OEE (utilization, 90/60, 95) when they produced nothing; `lib/oee.ts readMachineOee` marks every ranking row `measured: true`, so the dashboard shows "OEE 68%" not "Estimated". PRODUCTION-READINESS-FINAL claims closed | **P1 (both lenses)** | queued |
-| 4 | Inventory CSV import omits `X-Tenant` — founder previewing a client imports into DEFAULT (`EnterpriseInventory.tsx:706`) | P2 | queued |
-| 5 | Tenant purge fails on PostgreSQL for tenants with GMATS proformas/MINs — `gmats_proforma_lines`/`gmats_min_lines` have no `tenant_code`, and the registry row is already deleted (`offboard_tenant.py:5`, ADR-0008) | P2 | queued |
-| 6 | Seven escalation generators dedup on `status != "Resolved"` — a Cancelled escalation blocks that alert forever; #565 fixed only smart alerts (`ai/escalations.py:68`) | P2 | queued |
-| 7 | Admin role changes and password resets are not audit-logged (`users_routes.py:7`) | P2 | queued |
-| 8 | GMATS corrections and voids leave no audit trail ("full audit trail" promise) | P2 | queued |
+| 3 | `/analytics/executive-oee` ranks machines with **fabricated** OEE (utilization, 90/60, 95) when they produced nothing; `lib/oee.ts readMachineOee` marks every ranking row `measured: true`, so the dashboard shows "OEE 68%" not "Estimated". PRODUCTION-READINESS-FINAL claims closed | **P1 (both lenses)** | **fixed #597** |
+| 4 | Inventory CSV import omits `X-Tenant` — founder previewing a client imports into DEFAULT (`EnterpriseInventory.tsx:706`) | P2 | **fixed #598** |
+| 5 | Tenant purge fails on PostgreSQL for tenants with GMATS proformas/MINs — `gmats_proforma_lines`/`gmats_min_lines` have no `tenant_code`, and the registry row is already deleted (`offboard_tenant.py:5`, ADR-0008) | P2 | **fixed #600** |
+| 6 | Seven escalation generators dedup on `status != "Resolved"` — a Cancelled escalation blocks that alert forever; #565 fixed only smart alerts (`ai/escalations.py:68`) | P2 | **fixed #599** |
+| 7 | Admin role changes and password resets are not audit-logged (`users_routes.py:7`) | P2 | **fixed #601** |
+| 8 | GMATS corrections and voids leave no audit trail ("full audit trail" promise) | P2 | **fixed #602** |
 | 9 | Plan bundles defined twice: `modules.json` vs `PLAN_MODULE_TIERS` (tenant create/plan change) — one rule, two implementations | P3 | queued |
 | 10 | Branding colour/logo saved and re-shown, never applied | P3 | queued |
 | 11 | DOCKER.md says a fresh stack seeds `gmats`; the seed needs `GMATS_PASSWORD`, compose never sets it | P3 | queued |
+
+Item 2 (the approval-gate bypass) is **built and rebased in a worktree**, not yet
+merged — see "Branches awaiting review" below. Of the 39 candidates the sweep
+could not verify, two were checked and fixed while working nearby (#603, #604);
+the rest are still candidates, not facts.
 
 Also still open, lower: `IndustrialDevice.topic` (P3 — the registration form never
 sends it; API-only). Refuted by the verifiers (do NOT re-raise without new

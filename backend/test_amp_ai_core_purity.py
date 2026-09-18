@@ -54,6 +54,11 @@ PINNED_REQUIREMENTS = [
     "bcrypt==4.2.1",
     "python-multipart==0.0.28",
     "sentry-sdk[fastapi]>=2.0,<3.0",
+    # Reviewed 2026-09-18 (ADR-0021, limitation 10): the IANA time-zone database
+    # for zoneinfo. Service-contract periods run in the contract's own zone, and
+    # Windows and slim images carry no system tz data. Data files only: no
+    # compiled code, no network, nothing a model could use.
+    "tzdata==2026.2",
 ]
 
 failures = []

@@ -13,6 +13,7 @@ from sqlalchemy.orm import Session
 
 import doc_numbers
 import models
+import stock_events
 import tenancy
 from csv_safe import import_row_error, read_upload_text
 from payload_fields import int_cell, int_field, str_field
@@ -274,6 +275,7 @@ def issue_slip(sid: int, db: Session = Depends(get_db), current_user: dict = Dep
     if current_stock < s.requested_qty:
         raise HTTPException(status_code=400, detail=f"Insufficient stock: {current_stock} {item.unit} available")
     item.current_stock = current_stock - s.requested_qty
+    stock_events.stock_dropped(db, item, current_stock)
     s.issued_qty = s.requested_qty
     s.status = "Issued"
     s.issued_at = datetime.utcnow()
@@ -545,7 +547,9 @@ def approve_cycle_count(cid: int, db: Session = Depends(get_db), current_user: d
                 # never "set to 90". The stock mutation now matches the audit row
                 # instead of contradicting it. NULL current_stock (nullable
                 # Integer) coalesces to 0, the idiom accept_grn uses above.
-                item.current_stock = (item.current_stock or 0) + line.variance
+                before = item.current_stock or 0
+                item.current_stock = before + line.variance
+                stock_events.stock_dropped(db, item, before)
                 db.add(models.InventoryTransaction(
                     item_id=item.id, transaction_type="Adjust",
                     quantity=abs(line.variance),
@@ -728,7 +732,9 @@ async def import_inventory_csv(
                         existing.item_name = name
                         existing.category = category
                         existing.unit = unit
+                        before = existing.current_stock
                         existing.current_stock = stock
+                        stock_events.stock_dropped(db, existing, before)
                         existing.reorder_level = reorder
                         if supplier:
                             existing.supplier = supplier

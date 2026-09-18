@@ -61,3 +61,20 @@ plan does not include it, a human edit or delete of the proposed item still
 succeeds but withdraws the proposal, so a later plan upgrade cannot turn a
 human's rewrite into the agent's approved proposal; every withdrawal is in the
 audit log under the user who caused it (ADR-0015 addendum, points 9-11).
+
+## Addendum (2026-09-18): every stock writer, one rule
+
+Closing the BOM gap above left five other writers of `current_stock` silent: issuing a
+material issue slip (the enterprise inventory's main way of taking stock off the
+shelf), approving a cycle count with a negative variance, correcting a purchase
+order's receipt downwards, `PATCH /inventory/items` and the CSV import. An item drawn
+down by issue slips could sit below its reorder level with no proposal ever made. The
+two writers that did publish carried two copies of the crossing rule, which disagreed
+about an item with no reorder level.
+
+`stock_events.stock_dropped(db, item, before)` is now the one rule: publish when a write
+takes the item from above its reorder level to at or below it; never re-announce an
+item already below; announce nothing for an item with no level (as the low-stock SQL
+filter skips it). Every writer calls it. `test_inventory_low_every_drop.py` proves each
+writer publishes once, and fails CI for a new writer of `current_stock` that neither
+calls the rule nor is exempt with a reason.

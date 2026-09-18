@@ -51,7 +51,7 @@ Synchronous, in-process, shared DB session, appended to `EventLog`, broker-ready
 |---|---|---|
 | ProductionCompleted | work_orders_routes | BOM move, AI rec, Maintenance/Yield agents |
 | DowntimeStarted | machines_routes | AI rec, Maintenance/Escalation agents |
-| InventoryLow | inventory_routes (+ BOM subscriber) | AI rec, Reorder agent |
+| InventoryLow | stock_events.stock_dropped, called by every stock writer | AI rec, Reorder agent |
 | QualityInspectionFailed | quality_routes | AI rec, Quality agent |
 
 ## AI honesty (say this exactly)

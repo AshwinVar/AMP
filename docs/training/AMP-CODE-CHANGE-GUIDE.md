@@ -65,7 +65,7 @@
 - Tests: `test_oee_contract.py` (golden datasets) + `mutate_oee_contract.py`.
 
 ## Recipe: change inventory / BOM
-- Reorder trigger: `inventory_routes.py create_inventory_transaction` (`InventoryLow`).
+- Reorder trigger: `stock_events.py stock_dropped` (`InventoryLow`), called by every writer of `current_stock`.
 - Reorder draft qty: `ai/agents.py draft_reorder_on_inventory_low`.
 - BOM data: `PATCH /bom/{id}` (Admin). BOM resolution rules: `bom.py resolve`.
 

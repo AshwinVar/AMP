@@ -759,12 +759,12 @@ sequenceDiagram
 **Transaction types:** `Receive`/`Return` (add), `Issue` (subtract, stock-checked), `Adjust` (set absolute). Enterprise extras: GRN acceptance is one-shot (status-gated, no double stock movement); cycle-count approval applies variance as a **delta**, not an absolute overwrite.
 
 ### If you want to change inventory
-- Reorder threshold behaviour → `inventory_routes.py create_inventory_transaction` (the `InventoryLow` trigger).
+- Reorder threshold behaviour → `stock_events.py stock_dropped`, the one `InventoryLow` rule. Every writer of `current_stock` calls it (the ledger, issue slips, cycle counts, receipt corrections, PATCH, the CSV import, BOM consumption), and `test_inventory_low_every_drop` fails CI for a new writer that does not.
 - Reorder quantity the agent drafts → `ai/agents.py draft_reorder_on_inventory_low` (≈ refill to 2× reorder level).
 - A new stock document (like GRN) → `enterprise_inventory_routes.py` + `doc_numbers.allocate`. **Never `count() + 1`.** A count is a population, not a sequence: delete one row and the next document gets a number still printed on a live one. That is how GMATS issued two live tax invoices numbered INV-7002 after a void, and how one deleted inspection jammed the simulator's quality tick for good, until 2026-09 (ADR-0012 addendum). `test_document_numbers_one_rule` fails CI for any backend module that builds a `*_no` from a count.
 
 ### Quick recap
-Inventory = `InventoryItem` + an `InventoryTransaction` ledger; issuing below `reorder_level` publishes **`InventoryLow`**, which the **Reorder agent** turns into a *draft* PO for human review. Enterprise inventory adds GRN/issue-slips/remnants/cycle-counts with tenant-scoped document numbers.
+Inventory = `InventoryItem` + an `InventoryTransaction` ledger; any write that takes stock from above `reorder_level` to at or below it publishes **`InventoryLow`**, which the **Reorder agent** turns into a *draft* PO for human review. Enterprise inventory adds GRN/issue-slips/remnants/cycle-counts with tenant-scoped document numbers.
 
 ---
 

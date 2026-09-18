@@ -3,15 +3,15 @@
 > Handover file. A new session should be able to read only this and continue.
 > Keep it short. Update it at the end of every completed task.
 
-**Updated:** 2026-09-18 (#609–#615: the approval lock, AMP-native AI, agreed
+**Updated:** 2026-09-18 (#609–#616: the approval lock, AMP-native AI, agreed
 downtime attribution for service contracts, and the sweep queue's tail; see the
 section of that date below)
-**Master SHA:** `56812f2` (#614). A docs-only merge on top of it changes nothing
+**Master SHA:** `7803711` (#616). A docs-only merge on top of it changes nothing
 that runs.
-**Production SHA:** `56812f2` — verified live, not assumed:
-`{"status":"ok","database":"ok","schema":"ok","version":"56812f2"}` from
-`https://flowmes-production.up.railway.app/health`, read at 12:34 UTC, and
-`/readiness` at `0010_outcome_contracts`, so migration 0010 ran on production.
+**Production SHA:** `7803711` — verified live, not assumed:
+`{"status":"ok","database":"ok","schema":"ok","version":"7803711"}` from
+`https://flowmes-production.up.railway.app/health`, read at 12:57 UTC; `/readiness`
+200 at `0010_outcome_contracts` (migration 0010 ran on production with #614).
 Master and production are in step. Railway auto-deploys master, so prod tracks
 HEAD; re-check `/health` rather than trusting this line's age.
 
@@ -165,7 +165,7 @@ merge was verified live on production (`/health` version read back).
 | #613 | Which packs a plan includes was written in **five** places, and only apply-plan read `modules.json` (queue item 9) | 8/8 mutations |
 | #614 | **Agreed downtime attribution** for OEM service contracts (ADR-0021); migration 0010 | 304 suites; 45 PostgreSQL checks; harnesses 37/101/96/44/53 |
 | #615 | An inventory item could be **created or CSV-imported with a negative stock** (a sweep candidate) | 7/7 mutations |
-| #616 | **Open.** A factory was asked to consent to three kinds of sharing that never happened (alarms, telemetry, maintenance history: nothing reads them) | 8/8 mutations; **reverses a documented choice**, see founder decisions |
+| #616 | A factory was asked to **consent to three kinds of sharing that never happened** (alarms, telemetry, maintenance history: nothing reads them); a factory is now offered only the grants AMP reads | 8/8 mutations; **reverses a documented choice**, see founder decisions |
 
 Lessons worth keeping:
 
@@ -190,7 +190,7 @@ Lessons worth keeping:
 
   Both were replaced with mutations that can happen.
 
-**Branches awaiting review:** none. #616 is open with CI running.
+**Branches awaiting review:** none.
 
 **Founder decisions open (nothing below is blocked on code):**
 
@@ -204,7 +204,8 @@ Lessons worth keeping:
    - If you want it back, the honest version is a box marked "not active yet".
    - When a reserved grant gains a reader: do consents stored before then count? ADR-0017 says to ask again.
 4. **Native AI:** the failure-risk model's evidence is synthetic. It needs validation on a real plant's history, with that plant's consent, before any accuracy claim.
-5. **Agent approvals (ADR-0015):**
+5. **A work order created as Completed never moves its BOM stock** (`work_orders_routes.create_work_order` says so on purpose). Right for back-filling a job whose stock was already counted, wrong for recording one that just finished. Which should it be, or should the form ask?
+6. **Agent approvals (ADR-0015):**
    - Should agents propose for tenants without the Intelligence Pack?
    - Should an expired proposal be cancelled automatically?
    - Should boot sweep orphaned proposals?

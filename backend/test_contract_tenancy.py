@@ -13,7 +13,8 @@ THE PROPERTIES UNDER TEST
   * A statement or dispute id belongs to its contract: pairing it with another
     contract of the same manufacturer is a 404.
   * The founder's company switcher previews a factory's contracts only for an
-    Admin, and a switcher aimed at an OEM sentinel is refused outright.
+    Admin, and a switcher aimed at an OEM sentinel is refused outright: by the
+    middleware since #631, and by the routes' own party check, tested directly.
   * Service contracts are core: the plan gate never blocks them, while it still
     blocks a gated pack for the same tenant.
   * A party's contract list, past its cap, keeps the NEWEST contracts and says
@@ -278,6 +279,34 @@ def case_founder_preview():
           r.status == 403, r)
     r = GET(f"/service-contracts/{pid}", founder, headers={"X-Tenant": "OEM:OEM_ALPHA"})
     check("...even for a (planted) row addressed to that sentinel", r.status == 403, r)
+
+    # THE ROUTES' OWN GUARD, ON ITS OWN. Since #631, ReservedPreviewGuardMiddleware
+    # answers the two requests above before any route runs, so they no longer reach
+    # service_contracts.for_factory. That guard refuses a sentinel "that arrived any
+    # other way", and without a check of its own, removing it went unnoticed: on
+    # 2026-09-18, mutate_service_contracts' "a founder switcher aimed at an OEM
+    # sentinel acts as a factory" SURVIVED. Bind the sentinel directly, as any
+    # future path that bypasses the header would.
+    import service_contracts as svc
+    import tenancy
+    founder_claims = {"sub": "founder_admin", "tenant": "DEFAULT", "role": "Admin"}
+    tok = tenancy.set_current_tenant("OEM:OEM_ALPHA")
+    try:
+        svc.for_factory(founder_claims)
+        status = None
+    except svc.Refused as exc:
+        status = exc.status_code
+    finally:
+        tenancy.reset_current_tenant(tok)
+    check("for_factory itself refuses a bound OEM sentinel (403), middleware or not",
+          status == 403, status)
+    tok = tenancy.set_current_tenant("FACTORY_A")
+    try:
+        party = svc.for_factory(founder_claims)
+    finally:
+        tenancy.reset_current_tenant(tok)
+    check("CONTROL: ...and takes an ordinary factory tenant as the factory party",
+          party.tenant_code == "FACTORY_A", party.tenant_code)
 
 
 def case_the_plan_gate_never_blocks_contracts():

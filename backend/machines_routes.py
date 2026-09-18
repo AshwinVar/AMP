@@ -289,8 +289,23 @@ async def import_machines_csv(
                     if existing:
                         if line:
                             existing.line = line
+                        old_status = existing.status
                         existing.status = status
                         existing.utilization = utilization
+                        # A status change is recorded, as every other path that
+                        # changes one records it (PATCH "manual", MQTT, the gateway,
+                        # the simulator). The machine timeline, the risk scorer and
+                        # the native failure-risk model all read this history; an
+                        # import that set Breakdown used to leave it saying the
+                        # machine never left Running. Inside the row's savepoint,
+                        # so a row that fails leaves no event
+                        # (test_machine_import_records_status_change.py).
+                        if old_status != status:
+                            db.add(models.MachineEvent(
+                                machine_id=existing.id, machine_name=existing.name,
+                                old_status=old_status, new_status=status,
+                                utilization=utilization, source="import",
+                            ))
                         outcome = "updated"
                     else:
                         db.add(models.Machine(name=name, status=status,

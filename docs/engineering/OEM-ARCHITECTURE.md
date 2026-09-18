@@ -52,7 +52,8 @@ string **no factory can hold** makes factory data invisible *by construction*,
 before any OEM route exists.
 
 A tenant code is a plain identifier and cannot contain a colon, so `OEM:` can
-never collide with a real tenant.
+never collide with a real tenant: the registry refuses one, and a company preview
+(`X-Tenant`) naming one is refused with a 403 on every route and never bound.
 
 ---
 

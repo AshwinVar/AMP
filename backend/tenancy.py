@@ -270,7 +270,15 @@ def effective_tenant(claim_tenant, header_tenant, claim_role=None, claims=None):
     oem_code = oem_auth.oem_of_claims(claims)
     if oem_code:
         return oem_auth.sentinel_tenant(oem_code)
-    if claim_tenant == DEFAULT_TENANT and header_tenant and claim_role == "Admin":
+    # A RESERVED CODE IS NEVER BOUND FROM THE HEADER. The registry refuses a
+    # tenant code in the OEM sentinel namespace (assert_tenant_code_available,
+    # at /saas/tenants); the preview header is the other door a tenant code
+    # enters by, and it bound `X-Tenant: OEM:ACME` as the tenant, so anything
+    # the request wrote landed where ACME's OEM sessions read. A reserved
+    # preview falls back to the token's own tenant, like every refused preview
+    # (test_preview_cannot_enter_oem_namespace.py).
+    if (claim_tenant == DEFAULT_TENANT and header_tenant and claim_role == "Admin"
+            and not is_reserved_tenant_code(header_tenant)):
         return header_tenant
     return claim_tenant
 
@@ -349,6 +357,36 @@ def install_scoping():
         for obj in session.new:
             if isinstance(obj, SCOPED_MODELS) and getattr(obj, "tenant_code", None) is None:
                 obj.tenant_code = tenant
+
+
+class ReservedPreviewGuardMiddleware:
+    """Refuse, readably, a request whose X-Tenant names the OEM sentinel namespace.
+
+    effective_tenant already never binds a reserved code from the header (the
+    request would run in the caller's own tenant); this is the EXPLICIT answer,
+    for every route, so a preview aimed at `OEM:<code>` is a 403 rather than a
+    quiet answer from somewhere else. Service contracts refused it on their own
+    routes; nothing else did (test_preview_cannot_enter_oem_namespace.py).
+
+    Added inside CORS in main.py, like the plan gate, so the 403 is readable
+    cross-origin. It reads one header and decodes no token: nobody legitimate
+    sends a reserved code, so it is refused whoever sends it."""
+
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope.get("type") == "http":
+            for key, value in scope.get("headers") or []:
+                if key == b"x-tenant" and is_reserved_tenant_code(value.decode("latin-1").strip()):
+                    body = (b'{"detail": "A company preview cannot name the OEM sentinel '
+                            b'namespace (codes containing \':\'); see ADR-0017."}')
+                    await send({"type": "http.response.start", "status": 403,
+                                "headers": [(b"content-type", b"application/json"),
+                                            (b"content-length", str(len(body)).encode("latin-1"))]})
+                    await send({"type": "http.response.body", "body": body})
+                    return
+        await self.app(scope, receive, send)
 
 
 class TenantScopeMiddleware:

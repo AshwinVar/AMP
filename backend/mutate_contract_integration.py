@@ -171,9 +171,9 @@ MUTATIONS = [
     ("the coverage end is audited for the factory only", _one(LINKAGE,
         "            for tenant in (contract.factory_tenant_code,\n"
         "                           oem_auth.sentinel_tenant(contract.oem_code)):\n"
-        "                platform_routes.log_audit(session, \"system\"",
+        "                platform_routes.add_audit(session, \"system\"",
         "            for tenant in (contract.factory_tenant_code,):\n"
-        "                platform_routes.log_audit(session, \"system\"")),
+        "                platform_routes.add_audit(session, \"system\"")),
     ("no CoverageEnded event is published", _one(LINKAGE,
         "            oem_events.publish(event_bus, session, oem_events.CoverageEnded(",
         "            (lambda *a: None)(event_bus, session, oem_events.CoverageEnded(")),
@@ -196,7 +196,7 @@ MUTATIONS = [
     ("offboarding leaves an accepted contract accepted", _one(OFFBOARD,
         "                contract.status = \"terminated\"\n", "")),
     ("offboarding closes contracts without an audit row", _one(OFFBOARD,
-        "            platform_routes.log_audit(db, \"system:offboarding\", CLOSED_AT_OFFBOARDING,",
+        "            platform_routes.add_audit(db, \"system:offboarding\", CLOSED_AT_OFFBOARDING,",
         "            (lambda *a, **k: None)(db, \"system:offboarding\", CLOSED_AT_OFFBOARDING,")),
     ("offboarding never closes contracts at all", _one(OFFBOARD,
         "        counts.update(_close_service_contracts(db, code))\n", "")),

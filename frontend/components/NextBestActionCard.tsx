@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { apiGet, apiPost } from "../lib/api";
+import { money } from "../lib/money";
 
 // Mirrors the recovery read-model's "fix this first" fields (ai/recovery.py).
 type Component = { key: string; label: string; current: number; target: number; gap_points: number };
@@ -69,7 +70,7 @@ export default function NextBestActionCard({
   const priced = s.unit_value_gbp != null;
   const comp = s.components.find((c) => c.key === s.biggest_lever);
   const prize = priced
-    ? `£${(s.lever_recoverable_value_per_year ?? 0).toLocaleString()} / yr`
+    ? `${money(s.lever_recoverable_value_per_year ?? 0)} / yr`
     : `+${s.lever_recoverable_units_per_year.toLocaleString()} good units / yr`;
 
   return (
@@ -89,7 +90,7 @@ export default function NextBestActionCard({
             <p className="text-[11px] text-slate-500 mt-2 tabular-nums">
               {comp.label} {comp.current}% → {comp.target}% world-class
               {" · "}part of {priced
-                ? `£${(s.recoverable_value_per_year ?? 0).toLocaleString()}`
+                ? money(s.recoverable_value_per_year ?? 0)
                 : `${s.recoverable_units_per_year.toLocaleString()} units`} total recovery / yr
             </p>
           )}

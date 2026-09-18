@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { apiGet } from "../lib/api";
 import { type Coverage, coveragePhrase } from "../lib/coverage";
+import { CURRENCY, money } from "../lib/money";
 import UnitRateEditor from "./UnitRateEditor";
 
 // The money story: the OEE gap and downtime, both valued off the one per-tenant
@@ -36,7 +37,7 @@ type Management = {
   unit_value_gbp: number | null;
 };
 
-const gbp = (n: number) => `£${Math.round(n).toLocaleString()}`;
+const gbp = (n: number) => money(Math.round(n));
 const units = (n: number) => Math.round(n).toLocaleString();
 
 // Week-over-week OEE direction — hidden until there's a prior week ("new").
@@ -80,11 +81,11 @@ export default function MoneyStorySnapshot({ isAdmin = false }: { isAdmin?: bool
         <h2 className="text-3xl font-bold">OEE in money</h2>
         <p className="text-slate-400 mt-2">
           The OEE gap and downtime, valued off {priced ? (
-            <span className="text-slate-200">£{rate.toLocaleString()} / good unit</span>
+            <span className="text-slate-200">{money(rate)} / good unit</span>
           ) : (
             <span className="text-slate-300">your unit value</span>
           )}
-          {priced ? "" : isAdmin ? " — set your rate below to see £" : " — ask an Admin to set your rate to see £"}.
+          {priced ? "" : isAdmin ? ` — set your rate below to see ${CURRENCY}` : ` — ask an Admin to set your rate to see ${CURRENCY}`}.
         </p>
       </div>
 
@@ -109,7 +110,7 @@ export default function MoneyStorySnapshot({ isAdmin = false }: { isAdmin?: bool
           <p className="text-xs font-semibold uppercase tracking-wide text-emerald-300/80">Recovery upside · per year</p>
           <p className="mt-2 text-4xl font-bold text-emerald-300 tabular-nums">
             {rec.gap_points === 0
-              ? (priced ? "£0" : "0 units")
+              ? (priced ? money(0) : "0 units")
               : priced
                 ? gbp(rec.recoverable_value_per_year ?? 0)
                 : `+${units(rec.recoverable_units_per_year)} units`}
@@ -140,13 +141,13 @@ export default function MoneyStorySnapshot({ isAdmin = false }: { isAdmin?: bool
 
       <div className="flex items-center justify-between text-[11px] text-slate-500 gap-3 flex-wrap">
         <span>
-          Both figures are units × the same £/good-unit — one rate drives the whole dashboard, and stays units-only until you set it.
+          Both figures are units × the same {CURRENCY}/good-unit — one rate drives the whole dashboard, and stays units-only until you set it.
         </span>
         <span className="flex items-center gap-2 whitespace-nowrap">
           <span>
             Unit value:{" "}
             {priced ? (
-              <span className="text-slate-300 tabular-nums">£{rate.toLocaleString()}</span>
+              <span className="text-slate-300 tabular-nums">{money(rate)}</span>
             ) : (
               <span className="text-slate-500">not set</span>
             )}

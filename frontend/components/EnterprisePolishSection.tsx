@@ -1,3 +1,4 @@
+import { money } from "../lib/money";
 import type { AuditLog, FinalExecutiveSummary, ReportRequest, SystemHealth } from "../lib/phase27-types";
 
 export default function EnterprisePolishSection({ auditLogs, reports, health, summary, reportForm, setReportForm, createReport }: {
@@ -24,7 +25,7 @@ export default function EnterprisePolishSection({ auditLogs, reports, health, su
         <Kpi title="Quality" value={`${summary?.quality_rate ?? 0}%`} />
         <Kpi title="Dispatch" value={`${summary?.dispatch_rate ?? 0}%`} />
         <Kpi title="Low Stock" value={summary?.low_stock_items ?? 0} />
-        <Kpi title="Cost" value={`£${summary?.total_cost ?? 0}`} />
+        <Kpi title="Cost" value={money(summary?.total_cost ?? 0)} />
       </div>
 
       <div className="rounded-2xl bg-slate-900 border border-slate-800 p-5">

@@ -439,6 +439,19 @@ describe("tenant preview header", () => {
     expect(api.getDownloadHeaders()).not.toHaveProperty("X-Tenant");
   });
 
+  it("says it is previewing exactly when X-Tenant would be sent", () => {
+    // Screens hide what the server refuses a preview (tenancy.is_preview): signing a
+    // company's service contracts. One rule for the header and the flag.
+    localStorage.removeItem("company");
+    expect(api.isPreviewing()).toBe(false);
+    localStorage.setItem("company", "DEFAULT");
+    expect(api.isPreviewing()).toBe(false);
+    expect(api.getAuthHeaders()).not.toHaveProperty("X-Tenant");
+    localStorage.setItem("company", "ACME");
+    expect(api.isPreviewing()).toBe(true);
+    expect(api.getAuthHeaders()["X-Tenant"]).toBe("ACME");
+  });
+
   it("leaves Content-Type off the download headers", () => {
     // CsvImportButton posts a FormData with these. A JSON Content-Type would
     // override the multipart boundary the browser writes, and every CSV import

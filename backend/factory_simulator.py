@@ -812,6 +812,36 @@ def tick_machine_status(db):
     log.debug("tick: %s status %s -> %s", machine.name, old, new)
 
 
+def tick_status_heartbeat(db):
+    """Report every machine's current status as simulator telemetry (ADR-0021).
+
+    The simulated plant's equivalent of a gateway publishing on an interval: one
+    span message of source "simulator" per machine of the BOUND tenant, so a
+    demo service contract that trusts "simulator" has a status history to
+    attribute. Real telemetry arrives as "mqtt", "iot" or "industrial_gateway";
+    nothing here is ever labelled as any of those.
+
+    Refuses to run with no tenant bound: it would otherwise walk every tenant's
+    machines and stamp them from one loop.
+    """
+    import tenancy
+    import telemetry_coverage
+
+    tenant = tenancy.current_tenant()
+    if not tenant:
+        raise ValueError("tick_status_heartbeat needs a bound tenant")
+    at = telemetry_coverage.received_at()
+    machines = (db.query(models.Machine)
+                  .filter(models.Machine.tenant_code == tenant)
+                  .order_by(models.Machine.id.asc()).all())
+    for machine in machines:
+        telemetry_coverage.record_message(db, tenant, machine.id,
+                                          telemetry_coverage.SIMULATOR,
+                                          machine.status, at)
+    db.commit()
+    log.debug("tick: status heartbeat for %s machine(s) in %s", len(machines), tenant)
+
+
 def seed_all(db):
     print("\n=== AMP Factory Simulator — Initial Seed ===\n")
     _machines(db)

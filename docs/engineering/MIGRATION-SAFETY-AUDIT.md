@@ -38,6 +38,9 @@ production nightly and proving the restore, most recently **2026-08-10, success*
 | 0005 | `add_column` ×2, backfill, `alter_column` → NOT NULL | low | Guarded by `_has_column`; production already has both columns (added by #513's boot patches), so this is a no-op there. |
 | 0006 | `create_table` ×5, `create_index` | low | Guarded by table-existence; production already has all five (created by `create_all`), so no-op. |
 | 0007 | `add_column` ×2 (nullable, no backfill) | low | Guarded; production already has both (#513), so no-op. |
+| 0008 | `create_table` ×1 (`machine_claims`), `create_index` ×5 | low | Guarded by table-existence. New, empty table; alters nothing. Proved on a populated fleet in `verify_pg_oem.py` §5b. |
+| 0009 | `create_table` ×1 (`ai_learning_consents`), `create_index` ×2 | low | New, empty table; alters nothing. A unique (tenant, capability) constraint; `granted` defaults false in the database, so a row written without it is a refusal. Proved in `verify_pg_native_ai.py`, including downgrade and re-upgrade (ADR-0020). |
+| 0010 | `create_table` ×8, `create_index` ×24 | low | Guarded per table. New, empty tables; alters nothing that exists and writes no data. **Downgrade discards signed contracts, statements and acceptances** — see below. Proved from a populated 0009 database in `verify_pg_outcome_contracts.py` (CI). Re-parented at merge: it was written as 0009 beside the AMP-native AI branch's 0009, which merged first. |
 
 Every migration checks for the thing it is about to create. That is not
 incidental — they were written for exactly this adoption scenario.
@@ -87,6 +90,57 @@ Creates two tables (skipped if present) and then **seeds legacy recipes**.
 **What to do:** check the row count in `bills_of_materials` after the deploy
 against the log line the migration prints.
 
+### 0010 — agreed downtime attribution (ADR-0021)
+
+The product: a statement that attributes each covered downtime minute of an OEM's
+machine to the OEM, the factory, disputed or unmeasured, from the factory's own
+MES reasons, accepted by both parties. That attribution is the differentiator.
+Metering, pay-per-use and shared usage ledgers already exist (SteamChain,
+PayperChain, Linxfour; Rockwell US10747201B2) and nothing here claims novelty for
+them or builds one: no ledger, no hash chain, no usage billing. A
+freedom-to-operate review is needed before commercial launch.
+
+Creates eight empty tables: `service_contracts`,
+`service_contract_term_versions`, `service_contract_machines`,
+`contract_statements`, `contract_attribution_records`,
+`contract_statement_acceptances`, `contract_disputes` and
+`machine_telemetry_spans`. Each is skipped if boot's `create_all` already made
+it. No existing table is altered and no row is written, so it cannot fail on
+existing data and takes no lock on a populated table.
+
+What the schema commits to, and where it is proved:
+
+- **One statement per contract period** (`uq_contract_statement_period`) and
+  **one acceptance per (statement, party, revision)**
+  (`uq_statement_acceptance`). Revision is in the key on purpose: a party
+  accepts revision 1 and, after a dispute is raised and withdrawn, must be able
+  to accept revision 3 even though its bytes equal revision 1's.
+  Validity itself is `canonical.acceptance_is_valid`, not a column.
+- **No `Numeric` or `Float` column.** Money and percentages live as decimal
+  text inside the JSON documents; SQLite stores `NUMERIC` as `REAL`.
+- **The seven contract tables have no `tenant_code`.** They carry `oem_code`
+  and `factory_tenant_code`, so `offboard_tenant.purge_tenant_data` cannot
+  hard-delete an OEM's contract history when a factory leaves.
+- **`machine_telemetry_spans.tenant_code` is `NOT NULL` with no default**, and
+  the table is in `tenancy.SCOPED_MODELS`. Its `machine_id` foreign key onto
+  `machines` is ordered correctly by the purge's passes on PostgreSQL.
+
+`verify_pg_outcome_contracts.py` (run in CI's migration gate) builds from the
+frozen baseline, migrates to the previous revision (read from the script's `down_revision`, now 0009), inserts factory and OEM rows, upgrades, and
+asserts: every row survived; the autogenerate diff is empty and the comparison
+can fail; PostgreSQL refuses each duplicate key, a 65-character hash, a span
+with no tenant and a statement for a missing contract, each beside a control
+insert; `seconds` holds 2^40; downgrade and re-upgrade are clean with contract
+rows present; offboarding a factory completes and leaves the contract tables
+alone. `test_migration_0010_outcome_contracts.py` pins the same shape on SQLite
+in the ordinary suite.
+
+**The downgrade is destructive to new data.** It drops the eight tables with
+whatever contracts, statements, acceptances and disputes they hold: the record
+of what two companies agreed. Nothing that existed before 0010 is touched.
+Export `contract_statements.canonical_json` and the acceptances before
+downgrading any database where a contract was accepted.
+
 ---
 
 ## Hazard checklist
@@ -99,9 +153,9 @@ against the log line the migration prints.
 | Unsafe `NOT NULL` add | **no** | 0002 and 0005 both do add-nullable → backfill → set NOT NULL, three steps |
 | Missing default | **no** | every NOT NULL add carries a server default |
 | Large-table lock | **low** | the biggest tables (`production_records`, `iot_telemetry`) are untouched by every migration |
-| `CREATE INDEX` blocking writes | **yes, briefly** | 0004/0006 index tables they just created (empty). No index is added to an existing populated table. |
+| `CREATE INDEX` blocking writes | **yes, briefly** | 0004/0006/0008/0009/0010 index tables they just created (empty). No index is added to an existing populated table. |
 | Constraint addition that can fail | **0002 only** | mitigated by the de-duplication pass that runs first |
-| Irreversible operation | **no** | every migration has a real `downgrade()` |
+| Irreversible operation | **no** | every migration has a real `downgrade()`; 0010's drops the contract data it created (see above) |
 | Data backfill | **0002, 0004, 0005** | all idempotent and guarded; described above |
 
 **No migration in this set adds an index to an existing populated table**, which

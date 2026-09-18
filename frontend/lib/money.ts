@@ -33,3 +33,32 @@ export function lossFigure(cost: number | null | undefined, units: number | null
   if (units != null) return `${units.toLocaleString()} unit${units === 1 ? "" : "s"}`;
   return "—";
 }
+
+// ── Contract money (ADR-0021) ────────────────────────────────────────
+//
+// A service-contract statement carries money as DECIMAL TEXT with exactly two
+// places ("40000.00"), in the contract's own currency, computed server-side
+// with exact decimals. It is displayed without ever becoming a float: the
+// integer part is grouped as a BigInt and the paise are appended as the two
+// characters the server sent. `money()` above is the platform's GBP analytics
+// figure and is a different thing; do not route contract amounts through it.
+//
+// Indian digit grouping (12,34,567.89) is right because contracts are INR-only
+// (backend contract_terms.CURRENCIES). Admitting a second currency means the
+// grouping must follow it: a GBP fee would otherwise read "£12,34,567.89".
+const DECIMAL_MONEY = /^([0-9]{1,12})\.([0-9]{2})$/;
+
+/** formatDecimalMoney("1234567.89", "INR") -> "₹12,34,567.89" (en-IN grouping). */
+export function formatDecimalMoney(amount: string | null, currency: string): string {
+  if (amount === null) return "—";
+  const match = DECIMAL_MONEY.exec(amount);
+  if (!match) {
+    throw new RangeError("contract money must be decimal text with two places");
+  }
+  const grouped = new Intl.NumberFormat("en-IN").format(BigInt(match[1]));
+  const symbol =
+    new Intl.NumberFormat("en-IN", { style: "currency", currency })
+      .formatToParts(0)
+      .find((part) => part.type === "currency")?.value ?? currency;
+  return symbol + grouped + "." + match[2];
+}

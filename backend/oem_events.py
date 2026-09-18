@@ -105,6 +105,141 @@ class ServiceCompleted:
     event_version: int = 1
 
 
+# ── Service contracts: agreed downtime attribution (ADR-0021) ─────────
+#
+# Filed under the FACTORY's tenant for the same reason as the lifecycle events
+# above: a contract is about the customer's machines on the customer's floor.
+#
+# WHAT THEY CARRY, AND WHAT THEY NEVER CARRY. Identifiers, the contract
+# reference, a period, a revision, a party, a bucket name. Never a total, an
+# interval, a status, a reason text or an amount: event_log is read by the
+# factory's analytics and AI, and a copy of statement content there would be a
+# second, unhashed version of the numbers the parties accept. Timestamps are
+# pre-rendered text (canonical.ts) so the payload is exactly what was decided.
+
+
+@dataclass(frozen=True)
+class ContractProposed:
+    """A manufacturer proposed a service contract to a factory."""
+    tenant_code: str                  # THE FACTORY.
+    oem_code: str
+    contract_id: int
+    contract_ref: str
+    title: str = ""
+    occurred_at: datetime = field(default_factory=datetime.utcnow)
+    event_type: str = "ContractProposed"
+    event_version: int = 1
+
+
+@dataclass(frozen=True)
+class ContractAccepted:
+    """The factory accepted a contract, and with it granted SHARE_DOWNTIME."""
+    tenant_code: str
+    oem_code: str
+    contract_id: int
+    contract_ref: str
+    terms_hash: str = ""
+    installations: int = 0
+    occurred_at: datetime = field(default_factory=datetime.utcnow)
+    event_type: str = "ContractAccepted"
+    event_version: int = 1
+
+
+@dataclass(frozen=True)
+class AmendmentProposed:
+    """One party proposed new terms; the other must accept the same hash."""
+    tenant_code: str
+    oem_code: str
+    contract_id: int
+    contract_ref: str
+    version: int
+    proposed_by_party: str            # OEM | FACTORY
+    effective_from: str = ""
+    occurred_at: datetime = field(default_factory=datetime.utcnow)
+    event_type: str = "AmendmentProposed"
+    event_version: int = 1
+
+
+@dataclass(frozen=True)
+class StatementComputed:
+    """A statement revision was written (only when its content changed)."""
+    tenant_code: str
+    oem_code: str
+    contract_id: int
+    contract_ref: str
+    statement_id: int
+    period_start: str
+    revision: int
+    occurred_at: datetime = field(default_factory=datetime.utcnow)
+    event_type: str = "StatementComputed"
+    event_version: int = 1
+
+
+@dataclass(frozen=True)
+class StatementAgreed:
+    """Both parties hold a valid acceptance of the same hash at the same revision."""
+    tenant_code: str
+    oem_code: str
+    contract_id: int
+    contract_ref: str
+    statement_id: int
+    period_start: str
+    revision: int
+    content_hash: str = ""
+    occurred_at: datetime = field(default_factory=datetime.utcnow)
+    event_type: str = "StatementAgreed"
+    event_version: int = 1
+
+
+@dataclass(frozen=True)
+class DisputeRaised:
+    tenant_code: str
+    oem_code: str
+    contract_id: int
+    contract_ref: str
+    dispute_id: int
+    statement_id: int
+    raised_by_party: str
+    occurred_at: datetime = field(default_factory=datetime.utcnow)
+    event_type: str = "DisputeRaised"
+    event_version: int = 1
+
+
+@dataclass(frozen=True)
+class DisputeResolved:
+    tenant_code: str
+    oem_code: str
+    contract_id: int
+    contract_ref: str
+    dispute_id: int
+    statement_id: int
+    resolution_bucket: str
+    occurred_at: datetime = field(default_factory=datetime.utcnow)
+    event_type: str = "DisputeResolved"
+    event_version: int = 1
+
+
+@dataclass(frozen=True)
+class CoverageEnded:
+    """An installation stopped pointing at the machine a contract snapshotted.
+
+    Produced by the linkage listener (contract_linkage) when an installation's
+    machine or factory changes under an accepted contract. Covered time from
+    `coverage_ended_at` on is UNMEASURED, cause `installation_unlinked`.
+    """
+    tenant_code: str                  # THE FACTORY THE CONTRACT IS WITH.
+    oem_code: str
+    contract_id: int
+    contract_ref: str
+    installation_id: int
+    serial_number: str
+    coverage_ended_at: str = ""
+    reason: str = ""
+    occurred_at: datetime = field(default_factory=datetime.utcnow)
+    event_type: str = "CoverageEnded"
+    event_version: int = 1
+
+
 def publish(bus, db, event):
     """Publish an OEM event, or decline and say why.
 

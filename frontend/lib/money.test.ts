@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { CURRENCY, lossFigure, money } from "./money";
+import { CURRENCY, formatDecimalMoney, lossFigure, money } from "./money";
 
 describe("money", () => {
   it("prefixes the currency symbol", () => {
@@ -53,5 +53,49 @@ describe("lossFigure", () => {
 
   it("says nothing it cannot know", () => {
     expect(lossFigure(null, null)).toBe("—");
+  });
+});
+
+/**
+ * Contract money (ADR-0021) arrives as DECIMAL TEXT ("40000.00") because the
+ * backend computes it with exact decimals and never lets it become a float. The
+ * display keeps it text: the integer part is grouped as a BigInt and the paise
+ * are the two characters the server sent. (Parsing and printing alone would
+ * survive a float, since a double prints 15 significant digits back and this
+ * money has at most 14; arithmetic would not, and a credit two parties signed is
+ * the one number that must not drift. So there is none here.)
+ */
+describe("formatDecimalMoney", () => {
+  it("formats rupees with Indian grouping, digit for digit", () => {
+    expect(formatDecimalMoney("1234567.89", "INR")).toBe("₹12,34,567.89");
+    expect(formatDecimalMoney("40000.00", "INR")).toBe("₹40,000.00");
+  });
+
+  it("keeps every digit of the largest amount the terms allow", () => {
+    // 12 integer digits and paise: 14 significant digits, past what a float
+    // round-trips reliably through arithmetic.
+    expect(formatDecimalMoney("999999999999.99", "INR")).toBe("₹9,99,99,99,99,999.99");
+    expect(formatDecimalMoney("100000000000.01", "INR")).toBe("₹1,00,00,00,00,000.01");
+  });
+
+  it("keeps small amounts and paise exactly", () => {
+    expect(formatDecimalMoney("0.05", "INR")).toBe("₹0.05");
+    expect(formatDecimalMoney("2000.00", "INR")).toBe("₹2,000.00");
+  });
+
+  it("uses the contract's own currency symbol", () => {
+    expect(formatDecimalMoney("1234.50", "GBP")).toBe("£1,234.50");
+  });
+
+  it("says nothing rather than a number when there is no amount", () => {
+    // A credit that cannot be computed yet (disputes pending, not evaluable) is
+    // null, and must never render as a zero credit.
+    expect(formatDecimalMoney(null, "INR")).toBe("—");
+  });
+
+  it("refuses text that is not two-place decimal money", () => {
+    for (const bad of ["1e3", "12.5", "12", "-5.00", "1,000.00", " 1.00", "0x10.00"]) {
+      expect(() => formatDecimalMoney(bad, "INR"), bad).toThrow(RangeError);
+    }
   });
 });

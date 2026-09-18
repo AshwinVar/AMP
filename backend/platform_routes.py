@@ -106,10 +106,10 @@ def build_audit_row(actor, action, entity_type=None, entity_id=None, details=Non
 
     tenant_code: the company the audited record belongs to, when that can differ
     from the request's tenant. Left None, the ADR-0002 before_flush hook stamps the
-    request tenant. A founder correcting a customer's records from the DEFAULT
-    workspace must pass the record's tenant, or the row is filed under DEFAULT and
-    the customer's (tenant-scoped) audit log never shows it. Callers pass a tenant
-    only after the record's own tenant guard has admitted them.
+    request tenant. An explicit value is kept by that hook, which is how one
+    contract action records itself in BOTH the factory's tenant and the
+    manufacturer's sentinel tenant (ADR-0021). Callers pass a tenant only after the
+    record's own tenant guard has admitted them.
     """
     return models.AuditLog(
         actor=actor or "system", action=action,
@@ -121,8 +121,9 @@ def build_audit_row(actor, action, entity_type=None, entity_id=None, details=Non
 def add_audit(db, actor, action, entity_type=None, entity_id=None, details=None, tenant_code=None):
     """Stage an audit record in the CALLER's transaction, without committing, for
     a record that must commit or roll back together with the write it describes
-    (approvals.withdraw, amp_ai.consent). A failure raises into the caller: a
-    decision that must never happen unaudited must not survive a failed audit."""
+    (approvals.withdraw, amp_ai.consent, every service-contract transition). A
+    failure raises into the caller: a decision that must never happen unaudited
+    must not survive a failed audit."""
     row = build_audit_row(actor, action, entity_type, entity_id, details, tenant_code)
     db.add(row)
     return row

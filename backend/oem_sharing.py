@@ -30,6 +30,8 @@ shared data would survive the revocation of the policy that permitted it — the
 factory would withdraw consent and the OEM would keep reading yesterday's copy.
 Recomputing is the difference between "revoked" and "revoked from now on".
 """
+import contextlib
+
 import models
 import oem_auth
 
@@ -125,6 +127,85 @@ def get_installation(db, oem_code, installation_id):
     return rows[0] if rows else None
 
 
+def contract_statement_visible(db, contract):
+    """May this service contract's MANUFACTURER see its statements right now?
+
+    SHARE_DOWNTIME granted by the contract's factory to the contract's OEM, read
+    at call time through `grants_for` (ADR-0021). Being party to the contract is
+    not consent: the terms stay visible to both parties, but statement content
+    is the factory's downtime, and a factory that withdraws the grant withholds
+    it from the next request on.
+    """
+    return SHARE_DOWNTIME in grants_for(db, contract.oem_code,
+                                        contract.factory_tenant_code)
+
+
+@contextlib.contextmanager
+def bound_factory_read(tenant_code):
+    """Bind ONE factory's tenant for the reads inside, then restore the caller's.
+
+    The sanctioned, explicit way the OEM layer reads a factory table: an OEM
+    request is bound to its sentinel, which matches no factory row, so a read
+    of factory data needs that factory bound for exactly as long as the read.
+    Callers still filter by tenant explicitly where they can; this makes the
+    ADR-0002 hook agree with them rather than hide the rows.
+
+    REFUSES a blank tenant or an OEM sentinel, with ValueError. Binding None does
+    not mean "no factory": it switches the ADR-0002 filter OFF, and every scoped
+    table would return every tenant's rows. A sentinel would read nothing and
+    make every second of a statement look like "no data".
+    """
+    import tenancy
+
+    if (not isinstance(tenant_code, str) or not tenant_code.strip()
+            or oem_auth.is_sentinel(tenant_code)):
+        raise ValueError("bound_factory_read needs a factory tenant code")
+    token = tenancy.set_current_tenant(tenant_code)
+    try:
+        yield
+    finally:
+        tenancy.reset_current_tenant(token)
+
+
+def widen_grants(db, oem_code, tenant_code, grants, actor, *, context):
+    """Add `grants` to what this factory shares with this OEM. Never removes one.
+
+    The union the claim handler used to write in-line, extracted so accepting a
+    service contract (which grants SHARE_DOWNTIME) cannot drift from it. The
+    policy is RELATIONSHIP-level, keyed (oem, tenant): replacing it instead of
+    widening it would silently revoke what the factory already shares about
+    every other machine from this manufacturer. Withdrawal stays where it has
+    always been, the Admin-only control under Connected Equipment.
+
+    An unknown grant raises ValueError before anything is written. The
+    `oem_sharing_changed` audit row is written in the factory's tenant inside
+    the CALLER's transaction (platform_routes.add_audit), always, with the wording
+    the claim path has always used. The caller commits.
+    """
+    import platform_routes
+
+    wanted = set(grants)
+    unknown = sorted(g for g in wanted if g not in ALL_GRANTS)
+    if unknown:
+        raise ValueError(f"Unknown sharing grants: {', '.join(unknown)}")
+    policy = (db.query(models.OemDataSharingPolicy)
+                .filter(models.OemDataSharingPolicy.oem_code == oem_code,
+                        models.OemDataSharingPolicy.tenant_code == tenant_code).first())
+    before = policy.grants if policy else "(no policy)"
+    existing = parse_grants(policy.grants) if policy else set()
+    if policy is None:
+        policy = models.OemDataSharingPolicy(oem_code=oem_code, tenant_code=tenant_code)
+        db.add(policy)
+    policy.grants = ",".join(sorted(existing | wanted))
+    policy.updated_by = actor
+    db.flush()
+    platform_routes.add_audit(
+        db, actor, "oem_sharing_changed", "oem_data_sharing_policy", policy.id,
+        f"oem={oem_code} before={before!r} after={policy.grants!r} ({context})",
+        tenant_code=tenant_code)
+    return policy
+
+
 def visible_machine(db, installation, grants):
     """The factory Machine row behind an installation, or None.
 
@@ -138,19 +219,14 @@ def visible_machine(db, installation, grants):
     at all: one function, auditable, and gated on a grant that the factory
     controls.
     """
-    import tenancy
-
     if SHARE_MACHINE_HEALTH not in grants:
         return None
     if not installation.machine_id or not installation.factory_tenant_code:
         return None
-    token = tenancy.set_current_tenant(installation.factory_tenant_code)
-    try:
+    with bound_factory_read(installation.factory_tenant_code):
         machine = (db.query(models.Machine)
                      .filter(models.Machine.id == installation.machine_id)
                      .first())
-    finally:
-        tenancy.reset_current_tenant(token)
     if machine is None:
         return None
     # BELT AND BRACES, and not redundant. The binding above came from the

@@ -10,3 +10,6 @@ websockets==16.0
 bcrypt==4.2.1
 python-multipart==0.0.28
 sentry-sdk[fastapi]>=2.0,<3.0
+# Service-contract periods are anchored to the contract's own timezone (ADR-0021);
+# zoneinfo needs the IANA database, which Windows and slim images do not ship.
+tzdata==2026.2

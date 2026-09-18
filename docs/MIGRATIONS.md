@@ -168,6 +168,7 @@ Three layers, because the one that was missing is the one that mattered:
 | **Drift** | a model changed and the migration is missing — `alembic` autogenerate against a freshly-migrated PostgreSQL must produce an **empty** diff | CI `migrations` job |
 | **Upgrade path** | fresh → head; a production-shaped OLD database refuses, migrates, then serves and logs in; idempotent re-run; behind → refused; failed migration → non-zero exit and full rollback; unknown revision → fails closed | `backend/verify_pg_deploy.py` |
 | **Guard logic** | the states, the 503 middleware, and the liveness/readiness split | `backend/test_schema_guard.py` |
+| **Per-migration, from a populated previous revision** | a new migration applied to a database that already holds rows keeps every row, matches models.py (with a control proving the comparison can fail), has its keys enforced by the database, and survives downgrade/re-upgrade with its own rows present | `backend/verify_pg_outcome_contracts.py` (0009, CI); `backend/verify_pg_oem.py` (0006–0008, local); SQLite mirror in the ordinary suite: `backend/test_migration_0010_outcome_contracts.py` |
 
 All of it runs on **real PostgreSQL 18** in CI. That is not decoration: every
 one of the 186 backend suites builds its schema with `create_all()` on a fresh

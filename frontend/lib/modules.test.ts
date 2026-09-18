@@ -384,3 +384,29 @@ describe("viewLabel - the copilot drill-in button", () => {
     expect(viewLabel("")).toBeNull();
   });
 });
+
+describe("service contracts (ADR-0021)", () => {
+  // Where a factory accepts, rejects or disputes terms that bind it and grants
+  // SHARE_DOWNTIME by accepting. Like Connected Equipment it is CORE: the right
+  // to refuse or dispute a contract cannot sit behind a paywall.
+  it("is a core view, offline as in backend/modules.json", () => {
+    expect(getViewModule("contracts")).toBe("core");
+    expect(viewLabel("contracts")).toBe("Service Contracts");
+    const manifest = JSON.parse(readFileSync(join(__dirname, "..", "..", "backend", "modules.json"),
+                                             "utf8"));
+    const core = manifest.packs.find((p: { id: string }) => p.id === "core");
+    const view = core.views.find((v: { key: string }) => v.key === "contracts");
+    const offline = NAV_ITEMS.find((n) => n.key === "contracts");
+    expect(view).toEqual({ key: offline?.key, label: offline?.label, icon: offline?.icon });
+  });
+
+  it("is open to a starter tenant", () => {
+    expect(isViewEnabled("contracts", getEnabledModules("starter"))).toBe(true);
+  });
+
+  it("is for Admins and Supervisors, never an Operator", () => {
+    expect(canRoleSeeView("contracts", "Admin", false)).toBe(true);
+    expect(canRoleSeeView("contracts", "Supervisor", false)).toBe(true);
+    expect(canRoleSeeView("contracts", "Operator", false)).toBe(false);
+  });
+});

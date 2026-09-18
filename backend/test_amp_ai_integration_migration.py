@@ -166,14 +166,22 @@ from database import engine
 migrate.run(verbose=False)
 print("HEAD", migrate.head_revision())
 print("CURRENT", migrate.current_revision(engine))
+from alembic.config import Config
+from alembic.script import ScriptDirectory
+import os as _os
+_sd = ScriptDirectory.from_config(Config(_os.path.join(_os.getcwd(), "alembic.ini")))
+print("IN_CHAIN", any(r.revision == "0009_native_ai_consent" for r in _sd.walk_revisions()))
 describe(engine)
 drift(engine)
 duplicate_refused(engine)
 ''', url)
         check("migrate.run() succeeds on an empty database", rc == 0, out[-800:])
-        check(f"head is {REVISION}", _line(out, "HEAD") == REVISION, str(_line(out, "HEAD")))
-        check("...and the database is stamped there", _line(out, "CURRENT") == REVISION,
-              str(_line(out, "CURRENT")))
+        # Not "head IS this revision": a later migration (0010_outcome_contracts)
+        # builds on it, and this check must not fail every time one lands.
+        check(f"{REVISION} is on the chain to head", _line(out, "IN_CHAIN") == "True",
+              str(_line(out, "IN_CHAIN")))
+        check("...and the database is stamped at head", _line(out, "CURRENT") == _line(out, "HEAD"),
+              f"{_line(out, 'CURRENT')} vs {_line(out, 'HEAD')}")
         _check_table("fresh", out)
         check("fresh: no model/migration drift for the consent table",
               (_line(out, "DRIFT") or "").startswith("0 "), str(_line(out, "DRIFT")))
@@ -207,7 +215,7 @@ cfg = migrate._config()
 command.stamp(cfg, "0008_machine_claim")
 print("BEFORE_CURRENT", migrate.current_revision(engine))
 print("BEFORE_TABLE", "ai_learning_consents" in set(inspect(engine).get_table_names()))
-command.upgrade(cfg, "head")
+command.upgrade(cfg, "0009_native_ai_consent")
 print("AFTER_CURRENT", migrate.current_revision(engine))
 describe(engine)
 drift(engine)
@@ -222,10 +230,10 @@ print("DOWN_TABLE", "ai_learning_consents" in set(inspect(engine).get_table_name
 with engine.begin() as c:
     print("DOWN_MACHINES", c.execute(text("SELECT count(*) FROM machines WHERE name='PRESS-01'")).scalar())
     print("DOWN_AUDIT", c.execute(text("SELECT count(*) FROM audit_logs WHERE actor='ta-admin'")).scalar())
-command.upgrade(cfg, "head")
+command.upgrade(cfg, "0009_native_ai_consent")
 print("REUP_CURRENT", migrate.current_revision(engine))
 print("REUP_TABLE", "ai_learning_consents" in set(inspect(engine).get_table_names()))
-command.upgrade(cfg, "head")
+command.upgrade(cfg, "0009_native_ai_consent")
 print("IDEMPOTENT", migrate.current_revision(engine))
 ''', url)
         check("the upgrade script ran", rc == 0, out[-1200:])
@@ -251,7 +259,7 @@ print("IDEMPOTENT", migrate.current_revision(engine))
               _line(out, "DOWN_AUDIT") == "1", str(_line(out, "DOWN_AUDIT")))
         check("upgrading again restores the table", _line(out, "REUP_TABLE") == "True"
               and _line(out, "REUP_CURRENT") == REVISION, f"{_line(out, 'REUP_CURRENT')} {_line(out, 'REUP_TABLE')}")
-        check("a second upgrade at head is a no-op", _line(out, "IDEMPOTENT") == REVISION,
+        check("a second upgrade to it is a no-op", _line(out, "IDEMPOTENT") == REVISION,
               str(_line(out, "IDEMPOTENT")))
 
 

@@ -6,6 +6,7 @@ import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 
 import { getToken } from "../../lib/api";
+import OemContracts from "../../components/OemContracts";
 import OemMachineRegistry from "../../components/OemMachineRegistry";
 import {
   fetchCustomers,
@@ -259,6 +260,10 @@ export default function OemPortalPage() {
           </section>
 
           <OemMachineRegistry models={models} />
+
+          {/* ADR-0021. Rendered only for a role with read_contracts; the server
+              enforces every capability and the factory's consent again. */}
+          <OemContracts capabilities={identity.capabilities} fleet={machines} />
 
           <section className="mt-8">
             <h2 className="text-lg font-semibold text-white">Service queue</h2>

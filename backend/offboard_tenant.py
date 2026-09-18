@@ -16,6 +16,7 @@ from datetime import datetime
 
 from sqlalchemy import select
 
+import contract_linkage
 import models
 from tenancy import DEFAULT_TENANT
 
@@ -52,6 +53,9 @@ def purge_tenant_data(db, tenant_code: str) -> dict:
     code = (tenant_code or "").strip()
     if not code or code == DEFAULT_TENANT:
         raise ValueError("This tenant cannot be purged")
+    # Offboarding also runs as a CLI, without main's boot: the unlink below must
+    # still end any service contract's coverage (ADR-0021).
+    contract_linkage.install()
 
     targets = []
     for mapper in models.Base.registry.mappers:
@@ -75,6 +79,10 @@ def purge_tenant_data(db, tenant_code: str) -> dict:
         # "purge blocked by constraints on: machines", i.e. offboarding a tenant
         # failed outright. SQLite does not enforce foreign keys by default and
         # showed nothing.
+        # Contracts first: closing them reads the installations' coverage as it
+        # stood, and the unlink below then ends coverage through the linkage
+        # listener (ADR-0021).
+        counts.update(_close_service_contracts(db, code))
         counts.update(_unlink_oem_installations(db, code))
         # Also BEFORE the sweep: the GMATS line tables have no tenant_code, so the
         # sweep cannot delete them, and they block their parents and items.
@@ -174,3 +182,107 @@ def _unlink_oem_installations(db, code: str) -> dict:
         row.status = "Decommissioned"
         row.decommissioned_at = datetime.utcnow()
     return {"machine_installations_unlinked": len(rows)} if rows else {}
+
+
+CLOSED_AT_OFFBOARDING = "contract_closed_at_offboarding"
+
+
+def _close_service_contracts(db, code: str, now=None) -> dict:
+    """A departing factory's service contracts close; what was AGREED survives.
+
+    The sweep above cannot see the contract tables (they carry
+    `factory_tenant_code`, never `tenant_code`, precisely so that a purge of one
+    party cannot delete the other party's copy of a contract it signed). So this
+    function owes the behaviour (ADR-0021):
+
+      * a contract on offer (proposed) is withdrawn; an accepted one is
+        terminated by the SYSTEM at the first period boundary at or after now
+        (never mid-period, never past its end), reason "factory offboarded";
+        pending amendments are withdrawn. A draft is the manufacturer's own
+        unshared work and is left alone.
+      * every statement KEEPS its revision, content hash and acceptances — the
+        record of what both parties agreed — and LOSES its canonical content
+        and attribution records (the factory's downtime), and every dispute
+        (the parties' free text about it) is removed. The engine then refuses
+        to recompute over the kept hash (ContentPurged).
+      * one audit row per party, inside this transaction.
+
+    Instance deletes and writes only, no bulk statements.
+    """
+    import canonical
+    import contract_periods
+    import contract_terms
+    import oem_auth
+    import platform_routes
+
+    now = canonical.utc_seconds(now or datetime.utcnow())
+    SC, TV = models.ServiceContract, models.ServiceContractTermVersion
+    CS, CAR, CD = (models.ContractStatement, models.ContractAttributionRecord,
+                   models.ContractDispute)
+    counts = {"service_contracts_closed": 0, "contract_statement_contents_removed": 0,
+              "contract_attribution_records_removed": 0, "contract_disputes_removed": 0}
+    contracts = (db.query(SC)
+                   .filter(SC.factory_tenant_code == code,
+                           SC.status.in_(("proposed", "accepted", "terminated")))
+                   .order_by(SC.id.asc()).all())
+    for contract in contracts:
+        before = contract.status
+        statements = (db.query(CS).filter(CS.contract_id == contract.id)
+                        .order_by(CS.period_start.asc()).all())
+        if contract.status in ("proposed", "accepted"):
+            for version in (db.query(TV).filter(TV.contract_id == contract.id,
+                                                TV.status == "proposed").all()):
+                version.status = "withdrawn"
+            if contract.status == "proposed":
+                contract.status = "withdrawn"
+            else:
+                contract.status = "terminated"
+                contract.termination_effective_at = _offboarding_boundary(
+                    db, contract, statements, now, contract_terms, contract_periods)
+                contract.terminated_by_party = "SYSTEM"
+                contract.terminated_by = "system:offboarding"
+                contract.termination_reason = "factory offboarded"
+            contract.updated_at = now
+            counts["service_contracts_closed"] += 1
+        for statement in statements:
+            for record in db.query(CAR).filter(CAR.statement_id == statement.id).all():
+                db.delete(record)
+                counts["contract_attribution_records_removed"] += 1
+            if statement.canonical_json is not None:
+                statement.canonical_json = None
+                statement.updated_at = now
+                counts["contract_statement_contents_removed"] += 1
+        for dispute in db.query(CD).filter(CD.contract_id == contract.id).all():
+            db.delete(dispute)
+            counts["contract_disputes_removed"] += 1
+        details = (f"ref={contract.contract_ref} {before} -> {contract.status}: factory "
+                   f"offboarded; statement content, records and disputes removed; "
+                   f"hashes and acceptances kept")
+        for tenant in (contract.factory_tenant_code,
+                       oem_auth.sentinel_tenant(contract.oem_code)):
+            platform_routes.add_audit(db, "system:offboarding", CLOSED_AT_OFFBOARDING,
+                                      "service_contract", contract.id, details,
+                                      tenant_code=tenant)
+    db.flush()
+    return {k: v for k, v in counts.items() if v}
+
+
+def _offboarding_boundary(db, contract, statements, now, contract_terms, contract_periods):
+    """The first period boundary at or after now, capped at the contract's end.
+
+    If the stored terms no longer parse (they always do for a contract accepted
+    through the API), offboarding must still complete: the latest boundary AMP
+    knows for certain — the end of the last closed statement period, or the
+    contract start — is used instead."""
+    v1 = (db.query(models.ServiceContractTermVersion)
+            .filter(models.ServiceContractTermVersion.contract_id == contract.id,
+                    models.ServiceContractTermVersion.version == 1).first())
+    try:
+        boundary = contract_periods.boundary_at_or_after(
+            contract_terms.parse(v1.terms_json), contract.starts_at, now)
+    except (AttributeError, ValueError, contract_terms.TermsError,
+            contract_periods.PeriodError):
+        boundary = max([contract.starts_at]
+                       + [s.period_end for s in statements if s.period_end <= now])
+    return min(boundary, contract.ends_at)
+

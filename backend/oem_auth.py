@@ -51,11 +51,18 @@ OEM_ROLES = (OEM_ADMIN, OEM_SERVICE_MANAGER, OEM_SERVICE_ENGINEER, OEM_VIEWER)
 # Every OEM role may read the fleet; only some may change it.
 ROLE_CAPABILITIES = {
     OEM_ADMIN: {"read_fleet", "manage_models", "manage_installations",
-                "manage_users", "manage_branding", "manage_service", "commission"},
-    OEM_SERVICE_MANAGER: {"read_fleet", "manage_service", "manage_installations"},
-    OEM_SERVICE_ENGINEER: {"read_fleet", "manage_service", "commission"},
-    OEM_VIEWER: {"read_fleet"},
+                "manage_users", "manage_branding", "manage_service", "commission",
+                "read_contracts", "manage_contracts", "sign_contracts"},
+    OEM_SERVICE_MANAGER: {"read_fleet", "manage_service", "manage_installations",
+                          "read_contracts", "manage_contracts"},
+    OEM_SERVICE_ENGINEER: {"read_fleet", "manage_service", "commission",
+                           "read_contracts"},
+    OEM_VIEWER: {"read_fleet", "read_contracts"},
 }
+# Service contracts (ADR-0021): every role reads a contract it is party to;
+# drafting, amending, computing and disputing is service management; binding the
+# company (propose, withdraw, accept terms or a statement, terminate) is the
+# administrator's alone.
 
 # The prefix that makes an OEM's bound tenant unmatchable by any factory row.
 # A tenant code is a plain identifier (see mqtt_identity._identifier), so a colon

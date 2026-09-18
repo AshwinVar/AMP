@@ -29,6 +29,16 @@ function getPreviewTenant(): string {
 }
 
 /**
+ * True while the founder previews a customer company (every request carries
+ * X-Tenant). A preview may read, but it may not speak FOR the company: accept,
+ * dispute or sign its service contracts, or give its consent. The server refuses
+ * those (backend tenancy.is_preview); screens use this to not offer them.
+ */
+export function isPreviewing(): boolean {
+  return getPreviewTenant() !== "";
+}
+
+/**
  * The backend's own sentence from a failed call, not a generic one.
  *
  * apiPost/apiPut throw the raw response body; apiGet/apiPatch throw

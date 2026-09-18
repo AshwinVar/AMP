@@ -82,6 +82,10 @@ CORE_TENANT_TABLES = [
     # nothing — they are listed to keep SCOPED_MODELS and this list in lockstep,
     # which is what test_tenancy asserts.
     "bills_of_materials", "bom_components",
+    # ADR-0021. Also created WITH tenant_code, by migration 0009. The contract
+    # tables of that ADR are deliberately NOT here: they carry oem_code and
+    # factory_tenant_code, never tenant_code (see models.ServiceContract).
+    "machine_telemetry_spans",
 ]
 
 # Tables that gain tenant_code but must NOT be blind-backfilled to DEFAULT: the
@@ -201,6 +205,10 @@ SCOPED_MODELS = (
     # stock a completion consumes, so it is the last place to rely on an ambient
     # binding — but the hook belongs on them like every other tenant-owned table.
     models.BillOfMaterials, models.BomComponent,
+    # ADR-0021: the per-source status history the downtime attribution engine
+    # reads. A factory's own data; the engine ALSO filters by tenant explicitly,
+    # because an OEM-triggered compute runs outside any factory binding.
+    models.MachineTelemetrySpan,
 )
 
 
@@ -273,6 +281,19 @@ def request_tenant(current_user):
     back to the JWT claim. Token-issuing endpoints (login/refresh) must NOT use
     this — identity claims always come from the JWT itself."""
     return current_tenant() or (current_user or {}).get("tenant", DEFAULT_TENANT)
+
+
+def is_preview(current_user):
+    """Is this request acting in a tenant other than the token's own?
+
+    That is the founder's company-switcher preview: effective_tenant honours an
+    X-Tenant header only for a DEFAULT-claim Admin. A preview may read, and
+    administer as the platform operator, but it may not speak FOR the company:
+    it cannot give or withdraw the company's consent to learn from its data
+    (ADR-0020), and it cannot accept, dispute or sign a service contract that
+    binds the company (ADR-0021). Those must come from the company's own people,
+    so every such route asks this, the one rule."""
+    return request_tenant(current_user) != (current_user or {}).get("tenant", DEFAULT_TENANT)
 
 
 def tenant_unit_value(db, tenant):

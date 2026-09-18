@@ -130,8 +130,17 @@ Every module follows the same skeleton:
 - **Read-models:** `oem_sharing.fleet_row` / `service_view` / `commissioning_view`
 - **Tests:** `test_machine_claim.py`, `test_oem_provisioning.py`, `test_oem_service_consent.py`, `test_connected_equipment.py`, `mutate_oem_sharing.py`, `audit_oem_adversarial.py`, `audit_oem_demo_journey.py`
 
+### Agreed downtime attribution (ADR-0021)
+- **What:** service contracts between an OEM and a factory, a periodic statement attributing every covered downtime minute to AVAILABLE / OEM / FACTORY / DISPUTED / UNMEASURED from the factory's own records, and both parties' acceptance of an exact statement revision. The attribution is the differentiator; metering and shared usage ledgers already exist and are not claimed as new. AMP computes any credit and never invoices or moves money. A freedom-to-operate review is needed before commercial launch.
+- **Who does what:** the OEM drafts (and may edit a draft until it is proposed) and proposes; the factory's own Admin accepts the contract, which grants the OEM `SHARE_DOWNTIME`, or rejects it; from then on both parties compute, dispute and accept statements. A factory Supervisor reads; a founder's company preview reads but never signs (`tenancy.is_preview`).
+- **Tables (migration `0010_outcome_contracts`):** `ServiceContract`, `ServiceContractTermVersion`, `ServiceContractMachine`, `ContractStatement`, `ContractAttributionRecord`, `ContractStatementAcceptance`, `ContractDispute` (carry `oem_code` + `factory_tenant_code`, never `tenant_code`; not in `SCOPED_MODELS`), and `MachineTelemetrySpan` (tenant-scoped per-source status history)
+- **Logic:** `canonical.py` (canonical statement bytes, SHA-256 content hash, `acceptance_is_valid`: the only copy of the rule), `contract_terms.py`, `contract_periods.py`, `contract_money.py` (exact decimals, no float), `attribution_engine.py` (pure), `contract_statements.py`, `service_contracts.py` (every rule and refusal), `contract_linkage.py`, `telemetry_coverage.py`
+- **Routes:** `oem_contract_routes.py` (`/oem/contracts`), `service_contract_routes.py` (`/service-contracts`)
+- **Screens:** `OemContracts.tsx` (portal), `ServiceContracts.tsx` (dashboard "Service Contracts"), shared `components/contracts/*`, `lib/contracts.ts`
+- **Tests:** `test_canonical.py`, `test_attribution_engine.py`, `test_contract_*.py`, `test_migration_0010_outcome_contracts.py`, `verify_pg_outcome_contracts.py` (CI migration gate); mutation harnesses `mutate_canonical.py`, `mutate_contract_engine.py`, `mutate_service_contracts.py`, `mutate_contract_integration.py`, `frontend/mutate-contracts-ui.mjs`
+
 ## Infra / ops
-- **Migrations:** `alembic/versions/0001_baseline` → `0008_machine_claim`, `migrate.py`, `schema_guard.py`, `alembic/env.py`
+- **Migrations:** `alembic/versions/0001_baseline` → `0010_outcome_contracts`, `migrate.py`, `schema_guard.py`, `alembic/env.py`
 - **CI/CD:** `.github/workflows/ci.yml` (5 jobs), `backup.yml`, `retention.yml`
 - **Deploy:** `backend/railway.toml`, `backend/Procfile`, root `Dockerfile`, `docker-compose.yml`, `frontend/vercel.json`
 - **DR:** `restore_drill.py`, `verify_pg_deploy.py`, `scripts/restore_check.sh`, `retention.py`

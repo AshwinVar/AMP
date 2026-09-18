@@ -171,6 +171,44 @@ def wipe(db):
     """
     _assert_demo_scope()
 
+    # Service contracts (ADR-0021). A contract shown in a demo leaves rows that
+    # reference the demo's installations (and, through them, its machines), so
+    # they go before either. Demo scope is a contract of the demo MANUFACTURER or
+    # one addressed to the demo FACTORY; the children are removed by their
+    # parents' ids, deepest first.
+    contract_ids = [c.id for c in db.query(models.ServiceContract)
+                    .filter(or_(models.ServiceContract.oem_code == DEMO_OEM,
+                                models.ServiceContract.factory_tenant_code
+                                == DEMO_TENANT)).all()]
+    if contract_ids:
+        statement_ids = [s.id for s in db.query(models.ContractStatement)
+                         .filter(models.ContractStatement.contract_id.in_(contract_ids))
+                         .all()]
+        version_ids = [v.id for v in db.query(models.ServiceContractTermVersion)
+                       .filter(models.ServiceContractTermVersion.contract_id
+                               .in_(contract_ids)).all()]
+        if statement_ids:
+            for child in (models.ContractStatementAcceptance,
+                          models.ContractAttributionRecord):
+                (db.query(child).filter(child.statement_id.in_(statement_ids))
+                   .delete(synchronize_session=False))
+        (db.query(models.ContractDispute)
+           .filter(models.ContractDispute.contract_id.in_(contract_ids))
+           .delete(synchronize_session=False))
+        (db.query(models.ContractStatement)
+           .filter(models.ContractStatement.contract_id.in_(contract_ids))
+           .delete(synchronize_session=False))
+        if version_ids:
+            (db.query(models.ServiceContractMachine)
+               .filter(models.ServiceContractMachine.term_version_id.in_(version_ids))
+               .delete(synchronize_session=False))
+        (db.query(models.ServiceContractTermVersion)
+           .filter(models.ServiceContractTermVersion.contract_id.in_(contract_ids))
+           .delete(synchronize_session=False))
+        (db.query(models.ServiceContract)
+           .filter(models.ServiceContract.id.in_(contract_ids))
+           .delete(synchronize_session=False))
+
     # The OEM side. Claims reference installations, so they go first.
     inst_ids = [i.id for i in db.query(models.MachineInstallation)
                 .filter(models.MachineInstallation.oem_code == DEMO_OEM).all()]
@@ -243,8 +281,10 @@ def wipe(db):
            .filter(models.IndustrialDevice.linked_machine_id.in_(machine_ids),
                    models.IndustrialDevice.tenant_code != DEMO_TENANT)
            .update({"linked_machine_id": None}, synchronize_session=False))
-    for M in (models.Notification, models.Alert, models.Machine,
-              models.EventLog, models.TenantConfig):
+    # Telemetry spans (ADR-0021) reference the demo's machines, so they precede
+    # them.
+    for M in (models.Notification, models.Alert, models.MachineTelemetrySpan,
+              models.Machine, models.EventLog, models.TenantConfig):
         (db.query(M).filter(M.tenant_code == DEMO_TENANT)
            .delete(synchronize_session=False))
     (db.query(models.User).filter(models.User.tenant_code == DEMO_TENANT)

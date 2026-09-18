@@ -54,7 +54,8 @@ from amp_ai.failure_risk.history import LOOKBACK_DAYS, in_breakdown_at
 from amp_ai.telemetry_anomaly import service
 from auth import get_current_user, require_roles
 from database import SessionLocal
-from tenancy import DEFAULT_TENANT, request_tenant
+import tenancy
+from tenancy import request_tenant
 
 log = logging_config.get_logger(__name__)
 
@@ -132,7 +133,7 @@ def native_anomaly(machine_id: int, db: Session = Depends(_get_db),
     200 with a null score for insufficient history or an unavailable evaluation.
     """
     tenant = request_tenant(current_user)
-    if tenant != _claim_tenant(current_user):
+    if tenancy.is_preview(current_user):
         # The consent covers the company's OWN Admins and Supervisors opening the
         # check (consent.CAPABILITY_INFO "reads"). A platform operator previewing
         # the company is neither, so the learning step does not run for them -
@@ -178,12 +179,8 @@ class ConsentUpdate(BaseModel):
     granted: StrictBool
 
 
-def _claim_tenant(current_user):
-    return (current_user or {}).get("tenant", DEFAULT_TENANT)
-
-
 def _consent_page(db, tenant, current_user):
-    previewing = tenant != _claim_tenant(current_user)
+    previewing = tenancy.is_preview(current_user)
     is_admin = current_user.get("role") in CONSENT_EDITOR_ROLES
     if previewing:
         reason = (f"You are previewing {tenant} from the platform workspace. Only an Admin of {tenant} can "
@@ -216,7 +213,7 @@ def put_learning_consent(capability: str, payload: ConsentUpdate, db: Session = 
     (amp_ai.consent.set_consent): if the audit cannot be written, nothing changes.
     """
     tenant = request_tenant(current_user)
-    if tenant != _claim_tenant(current_user):
+    if tenancy.is_preview(current_user):
         raise HTTPException(status_code=403, detail=(
             "Consent to learn from a company's data can only be given or withdrawn by that company's own "
             "Admin, not from a platform preview."))

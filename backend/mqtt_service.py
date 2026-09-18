@@ -17,6 +17,7 @@ import models
 import mqtt_identity
 from events import event_bus, DowntimeStarted
 import oem_telemetry
+import telemetry_coverage
 import tenancy
 from machine_status import clamp_utilization, normalize_machine_status
 
@@ -419,6 +420,15 @@ def on_message(client, userdata, msg):
         machine.downtime = downtime_value
 
         _record_installation_report(db, route.tenant, machine, payload)
+
+        # ADR-0021: EVERY status-bearing message is a span of source "mqtt",
+        # whether or not it changes Machine.status. The MachineEvent below is
+        # written only on a change against the shared status, so it cannot say
+        # what MQTT itself reported (critic finding C2). The RAW status goes in,
+        # not the "Idle" default above: a message with no status is no data.
+        telemetry_coverage.record_message(
+            db, route.tenant, machine.id, telemetry_coverage.MQTT,
+            payload.get("status"), telemetry_coverage.received_at())
 
         db.commit()
         db.refresh(machine)

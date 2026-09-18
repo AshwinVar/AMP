@@ -308,6 +308,36 @@ jobs:
           PYTHONIOENCODING: utf-8
         run: python verify_pg_approvals.py 5432
 
+      # 5. THE ADVERSARIAL AUDITS THAT NEED POSTGRESQL. Each plays the attacker
+      #    against a populated world on this service:
+      #      audit_oem_adversarial    two OEMs against three factories, over
+      #                               HTTP, WebSocket, MQTT and CSV exports
+      #      audit_oem_pilot_journey  a manufacturer onboarded and its machine
+      #                               accepted by a factory, with no developer
+      #      audit_three_customers    three tenants sharing every identifier
+      #      audit_isolation          every scoped model, read and written
+      #                               across tenants, and NULL-tenant rows
+      #    They ran only by hand, which is how the specialist audit and 13
+      #    mutation tests went stale unseen (#633, #635, #638). Together they take
+      #    under half a minute. Each works in its own scratch database on this
+      #    service, never amp_ci.
+      - name: The OEM boundary holds under attack on PostgreSQL (audit)
+        working-directory: backend
+        run: python audit_oem_adversarial.py 5432
+      - name: The OEM pilot journey completes without a developer (audit)
+        working-directory: backend
+        run: python audit_oem_pilot_journey.py 5432
+      - name: Three customers with identical identifiers never cross (audit)
+        working-directory: backend
+        run: python audit_three_customers.py --pg
+      - name: No cross-tenant exposure across every scoped model (audit)
+        working-directory: backend
+        env:
+          DATABASE_URL: "postgresql://postgres:postgres@localhost:5432/amp_isolation"
+        run: |
+          psql -h localhost -U postgres -c "CREATE DATABASE amp_isolation"
+          python audit_isolation.py
+
   # Branch-coverage floor. A SEPARATE job from `backend` on purpose.
   #
   # The `backend` job's answer is "do the tests pass", and that answer must not

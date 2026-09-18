@@ -23,6 +23,7 @@ import ai.agents
 import ai.platform_status
 import ai.trends
 import models
+import oee_contract
 import schemas
 import sim_state
 import tenancy
@@ -212,6 +213,23 @@ def platform_status(db: Session = Depends(_get_db), current_user: dict = Depends
 @router.get("/reports/daily-summary.txt")
 def daily_summary_report(db: Session = Depends(_get_db), current_user: dict = Depends(require_roles(["Admin", "Supervisor"]))):
     summary = analytics_summary(db, current_user)
+    # Every figure says which span it covers, and an OEE nobody measured is not
+    # printed as a number. OEE and downtime are THE window (oee_contract); shift
+    # efficiency is every recorded shift. A week with no production used to print
+    # "Avg OEE: 47%" -- a utilization estimate -- above availability, performance
+    # and quality of 0%, and without the estimate it would print "0%", which reads
+    # as a plant that ran and lost everything (test_summary_never_invents_oee.py).
+    days = oee_contract.DEFAULT_WINDOW_DAYS
+    if summary["has_data"]:
+        oee_lines = "\n".join([
+            f"Plant OEE, last {days} days (pooled): {summary['avg_oee']}%",
+            f"Availability: {summary['avg_availability']}%",
+            f"Performance: {summary['avg_performance']}%",
+            f"Quality: {summary['avg_quality']}%",
+        ])
+    else:
+        oee_lines = (f"Plant OEE, last {days} days: not measured "
+                     "(no production recorded in this window)")
     report = f"""
 AMP Daily Factory Summary
 Generated: {datetime.utcnow().isoformat()} UTC
@@ -220,15 +238,12 @@ Machines: {summary["machines"]}
 Running: {summary["running"]}
 Breakdowns: {summary["breakdown"]}
 Avg Utilization: {summary["avg_utilization"]}%
-Avg OEE: {summary["avg_oee"]}%
-Avg Availability: {summary["avg_availability"]}%
-Avg Performance: {summary["avg_performance"]}%
-Avg Quality: {summary["avg_quality"]}%
-Downtime Events: {summary["downtime_events"]}
-Total Downtime: {summary["total_downtime_minutes"]} minutes
-Shift Efficiency: {summary["avg_shift_efficiency"]}%
-Top Downtime Reason: {summary["top_reason"]}
-Top Downtime Machine: {summary["top_machine"]}
+{oee_lines}
+Downtime Events, last {days} days: {summary["downtime_events"]}
+Total Downtime, last {days} days: {summary["total_downtime_minutes"]} minutes
+Shift Efficiency, all shifts: {summary["avg_shift_efficiency"]}%
+Top Downtime Reason, last {days} days: {summary["top_reason"]}
+Top Downtime Machine, last {days} days: {summary["top_machine"]}
 
 Alerts:
 {chr(10).join([f'- [{a["severity"]}] {a["message"]}' for a in summary["alerts"]]) or "No active alerts"}

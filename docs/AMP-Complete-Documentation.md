@@ -620,7 +620,7 @@ GET    /analytics/things  → summary/KPIs for that module
 | `GET` | `/reports/downtime.csv` | Downtime CSV export. |
 | `GET` | `/reports/shifts.csv` | Shifts CSV export. |
 | `GET` | `/reports/oee.csv` | OEE CSV export. |
-| `GET` | `/reports/daily-summary.txt` | Daily intelligence report (plain text). |
+| `GET` | `/reports/daily-summary.txt` | Plain-text factory summary: machine census, plant OEE and downtime over the last 7 days (OEE reads "not measured" when no production was recorded), shift efficiency over all shifts. |
 | `GET` | `/reports/intelligence-summary.txt` | Intelligence summary (plain text). |
 | `GET`/`POST` | `/audit-logs` | The audit trail of who did what. |
 

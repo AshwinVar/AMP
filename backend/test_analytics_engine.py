@@ -492,14 +492,6 @@ def test_per_record_and_pooled_reconcile_on_negative():
     print("PASS per-record and pooled OEE reconcile (and stay >= 0) on a negative row")
 
 
-def test_calculate_fallback_oee_monotonic():
-    assert ae.calculate_fallback_oee(80) == round((80 / 100) * 0.9 * 0.95 * 100)
-    assert ae.calculate_fallback_oee(90) > ae.calculate_fallback_oee(50)
-    assert ae.calculate_fallback_oee(0) == 0                  # zero utilization = 0
-    assert ae.calculate_fallback_oee(-30) == 0               # negative reading floored, not a negative estimate
-    print("PASS calculate_fallback_oee follows utilization monotonically (floored at 0)")
-
-
 if __name__ == "__main__":
     test_parse_duration_to_minutes()
     test_calculate_oee_known_values()
@@ -527,5 +519,4 @@ if __name__ == "__main__":
     test_smart_alerts_null_reject_count_is_safe()
     test_pooled_oee_from_sums_floors_negative_at_zero()
     test_per_record_and_pooled_reconcile_on_negative()
-    test_calculate_fallback_oee_monotonic()
     print("ALL ANALYTICS-ENGINE TESTS PASSED")

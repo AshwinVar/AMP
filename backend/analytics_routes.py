@@ -34,7 +34,6 @@ from analytics_engine import (
     build_oee_trends,
     build_shift_kpis,
     build_smart_alerts,
-    calculate_fallback_oee,
     calculate_oee_from_record,
     downtime_aggregates,
     generate_alerts,
@@ -81,8 +80,7 @@ def analytics_summary(db: Session = Depends(_get_db), current_user: dict = Depen
     # coalesce keeps the arithmetic total: SUM over no rows is NULL. The counted
     # columns are all nullable=False, but the ideal*count product and the empty
     # table can still yield NULL, and 0 is the reading pooled_oee_from_sums takes.
-    # The record COUNT drives the no-production fallback below (was `if not records`).
-    planned_sum, runtime_sum, total_sum, good_sum, ideal_sum, record_count = db.query(
+    planned_sum, runtime_sum, total_sum, good_sum, ideal_sum = db.query(
         func.coalesce(func.sum(models.ProductionRecord.planned_minutes), 0),
         func.coalesce(func.sum(models.ProductionRecord.runtime_minutes), 0),
         func.coalesce(func.sum(models.ProductionRecord.total_count), 0),
@@ -94,7 +92,6 @@ def analytics_summary(db: Session = Depends(_get_db), current_user: dict = Depen
             ),
             0,
         ),
-        func.count(models.ProductionRecord.id),
     ).filter(models.ProductionRecord.created_at >= _oee_window.start,
              models.ProductionRecord.created_at < _oee_window.end).one()
 
@@ -116,9 +113,18 @@ def analytics_summary(db: Session = Depends(_get_db), current_user: dict = Depen
     total_downtime_minutes = downtime["total_minutes"]
 
     # Plant OEE pooled across records (ratio of sums), consistent with every other
-    # surface; fall back to a utilization estimate only before any production exists.
-    # pooled_oee_from_sums is the same pooling pooled_oee(records) delegates to — one
-    # definition — so the number is byte-for-byte what the old whole-table scan gave.
+    # surface. pooled_oee_from_sums is the same pooling pooled_oee(records)
+    # delegates to — one definition — so the number is byte-for-byte what the old
+    # whole-table scan gave.
+    #
+    # A window with no production has NO OEE, and says so through has_data. This
+    # used to substitute `utilization x 0.9 x 0.95` whenever the window held no
+    # rows: a performance and a quality nobody measured, multiplied by a gauge,
+    # published as avg_oee beside availability, performance and quality of 0 --
+    # "OEE 47%" from 0 x 0 x 0. Meant for a tenant before its first record, it
+    # fired in every week a plant did not run once this moved to the 7-day window
+    # (test_summary_never_invents_oee.py). The executive-oee rows dropped the same
+    # constants (test_executive_oee_no_invented_machine_figures.py).
     pooled = pooled_oee_from_sums(
         planned=int(planned_sum),
         runtime=int(runtime_sum),
@@ -134,11 +140,6 @@ def analytics_summary(db: Session = Depends(_get_db), current_user: dict = Depen
     avg_availability = pooled["availability"]
     avg_performance = pooled["performance"]
     avg_quality = pooled["quality"]
-    if record_count == 0 and machines:
-        # Fallback only over machines with a utilization reading — calculate_fallback_oee
-        # divides utilization by 100, so a NULL row would crash the estimate.
-        fallback = [calculate_fallback_oee(m.utilization) for m in machines if m.utilization is not None]
-        avg_oee = round(sum(fallback) / len(fallback)) if fallback else 0
 
     # Shift efficiency is POOLED (total actual / total target), the same basis as
     # build_management_summary's target_achievement and the shift read-model

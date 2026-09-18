@@ -537,13 +537,6 @@ def build_smart_alerts(machines, production_records, downtime_logs):
     return alerts
 
 
-def calculate_fallback_oee(utilization: int):
-    # Floor at 0 for the same reason the pooled/per-record clamps do: the summary
-    # fallback (analytics_routes) passes a machine's raw stored utilization, and a
-    # legacy / raw-SQL negative reading would otherwise estimate a negative OEE.
-    return max(0, round((utilization / 100) * 0.9 * 0.95 * 100))
-
-
 def generate_alerts(db: Session):
     machines = db.query(models.Machine).all()
     production_records = (

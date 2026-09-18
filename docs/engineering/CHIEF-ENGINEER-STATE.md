@@ -3,13 +3,15 @@
 > Handover file. A new session should be able to read only this and continue.
 > Keep it short. Update it at the end of every completed task.
 
-**Updated:** 2026-09-18 (#606: a dev reseed script could wipe every tenant's
-inventory, now one-tenant and refused in production; #607 was this header)
-**Master SHA:** `11d05f9` (#607). A docs-only merge on top of it changes nothing
+**Updated:** 2026-09-18 (#609–#616: the approval lock, AMP-native AI, agreed
+downtime attribution for service contracts, and the sweep queue's tail; see the
+section of that date below)
+**Master SHA:** `7803711` (#616). A docs-only merge on top of it changes nothing
 that runs.
-**Production SHA:** `11d05f9` — verified live, not assumed:
-`{"status":"ok","database":"ok","schema":"ok","version":"11d05f9"}` from
-`https://flowmes-production.up.railway.app/health`, read at 08:42 UTC.
+**Production SHA:** `7803711` — verified live, not assumed:
+`{"status":"ok","database":"ok","schema":"ok","version":"7803711"}` from
+`https://flowmes-production.up.railway.app/health`, read at 12:57 UTC; `/readiness`
+200 at `0010_outcome_contracts` (migration 0010 ran on production with #614).
 Master and production are in step. Railway auto-deploys master, so prod tracks
 HEAD; re-check `/health` rather than trusting this line's age.
 
@@ -149,13 +151,72 @@ Two lessons worth keeping:
   `$<digit>` but not a JSX-text `${m.cost}`, which is exactly how two components
   printed dollars. Both missed lines are now pinned verbatim as a probe.
 
-**Branches awaiting review (built in worktrees, not merged):**
+### 2026-09-18 — AMP-native AI, service contracts, and the queue's tail (#609–#616)
 
-| Branch | What it is | State |
+The three branches that were awaiting review merged, and so did four fixes. Each
+merge was verified live on production (`/health` version read back).
+
+| PR | What | Evidence |
 |---|---|---|
-| `fix/agent-proposals-locked-until-decided` | Queue item 2: an agent proposal **holds its item** until an approver decides it; 409 on every PATCH/DELETE bypass, withdraw-on-decide, audited | 13 commits, rebased on `0f3c889`; worktree gates green (248 backend suites, 380 frontend tests). **Review fixes in progress in `AMP-wt/approval-lock`**: 13 files uncommitted, last edited 08:41 UTC 2026-09-18 by a live session. Leave that worktree alone. **Before merging:** it is 2 behind master, and #606 touched its neighbourhood. `reseed_inventory` now deletes `AgentAction` rows alongside their POs, and is no longer exempt from `test_bulk_write_scoping` / `test_unscoped_model_reads`. Rebase and re-run both guards. |
-| `feat/amp-native-ai` | AMP's own models (failure risk, telemetry anomaly, copilot intent), pure Python, no external LLM | 16 commits, ~25k lines; needs review + gates |
-| `feat/verified-outcome-contracts` | Agreed **downtime attribution** for OEM service contracts (OEM / factory / disputed / unmeasured, SLA credits, two-party accepted statements) | 20 commits; needs review + gates; **freedom-to-operate review required before launch** — Rockwell US10747201B2 is live to 2038 and covers metered subscription billing on a shared tamper-proof ledger |
+| #609 | An agent proposal **holds its item** until an approver decides it (queue item 2) | 409 on every PATCH/DELETE bypass, withdraw-on-decide audited, `SELECT … FOR UPDATE` proven on PostgreSQL |
+| #610 | **AMP-native AI**: three models in pure Python, no external model. Failure risk was adopted, on synthetic evidence only. Telemetry anomaly and copilot intent were **not** adopted, having failed their own gates. Learning happens only with a company Admin's consent; migration 0009 | 283 suites; PostgreSQL verified |
+| #611 | Two documents still printed the **leaked GMATS password** as the login to type; a fresh compose stack had no login; the smoke test could not be pasted (queue item 11) | the guard now reads every tracked file; 5/5 mutations |
+| #612 | The workspace **brand colour and logo** were saved, shown back and applied nowhere; the server now validates both (queue item 10) | 15/15 mutations |
+| #613 | Which packs a plan includes was written in **five** places, and only apply-plan read `modules.json` (queue item 9) | 8/8 mutations |
+| #614 | **Agreed downtime attribution** for OEM service contracts (ADR-0021); migration 0010 | 304 suites; 45 PostgreSQL checks; harnesses 37/101/96/44/53 |
+| #615 | An inventory item could be **created or CSV-imported with a negative stock** (a sweep candidate) | 7/7 mutations |
+| #616 | A factory was asked to **consent to three kinds of sharing that never happened** (alarms, telemetry, maintenance history: nothing reads them); a factory is now offered only the grants AMP reads | 8/8 mutations; **reverses a documented choice**, see founder decisions |
+
+Lessons worth keeping:
+
+- **CI's `coverage` job runs every suite in ONE pytest process.** Two new suites
+  pointed `SessionLocal` at their own in-memory database and never restored it.
+  `test_boot_migrations`, which sorts after them, then queried the wrong database
+  (#610's first failure). Nine suites on master still leak this way and are safe
+  only because of their sort order; a follow-up task was offered.
+- **A wall-clock budget under coverage's tracer measures the tracer.** The same
+  build took 37 s bare and about 108 s traced. `backend/wallclock.py` is the rule:
+  the standalone run always judges the budget, and the pytest entry judges it only
+  when untraced.
+- **Two parallel branches can each pass while the pair fails.** Native AI pins
+  `requirements.txt`, and contracts added `tzdata`. Only the combined CI caught
+  it, because my local runs covered only each branch's own suites. Run the full
+  sweep on the combined tree before opening the PR.
+- **A guard's reach check must inspect what the loop read, not a list beside
+  it.** The first version in #611 let the "backend `.py` only" mutant survive.
+- **Two UI mutants in the contracts harness could never be killed.**
+  - A float formatter prints ≤14-digit money exactly: 402,400 probes found no difference.
+  - A hard-coded grant is unobservable behind a disabled Accept.
+
+  Both were replaced with mutations that can happen.
+
+**Branches awaiting review:** none.
+
+**Founder decisions open (nothing below is blocked on code):**
+
+1. **Service contracts, before telling a customer:**
+   - the freedom-to-operate review (Rockwell US10747201B2, live to 2038);
+   - statuses are not authenticated as the manufacturer's (ADR-0021, limitation 3).
+2. **May a founder's company preview give a company's consent anywhere?**
+   - Refused today: contract signing and AMP-native AI consent.
+   - Still accepted: connected-equipment sharing grants and machine claims.
+3. **#616 reverses advance consent to reserved grants.**
+   - If you want it back, the honest version is a box marked "not active yet".
+   - When a reserved grant gains a reader: do consents stored before then count? ADR-0017 says to ask again.
+4. **Native AI:** the failure-risk model's evidence is synthetic. It needs validation on a real plant's history, with that plant's consent, before any accuracy claim.
+5. **A work order created as Completed never moves its BOM stock** (`work_orders_routes.create_work_order` says so on purpose). Right for back-filling a job whose stock was already counted, wrong for recording one that just finished. Which should it be, or should the form ask?
+6. **Agent approvals (ADR-0015):**
+   - Should agents propose for tenants without the Intelligence Pack?
+   - Should an expired proposal be cancelled automatically?
+   - Should boot sweep orphaned proposals?
+
+**Next from the sweep** (candidates in `tasks/sweep_result.json`, unverified unless marked):
+- InventoryLow is published by the ledger only, not by issue slips, cycle counts, PATCH or CSV stock drops, so the Reorder agent misses them;
+- a work order created as Completed never moves its BOM stock;
+- plant OEE is published without its coverage on most surfaces;
+- the handbook says an auto-approved reorder PO "stays a Draft" (the code approves it);
+- the OEM sentinel tenant namespace is checked only at registry create;
+- founder-only `/platform/status` and `/ai/status` are gated on workspace, not role.
 
 ### 2026-09-18 — importing a dev script deleted every tenant's inventory (#606)
 
@@ -196,16 +257,16 @@ not facts). Full result: session scratchpad `tasks/sweep_result.json` (not in gi
 | # | Defect | Sev | Status |
 |---|---|---|---|
 | 1 | **Founder-workspace non-Admins locked to GMATS, not their own tenant** — read GMATS's stock/rates/customers; Supervisor could write it | P2 (cross-tenant WRITE) | **fixed #595** |
-| 2 | Agent approval gate bypassed by generic PATCH — an Operator opens/cancels a Proposed maintenance task from the CMMS dropdown; AgentAction stays Proposed, a later decision contradicts reality (`approvals.py:1`, ADR-0005) | P2 | queued |
+| 2 | Agent approval gate bypassed by generic PATCH — an Operator opens/cancels a Proposed maintenance task from the CMMS dropdown; AgentAction stays Proposed, a later decision contradicts reality (`approvals.py:1`, ADR-0005) | P2 | **fixed #609** |
 | 3 | `/analytics/executive-oee` ranks machines with **fabricated** OEE (utilization, 90/60, 95) when they produced nothing; `lib/oee.ts readMachineOee` marks every ranking row `measured: true`, so the dashboard shows "OEE 68%" not "Estimated". PRODUCTION-READINESS-FINAL claims closed | **P1 (both lenses)** | **fixed #597** |
 | 4 | Inventory CSV import omits `X-Tenant` — founder previewing a client imports into DEFAULT (`EnterpriseInventory.tsx:706`) | P2 | **fixed #598** |
 | 5 | Tenant purge fails on PostgreSQL for tenants with GMATS proformas/MINs — `gmats_proforma_lines`/`gmats_min_lines` have no `tenant_code`, and the registry row is already deleted (`offboard_tenant.py:5`, ADR-0008) | P2 | **fixed #600** |
 | 6 | Seven escalation generators dedup on `status != "Resolved"` — a Cancelled escalation blocks that alert forever; #565 fixed only smart alerts (`ai/escalations.py:68`) | P2 | **fixed #599** |
 | 7 | Admin role changes and password resets are not audit-logged (`users_routes.py:7`) | P2 | **fixed #601** |
 | 8 | GMATS corrections and voids leave no audit trail ("full audit trail" promise) | P2 | **fixed #602** |
-| 9 | Plan bundles defined twice: `modules.json` vs `PLAN_MODULE_TIERS` (tenant create/plan change) — one rule, two implementations | P3 | queued |
-| 10 | Branding colour/logo saved and re-shown, never applied | P3 | queued |
-| 11 | DOCKER.md says a fresh stack seeds `gmats`; the seed needs `GMATS_PASSWORD`, compose never sets it | P3 | queued |
+| 9 | Plan bundles defined twice: `modules.json` vs `PLAN_MODULE_TIERS` (tenant create/plan change) — one rule, two implementations | P3 | **fixed #613** (it was five copies, not two) |
+| 10 | Branding colour/logo saved and re-shown, never applied | P3 | **fixed #612** |
+| 11 | DOCKER.md says a fresh stack seeds `gmats`; the seed needs `GMATS_PASSWORD`, compose never sets it | P3 | **fixed #611** (and two docs printed the leaked password) |
 
 Item 2 (the approval-gate bypass) is **built and rebased in a worktree**, not yet
 merged — see "Branches awaiting review" below. Of the 39 candidates the sweep

@@ -18,7 +18,14 @@ not reachable from a request:
 A green run here is NOT "the tests pass". It is "the specific ways I could think
 of to make the isolation false, do not work".
 
-Run: python backend/audit_oem_specialist.py [port]      (PostgreSQL)
+It ran only by hand until 2026-09-18, and two of its checks went stale within a
+day without anyone seeing: one read wording that had moved into a shared helper
+(#616), one counted a response dict as a write (#614). Both reported findings
+while the product was correct, and a check that is red for no reason hides the
+day it is red for a real one. It now runs in CI on every push.
+
+Run: DATABASE_URL="sqlite:///./ci.db" python backend/audit_oem_specialist.py
+     (no server needed: it reads the code and builds in-memory databases)
 """
 import ast
 import inspect
@@ -53,6 +60,238 @@ def ok(label, condition, detail=""):
           + (f"   [{detail}]" if detail and not condition else ""))
     if not condition:
         FINDINGS.append(f"CONTROL {label}: {detail}")
+
+
+# =====================================================================
+# WHAT COUNTS AS A WRITE
+#
+# Several checks ask "does anything write this column?", and they share one
+# answer. The first answer was wrong both ways. It counted every dict with the
+# column as a key, so the day service contracts landed (#614) it reported two
+# modules that only DISPLAY a contract's factory as putting machines at
+# factories. And it never read a constructor's keywords, so
+# `MachineInstallation(factory_tenant_code=t)` in a route (a machine created
+# already at a factory) passed unseen. An audit that is red for no reason hides
+# the day it is red for a real one.
+
+_UNSEEN = object()   # a value the audit cannot read: never counted as a detach
+
+
+def _call_name(node):
+    fn = node.func
+    return fn.attr if isinstance(fn, ast.Attribute) else getattr(fn, "id", None)
+
+
+def _sql_text(node):
+    """The SQL in a string constant, or in text("...") around one; else None."""
+    if isinstance(node, ast.Constant) and isinstance(node.value, str):
+        return node.value.lower()
+    if isinstance(node, ast.Call) and _call_name(node) == "text" and node.args:
+        return _sql_text(node.args[0])
+    return None
+
+
+def _writes_installations(sql):
+    return (sql is not None and "machine_installations" in sql
+            and re.search(r"\b(update|insert)\b", sql) is not None)
+
+
+def _is_write_statement(node):
+    return (_writes_installations(_sql_text(node))
+            or any(isinstance(n, ast.Call) and _call_name(n) in ("update", "insert")
+                   for n in ast.walk(node)))
+
+
+def _dicts_in(args):
+    for arg in args:
+        if isinstance(arg, ast.Dict):
+            yield arg
+        elif isinstance(arg, (ast.List, ast.Tuple)):
+            yield from (e for e in arg.elts if isinstance(e, ast.Dict))
+
+
+def _model_named(expr):
+    """The first CapWords name in `expr` (`models.MachineInstallation.id` gives
+    MachineInstallation), or None."""
+    names = [n.attr if isinstance(n, ast.Attribute) else n.id
+             for n in ast.walk(expr) if isinstance(n, (ast.Attribute, ast.Name))]
+    return next((n for n in names if n[:1].isupper()), None)
+
+
+def _bulk_model(call):
+    """The model a bulk write is rooted at: `db.query(M)...update()`,
+    `update(M)...values()`, `insert(M).values()`, `execute(update(M), [...])`.
+    None when the audit cannot tell (a variable, a plain dict, raw SQL)."""
+    if _call_name(call) == "execute":
+        roots = [n for n in ast.walk(call.args[0]) if isinstance(n, ast.Call)
+                 and _call_name(n) in ("update", "insert") and n.args]
+        return _model_named(roots[0].args[0]) if roots else None
+    node = call.func
+    while isinstance(node, (ast.Call, ast.Attribute)):
+        if isinstance(node, ast.Call):
+            if _call_name(node) in ("query", "update", "insert") and node.args:
+                return _model_named(node.args[0])
+            node = node.func
+        else:
+            node = node.value
+    return None
+
+
+def _writes_of(tree, columns, model=None):
+    """Every WRITE of one of `columns` in `tree`, as (column, line, detaches).
+
+    `detaches` is True only for an explicit None. A write is:
+      - an attribute assignment, `inst.factory_tenant_code = t`, or setattr
+        with the name as a constant;
+      - a key or keyword handed to `.update()` or `.values()`, the ORM and Core
+        bulk forms (a plain dict's .update() is counted too: the audit cannot
+        tell the receivers apart, so it assumes the worse one);
+      - a key in the parameters of an `execute()` whose statement writes;
+      - a keyword to MachineInstallation(...), except an explicit None, which
+        registers a machine at no factory; and `**fields` into it, which the
+        audit cannot see inside and so counts;
+      - raw SQL handed to a call, updating or inserting machine_installations
+        and naming the column.
+    With `model`, a bulk write rooted at a DIFFERENT model the audit can name is
+    not counted: ServiceContract has a factory_tenant_code of its own, and
+    editing a draft contract's factory puts no machine anywhere. An attribute
+    assignment cannot be told apart, so it always counts.
+    A dict anywhere else is a response or a request body. NOT followed: a dict
+    built in one statement and written in another, and SQL built at run time.
+    """
+    out = []
+
+    def add(col, node, value):
+        out.append((col, node.lineno,
+                    isinstance(value, ast.Constant) and value.value is None))
+
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.Assign, ast.AugAssign, ast.AnnAssign)):
+            targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+            for tgt in targets:
+                for t in (tgt.elts if isinstance(tgt, (ast.Tuple, ast.List)) else [tgt]):
+                    if isinstance(t, ast.Attribute) and t.attr in columns:
+                        add(t.attr, node, node.value if t is tgt else _UNSEEN)
+            continue
+        if not isinstance(node, ast.Call):
+            continue
+        name = _call_name(node)
+        if (name == "setattr" and len(node.args) == 3
+                and isinstance(node.args[1], ast.Constant) and node.args[1].value in columns):
+            add(node.args[1].value, node, node.args[2])
+        bulk = name in ("update", "values") or (
+            name == "execute" and node.args and _is_write_statement(node.args[0]))
+        if bulk and (model is None or _bulk_model(node) in (None, model)):
+            for d in _dicts_in(node.args):
+                for key, val in zip(d.keys, d.values):
+                    if isinstance(key, ast.Constant) and key.value in columns:
+                        add(key.value, node, val)
+            if name in ("update", "values"):
+                for kw in node.keywords:
+                    if kw.arg in columns:
+                        add(kw.arg, node, kw.value)
+        if name == "MachineInstallation":
+            for kw in node.keywords:
+                if kw.arg is None:
+                    for col in columns:
+                        add(col, node, _UNSEEN)
+                elif kw.arg in columns and not (isinstance(kw.value, ast.Constant)
+                                                and kw.value.value is None):
+                    add(kw.arg, node, kw.value)
+        sql = _sql_text(node.args[0]) if node.args else None
+        if _writes_installations(sql):
+            for col in columns:
+                if col in sql:
+                    add(col, node, _UNSEEN)
+    return out
+
+
+def _backend_sources():
+    """Every backend source file, recursively, relative to HERE with '/'
+    separators, tests, audits and mutation harnesses excluded. The first version
+    listed the top level only, so a writer in ai/ or amp_ai/ was never read."""
+    out = []
+    for root, dirs, files in os.walk(HERE):
+        dirs[:] = sorted(d for d in dirs if not d.startswith((".", "__"))
+                         and d not in ("venv", "node_modules"))
+        for name in sorted(files):
+            if name.endswith(".py") and not name.startswith(("test_", "audit_", "mutate_")):
+                out.append(os.path.relpath(os.path.join(root, name), HERE).replace(os.sep, "/"))
+    return out
+
+
+def _app_import_closure(entry="main.py"):
+    """The backend files the running application imports, transitively, from
+    `entry` (the Procfile runs main:app): every import statement, inside
+    functions too, and every import_module / __import__ with a constant name."""
+    def resolve(module):
+        base = os.path.join(HERE, *module.split("."))
+        for cand in (base + ".py", os.path.join(base, "__init__.py")):
+            if os.path.isfile(cand):
+                return os.path.relpath(cand, HERE).replace(os.sep, "/")
+        return None
+
+    seen, todo = set(), [entry]
+    while todo:
+        rel = todo.pop()
+        if rel in seen:
+            continue
+        seen.add(rel)
+        try:
+            tree = ast.parse(io.open(os.path.join(HERE, rel), encoding="utf-8").read())
+        except (OSError, SyntaxError):
+            continue
+        package = os.path.dirname(rel).replace("/", ".")
+        names = []
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                for alias in node.names:
+                    parts = alias.name.split(".")
+                    names += [".".join(parts[:i]) for i in range(1, len(parts) + 1)]
+            elif isinstance(node, ast.ImportFrom):
+                parts = package.split(".") if (node.level and package) else []
+                if node.level > 1:
+                    parts = parts[:max(0, len(parts) - (node.level - 1))]
+                parts += node.module.split(".") if node.module else []
+                names += [".".join(parts[:i]) for i in range(1, len(parts) + 1)]
+                names += [".".join(parts + [alias.name]) for alias in node.names]
+            elif (isinstance(node, ast.Call) and _call_name(node) in ("import_module", "__import__")
+                  and node.args and isinstance(node.args[0], ast.Constant)
+                  and isinstance(node.args[0].value, str)):
+                names.append(node.args[0].value)
+        for name in names:
+            found = resolve(name)
+            if found and found not in seen:
+                todo.append(found)
+    return seen
+
+
+def _grant_doors(tree):
+    """{handler: guarded} for every function that reads `payload.grants`.
+    Guarded: its FIRST read of the list is the argument to refused_grants(),
+    and the refusal is raised."""
+    doors = {}
+    for fn in ast.walk(tree):
+        if not isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        reads = [n for n in ast.walk(fn)
+                 if isinstance(n, ast.Attribute) and n.attr == "grants"
+                 and isinstance(n.value, ast.Name) and n.value.id == "payload"]
+        if not reads:
+            continue
+        first = min(reads, key=lambda n: (n.lineno, n.col_offset))
+        bound = set()
+        for node in ast.walk(fn):
+            if (isinstance(node, ast.Assign) and isinstance(node.value, ast.Call)
+                    and _call_name(node.value) == "refused_grants"
+                    and any(a is first for a in node.value.args)):
+                bound |= {t.id for t in node.targets if isinstance(t, ast.Name)}
+        raised = any(isinstance(node, ast.If) and isinstance(node.test, ast.Name)
+                     and node.test.id in bound
+                     and any(isinstance(s, ast.Raise) for b in node.body for s in ast.walk(b))
+                     for node in ast.walk(fn))
+        doors[fn.name] = bool(bound) and raised
+    return doors
 
 
 # =====================================================================
@@ -423,9 +662,55 @@ def attack_the_factory_side():
           "request_tenant(current_user)" in ce, "reads a tenant from the payload")
     check("...and rejects an OEM token like every factory route",
           "get_current_user" in ce, "does not use the factory authenticator")
-    check("the grant list is validated against the vocabulary",
-          "ALL_GRANTS" in ce and "Unknown sharing grants" in ce,
-          "unknown grants are not refused")
+    # Grants are validated in ONE place, oem_sharing.refused_grants, and every
+    # door reaches it: the two handlers on this router, and widen_grants (the
+    # claim's union, a service contract's acceptance). The first version of this
+    # check looked for the refusal's wording in this file, and reported "unknown
+    # grants are not refused" the day the wording moved into that helper (#616),
+    # with the product unchanged. So the refusal is run, and each door is read
+    # for reaching it before it uses the list.
+    import oem_sharing
+    reason = oem_sharing.refused_grants(["SHARE_PAYROLL"])
+    check("an unknown grant is refused, and named", bool(reason) and "SHARE_PAYROLL" in reason,
+          f"refused_grants returned {reason!r}")
+    ok("CONTROL: the offered grants themselves are accepted",
+       oem_sharing.refused_grants(list(oem_sharing.OFFERED_GRANTS)) is None)
+
+    doors = _grant_doors(ast.parse(ce))
+    ok("CONTROL: both grant doors on this router were found (sharing, claim)",
+       len(doors) >= 2, f"found {sorted(doors)}")
+    unguarded = sorted(name for name, guarded in doors.items() if not guarded)
+    check("every handler validates the grant list before it uses it, and refuses on failure",
+          bool(doors) and not unguarded, f"unvalidated: {unguarded}")
+
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import sessionmaker
+    from sqlalchemy.pool import StaticPool
+    import models
+    from database import Base
+    eng = create_engine("sqlite://", connect_args={"check_same_thread": False},
+                        poolclass=StaticPool)
+    Base.metadata.create_all(bind=eng)
+    db = sessionmaker(bind=eng)()
+    try:
+        oem_sharing.widen_grants(db, "OEM_ALPHA", "FACTORY_A", ["SHARE_PAYROLL"], "audit",
+                                 context="audit")
+        refused = False
+    except ValueError:
+        refused = True
+    written = (db.query(models.OemDataSharingPolicy)
+                 .filter(models.OemDataSharingPolicy.oem_code == "OEM_ALPHA",
+                         models.OemDataSharingPolicy.tenant_code == "FACTORY_A").count())
+    check("widening a policy (a claim, a contract's acceptance) refuses an unknown grant "
+          "before writing", refused and written == 0,
+          f"refused={refused}, policies written={written}")
+    policy = oem_sharing.widen_grants(db, "OEM_ALPHA", "FACTORY_A", [oem_sharing.SHARE_DOWNTIME],
+                                      "audit", context="audit")
+    ok("CONTROL: ...and a grant that exists IS written, so the refusal is the check",
+       oem_sharing.SHARE_DOWNTIME in (policy.grants or ""), repr(policy.grants))
+    db.rollback()
+    db.close()
+
     check("granting to an OEM with no equipment here is refused",
           "has no equipment installed here" in ce, "no such guard")
     check("every change is audited", "log_audit(" in ce, "not audited")
@@ -453,34 +738,43 @@ def attack_the_claim_assumptions():
     # this check said that and reported offboard_tenant.py, which detaches a
     # departing customer's installations. Detaching to NULL cannot put a machine
     # at a factory; only writing a tenant code can. So the writers are split by
-    # what they write, and the narrow set is the one that matters.
-    def _writes(name):
+    # what they write, and the narrow set is the one that matters. What counts as
+    # a write is _writes_of, above.
+    #
+    # Harnesses build fixtures, and a fixture is a machine already at a factory.
+    # They may write the column ONLY because the running application never
+    # imports them, and that is checked here rather than assumed: a harness the
+    # app imports is a writer like any other.
+    harnesses = {
+        "contract_route_harness.py": "the service-contract route tests' fixtures",
+        "oem_perf.py": "seeds 10 to 10,000 installed machines to time the fleet queries",
+        "verify_pg_outcome_contracts.py": "fills a scratch PostgreSQL database to prove "
+                                          "migration 0010 keeps its rows",
+    }
+    sources = _backend_sources()
+    assigners, detachers = set(), set()
+    for name in sources:
         try:
             tree = ast.parse(io.open(os.path.join(HERE, name), encoding="utf-8").read())
         except SyntaxError:
-            return set()
-        found = set()
-        for node in ast.walk(tree):
-            if isinstance(node, ast.Assign):
-                for tgt in node.targets:
-                    if isinstance(tgt, ast.Attribute) and tgt.attr == "factory_tenant_code":
-                        found.add(isinstance(node.value, ast.Constant)
-                                  and node.value.value is None)
-            if isinstance(node, ast.Dict):
-                for key, val in zip(node.keys, node.values):
-                    if isinstance(key, ast.Constant) and key.value == "factory_tenant_code":
-                        found.add(isinstance(val, ast.Constant) and val.value is None)
-        return found
-
-    assigners, detachers = set(), set()
-    for name in sorted(os.listdir(HERE)):
-        if not name.endswith(".py") or name.startswith(("test_", "audit_", "mutate_")):
             continue
-        for is_detach in _writes(name):
-            (detachers if is_detach else assigners).add(name)
+        for _col, _line, detaches in _writes_of(tree, ("factory_tenant_code",),
+                                                model="MachineInstallation"):
+            (detachers if detaches else assigners).add(name)
 
-    check("ONE code path puts a machine at a factory", assigners == {"oem_claims.py"},
-          f"a factory tenant is assigned by {sorted(assigners)}")
+    runtime = assigners - set(harnesses)
+    check("ONE code path puts a machine at a factory", runtime == {"oem_claims.py"},
+          f"a factory tenant is assigned by {sorted(runtime)}")
+    app = _app_import_closure()
+    ok("CONTROL: the import graph from main.py reaches the claim and both routers",
+       {"oem_claims.py", "oem_routes.py", "connected_equipment_routes.py"} <= app,
+       f"reached {len(app)} files")
+    check("...and the harnesses that seed machines at factories are not part of the app",
+          not set(harnesses) & app, f"imported by the app: {sorted(set(harnesses) & app)}")
+    ok("CONTROL: each listed harness still writes the column (a stale entry is a blind spot)",
+       set(harnesses) <= assigners, f"not writing: {sorted(set(harnesses) - assigners)}")
+    ok("CONTROL: the scan reads the packages as well as the top level",
+       any(n.startswith(("ai/", "amp_ai/")) for n in sources), f"{len(sources)} files")
     # The release (the factory lets a machine go) and the offboard (the customer
     # leaves AMP entirely). oem_claims is deliberately NOT here: acceptance only
     # ever assigns, and nothing in the claim path can undo one.
@@ -491,19 +785,11 @@ def attack_the_claim_assumptions():
     # --- NO OEM PATH -----------------------------------------------------
     # The manufacturer's own router must contain no assignment that could
     # attach a machine to a customer, by either column.
+    # A detach counts too: the manufacturer may not unlink a factory's machine
+    # either. Registering a machine with factory_tenant_code=None is neither.
     tree = ast.parse(io.open(os.path.join(HERE, "oem_routes.py"), encoding="utf-8").read())
-    forbidden = set()
-    for node in ast.walk(tree):
-        if isinstance(node, ast.Assign):
-            for tgt in node.targets:
-                if isinstance(tgt, ast.Attribute) and tgt.attr in (
-                        "factory_tenant_code", "machine_id", "tenant_code"):
-                    forbidden.add(tgt.attr)
-        if isinstance(node, ast.Dict):
-            for key in node.keys:
-                if isinstance(key, ast.Constant) and key.value in (
-                        "factory_tenant_code", "machine_id", "tenant_code"):
-                    forbidden.add(key.value)
+    forbidden = {col for col, _line, _detaches in
+                 _writes_of(tree, ("factory_tenant_code", "machine_id", "tenant_code"))}
     check("no /oem handler assigns a factory or a machine link", not forbidden,
           f"oem_routes.py writes {sorted(forbidden)}")
 

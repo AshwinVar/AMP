@@ -296,6 +296,20 @@ def is_preview(current_user):
     return request_tenant(current_user) != (current_user or {}).get("tenant", DEFAULT_TENANT)
 
 
+def is_founder(current_user) -> bool:
+    """Is this the founder: an Admin whose OWN token is for the platform workspace?
+
+    Read from the token's claims, not the effective tenant, so a founder
+    previewing a customer is still the founder and a customer's Admin never is.
+    ROLE AND WORKSPACE, as effective_tenant decides the preview: an Operator or
+    Supervisor login inside the founder's workspace (a demo account) is not the
+    founder. Fail-closed: a token missing either claim is not the founder. Every
+    founder-only answer on a route any role may call asks this, the one rule
+    (test_founder_diagnostics_need_the_founder.py)."""
+    user = current_user or {}
+    return user.get("tenant") == DEFAULT_TENANT and user.get("role") == "Admin"
+
+
 def tenant_unit_value(db, tenant):
     """The tenant's configured £ margin per good unit (TenantConfig.unit_value_gbp),
     or None if unset. The single per-tenant £ rate — shared by the recovery

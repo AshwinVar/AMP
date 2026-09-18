@@ -200,8 +200,10 @@ def platform_status(db: Session = Depends(_get_db), current_user: dict = Depends
     # copilot connectivity, and the tenant's logged agent actions.
     result = ai.platform_status.build_platform_status(db, request_tenant(current_user))
     # Sim-loop diagnostics are founder-only: the allowlist names other tenants,
-    # which a client workspace must not see.
-    if current_user.get("tenant", tenancy.DEFAULT_TENANT) == tenancy.DEFAULT_TENANT:
+    # which a client workspace must not see -- and nor may an Operator or
+    # Supervisor login inside the founder's own workspace. This tested the
+    # workspace alone (tenancy.is_founder).
+    if tenancy.is_founder(current_user):
         result["sim"] = {
             "tenants": sim_state.tenants,
             "last_tick_utc": sim_state.last_tick.isoformat() if sim_state.last_tick else None,

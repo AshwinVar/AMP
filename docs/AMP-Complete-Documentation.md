@@ -369,7 +369,7 @@ The intelligence layer is built from **read‑models** (ADR‑0007): pure functi
 
 ### `backend/report_generator.py` — the report writer
 - **Plain English:** Formats the daily factory summary into clean readable text.
-- **Technical:** `build_daily_summary_text(summary, shift_kpis, alerts)` returns a formatted plain‑text report (used by `GET /reports/daily-summary.txt`).
+- **Technical:** `build_daily_summary_text(summary, shift_kpis, alerts)` returns a formatted plain‑text report (used by `GET /reports/intelligence-summary.txt`, with `/analytics/management`'s own summary).
 
 ## 4.3 Backend — add‑on route modules (each `register(app)`ed by main.py)
 
@@ -621,7 +621,7 @@ GET    /analytics/things  → summary/KPIs for that module
 | `GET` | `/reports/shifts.csv` | Shifts CSV export. |
 | `GET` | `/reports/oee.csv` | OEE CSV export. |
 | `GET` | `/reports/daily-summary.txt` | Plain-text factory summary: machine census, plant OEE and downtime over the last 7 days (OEE reads "not measured" when no production was recorded), shift efficiency over all shifts. |
-| `GET` | `/reports/intelligence-summary.txt` | Intelligence summary (plain text). |
+| `GET` | `/reports/intelligence-summary.txt` | Plain-text intelligence report: the management dashboard's own last-7-days summary (plant OEE reads "not measured" when no production was recorded), per-shift KPIs over all recorded shifts, and the smart-alert feed. |
 | `GET`/`POST` | `/audit-logs` | The audit trail of who did what. |
 
 ### Factory layout / digital twin

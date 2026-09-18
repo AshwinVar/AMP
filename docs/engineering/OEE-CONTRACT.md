@@ -140,6 +140,7 @@ assistant's context does so in prose:
 | AI copilot LLM context | **last 10 records** | last 7 days, + coverage |
 | `plant_oee()` / `machine_oee()` | — | last 7 days |
 | `/oee-trend` (this week vs last) | dates `today-6 … today` vs the 7 dates before | last 7 days vs `prior_window` of it |
+| `/reports/intelligence-summary.txt` | **all history**, under the dashboard's labels | last 7 days: `/analytics/management`'s own summary, window named on every line |
 
 Measured before, on one factory at one moment:
 

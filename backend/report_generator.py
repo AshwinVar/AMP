@@ -1,5 +1,6 @@
 from datetime import datetime
 
+import oee_contract
 from currency import money
 
 
@@ -18,19 +19,33 @@ def _downtime_loss(summary: dict) -> str:
 
 
 def build_daily_summary_text(summary: dict, shift_kpis: list, alerts: list):
+    # `summary` is /analytics/management's own (reports_routes), pooled over THE
+    # window, so every windowed line names it. The report used to print the same
+    # labels over ALL history, and a week with no production as "Average OEE:
+    # 0%" -- a plant that ran and lost everything
+    # (test_intelligence_report_is_the_management_week.py). A hand-built summary
+    # without has_data counts as measured only if it carries figures at all.
+    days = oee_contract.DEFAULT_WINDOW_DAYS
+    if summary.get("has_data", "avg_oee" in summary):
+        oee_lines = [
+            f"Plant OEE, last {days} days (pooled): {summary.get('avg_oee', 0)}%",
+            f"Availability: {summary.get('avg_availability', 0)}%",
+            f"Performance: {summary.get('avg_performance', 0)}%",
+            f"Quality: {summary.get('avg_quality', 0)}%",
+        ]
+    else:
+        oee_lines = [f"Plant OEE, last {days} days: not measured "
+                     "(no production recorded in this window)"]
     lines = [
         "AMP Daily Factory Intelligence Report",
         f"Generated: {datetime.utcnow().isoformat()} UTC",
         "",
         "Executive Summary",
         "-----------------",
-        f"Average OEE: {summary.get('avg_oee', 0)}%",
-        f"Availability: {summary.get('avg_availability', 0)}%",
-        f"Performance: {summary.get('avg_performance', 0)}%",
-        f"Quality: {summary.get('avg_quality', 0)}%",
-        f"Total Downtime: {summary.get('total_downtime_minutes', 0)} minutes",
-        f"Top Loss Reason: {summary.get('top_loss_reason', 'No data')}",
-        f"Worst Machine: {summary.get('worst_machine', 'No data')}",
+        *oee_lines,
+        f"Total Downtime, last {days} days: {summary.get('total_downtime_minutes', 0)} minutes",
+        f"Top Loss Reason, last {days} days: {summary.get('top_loss_reason', 'No data')}",
+        f"Worst Machine, last {days} days: {summary.get('worst_machine', 'No data')}",
         # Format through the shared money() helper (currency.py) — the single money
         # renderer every other surface uses — rather than re-spelling "{CURRENCY}{n}"
         # here. The inline version emitted no thousands separator, so a five/six-figure
@@ -42,10 +57,10 @@ def build_daily_summary_text(summary: dict, shift_kpis: list, alerts: list):
         # and avoids money(None) raising on a hand-built summary dict).
         # £ only with the tenant's unit value (ADR-0010); units otherwise, and
         # "unknown" when downtime had no run time to convert.
-        f"Estimated Downtime Loss: {_downtime_loss(summary)}",
+        f"Estimated Downtime Loss, last {days} days: {_downtime_loss(summary)}",
         "",
-        "Shift KPIs",
-        "----------",
+        "Shift KPIs (all recorded shifts)",
+        "--------------------------------",
     ]
 
     if shift_kpis:

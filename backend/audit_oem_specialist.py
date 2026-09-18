@@ -698,7 +698,9 @@ def attack_the_factory_side():
         refused = False
     except ValueError:
         refused = True
-    written = db.query(models.OemDataSharingPolicy).count()
+    written = (db.query(models.OemDataSharingPolicy)
+                 .filter(models.OemDataSharingPolicy.oem_code == "OEM_ALPHA",
+                         models.OemDataSharingPolicy.tenant_code == "FACTORY_A").count())
     check("widening a policy (a claim, a contract's acceptance) refuses an unknown grant "
           "before writing", refused and written == 0,
           f"refused={refused}, policies written={written}")

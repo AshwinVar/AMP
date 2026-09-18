@@ -3,25 +3,27 @@
 > Handover file. A new session should be able to read only this and continue.
 > Keep it short. Update it at the end of every completed task.
 
-**Updated:** 2026-09-18 (#631–#638: verification that had stopped verifying.
+**Updated:** 2026-09-18 (#631–#643: verification that had stopped verifying.
 The founder's preview could reach an OEM namespace. The specialist audit had
 gone stale. Five OEE surfaces stated no coverage. 13 mutation tests applied to
 nothing, 11 in Python and 2 in the UI. One guard lost its proof to #631. Four
-money cards had no thousands separator. See the section of that date below.)
-**Master SHA:** `25f15bc` (#638). A docs-only merge on top of it changes nothing
+money cards had no thousands separator. Every audit that can fail now runs on
+every push, and the whole mutation fleet runs every Monday. See the section of
+that date below.)
+**Master SHA:** `96faddb` (#643). A docs-only merge on top of it changes nothing
 that runs.
-**Production SHA:** `25f15bc`, verified live, not assumed:
-`{"status":"ok","database":"ok","schema":"ok","version":"25f15bc"}` from
-`https://flowmes-production.up.railway.app/health`, read at 20:37 UTC;
+**Production SHA:** `96faddb`, verified live, not assumed:
+`{"status":"ok","database":"ok","schema":"ok","version":"96faddb"}` from
+`https://flowmes-production.up.railway.app/health`, read at 21:54 UTC;
 `/readiness` 200 at `0010_outcome_contracts`; the frontend
 (`https://flow-mes.vercel.app`) answers 200. Railway auto-deploys master, so
 prod tracks HEAD; re-check `/health` rather than trusting this line's age.
-**Vercel, check once:** its production deploy of `8f05217` (#637, a backend
-test only) sat at "Vercel is deploying your app" from 20:08 UTC and was still
-pending at 20:37, with #638's preview queued behind it. The live frontend is
-`c217bcf`'s build (#636). It holds every frontend change so far except
-`lib/mutation-anchors.test.ts` and a harness, and neither of those ships. If the
-queue has not cleared, look at the Vercel dashboard.
+**Vercel is slow, not broken:** its deploys queued for well over an hour this
+evening. `8f05217`'s completed at last, and `25f15bc`'s and `96faddb`'s were
+still "deploying" at 21:54 UTC. Nothing that ships in the frontend has changed
+since `c217bcf` (#636), whose deploy completed; #638 changed only a test and a
+harness. So the live frontend already behaves as master does. If the queue has
+not cleared by the next session, look at the Vercel dashboard.
 
 **Awaiting review:** none.
 
@@ -161,10 +163,10 @@ Two lessons worth keeping:
   `$<digit>` but not a JSX-text `${m.cost}`, which is exactly how two components
   printed dollars. Both missed lines are now pinned verbatim as a probe.
 
-### 2026-09-18 — verification that had stopped verifying (#631–#638)
+### 2026-09-18 — verification that had stopped verifying (#631–#643)
 
-Three of these fix what a person sees. Five fix the proof that everything else
-is still true. The fleet run behind #635 is the thing to remember. Every audit
+Three of these fix what a person sees. The rest fix the proof that everything
+else is still true, and put that proof where it runs by itself. The fleet run behind #635 is the thing to remember. Every audit
 and mutation harness was run against master, each in its own worktree. It found:
 - 13 mutations (11 Python, 2 UI) and 2 audit checks that had stopped testing
   anything, some for six weeks;
@@ -181,6 +183,11 @@ Nothing had noticed, because nothing ran them.
 | #636 | **Four money figures printed "£49740" where every other card reads "£49,740"** (the enterprise Cost KPI, Costing's Manual Cost, the SaaS page's MRR and each tenant's fee). `lib/money.ts` claimed to be the one place the symbol is written, while 16 lines in 10 files wrote it themselves. Every amount now goes through `money()`, and `lib/currency-literals.test.ts` holds the claim | vitest 619/619; failing first on the 16 lines |
 | #637 | **#631's middleware left `service_contracts.for_factory`'s own sentinel refusal untested.** The HTTP check now stops at the middleware, so removing the route's guard went unnoticed; the fleet run caught it as the one real survivor. The guard is tested directly again, by binding the sentinel without the header | harness: all 96 caught or shadowed (exit 1 on master); 321/321 |
 | #638 | **The frontend harnesses had the same rot.** #612's `detailOf` → `errorDetail` stranded two of `mutate-oem-ui`'s guards: a refused lookup swallowed into a generic message, and a refused confirmation reported as success. Retargeted, and `frontend/lib/mutation-anchors.test.ts` now checks every UI anchor on each push | 86 anchors; failing first on the 2 |
+| #639 | This handover | docs |
+| #640 | The two adversarial audits that need no server (`audit_adversarial_final`, `audit_oem_contracts_adversarial`) now run in the backend job, each on its own SQLite file | each shown to exit 1 on a planted defect |
+| #641 | The four PostgreSQL audits (`audit_oem_adversarial`, `audit_oem_pilot_journey`, `audit_three_customers`, `audit_isolation`) now run in the migration gate's job, each in a scratch database | each exits 1 on a planted defect; all four passed in CI |
+| #642 | **The whole mutation fleet runs every Monday** (`.github/workflows/mutation-fleet.yml`): one job per backend harness, discovered from the tree; `mutate_oem_claim` against a PostgreSQL service; both UI harnesses. It also runs on any PR that edits the workflow. **Its first run found a guard only Windows tested:** the failure-risk generator hash is line-ending-independent, but the only check compared against the committed hash, which an LF checkout (Linux, CI) matches either way. The test now hashes the source both ways | reproduced on Windows with an LF checkout: the old check passes the mutant, the new one fails it |
+| #643 | The six PostgreSQL migration verifications (`verify_pg_migration`, `_docnumbers`, `_bom`, `_oem`, `_native_ai`, `_claim`) now run in the migration gate's job. **One had gone stale:** `verify_pg_native_ai` upgraded to "head" and failed when 0010 moved it, on a migration that was still correct; it now names 0009 | each exits 1 on a defect in its own scope (the BOM one's first plant was out of scope: the drift gate owns that constraint) |
 
 Lessons worth keeping:
 
@@ -206,6 +213,11 @@ Lessons worth keeping:
   layer in front of existing checks, give each of those checks a direct test.
 - **Take the SHA a poller watches from git** (`git rev-parse HEAD`), never type
   it. A mistyped SHA polls a commit that does not exist, forever.
+- **A guard can be tested on one platform only.** Removing the failure-risk
+  hash's CRLF normalisation failed a test on Windows (git writes CRLF there) and
+  passed it on Linux (the bytes were LF already). The fleet's first Linux run
+  found it. A property about platforms needs a test that constructs each
+  platform's input, not one that inherits whatever the checkout has.
 - **Harnesses restore files through a text-mode write.** On this Windows
   checkout that turns CRLF into LF, with the committed blob's bytes. `git status`
   reports the file as modified; `git diff --ignore-cr-at-eol --name-only` shows
@@ -221,9 +233,9 @@ Lessons worth keeping:
 
 **Next** (verified in passing unless marked):
 - decisions 10 and 12, once chosen;
-- run the harness fleet again after any refactor of the OEM, tenancy or
-  AI-consent code, and after adding any guard upstream of existing ones (see
-  HARNESS DEBT for how).
+- the mutation fleet now runs every Monday (#642). After refactoring the OEM,
+  tenancy or AI-consent code, or adding a guard upstream of existing ones,
+  dispatch it from the Actions tab rather than waiting for Monday.
 
 ### 2026-09-18 — figures that claimed more than was measured (#617–#630)
 
@@ -791,10 +803,19 @@ Phases 2, 4–6 not started. Note before starting Phase 2: the LLM is already re
     `frontend/lib/mutation-anchors.test.ts` now checks all 86 anchors on every
     push. Run in full on #638's branch, both exit 0 (33/33 and 53/53). They
     restore each file's own line endings, so they leave no noise.
-- **The static half runs in CI now** (`test_mutation_anchors_apply.py`: every
-  anchor still names one line). Whether a mutation is still CAUGHT needs the
-  harness itself, so rerun the fleet after refactoring guarded code. A guard that
-  a new upstream layer shadows, as #631 did to #637's, shows up only there.
+- **Both halves run by themselves now.** On every push,
+  `test_mutation_anchors_apply.py` and `frontend/lib/mutation-anchors.test.ts`
+  check that every anchor still names one line. Every Monday at 04:17 UTC, and
+  on dispatch, `.github/workflows/mutation-fleet.yml` runs every harness (#642).
+  That fleet run is the only place a guard shadowed by a new upstream layer
+  shows up, as #631 did to #637's. A red run is a finding: read the harness's
+  own output before touching its expectations. To run it early after
+  refactoring guarded code, dispatch it from the Actions tab.
+- **Every audit and PostgreSQL verification that can fail runs on every push**
+  (#633, #640, #641, #643): the specialist audit and the two SQLite audits in
+  the backend job; the four PostgreSQL audits and six migration verifications
+  in the migration gate's job. `audit_perf.py` stays out: it
+  measures latency and has no pass/fail line.
 - **Line endings.** Several harnesses restore a file through a text-mode write,
   which leaves LF where a Windows checkout had CRLF, with the committed blob's
   exact bytes. Harmless (git normalises; Linux CI never sees it), but judge a

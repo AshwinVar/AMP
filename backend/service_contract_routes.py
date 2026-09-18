@@ -66,14 +66,14 @@ def get_contract(contract_id: int, db: Session = Depends(_get_db),
 @router.post("/{contract_id}/accept")
 def accept(contract_id: int, payload: FactoryAcceptance, db: Session = Depends(_get_db),
            current_user: dict = Depends(require_roles(SIGNERS))):
-    return svc.accept_contract(db, svc.for_factory(current_user), contract_id,
+    return svc.accept_contract(db, svc.for_factory_signer(current_user), contract_id,
                                payload.terms_hash, payload.grant_downtime_sharing)
 
 
 @router.post("/{contract_id}/reject")
 def reject(contract_id: int, payload: DecisionNote, db: Session = Depends(_get_db),
            current_user: dict = Depends(require_roles(SIGNERS))):
-    return svc.reject_contract(db, svc.for_factory(current_user), contract_id,
+    return svc.reject_contract(db, svc.for_factory_signer(current_user), contract_id,
                                payload.note.strip())
 
 
@@ -88,14 +88,14 @@ def reason_vocabulary(contract_id: int, db: Session = Depends(_get_db),
 def draft_amendment(contract_id: int, payload: AmendmentDraft,
                     db: Session = Depends(_get_db),
                     current_user: dict = Depends(require_roles(SIGNERS))):
-    return svc.draft_amendment(db, svc.for_factory(current_user), contract_id, payload)
+    return svc.draft_amendment(db, svc.for_factory_signer(current_user), contract_id, payload)
 
 
 @router.post("/{contract_id}/amendments/{version}/propose")
 def propose_amendment(contract_id: int, version: int, payload: TermsHash,
                       db: Session = Depends(_get_db),
                       current_user: dict = Depends(require_roles(SIGNERS))):
-    return svc.propose_amendment(db, svc.for_factory(current_user), contract_id,
+    return svc.propose_amendment(db, svc.for_factory_signer(current_user), contract_id,
                                  version, payload.terms_hash)
 
 
@@ -103,7 +103,7 @@ def propose_amendment(contract_id: int, version: int, payload: TermsHash,
 def accept_amendment(contract_id: int, version: int, payload: TermsHash,
                      db: Session = Depends(_get_db),
                      current_user: dict = Depends(require_roles(SIGNERS))):
-    return svc.accept_amendment(db, svc.for_factory(current_user), contract_id,
+    return svc.accept_amendment(db, svc.for_factory_signer(current_user), contract_id,
                                 version, payload.terms_hash)
 
 
@@ -111,14 +111,14 @@ def accept_amendment(contract_id: int, version: int, payload: TermsHash,
 def reject_amendment(contract_id: int, version: int, payload: DecisionNote,
                      db: Session = Depends(_get_db),
                      current_user: dict = Depends(require_roles(SIGNERS))):
-    return svc.reject_amendment(db, svc.for_factory(current_user), contract_id,
+    return svc.reject_amendment(db, svc.for_factory_signer(current_user), contract_id,
                                 version, payload.note.strip())
 
 
 @router.post("/{contract_id}/terminate")
 def terminate(contract_id: int, payload: Termination, db: Session = Depends(_get_db),
               current_user: dict = Depends(require_roles(SIGNERS))):
-    return svc.terminate_contract(db, svc.for_factory(current_user), contract_id,
+    return svc.terminate_contract(db, svc.for_factory_signer(current_user), contract_id,
                                   payload.reason)
 
 
@@ -139,7 +139,7 @@ def preview(contract_id: int, db: Session = Depends(_get_db),
 @router.post("/{contract_id}/statements/compute")
 def compute(contract_id: int, payload: ComputeRequest, db: Session = Depends(_get_db),
             current_user: dict = Depends(require_roles(SIGNERS))):
-    return svc.compute(db, svc.for_factory(current_user), contract_id,
+    return svc.compute(db, svc.for_factory_signer(current_user), contract_id,
                        payload.period_start)
 
 
@@ -168,7 +168,7 @@ def download(contract_id: int, statement_id: int, db: Session = Depends(_get_db)
 def accept_statement(contract_id: int, statement_id: int, payload: StatementAcceptance,
                      db: Session = Depends(_get_db),
                      current_user: dict = Depends(require_roles(SIGNERS))):
-    return svc.accept_statement(db, svc.for_factory(current_user), contract_id,
+    return svc.accept_statement(db, svc.for_factory_signer(current_user), contract_id,
                                 statement_id, payload.content_hash, payload.revision)
 
 
@@ -176,7 +176,7 @@ def accept_statement(contract_id: int, statement_id: int, payload: StatementAcce
 def raise_dispute(contract_id: int, statement_id: int, payload: DisputeRaise,
                   db: Session = Depends(_get_db),
                   current_user: dict = Depends(require_roles(SIGNERS))):
-    return svc.raise_dispute(db, svc.for_factory(current_user), contract_id,
+    return svc.raise_dispute(db, svc.for_factory_signer(current_user), contract_id,
                              statement_id, payload)
 
 
@@ -191,7 +191,7 @@ def disputes(contract_id: int, db: Session = Depends(_get_db),
 def propose_resolution(contract_id: int, dispute_id: int, payload: ResolutionProposal,
                        db: Session = Depends(_get_db),
                        current_user: dict = Depends(require_roles(SIGNERS))):
-    return svc.propose_resolution(db, svc.for_factory(current_user), contract_id,
+    return svc.propose_resolution(db, svc.for_factory_signer(current_user), contract_id,
                                   dispute_id, payload)
 
 
@@ -199,14 +199,14 @@ def propose_resolution(contract_id: int, dispute_id: int, payload: ResolutionPro
 def accept_resolution(contract_id: int, dispute_id: int, payload: ResolutionAcceptance,
                       db: Session = Depends(_get_db),
                       current_user: dict = Depends(require_roles(SIGNERS))):
-    return svc.accept_resolution(db, svc.for_factory(current_user), contract_id,
+    return svc.accept_resolution(db, svc.for_factory_signer(current_user), contract_id,
                                  dispute_id, payload)
 
 
 @router.post("/{contract_id}/disputes/{dispute_id}/withdraw")
 def withdraw_dispute(contract_id: int, dispute_id: int, db: Session = Depends(_get_db),
                      current_user: dict = Depends(require_roles(SIGNERS))):
-    return svc.withdraw_dispute(db, svc.for_factory(current_user), contract_id,
+    return svc.withdraw_dispute(db, svc.for_factory_signer(current_user), contract_id,
                                 dispute_id)
 
 

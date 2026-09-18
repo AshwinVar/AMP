@@ -2,7 +2,7 @@
 
 import React, { useEffect, useState } from "react";
 
-import { getUserRole } from "../lib/api";
+import { getUserRole, isPreviewing } from "../lib/api";
 import {
   bucketLabel,
   contractError,
@@ -155,11 +155,20 @@ export function ContractReview({ detail, canSign, reload }: {
 }
 
 export default function ServiceContracts() {
-  const canSign = getUserRole() === "Admin";
+  // A founder previewing this company reads its contracts but cannot act for it:
+  // the server refuses every factory-side action from a preview (tenancy.is_preview).
+  const previewing = isPreviewing();
+  const canSign = getUserRole() === "Admin" && !previewing;
   return (
     <div className="space-y-4" data-testid="service-contracts">
       <div>
         <h2 className="text-xl font-semibold text-white">Service contracts</h2>
+        {previewing && (
+          <p role="note" className="mt-1 text-sm text-amber-300">
+            You are previewing this company. Only its own Admin can accept, dispute or sign its
+            service contracts.
+          </p>
+        )}
         <p className="mt-1 max-w-3xl text-sm text-slate-400">
           Contracts your machines&apos; manufacturers propose: annual maintenance, warranties and
           uptime clauses. Each month AMP attributes every covered minute of downtime to the

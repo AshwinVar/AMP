@@ -187,6 +187,20 @@ def for_factory(current_user):
     return Party(FACTORY, None, tenant, actor, current_user.get("role"))
 
 
+def for_factory_signer(current_user):
+    """The factory ACTING as a party: accepting, rejecting, amending, computing,
+    disputing or terminating. Refused from a founder's company preview
+    (tenancy.is_preview): an agreement both parties accept is worth nothing if the
+    platform operator can accept it for one of them. Reads stay open to a preview
+    (for_factory); only acting for the company is refused."""
+    party = for_factory(current_user)
+    if tenancy.is_preview(current_user):
+        raise Refused(403, f"You are previewing {party.tenant_code} from the platform workspace. "
+                           f"Only {party.tenant_code}'s own Admin can accept, dispute, amend or "
+                           "sign its service contracts, never a preview.")
+    return party
+
+
 def other_side(side):
     return FACTORY if side == OEM else OEM
 

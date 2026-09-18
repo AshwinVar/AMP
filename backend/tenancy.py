@@ -283,6 +283,19 @@ def request_tenant(current_user):
     return current_tenant() or (current_user or {}).get("tenant", DEFAULT_TENANT)
 
 
+def is_preview(current_user):
+    """Is this request acting in a tenant other than the token's own?
+
+    That is the founder's company-switcher preview: effective_tenant honours an
+    X-Tenant header only for a DEFAULT-claim Admin. A preview may read, and
+    administer as the platform operator, but it may not speak FOR the company:
+    it cannot give or withdraw the company's consent to learn from its data
+    (ADR-0020), and it cannot accept, dispute or sign a service contract that
+    binds the company (ADR-0021). Those must come from the company's own people,
+    so every such route asks this, the one rule."""
+    return request_tenant(current_user) != (current_user or {}).get("tenant", DEFAULT_TENANT)
+
+
 def tenant_unit_value(db, tenant):
     """The tenant's configured £ margin per good unit (TenantConfig.unit_value_gbp),
     or None if unset. The single per-tenant £ rate — shared by the recovery

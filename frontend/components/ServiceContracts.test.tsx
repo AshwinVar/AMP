@@ -14,6 +14,7 @@ import { detail, periods, statement, version } from "./contracts/testFixtures";
  */
 
 let role = "Admin";
+let previewing = false;
 const fns = {
   list: vi.fn(), detail: vi.fn(), periods: vi.fn(), history: vi.fn(), statement: vi.fn(),
   accept: vi.fn(), reject: vi.fn(), reasonVocabulary: vi.fn(),
@@ -23,6 +24,7 @@ vi.mock("../lib/api", () => ({
   API_URL: "http://test",
   getAuthHeaders: () => ({}),
   getUserRole: () => role,
+  isPreviewing: () => previewing,
   apiGet: vi.fn(),
   apiPost: vi.fn(),
 }));
@@ -42,6 +44,7 @@ import ServiceContracts from "./ServiceContracts";
 
 beforeEach(() => {
   role = "Admin";
+  previewing = false;
   for (const f of Object.values(fns)) f.mockReset();
   fns.list.mockResolvedValue({ contracts: [detail()], truncated: false });
   fns.detail.mockResolvedValue(detail());
@@ -114,6 +117,18 @@ describe("reviewing a proposed contract", () => {
     expect(screen.queryByRole("button", { name: "Accept contract" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Reject" })).toBeNull();
     expect(screen.getByText(/Only an Admin can accept or reject/)).toBeTruthy();
+  });
+
+  it("gives the founder's preview the review but no decision, and says why", async () => {
+    // The server refuses every factory-side action from a preview (tenancy.is_preview):
+    // an Admin role in the platform workspace is not this company's Admin.
+    role = "Admin";
+    previewing = true;
+    await openProposal();
+    expect(screen.queryByRole("checkbox")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Accept contract" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Reject" })).toBeNull();
+    expect(screen.getByText(/You are previewing this company/)).toBeTruthy();
   });
 });
 

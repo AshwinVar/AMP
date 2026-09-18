@@ -166,6 +166,20 @@ chained, by design. Statements are described as consistency-checked and nothing 
   proposals withdrawn, accepted contracts terminated at the next period
   boundary, statement content, records and disputes removed, hashes and
   acceptances kept.
+- **A preview cannot sign for the company.** The factory party came from
+  `tenancy.request_tenant`, which honours the founder's company-switcher
+  preview, so the platform operator previewing a customer could accept a
+  contract for it (and with it grant the manufacturer `SHARE_DOWNTIME`), dispute
+  a statement or terminate a contract. Measured before the fix: a preview
+  accepted a contract, recorded as `factory_accepted_by: founder`, and
+  terminated another. Every factory-side POST now takes its party from
+  `service_contracts.for_factory_signer`, which refuses a preview (403, saying
+  why) through `tenancy.is_preview`, the rule AMP-native AI's consent uses
+  (ADR-0020). Reads stay open to a preview. `test_contract_preview_cannot_sign.py`
+  checks it through the real middleware and requires every POST route to use the
+  signer. **Open for the founder:** connected-equipment sharing grants and machine
+  claims (ADR-0019) still accept a preview. Whether a preview may give a company's
+  consent anywhere is a platform decision, not made here.
 
 ### 7. Why not reuse `OeeWindow`
 

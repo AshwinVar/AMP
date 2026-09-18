@@ -18,6 +18,11 @@ vi.mock("../lib/api", () => ({
 }));
 vi.mock("./AgentPolicyPanel", () => ({ default: () => null }));
 vi.mock("./AgentDetailDrawer", () => ({ default: () => null }));
+// The AMP-native AI panels this section also mounts (ADR-0020) have their own
+// suites (AILearningConsentCard.test.tsx, AIModelCard.test.tsx); stubbed here like
+// the other child panels so this suite tests the agent activity section alone.
+vi.mock("./AILearningConsentCard", () => ({ default: () => null }));
+vi.mock("./AIModelCard", () => ({ default: () => null }));
 
 import AgentActivitySection from "./AgentActivitySection";
 

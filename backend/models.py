@@ -733,7 +733,10 @@ class ReportRequest(Base):
     report_type = Column(String, nullable=False)
     requested_by = Column(String, default="Admin")
     format = Column(String, default="PDF")
-    status = Column(String, default="Generated")
+    # "Logged": what happened. Nothing in AMP generates the file a request names
+    # (test_report_requests_are_not_generated.py); this used to default to
+    # "Generated". A Python-side default, so no DDL and no migration.
+    status = Column(String, default="Logged")
     notes = Column(String, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
 

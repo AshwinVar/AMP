@@ -286,6 +286,10 @@ def create_report(payload: schemas.ReportRequestCreate, db: Session = Depends(_g
     existing = db.query(models.ReportRequest).filter(models.ReportRequest.report_no == payload.report_no).first()
     if existing:
         raise HTTPException(status_code=400, detail="Report number already exists")
+    # No status from the client: the schema has no such field, so the row takes
+    # the model's "Logged", which is what happened. Nothing in AMP generates the
+    # report file a request names; the dashboard used to send "Generated" and it
+    # was stored (test_report_requests_are_not_generated.py).
     row = models.ReportRequest(**payload.model_dump())
     db.add(row)
     try:

@@ -1252,11 +1252,12 @@ class NotificationResponse(BaseModel):
 
 
 class ReportRequestCreate(BaseModel):
+    # No `status`: the server owns it (reports_routes.create_report). The client
+    # used to send "Generated" and it was stored, though nothing generates a report.
     report_no: str
     report_type: str
     requested_by: str = "Admin"
     format: str = "PDF"
-    status: str = "Generated"
     notes: Optional[str] = None
 
 

@@ -118,7 +118,13 @@ def test_worsening_trend_attributes_swing_to_machine_and_driver():
     assert sum(d["downtime_cost"] for d in t["series"]) == 220 + 100
     assert sum(d["scrap_cost"] for d in t["series"]) == 48 + 24
     assert sum(d["lost_units"] for d in t["series"]) == 134 + 62
-    assert len(t["series"]) == cost.TREND_WINDOW_DAYS      # 14 entries, oldest -> newest
+    # every date the fortnight [now-14d, now) touches, oldest -> newest: fifteen when
+    # it opens mid-day (the oldest flagged partial), fourteen when it opens at midnight
+    partial = bool(t["series"][0].get("partial"))
+    assert len(t["series"]) == cost.TREND_WINDOW_DAYS + (1 if partial else 0), len(t["series"])
+    dates = [datetime.fromisoformat(d["date"]).date() for d in t["series"]]
+    assert all((b - a).days == 1 for a, b in zip(dates, dates[1:])), dates
+    assert not any(d.get("partial") for d in t["series"][1:])
 
 
 def test_without_a_unit_value_the_trend_speaks_units_only():

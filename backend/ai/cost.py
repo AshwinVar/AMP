@@ -20,6 +20,7 @@ from datetime import datetime, timedelta
 
 import loss_value
 import models
+import oee_contract
 import tenancy
 from ai.downtime import MIN_MOVE_MINUTES as DOWNTIME_MOVE_MINUTES
 from ai.twin import _recent_production
@@ -146,7 +147,6 @@ def build_cost_summary(db, tenant: str, now=None) -> dict:
     # ONE anchor for the request: the headline, the daily bars and the recorded
     # costs beside them must all be the same seven days. They were three
     # different bases under one "days": 7 label (#587).
-    import oee_contract
     window = oee_contract.OeeWindow(WINDOW_DAYS, now=now)
     records = _recent_production(db, days=WINDOW_DAYS, now=window.end)
     unit_value = tenancy.tenant_unit_value(db, tenant)
@@ -263,16 +263,9 @@ def build_cost_summary(db, tenant: str, now=None) -> dict:
     }
 
 
-def _half_of(day, today):
-    """Which half a day falls in: 'current' = the last WINDOW_DAYS including today,
-    'prior' = the WINDOW_DAYS before that, None = outside the window. Mirrors
-    ai.downtime._half_of so the trend cards split their windows the same way."""
-    age = (today - day).days
-    if 0 <= age < WINDOW_DAYS:
-        return "current"
-    if WINDOW_DAYS <= age < TREND_WINDOW_DAYS:
-        return "prior"
-    return None
+def _add_rows(a, b):
+    """Two _breakdown rows as one: each column summed, unknown (None) if either is."""
+    return {k: None if a[k] is None or b[k] is None else a[k] + b[k] for k in a}
 
 
 def _amount(units, cost, priced):
@@ -282,7 +275,7 @@ def _amount(units, cost, priced):
     return f"{units:,} good unit{'s' if units != 1 else ''}"
 
 
-def build_cost_trend(db, tenant: str) -> dict:
+def build_cost_trend(db, tenant: str, now=None) -> dict:
     """Which way are the losses going, and who moved it? Compares the last 7 days
     of lost good units (downtime + scrap, on the SAME per-record basis as
     build_cost_summary, each week at its own run rate) against the 7 before, and
@@ -294,18 +287,25 @@ def build_cost_trend(db, tenant: str) -> dict:
     days and machines are apportioned from that half's totals, so the daily series
     sums back to the half totals (rule 3). A swing built on one or two loss-making
     jobs is reported but not judged."""
-    today = datetime.utcnow().date()
-    window = [today - timedelta(days=n) for n in range(TREND_WINDOW_DAYS - 1, -1, -1)]
-    records = _recent_production(db, days=TREND_WINDOW_DAYS)
+    # One anchor, two adjacent windows, as ai/oee.build_oee_trend: `current` is
+    # the window build_cost_summary pools -- the "Total lost" printed beside this
+    # verdict on the Costing card, and the scorecard's Cost of losses -- and
+    # `prior` tiles against it exactly (oee_contract.prior_window). The calendar
+    # halves this replaces ([today-6 ... today] against the seven dates before)
+    # put a loss from late on the eighth date in the card's total and in this
+    # trend's PRIOR week, so the verdict's "to £Y" was not the total beside it and
+    # could call a week of rising losses a fall. The fetch was the rolling
+    # fortnight, so a record on date today-14 landed in no half and no bar and
+    # still set the noise floor's run rate
+    # (test_cost_trend_uses_the_contract_windows.py).
+    current_window = oee_contract.OeeWindow(WINDOW_DAYS, now=now)
+    prior_window = oee_contract.prior_window(current_window)
+    in_half = {"current": _recent_production(db, days=WINDOW_DAYS, now=current_window.end),
+               "prior": _recent_production(db, days=WINDOW_DAYS, now=prior_window.end)}
+    records = in_half["current"] + in_half["prior"]
     names = {m.id: m.name for m in db.query(models.Machine).all()}
     unit_value = tenancy.tenant_unit_value(db, tenant)
     priced = unit_value is not None
-
-    in_half = {"current": [], "prior": []}
-    for r in records:
-        half = _half_of(r.created_at.date(), today) if r.created_at else None
-        if half is not None:
-            in_half[half].append(r)
 
     halves, day_rows, machine_rows = {}, {}, {}
     for half, recs in in_half.items():
@@ -321,19 +321,30 @@ def build_cost_trend(db, tenant: str) -> dict:
             "records": len(recs),
             "loss_records": sum(1 for r in recs if _down(r) or (r.rejected_count or 0)),
         }
-        day_rows.update(_breakdown(_group(recs, lambda r: r.created_at.date()), totals, unit_value))
+        # The seam date holds the end of one week and the start of the next, so a
+        # date's row is its share of each half added together (rule 3 still holds).
+        for d, row in _breakdown(_group(recs, lambda r: r.created_at.date()), totals, unit_value).items():
+            day_rows[d] = _add_rows(day_rows[d], row) if d in day_rows else row
         machine_rows[half] = _breakdown(_group(recs, lambda r: r.machine_id), totals, unit_value)
 
     blank = {"lost_units": 0, "downtime_lost_units": 0, "rejected_units": 0,
              "cost": 0 if priced else None, "downtime_cost": 0 if priced else None,
              "scrap_cost": 0 if priced else None}
+    # Every date the fortnight touches, oldest first. A window that opens mid-day
+    # touches fifteen, and the oldest is flagged `partial`, as build_cost_summary's
+    # daily bars are (#587): drawing it as a whole day would move the gap, not close it.
+    start_date = prior_window.start.date()
+    end_date = (current_window.end - timedelta(microseconds=1)).date()
+    opens_mid_day = prior_window.start.time() != datetime.min.time()
     series = []
-    for d in window:
+    for i in range((end_date - start_date).days + 1):
+        d = start_date + timedelta(days=i)
         row = day_rows.get(d, blank)
         series.append({"date": d.isoformat(), "lost_units": row["lost_units"],
                        "downtime_lost_units": row["downtime_lost_units"],
                        "scrap_units": row["rejected_units"], "cost": row["cost"],
-                       "downtime_cost": row["downtime_cost"], "scrap_cost": row["scrap_cost"]})
+                       "downtime_cost": row["downtime_cost"], "scrap_cost": row["scrap_cost"],
+                       **({"partial": True} if (i == 0 and opens_mid_day) else {})})
     current, prior = halves["current"], halves["prior"]
 
     known = current["lost_units"] is not None and prior["lost_units"] is not None

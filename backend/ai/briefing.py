@@ -11,6 +11,7 @@ A read-model that reads only other read-models (and one machine-status query);
 auto-scoped to the tenant by the query layer (ADR-0002); it adds no storage.
 """
 import models
+import oee_contract
 from ai.oee import build_oee_summary
 from ai.recovery import build_recovery_summary
 from ai.downtime import build_downtime_summary
@@ -254,8 +255,11 @@ def build_briefing(db, tenant: str) -> dict:
     # "this week" so a rising-intra-week / down-vs-last-week plant doesn't read as a
     # bare contradiction across the two surfaces.
     trend = _trend(oee["daily"])
-    headline = (f"Plant OEE {plant['oee']}% ({trend} this week) · "
-                f"{len(alerts)} thing{_plural(len(alerts))} need attention")
+    # A plant OEE states its coverage (OEE contract s4): a figure from part of the
+    # plant reads higher the week a poor machine goes silent.
+    covered = oee_contract.coverage_phrase(oee["coverage"])
+    headline = (f"Plant OEE {plant['oee']}% ({covered + '; ' if covered else ''}{trend} this week) · "
+                f"{len(alerts)} thing{_plural(len(alerts))} need{'s' if len(alerts) == 1 else ''} attention")
 
     return {
         "has_data": True,

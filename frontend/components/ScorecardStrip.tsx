@@ -5,10 +5,17 @@ import { apiGet } from "../lib/api";
 import { CURRENCY, money } from "../lib/money";
 
 // Mirrors the backend scorecard read-model (ai/scorecard.py build_scorecard).
+// How much of the plant a figure measured (backend oee_contract.coverage). Only
+// the Plant OEE KPI carries it.
+type Coverage = {
+  machines_expected: number; machines_reporting: number;
+  coverage_pct: number | null; complete: boolean;
+};
 type Kpi = {
   key: string; label: string; value: number | null; unit: string;
   tone: "good" | "warn" | "bad" | "none";
   delta: number | null; delta_tone: "good" | "bad" | "flat" | null;
+  coverage?: Coverage | null;
 };
 type Scorecard = { has_data: boolean; kpis: Kpi[] };
 
@@ -85,6 +92,14 @@ export default function ScorecardStrip({ onOpen }: { onOpen?: (viewKey: string) 
               {clickable && <span className="text-slate-600 group-hover:text-slate-300 transition" aria-hidden>→</span>}
             </p>
             <p className={`text-3xl font-bold mt-1 ${toneCls[k.tone]}`}>{fmt(k)}</p>
+            {/* A plant OEE from part of the plant says so: a machine that stops
+                reporting leaves the pooled figure, which then reads higher. */}
+            {k.value != null && k.coverage && !k.coverage.complete && (
+              <p className="text-[11px] mt-0.5 text-amber-300/90">
+                from {k.coverage.machines_reporting} of {k.coverage.machines_expected} machine
+                {k.coverage.machines_expected !== 1 ? "s" : ""}
+              </p>
+            )}
             {k.delta != null && (
               <p className={`text-xs mt-0.5 ${deltaCls[k.delta_tone ?? "flat"]}`}>
                 {deltaGlyph(k.delta)} {fmtDelta(k)} <span className="text-slate-600">vs last wk</span>

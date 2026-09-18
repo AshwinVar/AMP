@@ -8,6 +8,7 @@ A thin keyword router today; an LLM can layer on top later without changing the
 contract. Every underlying query is auto-scoped to the tenant (ADR-0002).
 """
 import models
+import oee_contract
 from ai.oee import build_oee_summary
 from ai.cost import build_cost_summary
 from ai.delivery import build_delivery_summary
@@ -258,7 +259,10 @@ def _oee(db, tenant):
     plant = o["plant"]
     if not plant["has_data"]:
         return "No production yet this week, so there's no OEE to report.", "executive"
-    ans = (f"Plant OEE is {plant['oee']}% (availability {plant['availability']}%, "
+    # A plant OEE states its coverage (OEE contract s4).
+    covered = oee_contract.coverage_phrase(o["coverage"])
+    ans = (f"Plant OEE is {plant['oee']}%{', measured ' + covered if covered else ''} "
+           f"(availability {plant['availability']}%, "
            f"performance {plant['performance']}%, quality {plant['quality']}%). "
            f"Biggest drag: {o['biggest_drag']}.")
     if o.get("worst"):

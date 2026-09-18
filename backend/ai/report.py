@@ -8,6 +8,7 @@ storage.
 """
 from datetime import datetime
 
+import oee_contract
 from ai.scorecard import build_scorecard
 from ai.cost import build_cost_summary
 from ai.delivery import build_delivery_summary
@@ -37,7 +38,10 @@ def _kpi_line(k) -> str:
         arrow = "up" if k["delta"] > 0 else "down"
         mag = money(abs(k["delta"])) if k["unit"] == CURRENCY else f"{abs(k['delta'])}{'' if k['unit'] == '%' else k['unit']}"
         delta = f" ({arrow} {mag} vs last week)"
-    return f"- **{k['label']}**: {val}{delta}"
+    # The Plant OEE KPI carries its coverage (OEE contract s4); say it when the
+    # figure did not come from every machine.
+    covered = oee_contract.coverage_phrase(k.get("coverage")) if k["value"] is not None else ""
+    return f"- **{k['label']}**: {val}{delta}{' — ' + covered if covered else ''}"
 
 
 def loss_lines(cost) -> list:

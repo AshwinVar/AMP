@@ -122,7 +122,8 @@ CLI_ONLY_FUNCTIONS = {
 KNOWN_CLI_TOOLS = {
     "backfill_enterprise_tenants.py": "approval-gated backfill; prints a dry-run report",
     "retention.py": "operational prune; prints what it would delete for a human to approve",
-    "reseed_inventory.py": "local dev reseed",
+    "reseed_inventory.py": "one-tenant dev reseed (--tenant, --yes, refuses production); "
+                           "prints what it deleted and seeded",
     "reset_machines.py": "local dev helper",
     "e2e_sim.py": "end-to-end smoke runner; its output IS the result",
     "live_simulator.py": "dev-only HTTP simulator",

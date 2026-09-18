@@ -106,7 +106,8 @@ ALLOWED_CROSS_TENANT = {
 
 SKIP_FILES = {
     "reset_factory.py",
-    "reseed_inventory.py",
+    # Not reseed_inventory.py: its one read of an unscoped model (the AgentAction
+    # cleanup) filters by the named tenant's POs, so the sweep checks it.
     "offboard_tenant.py",
     "backfill_enterprise_tenants.py",
 }

@@ -39,7 +39,8 @@ omit =
     e2e_sim.py
     phase30_plc_simulator.py
     mqtt_machine_publisher.py
-    reseed_inventory.py
+    # reseed_inventory.py is no longer omitted: its run() takes a session, and
+    # test_reseed_inventory_scoped.py drives it in-process.
     # Pre-commercial audit harnesses: run by hand against a disposable
     # PostgreSQL database to produce evidence (tenant isolation, read-model
     # latency at factory scale). Never imported by the app, and measuring them

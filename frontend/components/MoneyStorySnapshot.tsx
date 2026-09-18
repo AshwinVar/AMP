@@ -22,10 +22,12 @@ type Recovery = {
   lever_recoverable_value_per_year: number | null;
   lever_recoverable_units_per_year: number;
 };
+// estimated_loss_value is null without a unit value (it used to be a made-up £8 a
+// minute); estimated_loss_units is null when downtime had no run time to convert.
 type Management = {
   total_downtime_minutes: number;
-  estimated_loss_units: number;
-  estimated_loss_value: number;
+  estimated_loss_units: number | null;
+  estimated_loss_value: number | null;
   unit_value_gbp: number | null;
 };
 
@@ -85,10 +87,16 @@ export default function MoneyStorySnapshot({ isAdmin = false }: { isAdmin?: bool
         <div className="rounded-2xl border border-red-500/30 bg-red-500/5 p-6">
           <p className="text-xs font-semibold uppercase tracking-wide text-red-300/80">Downtime loss · recent window</p>
           <p className="mt-2 text-4xl font-bold text-red-300 tabular-nums">
-            {priced ? gbp(mgmt?.estimated_loss_value ?? 0) : `${units(mgmt?.estimated_loss_units ?? 0)} units`}
+            {mgmt?.estimated_loss_value != null
+              ? gbp(mgmt.estimated_loss_value)
+              : mgmt?.estimated_loss_units != null
+                ? `${units(mgmt.estimated_loss_units)} units`
+                : "—"}
           </p>
           <p className="mt-2 text-sm text-slate-400">
-            {units(mgmt?.total_downtime_minutes ?? 0)} min of downtime ≈ {units(mgmt?.estimated_loss_units ?? 0)} good units not made
+            {mgmt?.estimated_loss_units != null
+              ? `${units(mgmt.total_downtime_minutes ?? 0)} min of downtime ≈ ${units(mgmt.estimated_loss_units)} good units not made`
+              : `${units(mgmt?.total_downtime_minutes ?? 0)} min of downtime, with no run time to convert into units`}
           </p>
         </div>
 

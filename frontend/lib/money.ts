@@ -17,3 +17,19 @@ export const CURRENCY = "£";
 export function money(n: number): string {
   return `${CURRENCY}${n.toLocaleString()}`;
 }
+
+/**
+ * A loss as a card shows it (ADR-0010): money when the tenant has set its unit
+ * value (the backend then sends a number for `cost`), good units when it has not
+ * (`cost` is null), and "—" when the downtime could not be converted into units
+ * at all (no run time in the window, so both are null).
+ *
+ * The cost-of-losses cards used to call money() on figures priced at a fixed £12 a
+ * minute and £25 a unit for every tenant. With no rate there is no £ to show, and
+ * money(null) would crash; this is the one place that decides what to show instead.
+ */
+export function lossFigure(cost: number | null | undefined, units: number | null | undefined): string {
+  if (cost != null) return money(cost);
+  if (units != null) return `${units.toLocaleString()} unit${units === 1 ? "" : "s"}`;
+  return "—";
+}

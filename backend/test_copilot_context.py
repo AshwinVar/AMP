@@ -40,6 +40,8 @@ def test_context_includes_all_advertised_domains():
     db.add(models.QualityInspection(inspection_no="QC-1", machine_id=1, inspector="qa",
                                     inspected_quantity=100, passed_quantity=90, failed_quantity=10,
                                     defect_category="solder"))
+    # a unit value -> the cost section is in £ (ADR-0010)
+    db.add(models.TenantConfig(tenant_code="DEFAULT", plan="Pro", unit_value_gbp=45))
     db.commit()
 
     ctx = ai_copilot._build_factory_context(db, "DEFAULT")
@@ -54,6 +56,24 @@ def test_context_includes_all_advertised_domains():
     print("PASS copilot context now includes cost, orders, quality and production (not just machines/OEE)")
 
 
+def test_context_without_a_unit_value_gives_the_model_units_not_money():
+    """No unit value set: the model must not be handed a £ to repeat (ADR-0010).
+    40 min down at 90 good / 440 run minutes ≈ 8 units, + 10 scrap = 18 units."""
+    db = _sess()
+    now = datetime.utcnow()
+    db.add(models.Machine(id=1, name="SMT-Reflow-01", status="Running", utilization=80, line="SMT"))
+    db.add(models.ProductionRecord(machine_id=1, planned_minutes=480, runtime_minutes=440,
+                                   ideal_cycle_time_seconds=30, total_count=100, good_count=90,
+                                   rejected_count=10, created_at=now))
+    db.commit()
+    ctx = ai_copilot._build_factory_context(db, "DEFAULT")
+    assert "COST OF LOSSES" not in ctx, ctx
+    losses = [line for line in ctx.splitlines() if line.startswith("LOSSES (7d)")]
+    assert losses and "18 good units not made" in losses[0], ctx
+    assert "£" not in losses[0] and "no unit value set" in losses[0], losses[0]
+    print("PASS no unit value: the copilot context carries lost units and no £")
+
+
 def test_context_empty_is_safe():
     ctx = ai_copilot._build_factory_context(_sess(), "DEFAULT")
     assert ctx == "No factory data available yet."
@@ -62,5 +82,6 @@ def test_context_empty_is_safe():
 
 if __name__ == "__main__":
     test_context_includes_all_advertised_domains()
+    test_context_without_a_unit_value_gives_the_model_units_not_money()
     test_context_empty_is_safe()
     print("COPILOT CONTEXT OK: the LLM sees cost, orders, quality, maintenance, WIP and compliance")

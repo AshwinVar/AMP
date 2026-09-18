@@ -48,11 +48,13 @@ def _fresh_session():
 def _seed_losses(db):
     """One machine with real downtime and scrap, so loss_cost is non-zero.
 
-    40 min downtime x 12 + 3 rejects x 25 = 555. The number matters: a fixture with
-    loss_cost == 0 would render "£0" and still pass a naive "no $" assertion while
-    telling us nothing about the formatting path.
+    Priced at the tenant's own unit value, £45 (ADR-0010: no rate, no £). This week:
+    40 min down at 97 good / 440 run minutes ≈ 9 units, + 3 rejects = 12 units = £540.
+    The number matters: a fixture with loss_cost == 0 would render "£0" and still
+    pass a naive "no $" assertion while telling us nothing about the formatting path.
     """
     now = datetime.utcnow()
+    db.add(models.TenantConfig(tenant_code="DEFAULT", plan="Pro", unit_value_gbp=45))
     db.add(models.Machine(id=1, name="M1", status="Running", utilization=90, line="SMT"))
     db.add(models.ProductionRecord(machine_id=1, planned_minutes=480, runtime_minutes=440,
                                    ideal_cycle_time_seconds=30, total_count=100, good_count=97,
@@ -126,6 +128,42 @@ def test_no_money_surface_prints_a_dollar():
     print("PASS no money surface prints a dollar; all print %s" % CURRENCY)
 
 
+def _frontend_currency_literals(rel, text):
+    """(index, line number, line) for every frontend line that prints a literal "$".
+
+    `${...}` inside a template literal is interpolation, not currency, so only a $
+    IMMEDIATELY before one (`$${`) or before a digit counts there. Outside a template
+    literal -- in JSX text -- a bare `${m.cost}` renders a "$" followed by the value.
+    CostIntelCard printed every machine's loss that way and DigitalTwinSection its
+    "Cost:" label, and the old check, which only looked for `$${` and `$<digit>`,
+    passed both. Backtick-quoted segments are blanked before the JSX-text check."""
+    found = []
+    for line_no, ln in enumerate(text.splitlines(), 1):
+        code = ln.split("//", 1)[0]
+        outside_templates = re.sub(r"`[^`]*`", "``", code)
+        if re.search(r"\$\$\{|\$\d", code) or re.search(r"\$\{|\$\d", outside_templates):
+            found.append((len(found), line_no, ln.strip()))
+    return found
+
+
+def test_the_frontend_guard_catches_a_dollar_in_jsx_text():
+    """The two lines this guard missed, verbatim, must now be caught; ordinary
+    template interpolation and the shared formatter must not be."""
+    missed = [
+        "<span>${m.cost.toLocaleString()} (downtime ${m.downtime_cost.toLocaleString()})</span>",
+        "<p>Cost: ${(machine ? costMap.get(machine.id) ?? 0 : 0).toLocaleString()}</p>",
+    ]
+    fine = [
+        "title={`Downtime ${money(m.downtime_cost)}`}",
+        "style={{ width: `${w}%` }}",
+        "<p>Lost: {lossFigure(row.cost, row.lost_units)}</p>",
+        "return `${CURRENCY}${n.toLocaleString()}`;",
+    ]
+    assert len(_frontend_currency_literals("probe", "\n".join(missed))) == 2
+    assert _frontend_currency_literals("probe", "\n".join(fine)) == []
+    print("PASS the frontend currency guard catches a JSX-text dollar and ignores template interpolation")
+
+
 def test_source_rot_guard_no_bare_symbol_in_a_money_file():
     """Catch a NEW hardcoded literal that no current test happens to render.
 
@@ -137,7 +175,7 @@ def test_source_rot_guard_no_bare_symbol_in_a_money_file():
     frontend_files = ["components/CostIntelCard.tsx", "components/CostSnapshot.tsx",
                       "components/ScorecardStrip.tsx", "components/CostingSection.tsx",
                       "components/MoneyStorySnapshot.tsx", "components/RecoverySnapshot.tsx",
-                      "lib/money.ts"]
+                      "components/DigitalTwinSection.tsx", "lib/money.ts"]
     # The single allowed "$" in backend code: ai/assistant.py's intent-keyword tuple,
     # identified by a token unique to it. Those strings are matched against what the
     # USER TYPES, so "$" belongs there next to "£" — someone asking "what's this
@@ -150,12 +188,8 @@ def test_source_rot_guard_no_bare_symbol_in_a_money_file():
             if "$" in code and INTENT_KEYWORDS not in code:
                 offenders.append(f"{rel}:{i}: {ln.strip()}")
     for rel in frontend_files:
-        for i, ln in enumerate(_read(os.path.join(FRONTEND, rel)).splitlines(), 1):
-            code = ln.split("//", 1)[0]
-            # `${...}` is ordinary template interpolation; only a $ IMMEDIATELY before
-            # one (`$${`) or before a digit is a currency literal.
-            if re.search(r"\$\$\{|\$\d", code):
-                offenders.append(f"{rel}:{i}: {ln.strip()}")
+        for i, line_no, ln in _frontend_currency_literals(rel, _read(os.path.join(FRONTEND, rel))):
+            offenders.append(f"{rel}:{line_no}: {ln}")
     assert not offenders, "hardcoded currency literal(s) — import from currency.py / lib/money.ts:\n" + "\n".join(offenders)
     print("PASS no money file carries a hardcoded currency literal")
 
@@ -171,6 +205,7 @@ if __name__ == "__main__":
     test_the_two_stacks_agree_on_the_symbol()
     test_the_scorecard_unit_token_survives_every_consumer()
     test_no_money_surface_prints_a_dollar()
+    test_the_frontend_guard_catches_a_dollar_in_jsx_text()
     test_source_rot_guard_no_bare_symbol_in_a_money_file()
     test_the_formatters_themselves()
     print("ALL CURRENCY TESTS PASSED")

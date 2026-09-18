@@ -40,6 +40,27 @@ def _kpi_line(k) -> str:
     return f"- **{k['label']}**: {val}{delta}"
 
 
+def loss_lines(cost) -> list:
+    """The week's losses as report bullets: £ with the tenant's rate, good units
+    without it (ADR-0010). Never a £ the tenant did not set."""
+    down = cost["downtime_minutes"]
+    if cost["lost_units"] is None:
+        return [f"- {down:,} min of downtime with no run time to convert into lost units; "
+                f"{cost['rejected_units']:,} units scrapped"]
+    if cost["priced"]:
+        lines = [f"- {money(cost['loss_cost'])} lost this week "
+                 f"(downtime {money(cost['downtime_cost'])}, scrap {money(cost['scrap_cost'])})"]
+    else:
+        lines = [f"- {cost['lost_units']:,} good units lost this week "
+                 f"(downtime {down:,} min ≈ {cost['downtime_lost_units']:,} units, "
+                 f"scrap {cost['rejected_units']:,} units). Set a unit value to see this in money."]
+    if cost["by_machine"]:
+        worst = cost["by_machine"][0]
+        figure = money(worst["cost"]) if cost["priced"] else f"{worst['lost_units']:,} units"
+        lines.append(f"- Biggest loss: {worst['name']} ({figure})")
+    return lines
+
+
 def build_weekly_report(db, tenant: str) -> dict:
     """A Markdown weekly report composed from the scorecard, cost, delivery and
     briefing read-models (ADR-0007). Returns the text plus a data echo so a UI can
@@ -57,11 +78,7 @@ def build_weekly_report(db, tenant: str) -> dict:
     lines.append("")
 
     lines.append("## Cost of losses")
-    lines.append(f"- {money(cost['loss_cost'])} lost this week "
-                 f"(downtime {money(cost['downtime_cost'])}, scrap {money(cost['scrap_cost'])})")
-    if cost["by_machine"]:
-        worst = cost["by_machine"][0]
-        lines.append(f"- Costliest machine: {worst['name']} ({money(worst['cost'])})")
+    lines += loss_lines(cost)
     lines.append("")
 
     lines.append("## Delivery")

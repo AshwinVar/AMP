@@ -270,9 +270,16 @@ def _build_factory_context(db: Session, tenant: str) -> str:
         cost = build_cost_summary(db, tenant)
         if cost["has_data"]:
             worst = cost["by_machine"][0]["name"] if cost["by_machine"] else "-"
-            lines.append(f"COST OF LOSSES (7d): {money(cost['loss_cost'])} total "
-                         f"(downtime {money(cost['downtime_cost'])}, scrap {money(cost['scrap_cost'])}); "
-                         f"costliest machine {worst}.")
+            if cost["priced"] and cost["loss_cost"] is not None:
+                lines.append(f"COST OF LOSSES (7d): {money(cost['loss_cost'])} total "
+                             f"(downtime {money(cost['downtime_cost'])}, scrap {money(cost['scrap_cost'])}); "
+                             f"biggest loss {worst}.")
+            elif cost["lost_units"] is not None:
+                # No unit value set: the losses exist in units only; never hand the
+                # model a £ the tenant did not give us (ADR-0010).
+                lines.append(f"LOSSES (7d): {cost['lost_units']:,} good units not made "
+                             f"(downtime {cost['downtime_minutes']:,} min, scrap {cost['rejected_units']:,} units; "
+                             f"no unit value set, so no money figure); biggest loss {worst}.")
         deliv = build_delivery_summary(db, tenant)
         if deliv["total"]:
             lines.append(f"ORDERS/DELIVERY: {deliv['total']} orders, "

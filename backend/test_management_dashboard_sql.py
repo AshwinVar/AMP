@@ -95,9 +95,10 @@ def test_management_dashboard_matches_list_summary_and_pools_in_sql():
 
     # Loss units at the observed run-rate good/runtime = 410/510 per minute over 165
     # downtime minutes = round(165 * 410/510) = round(132.6..) = 133. No £ rate
-    # configured (DEFAULT tenant), so the legacy £8/min proxy: 165*8 = 1320.
+    # configured (DEFAULT tenant), so no £ at all (ADR-0010). This used to be the
+    # legacy £8/min proxy, 165*8 = 1320: a figure the customer never gave us.
     assert out["estimated_loss_units"] == 133, out
-    assert out["estimated_loss_value"] == 1320, out
+    assert out["estimated_loss_value"] is None, out
 
     assert out["breakdown_count"] == 1 and out["machine_count"] == 2, out
 
@@ -138,8 +139,9 @@ def test_management_dashboard_sums_path_parity_is_exact_unit():
         machines, downtime, [], [], unit_value_gbp=2.5,
         production_sums=prod_sums, shift_sums=shift_sums)
     assert via_rows == via_sums, (via_rows, via_sums)
-    # And the £ path honoured the configured rate: 133 loss units * £2.5 = round(332.5)=332.
-    assert via_sums["estimated_loss_value"] == round(133 * 2.5), via_sums
+    # And the £ path honoured the configured rate: 133 loss units * £2.5 = 332.5, rounded
+    # half UP to 333 (loss_value.whole; Python's round() would give the banker's 332).
+    assert via_sums["estimated_loss_value"] == 333, via_sums
     print("PASS build_management_summary: sums entry-point == rows entry-point (incl. configured £ rate)")
 
 
@@ -187,7 +189,8 @@ def test_management_dashboard_empty_tables_are_zero_not_a_crash():
     assert out["avg_oee"] == 0 and out["avg_availability"] == 0, out
     assert out["total_downtime_minutes"] == 0, out
     assert out["target_achievement"] == 0, out          # 0 target -> 0, not a crash
-    assert out["estimated_loss_units"] == 0 and out["estimated_loss_value"] == 0, out
+    # no downtime -> 0 units lost; no unit value configured -> no £ (ADR-0010)
+    assert out["estimated_loss_units"] == 0 and out["estimated_loss_value"] is None, out
     assert out["worst_machine"] == "No data" and out["top_loss_reason"] == "No data", out
     assert out["machine_count"] == 1 and out["breakdown_count"] == 0, out
     print("PASS management dashboard: empty tables -> all-zero summary, no divide-by-empty crash")

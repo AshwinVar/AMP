@@ -3,6 +3,20 @@ from datetime import datetime
 from currency import money
 
 
+def _downtime_loss(summary: dict) -> str:
+    """The management summary's downtime loss: £ with the tenant's unit value,
+    good units without it, and "unknown" when there was no run time to convert.
+    It used to print money(estimated_loss_value or 0): £8 a minute the customer
+    never set, or a £0 for a loss that was not zero."""
+    value = summary.get("estimated_loss_value")
+    units = summary.get("estimated_loss_units")
+    if value is not None:
+        return money(value)
+    if units is not None:
+        return f"{units:,} good units (set a unit value to see money)"
+    return "unknown (no run time to convert the downtime)"
+
+
 def build_daily_summary_text(summary: dict, shift_kpis: list, alerts: list):
     lines = [
         "AMP Daily Factory Intelligence Report",
@@ -26,7 +40,9 @@ def build_daily_summary_text(summary: dict, shift_kpis: list, alerts: list):
         # `... or 0` coalesces a missing/None value to a real £0 (build_management_summary
         # always sets an int, but this keeps the pre-existing `.get(.., 0)` null-safety
         # and avoids money(None) raising on a hand-built summary dict).
-        f"Estimated Downtime Loss: {money(summary.get('estimated_loss_value') or 0)}",
+        # £ only with the tenant's unit value (ADR-0010); units otherwise, and
+        # "unknown" when downtime had no run time to convert.
+        f"Estimated Downtime Loss: {_downtime_loss(summary)}",
         "",
         "Shift KPIs",
         "----------",

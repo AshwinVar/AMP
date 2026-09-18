@@ -221,6 +221,12 @@ def reference_executive_oee(db):
         # consumer can tell "scored 0%" from "did not run", and this
         # reference exists to be compared key-for-key, so it grows with it.
         "has_data": plant["has_data"],
+        # Added when plant OEE began stating its coverage (OEE contract s4,
+        # test_exec_oee_and_recovery_state_coverage.py). The endpoint computes it
+        # with oee_contract.coverage over its window; so does this reference,
+        # which is compared key-for-key and so grows with the endpoint.
+        "coverage": oee_contract.coverage(
+            db, "DEFAULT", oee_contract.OeeWindow(oee_contract.DEFAULT_WINDOW_DAYS)),
     }
 
 

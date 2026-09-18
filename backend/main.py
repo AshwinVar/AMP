@@ -728,6 +728,10 @@ ALLOWED_ORIGINS = [
 # instead of a readable 403 — so it is added BEFORE CORSMiddleware.
 app.add_middleware(plan_gate.PlanGateMiddleware)
 
+# A company preview aimed at the OEM sentinel namespace is refused, readably,
+# on every route. Inside CORS for the plan gate's reason (tenancy.py).
+app.add_middleware(tenancy.ReservedPreviewGuardMiddleware)
+
 # THE SCHEMA GATE (ADR-0018). Added here — inside CORS, for the same reason as
 # the plan gate — and it is the innermost of the response-returning middlewares
 # because a schema mismatch makes every question below it unanswerable: there is

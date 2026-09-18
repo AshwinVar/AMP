@@ -85,9 +85,16 @@ identifiers and nobody had used a colon. The audit creates exactly that tenant,
 binds the sentinel, and demonstrates the collision.
 
 **Fixed, not merely noted.** `tenancy.assert_tenant_code_available` rejects any
-tenant code containing `:`, enforced at `/saas/tenants` — the one place a tenant
-code enters the system. The audit now proves the collision *would* work
-(a CONTROL) and that creating one is refused.
+tenant code containing `:`, enforced at `/saas/tenants`. The audit now proves the
+collision *would* work (a CONTROL) and that creating one is refused.
+
+*Correction (2026-09-18):* `/saas/tenants` was described here as "the one place a
+tenant code enters the system". It is not: the founder's company-switcher
+preview (`X-Tenant`) binds a tenant too, and it bound `OEM:<code>` unchecked, so
+anything a crafted preview wrote landed in that manufacturer's sentinel
+namespace. `effective_tenant` now never binds a reserved code from the header,
+and `ReservedPreviewGuardMiddleware` refuses such a request with a readable 403
+on every route (`test_preview_cannot_enter_oem_namespace.py`).
 
 **The second finding, from the claim campaign.** The audit asserted that only two
 code paths write `factory_tenant_code`, and reported a third: `offboard_tenant`.

@@ -264,7 +264,7 @@ def case_the_factory_accepts_explicitly():
     check("an OEM token cannot accept on the factory's behalf", r.status == 403, r)
     check("another factory gets 404", H.factory_accept(cid, tok=TOKENS["fb"]).status == 404)
     check("nothing so far changed the sharing policy",
-          H.grants() == {"SHARE_ALARMS"}, H.grants())
+          H.grants() == {"SHARE_OPERATING_HOURS"}, H.grants())
     check("...nor created coverage rows", _count(models.ServiceContractMachine) == 0)
 
     r = H.factory_accept(cid)
@@ -277,7 +277,7 @@ def case_the_factory_accepts_explicitly():
           v.get("status") == "accepted" and v.get("factory_accepted_hash") == h
           and v.get("oem_accepted_hash") == h, v)
     check("the grant WIDENED the policy: alarms kept, downtime added",
-          H.grants() == {"SHARE_ALARMS", "SHARE_DOWNTIME"}, H.grants())
+          H.grants() == {"SHARE_OPERATING_HOURS", "SHARE_DOWNTIME"}, H.grants())
     with H.unscoped() as db:
         rows = (db.query(models.ServiceContractMachine)
                   .order_by(models.ServiceContractMachine.installation_id).all())

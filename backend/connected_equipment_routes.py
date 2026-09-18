@@ -105,10 +105,10 @@ def connected_equipment(db: Session = Depends(_get_db),
             "machines": sum(1 for r in rows if r.oem_code == code),
             "granted": sorted(oem_sharing.grants_for(db, code, tenant)),
         } for code in oem_codes],
-        # The full vocabulary, with plain-English labels, so the factory can see
-        # what it is NOT sharing as clearly as what it is.
-        "available_grants": [{"key": g, "label": oem_sharing.GRANT_LABELS[g]}
-                             for g in oem_sharing.ALL_GRANTS],
+        # Every grant AMP reads, with plain-English labels, so the factory can see
+        # what it is NOT sharing as clearly as what it is. Only those: a box that
+        # shares nothing is not consent to anything (oem_sharing.OFFERED_GRANTS).
+        "available_grants": oem_sharing.offered_grant_choices(),
     }
 
 
@@ -131,11 +131,9 @@ def update_sharing(payload: SharingUpdate, db: Session = Depends(_get_db),
     if not oem_code:
         raise HTTPException(status_code=400, detail="oem_code is required")
 
-    unknown = [g for g in payload.grants if g not in oem_sharing.ALL_GRANTS]
-    if unknown:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Unknown sharing grants: {', '.join(sorted(unknown))}")
+    refusal = oem_sharing.refused_grants(payload.grants)
+    if refusal:
+        raise HTTPException(status_code=400, detail=refusal)
 
     # The OEM must actually have equipment here. Granting to a manufacturer with
     # no machines on site is either a typo or an attempt to hand data to a third
@@ -207,10 +205,9 @@ def _claim_preview(db, claim, inst, _preview_tenant):
         "firmware_version": inst.firmware_version,
         "warranty": oem_service.warranty_state(inst),
         "expires_at": claim.expires_at.isoformat() if claim.expires_at else None,
-        # The vocabulary, so the factory chooses from what exists rather than
-        # being told afterwards what it agreed to.
-        "available_grants": [{"key": g, "label": oem_sharing.GRANT_LABELS[g]}
-                             for g in oem_sharing.ALL_GRANTS],
+        # What can be shared, so the factory chooses from what exists rather than
+        # being told afterwards what it agreed to (oem_sharing.OFFERED_GRANTS).
+        "available_grants": oem_sharing.offered_grant_choices(),
         # What this factory ALREADY shares with this manufacturer, if anything.
         # Shown because accepting can only widen consent: without it, somebody
         # adding a second machine would think the unticked boxes were about to
@@ -259,11 +256,9 @@ def accept_claim(code: str, payload: ClaimAcceptance,
     tenant = request_tenant(current_user)
     actor = current_user.get("sub") or current_user.get("username") or "?"
 
-    unknown = [g for g in payload.grants if g not in oem_sharing.ALL_GRANTS]
-    if unknown:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Unknown sharing grants: {', '.join(sorted(unknown))}")
+    refusal = oem_sharing.refused_grants(payload.grants)
+    if refusal:
+        raise HTTPException(status_code=400, detail=refusal)
 
     claim = oem_claims.find_by_code(db, code)
     inst = None

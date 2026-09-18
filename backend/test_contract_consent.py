@@ -70,12 +70,12 @@ def case_setup():
     cid = r.body["id"]
     H.propose(cid)
     check("proposing a contract grants nothing",
-          H.grants() == before == {"SHARE_ALARMS"}, H.grants())
+          H.grants() == before == {"SHARE_OPERATING_HOURS"}, H.grants())
     check("...and an OEM cannot compute on a contract the factory has not accepted",
           H.compute(cid, H.periods(cid)[0]["start"]).status in (403, 409))
     a = H.factory_accept(cid)
     check("the factory accepts, granting SHARE_DOWNTIME", a.status == 200
-          and H.grants() == {"SHARE_ALARMS", "SHARE_DOWNTIME"}, (a, H.grants()))
+          and H.grants() == {"SHARE_OPERATING_HOURS", "SHARE_DOWNTIME"}, (a, H.grants()))
     S["cid"] = cid
     ps = H.periods(cid)
     S["ps"] = ps
@@ -99,7 +99,7 @@ def case_withdrawal_withholds_on_the_next_request():
     section("1. WITHDRAWING SHARE_DOWNTIME WITHHOLDS STATEMENTS ON THE NEXT REQUEST")
     cid, st, ps, did = S["cid"], S["st"], S["ps"], S["did"]
     sid = st["id"]
-    _set_grants(["SHARE_ALARMS"])
+    _set_grants(["SHARE_OPERATING_HOURS"])
     base = f"/oem/contracts/{cid}"
     ws = H.parse_ts(ps[1]["start"]) + timedelta(days=9)
     attempts = [
@@ -169,7 +169,7 @@ def case_withdrawal_withholds_on_the_next_request():
     check("CONTROL: the factory's own history carries the revised hash",
           revised_hash in fh.raw.decode("utf-8", "replace"))
 
-    _set_grants(["SHARE_ALARMS", "SHARE_DOWNTIME"])
+    _set_grants(["SHARE_OPERATING_HOURS", "SHARE_DOWNTIME"])
     g = GET(f"{base}/statements/{sid}", TOKENS["alpha"])
     check("restoring the grant restores access on the next request",
           g.status == 200 and g.body.get("content") is not None, g)
@@ -192,7 +192,7 @@ def case_acceptance_grants_to_that_manufacturer_only():
           H.grants("OEM_ALPHA", "FACTORY_B"))
     check("...and nothing to BETA", H.grants("OEM_BETA", "FACTORY_B") == set())
     check("...and nothing changed between FACTORY_A and ALPHA",
-          H.grants() == {"SHARE_ALARMS", "SHARE_DOWNTIME"}, H.grants())
+          H.grants() == {"SHARE_OPERATING_HOURS", "SHARE_DOWNTIME"}, H.grants())
     S["cid_b"] = cid
 
 

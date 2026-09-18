@@ -105,7 +105,9 @@ grepping every `require_oem(...)` call site. The same is true of
 | 6 | **A relationship is not consent.** Two independent things must both hold: an installation row *and* a granted policy. | `oem_sharing.py:10-17`, `:95` `installations_for` |
 | 7 | **"Not shared" is distinguishable from "no data"** in the API and the portal. | `oem_routes.py:183` `not_shared`; `oem_sharing.py:171` `fleet_row` |
 
-The exact seven keys and their labels, as a factory sees them:
+The seven keys in the vocabulary. A factory is offered only the four that gate
+data (`oem_sharing.OFFERED_GRANTS`, since 2026-09-18); the last three are
+reserved:
 
 | Key | Label shown to the factory |
 |---|---|
@@ -117,9 +119,10 @@ The exact seven keys and their labels, as a factory sees them:
 | `SHARE_MAINTENANCE_HISTORY` | Maintenance work carried out on this machine |
 | `SHARE_DOWNTIME` | Downtime events recorded against this machine |
 
-**The most important narrowing in this document.** Only **two** of the seven
-grants gate any data today. Verified by searching every use of each constant
-outside tests and audit harnesses:
+**The most important narrowing in this document.** Written when only **two** of
+the seven grants gated any data; the list below is kept as it was found, and
+the current position is at its end. Verified by searching every use of each
+constant outside tests and audit harnesses:
 
 - `SHARE_MACHINE_HEALTH` → gates `last_seen_at`, `machine_status`,
   `utilization` (`oem_sharing.py:202-207`, `:128` `visible_machine`)
@@ -142,6 +145,14 @@ outside tests and audit harnesses:
 This is a consent *framework* that is fully built and a set of *payloads* that
 mostly are not. It is honest to demonstrate the consent screen. It is not
 honest to imply that granting `SHARE_ALARMS` will show a manufacturer alarms.
+
+**Current position (2026-09-18).** `SHARE_SERVICE_STATUS` now gates the service
+verdict (`oem_sharing.service_view`) and `SHARE_DOWNTIME` gates service-contract
+statements (ADR-0021). `SHARE_ALARMS`, `SHARE_TELEMETRY` and
+`SHARE_MAINTENANCE_HISTORY` still gate nothing, so a factory is no longer offered
+them: the consent screen shows four boxes, each of which shares something.
+`test_sharing_grants_offered_only_if_read.py` keeps the offered list equal to the
+grants something reads.
 
 ### 1.4 Telemetry — the single most dangerous area for overstatement
 

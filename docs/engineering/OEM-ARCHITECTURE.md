@@ -122,10 +122,13 @@ still resolves `(tenant, site, name)` exactly as ADR-0011 specifies.
 | `SHARE_MACHINE_HEALTH` | health score, connectivity, machine status |
 | `SHARE_OPERATING_HOURS` | operating and loaded hours |
 | `SHARE_SERVICE_STATUS` | service due / overdue |
-| `SHARE_ALARMS` | equipment alarm codes |
-| `SHARE_TELEMETRY` | live readings |
-| `SHARE_MAINTENANCE_HISTORY` | maintenance work done |
-| `SHARE_DOWNTIME` | downtime events |
+| `SHARE_DOWNTIME` | downtime and its reasons, in service-contract statements (ADR-0021) |
+| `SHARE_ALARMS` | reserved: nothing reads it, so it is not offered |
+| `SHARE_TELEMETRY` | reserved: nothing reads it, so it is not offered |
+| `SHARE_MAINTENANCE_HISTORY` | reserved: nothing reads it, so it is not offered |
+
+A factory is offered only the grants something reads (`oem_sharing.OFFERED_GRANTS`,
+held equal to the readers by `test_sharing_grants_offered_only_if_read.py`).
 
 **No row = nothing shared**, beyond what the OEM already knows from having sold
 the machine (its serial, its model, which customer site it shipped to — the

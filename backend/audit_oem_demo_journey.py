@@ -256,17 +256,19 @@ def main():
     print("=" * 74)
     print("MINUTE 5-6 — the customer chooses what to share")
     print("=" * 74)
-    CHOSEN = ["SHARE_MACHINE_HEALTH", "SHARE_OPERATING_HOURS",
-              "SHARE_SERVICE_STATUS", "SHARE_ALARMS"]
+    # The four categories AMP offers are the four something reads
+    # (oem_sharing.OFFERED_GRANTS). Downtime stays off: a service contract asks for it.
+    CHOSEN = ["SHARE_MACHINE_HEALTH", "SHARE_OPERATING_HOURS", "SHARE_SERVICE_STATUS"]
     c, acc = POST(f"/connected-equipment/claim/{code}", fac, {"grants": CHOSEN})
-    step("it accepts, granting FOUR categories of seven", c == 200, f"{c} {acc}")
-    step("...and exactly those four", sorted(acc.get("granted", [])) == sorted(CHOSEN),
+    step("it accepts, granting THREE of the four categories AMP offers", c == 200, f"{c} {acc}")
+    step("...and exactly those three", sorted(acc.get("granted", [])) == sorted(CHOSEN),
          str(acc.get("granted")))
 
     c, ce = GET("/connected-equipment", fac)
     avail = [g["key"] for g in ce.get("available_grants", [])]
-    step("NOT everything is shared — three categories stay off",
-         len(avail) == 7 and len(CHOSEN) == 4, f"{len(avail)} available")
+    step("NOT everything is shared: downtime stays off",
+         len(avail) == 4 and "SHARE_DOWNTIME" in avail and "SHARE_DOWNTIME" not in CHOSEN,
+         f"{avail}")
 
     # ------------------------------------------------------ minutes 6-8 ----
     print()
@@ -337,8 +339,7 @@ def main():
     step("...and its health", row.get("machine_status") == "Running",
          str(row.get("machine_status")))
     step("...while what was NOT shared is named, not silently missing",
-         "SHARE_TELEMETRY" in (GET(f"/oem/machines/{inst_id}", oem)[1]
-                               .get("not_shared") or []),
+         (GET(f"/oem/machines/{inst_id}", oem)[1].get("not_shared") or []) == ["SHARE_DOWNTIME"],
          str(GET(f"/oem/machines/{inst_id}", oem)[1].get("not_shared")))
 
     print()

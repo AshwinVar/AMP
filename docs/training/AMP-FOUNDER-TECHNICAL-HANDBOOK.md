@@ -1445,7 +1445,7 @@ Alarms            YES
 AERON must see health/hours/service/alarms for its own machine — and nothing else, ever.
 
 ### Terms first
-- **Grant** — one switch (`SHARE_OPERATING_HOURS`) the factory turns on. There are **7**: `SHARE_MACHINE_HEALTH, SHARE_OPERATING_HOURS, SHARE_SERVICE_STATUS, SHARE_ALARMS, SHARE_TELEMETRY, SHARE_MAINTENANCE_HISTORY, SHARE_DOWNTIME`.
+- **Grant** — one switch (`SHARE_OPERATING_HOURS`) the factory turns on. The factory is offered **4**, the ones something in AMP reads (`oem_sharing.OFFERED_GRANTS`): `SHARE_MACHINE_HEALTH, SHARE_OPERATING_HOURS, SHARE_SERVICE_STATUS, SHARE_DOWNTIME`. Three more (`SHARE_ALARMS, SHARE_TELEMETRY, SHARE_MAINTENANCE_HISTORY`) are reserved and not offered: AMP has no data behind them, and a box that shares nothing is not consent to anything.
 - **Default-deny** — the absence of a policy row means *nothing* is shared. You opt in, never out.
 - **Allowlist** — build the OEM's view by **copying a field in only if its grant is present**, rather than building the full view and **removing** forbidden fields. Allowlist fails *closed*; a "denylist" fails *open*.
 

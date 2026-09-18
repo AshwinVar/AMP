@@ -164,10 +164,13 @@ async def run_all():
     check("...with a human name and support contact",
           any(m["name"] == "Alpha Compressors" for m in body["manufacturers"]),
           str(body["manufacturers"]))
-    check("the FULL grant vocabulary is offered, with labels",
-          len(body["available_grants"]) == 7
+    # Only what AMP reads: a box that shares nothing is not consent to anything
+    # (oem_sharing.OFFERED_GRANTS, test_sharing_grants_offered_only_if_read.py).
+    check("every grant AMP reads is offered, with labels, and nothing else",
+          [g["key"] for g in body["available_grants"]] == ["SHARE_MACHINE_HEALTH",
+           "SHARE_OPERATING_HOURS", "SHARE_SERVICE_STATUS", "SHARE_DOWNTIME"]
           and all(g["label"] for g in body["available_grants"]),
-          str(body["available_grants"])[:120])
+          str(body["available_grants"])[:160])
     check("nothing is shared yet, and it says so",
           all(e["shared_with_manufacturer"] == [] for e in body["equipment"]),
           str([e["shared_with_manufacturer"] for e in body["equipment"]]))
@@ -193,7 +196,7 @@ async def run_all():
           code in (401, 403), str(code))
 
     code, _ = await call("/connected-equipment/sharing", fac_a_op, "PUT",
-                         {"oem_code": "OEM_ALPHA", "grants": ["SHARE_ALARMS"]})
+                         {"oem_code": "OEM_ALPHA", "grants": ["SHARE_SERVICE_STATUS"]})
     check("a factory OPERATOR cannot change sharing", code == 403, str(code))
 
     code, body = await call("/connected-equipment/sharing", fac_a, "PUT",
@@ -242,6 +245,37 @@ async def run_all():
              if e["serial_number"] == "SN-A1"][0]["shared_with_manufacturer"]
     check("...and the previous grant was left untouched",
           still == ["SHARE_OPERATING_HOURS"], str(still))
+
+    # A grant nothing in AMP reads is refused too: consenting to it would share
+    # nothing, and recording it as given misleads the factory that ticked it.
+    for reserved in ("SHARE_ALARMS", "SHARE_TELEMETRY", "SHARE_MAINTENANCE_HISTORY"):
+        code, body = await call("/connected-equipment/sharing", fac_a, "PUT",
+                                {"oem_code": "OEM_ALPHA",
+                                 "grants": ["SHARE_OPERATING_HOURS", reserved]})
+        check(f"granting {reserved}, which nothing reads, is a 400 that says so",
+              code == 400 and reserved in str(body) and "share nothing" in str(body),
+              f"{code} {body}")
+    code, after = await call("/connected-equipment", fac_a)
+    still = [e for e in after["equipment"]
+             if e["serial_number"] == "SN-A1"][0]["shared_with_manufacturer"]
+    check("...and the agreement is still exactly what it was",
+          still == ["SHARE_OPERATING_HOURS"], str(still))
+    code, machine = await call(f"/oem/machines/{a1['installation_id']}", oem)
+    code, summary = await call("/oem/sharing", oem)
+    check("the manufacturer's sharing summary offers only what a customer CAN share",
+          code == 200 and summary["policies"] and all(
+              p["available"] == ["SHARE_MACHINE_HEALTH", "SHARE_OPERATING_HOURS",
+                                 "SHARE_SERVICE_STATUS", "SHARE_DOWNTIME"]
+              for p in summary["policies"]), f"{code} {summary}")
+    check("the manufacturer is told only what the customer COULD share and has not",
+          machine.get("not_shared") == ["SHARE_DOWNTIME", "SHARE_MACHINE_HEALTH",
+                                         "SHARE_SERVICE_STATUS"],
+          str(machine.get("not_shared")))
+    code, service = await call(f"/oem/machines/{a1['installation_id']}/service", oem)
+    check("...on the service view as well as the machine view",
+          service.get("not_shared") == ["SHARE_DOWNTIME", "SHARE_MACHINE_HEALTH",
+                                        "SHARE_SERVICE_STATUS"],
+          f"{code} {service.get('not_shared')}")
 
     code, _ = await call("/connected-equipment/sharing", fac_a, "PUT",
                          {"oem_code": "OEM_NOWHERE", "grants": []})

@@ -360,9 +360,9 @@ Required for the pilot to mean anything:
 | Who is supposed to act on an alarm today: OEM or customer? | |
 | Do you expect AMP to raise anything to the OEM on alarm during the pilot? | |
 
-> **Answer honestly and expect nothing back in this pilot.** There is a sharing
-> grant called `SHARE_ALARMS` ("Equipment alarm codes raised by this machine"), and
-> the vocabulary exists — but **no alarm entity, ingest path or read model exists in
+> **Answer honestly and expect nothing back in this pilot.** A grant key
+> `SHARE_ALARMS` is reserved in the vocabulary, but a factory is not offered it,
+> because **no alarm entity, ingest path or read model exists in
 > the codebase**. An alarm tag in the profile is interpreted and range-checked like
 > any other reading; it is not stored as an alarm, not surfaced in the portal, and
 > not escalated. Collecting the list now is how we specify the next release, not how
@@ -405,6 +405,15 @@ the factory decides.
 | `SHARE_MAINTENANCE_HISTORY` | Maintenance work carried out on this machine | ☐ | ☐ |
 | `SHARE_DOWNTIME` | Downtime events recorded against this machine | ☐ | ☐ |
 
+> Since 2026-09-18 a factory is **offered only the grants something in AMP reads**
+> (`oem_sharing.OFFERED_GRANTS`). `SHARE_ALARMS`, `SHARE_TELEMETRY` and
+> `SHARE_MAINTENANCE_HISTORY` are reserved: their rows above record what the OEM
+> *wants*, not what a factory can tick today. Until then they were offered so that
+> consent could be recorded in advance, but the screen never said that nothing
+> flowed, so a factory read the tick as sharing. When one gains a reader it is
+> offered again, and a consent stored before it had one should not be assumed to
+> cover a flow that did not exist when it was given.
+
 | Field | Answer |
 |---|---|
 | Which grants are **essential** to the OEM's pilot case? | |
@@ -430,12 +439,11 @@ the factory decides.
 >   (`GET /oem/service`) and the per-machine service view. It also decides
 >   whether a manufacturer may record a service against an hours reading it
 >   supplies itself;
-> * `SHARE_ALARMS`, `SHARE_TELEMETRY`, `SHARE_MAINTENANCE_HISTORY` and
->   `SHARE_DOWNTIME` are **valid, storable, auditable consent with no data class
->   behind them yet.** Granting them today changes nothing an OEM can see. They
->   are in the vocabulary so that consent is recorded before the capability
->   ships, not after — and a factory should read a tick against them as a
->   decision taken in advance, not as data flowing now.
+> * `SHARE_DOWNTIME` releases downtime and its reasons inside the service-contract
+>   statements the factory has accepted (ADR-0021), and nothing else;
+> * `SHARE_ALARMS`, `SHARE_TELEMETRY` and `SHARE_MAINTENANCE_HISTORY` have **no
+>   data class behind them yet**, so they are not offered (see the note under
+>   the table above).
 >
 > **What the verdict necessarily tells a manufacturer.** A verdict is a coarse
 > function of the hour meter: "due" means the machine sits between 95% and 100%
@@ -672,11 +680,10 @@ conversation, and none of it should appear in a pitch deck as if it shipped.
    containing a space cannot be addressed at all** — and because identity is
    `(tenant, site, name)`, a mismatch between a pre-created machine and the topic
    silently creates a second machine instead of updating the first.
-8. **Five of the seven sharing grants release no data yet.**
-   `SHARE_SERVICE_STATUS`, `SHARE_ALARMS`, `SHARE_TELEMETRY`,
-   `SHARE_MAINTENANCE_HISTORY` and `SHARE_DOWNTIME` are real, auditable, revocable
-   consent with no field behind them in the shipped fleet read model. Only
-   `SHARE_OPERATING_HOURS` and `SHARE_MACHINE_HEALTH` currently gate a value.
+8. **Three of the seven sharing grants have no data behind them, so they are not
+   offered.** `SHARE_ALARMS`, `SHARE_TELEMETRY` and `SHARE_MAINTENANCE_HISTORY` are
+   reserved. Machine health, operating hours and service status gate the fleet and
+   service views; downtime gates service-contract statements.
 9. **No alarm handling.** No alarm entity, no alarm ingest, no alarm view, no
    escalation. An alarm tag in a profile is interpreted as a reading and nothing more.
 10. **No model-creation route.** The catalogue row and telemetry profile are written

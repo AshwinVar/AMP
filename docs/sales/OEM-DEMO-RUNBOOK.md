@@ -451,39 +451,37 @@ the machine in front of you, do not add it."*
 
 **CLICK:** Point at the section headed **What Aeron Compressor Systems may see**.
 
-**SHOW:** Seven tick boxes, all empty:
+**SHOW:** Four tick boxes, all empty:
 *Machine health score and connectivity state* · *Operating and loaded hours* ·
-*Service due / overdue status* · *Equipment alarm codes raised by this machine* ·
-*Live telemetry readings from this machine* · *Maintenance work carried out on
-this machine* · *Downtime events recorded against this machine*.
+*Service due / overdue status* · *Downtime events recorded against this machine*.
 Underneath: *"You are sharing nothing. The machine will still be added."*
 
 **SAY:**
 > "Here is the part your customers will care about, and it is the part that gets
 > you through their procurement.
 >
-> Seven things, all off. Not a slider, not 'basic / advanced', not a contract
-> clause — seven named things, in English, that they tick one at a time. And read
+> Four things, all off. Not a slider, not 'basic / advanced', not a contract
+> clause — four named things, in English, that they tick one at a time. And read
 > the line at the bottom: they can add the machine and share nothing at all. That
 > is a complete, valid answer, and the product does not sulk about it."
 
 **CLICK:** Tick three boxes: **Machine health score and connectivity state**,
 **Operating and loaded hours**, **Service due / overdue status**.
 
-**SHOW:** The line below changes to *"Sharing 3 of 7. No setting here can reveal
+**SHOW:** The line below changes to *"Sharing 3 of 4. No setting here can reveal
 work orders, production quantities, recipes, inventory, costs or operators."*
 
 **SAY:**
 > "They have given Aeron the three things a compressor supplier actually needs to
-> service the machine. Not alarms, not the raw telemetry, not their maintenance
-> records. And the sentence underneath is the one that ends the argument: there is
-> no combination of these seven boxes that reveals a work order, a production
+> service the machine. The fourth, downtime, stays off until the two of you sign a
+> service contract. And the sentence underneath is the one that ends the argument:
+> there is no combination of these boxes that reveals a work order, a production
 > quantity, a recipe, a cost or an operator's name. Those are not behind a
 > permission — they are not reachable from the manufacturer side at all."
 
 **DO NOT SAY:**
 - *"It's granular per machine"* — it is not. The agreement is per manufacturer,
-  per workspace. If Aeron have four machines at Northgate, these seven boxes
+  per workspace. If Aeron have four machines at Northgate, these boxes
   cover all four. Saying per-machine would be a promise the next demo breaks.
 - *"We're SOC 2 certified"* / *"ISO 27001"* / *"it's GDPR compliant"* — AMP holds
   no certification. What you can say is: the separation is enforced in the code
@@ -492,14 +490,17 @@ work orders, production quantities, recipes, inventory, costs or operators."*
 - *"They can see an audit trail of everything Aeron looked at"* — every *change*
   to sharing is audited with before-and-after. Individual read requests are not
   logged and are not presented back to the customer as a viewing log.
+- *"They can share alarms, live telemetry or maintenance history"* — not today.
+  AMP stores no alarms, keeps no readings for the manufacturer and has no
+  maintenance-history view, so those are not offered: a box that shared nothing
+  would be consent to nothing. See `docs/sales/REAL-OEM-INPUT-REQUIRED.md`.
 
 **CLICK:** Press **Confirm and add machine**.
 
 **SHOW:** The panel closes. A card appears headed **Aeron Compressor Systems**,
-*AERON · 1 machine here*, *Currently shares 3 of 7*, with the same seven tick
-boxes — three now blue — and beneath them *"Not shared: Equipment alarm codes
-raised by this machine, Live telemetry readings from this machine, Maintenance
-work carried out on this machine, Downtime events recorded against this machine."*
+*AERON · 1 machine here*, *Currently shares 3 of 4*, with the same four tick
+boxes — three now blue — and beneath them *"Not shared: Downtime events recorded
+against this machine."*
 Below it, a table **Equipment on site** with the row for `SN-ACX-0001`.
 
 **SAY:**
@@ -707,7 +708,8 @@ Equipment**. In the **Aeron Compressor Systems** card, untick **Operating and
 loaded hours**. Press **Save sharing**.
 
 **SHOW:** Green text: *"Saved. This takes effect immediately."* The line below now
-reads *"Not shared: Operating and loaded hours, Equipment alarm codes…"*
+reads *"Not shared: Operating and loaded hours, Downtime events recorded against
+this machine."*
 
 **SAY:**
 > "Northgate have changed their mind about one thing. Not the relationship — one

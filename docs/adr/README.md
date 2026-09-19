@@ -23,7 +23,11 @@ Guiding principles: incremental (strangler) evolution, never a rewrite; backward
 | [0015](0015-server-side-approval-gate.md) | The backend is authoritative about approvals | Accepted |
 | [0016](0016-authenticated-live-websocket.md) | The live WebSocket authenticates before it accepts | Accepted |
 | [0017](0017-oem-fleet-and-cross-tenant-equipment.md) | OEM fleet and cross-tenant equipment relationships | Accepted |
+| [0018](0018-migrations-run-before-the-application-serves.md) | Migrations run before the application serves | Accepted |
+| [0019](0019-factory-controlled-machine-claim.md) | Factory-controlled machine claim and installation assignment | Accepted |
 | [0020](0020-amp-native-ai.md) | AMP-native AI: standard-library models, pinned artifacts, per-tenant learning consent | Accepted |
+| [0021](0021-agreed-downtime-attribution.md) | Agreed downtime attribution for service contracts | Accepted |
+| [0022](0022-copilot-typed-tools-evidence-and-grounding.md) | The Copilot answers through typed, authorized AMP tools, with evidence; a model may only word it | Accepted |
 
 **Recommended order:** 0001 first (smaller, proves the pattern; events carry `tenant_code`), then 0002.
 

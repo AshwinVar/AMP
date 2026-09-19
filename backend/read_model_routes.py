@@ -14,6 +14,8 @@ from sqlalchemy.orm import Session
 
 import ai
 import ai_copilot
+from ai import orchestrator as ai_orchestrator
+from ai.tools import Principal
 from auth import get_current_user
 from database import SessionLocal
 from tenancy import request_tenant
@@ -435,14 +437,20 @@ def get_weekly_report(db: Session = Depends(_get_db), current_user: dict = Depen
 
 @router.post("/copilot/ask")
 def copilot_ask(payload: dict, db: Session = Depends(_get_db), current_user: dict = Depends(get_current_user)):
-    # Answers a plant question from the read-models, no API key required.
-    # Returns the answer text and the view that drills into it.
+    # Answers a plant question from the read-models, no API key required, through
+    # the typed-tool orchestrator (ADR-0022): the same routing and the same
+    # sentence as the rule copilot, plus the evidence behind it -- every figure
+    # with its provenance, the tools that ran and the data state. The principal
+    # (tenant and role) is AMP's, from this request; nothing in the payload can
+    # choose it, and each tool checks role and plan pack on every call.
     #
     # ADR-0020: when (and only when) the AMP-native intent model is ADOPTED and no
     # LLM is configured, it may PROPOSE the pillar. The tenant is still this
     # request's; the model sees the question and nothing else. Not adopted (the
-    # committed v1) -> no proposer -> the response is exactly the keyword answer.
-    return ai.assistant.answer(db, request_tenant(current_user), payload.get("question", ""),
+    # committed v1) -> no proposer -> the routing is exactly the keyword router.
+    question = payload.get("question") if isinstance(payload, dict) else None
+    return ai_orchestrator.ask(db, Principal.from_user(current_user),
+                               question if isinstance(question, str) else "",
                                proposer=ai_copilot.native_proposer())
 
 

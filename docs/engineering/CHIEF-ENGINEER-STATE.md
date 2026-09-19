@@ -25,6 +25,12 @@ whose production deploy completed.
 
 **Awaiting review:** none.
 
+**THE 10-DAY DIFFERENTIATION SPRINT started 2026-09-19.** Its own tracker is
+[`AMP-10-DAY-SPRINT.md`](AMP-10-DAY-SPRINT.md): day, SHAs, the 16
+differentiators with status, the AI benchmark, what is blocked and why. Resume
+with: "Resume AMP 10-Day Autonomous Differentiation Sprint from
+CHIEF-ENGINEER-STATE.md and AMP-10-DAY-SPRINT.md."
+
 > This header was twenty PRs stale when it was found (`040d30a`/#539 while master
 > was `208f564`/#559). A handover whose own first three lines are wrong teaches a
 > new session not to trust the rest of it. **Update these three lines whenever you
@@ -669,6 +675,16 @@ The downtime-scan defect below was P2 and is fixed.
 ---
 
 ## AI ROADMAP PHASE
+
+**2026-09-19 — ADR-0022: the Copilot answers through typed AMP tools, with
+evidence, and a model may only word it.**
+
+- **Tools.** 18 tools in `ai/tools/`, each no wider than the REST route it mirrors (the live app is read to check). `run_tool` checks role, licence, strict arguments and tenant binding on every call.
+- **Evidence and states.** `ai/evidence.py` holds the provenance, data-state and root-cause vocabulary, mirrored in `frontend/lib/evidence.ts`.
+- **Grounding.** `ai/grounding.py` rejects any model wording whose number or name is not in the evidence.
+- **Evaluation.** `copilot_eval/` uses three factories whose identifiers collide, plus an OEM, 32 questions and 15 adversarial prompts. `test_copilot_eval.py` gates on zero disclosures, zero ungrounded answers shown and zero money fabrications, for AMP's engine and for nine scripted model behaviours.
+- **Routing unchanged.** `/copilot/ask` routes exactly as before and now returns the evidence.
+- **Phase 3 is no longer blocked on a key.** It is blocked only on the founder's permission to download local weights. Whatever model arrives is measured by `copilot_eval`, not by hand.
 
 **Phase 1 — provider abstraction: DONE (2026-09-01).**
 `ai_copilot.PROVIDERS` is now a registry of `AIProvider` objects

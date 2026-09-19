@@ -55,6 +55,7 @@ import CoverageSnapshot from "../../components/CoverageSnapshot";
 import FlowSnapshot from "../../components/FlowSnapshot";
 import ShiftSnapshot from "../../components/ShiftSnapshot";
 import BriefingSnapshot from "../../components/BriefingSnapshot";
+import CommandCentreSection from "../../components/CommandCentreSection";
 import DeliverySnapshot from "../../components/DeliverySnapshot";
 import SupplySnapshot from "../../components/SupplySnapshot";
 import CostSnapshot from "../../components/CostSnapshot";
@@ -2057,6 +2058,17 @@ export default function DashboardPage() {
 
       <div className="mb-8">
         <ScorecardStrip
+          onOpen={(view) => {
+            setActiveView(view);
+            window.scrollTo({ top: 0, behavior: "smooth" });
+          }}
+        />
+      </div>
+
+      {/* The Command Centre (ADR-0024): where the plant is, what is wrong ranked
+          by what it cost, why, what it is costing, and what to do next. */}
+      <div className="mb-8">
+        <CommandCentreSection
           onOpen={(view) => {
             setActiveView(view);
             window.scrollTo({ top: 0, behavior: "smooth" });

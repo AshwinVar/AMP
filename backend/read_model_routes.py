@@ -214,6 +214,15 @@ def get_recovery_summary(db: Session = Depends(_get_db), current_user: dict = De
     return ai.recovery.build_recovery_summary(db, request_tenant(current_user))
 
 
+@router.get("/command-centre")
+def get_command_centre(db: Session = Depends(_get_db), current_user: dict = Depends(get_current_user)):
+    # The Factory Command Centre (ADR-0024): the owner's five questions in one
+    # read-model -- where the plant is, what is wrong ranked by measured impact,
+    # why, what it is costing (money only when a unit value is set), and what to
+    # do next. Composes the existing read-models; adds no storage.
+    return ai.command_centre.build_command_centre(db, request_tenant(current_user))
+
+
 @router.get("/briefing")
 def get_briefing(db: Session = Depends(_get_db), current_user: dict = Depends(get_current_user)):
     # Morning briefing (ADR-0007): the "what needs attention right now" digest —

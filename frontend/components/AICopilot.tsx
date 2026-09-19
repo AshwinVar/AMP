@@ -2,7 +2,9 @@
 import { useEffect, useState } from "react";
 import { apiGet, apiPost } from "../lib/api";
 import { copilotBadge } from "../lib/aiModels";
+import type { Fact, Grounding, ToolRun } from "../lib/evidence";
 import { viewLabel } from "../lib/modules";
+import CopilotEvidence from "./CopilotEvidence";
 
 type Turn = {
   q: string;
@@ -14,6 +16,12 @@ type Turn = {
   // ADR-0020: set by /copilot/ask when AMP's own intent model was asked to route.
   route_source?: string;
   confidence?: number | null;
+  // ADR-0022: the evidence behind a /copilot/ask answer.
+  evidence?: Fact[];
+  tools?: ToolRun[];
+  state?: string;
+  grounding?: Grounding;
+  engine?: string;
 };
 type AiStatus = {
   enabled: boolean;
@@ -21,7 +29,26 @@ type AiStatus = {
   model?: string | null;
   engine?: "llm" | "amp-native" | "rules";
 };
-type RulesAnswer = { answer: string; view?: string; route_source?: string; confidence?: number | null };
+type RulesAnswer = {
+  answer: string;
+  view?: string;
+  route_source?: string;
+  confidence?: number | null;
+  evidence?: Fact[];
+  tools?: ToolRun[];
+  state?: string;
+  grounding?: Grounding;
+  engine?: string;
+};
+
+// A /copilot/ask answer as a thread turn, evidence included (ADR-0022).
+function rulesTurn(q: string, res: RulesAnswer): Turn {
+  return {
+    q, a: res.answer, view: res.view, source: "rules", route_source: res.route_source,
+    confidence: res.confidence, evidence: res.evidence, tools: res.tools, state: res.state,
+    grounding: res.grounding, engine: res.engine,
+  };
+}
 
 const SUGGESTIONS = [
   "Why is my OEE low?",
@@ -68,11 +95,11 @@ export default function AICopilot({ onOpen }: { onOpen?: (viewKey: string) => vo
           turn = { q: query, a: res.answer, view: res.view, source: res.source, model: res.model, note: res.note };
         } catch {
           const res = await apiPost<RulesAnswer>("/copilot/ask", { question: query });
-          turn = { q: query, a: res.answer, view: res.view, source: "rules", route_source: res.route_source, confidence: res.confidence };
+          turn = rulesTurn(query, res);
         }
       } else {
         const res = await apiPost<RulesAnswer>("/copilot/ask", { question: query });
-        turn = { q: query, a: res.answer, view: res.view, source: "rules", route_source: res.route_source, confidence: res.confidence };
+        turn = rulesTurn(query, res);
       }
       setThread((t) => [turn, ...t]);
       setQuestion("");
@@ -164,6 +191,8 @@ export default function AICopilot({ onOpen }: { onOpen?: (viewKey: string) => vo
             </div>
             <p className="text-slate-200 text-sm whitespace-pre-wrap leading-relaxed">{t.a}</p>
             {t.note && <p className="text-amber-300/80 text-xs mt-2">{t.note}</p>}
+            <CopilotEvidence facts={t.evidence} tools={t.tools} state={t.state}
+              grounding={t.grounding} engine={t.engine} />
             {t.view && onOpen && viewLabel(t.view) && (
               <button
                 onClick={() => onOpen(t.view!)}

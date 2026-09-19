@@ -750,6 +750,8 @@ def attack_the_claim_assumptions():
         "oem_perf.py": "seeds 10 to 10,000 installed machines to time the fleet queries",
         "verify_pg_outcome_contracts.py": "fills a scratch PostgreSQL database to prove "
                                           "migration 0010 keeps its rows",
+        "copilot_eval/fixtures.py": "seeds the Copilot evaluation's three factories, one "
+                                    "with an OEM machine installed (ADR-0022)",
     }
     sources = _backend_sources()
     assigners, detachers = set(), set()

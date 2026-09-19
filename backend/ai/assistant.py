@@ -58,9 +58,27 @@ def _drills_into(view: str):
     return deco
 
 
+# EACH PILLAR IS TWO HALVES: read the read-model, then say it.
+#
+# `say_<pillar>(data)` turns a read-model's dict into (sentence, view) and reads
+# nothing. The pillar below it is `say(build(db, tenant))`, exactly the function
+# it always was. The split exists for the typed Copilot tools (ai/tools, ADR-0022):
+# a tool runs the SAME builder once, attaches the facts behind the sentence, and
+# says it with the SAME function, so a routed question gets the same words with
+# or without the evidence beside them, and the builder never runs twice.
+
+
 @_drills_into("inventory")
 def _inventory(db, tenant):
-    inv = build_inventory_summary(db, tenant)
+    return say_inventory(build_inventory_summary(db, tenant))
+
+
+def say_inventory(inv):
+    # No items at all is not "healthy": it is stock nobody has set up, and saying
+    # "nothing is at or below its reorder level" about an empty list is a claim
+    # about stock that was never measured (found by the Copilot evaluation, C).
+    if inv.get("total_items") == 0:
+        return "No stock items are set up in this workspace yet.", "inventory"
     if inv["at_risk"] == 0:
         return "Stock is healthy — nothing is at or below its reorder level right now.", "inventory"
     lead = inv["items"][0]["item_name"] if inv["items"] else "the top item"
@@ -71,7 +89,10 @@ def _inventory(db, tenant):
 
 @_drills_into("orders")
 def _delivery(db, tenant):
-    d = build_delivery_summary(db, tenant)
+    return say_delivery(build_delivery_summary(db, tenant))
+
+
+def say_delivery(d):
     if d["total"] == 0:
         return "There are no customer orders on the book.", "orders"
     parts = [f"{d['total']} orders, {d['fulfillment_rate']}% fulfilled by units"]
@@ -88,7 +109,10 @@ def _delivery(db, tenant):
 
 @_drills_into("costing")
 def _cost(db, tenant):
-    c = build_cost_summary(db, tenant)
+    return say_cost(build_cost_summary(db, tenant))
+
+
+def say_cost(c):
     if not c["has_data"]:
         return "No production this week, so there are no losses to cost.", "costing"
     if c["lost_units"] is None:
@@ -111,7 +135,10 @@ def _cost(db, tenant):
 
 @_drills_into("quality")
 def _quality(db, tenant):
-    q = build_quality_summary(db, tenant)
+    return say_quality(build_quality_summary(db, tenant))
+
+
+def say_quality(q):
     if q["inspections"] == 0:
         return "No quality inspections recorded yet.", "quality"
     ans = f"First-pass yield is {q['first_pass_yield']}% and the fail rate is {q['fail_rate']}%."
@@ -125,7 +152,10 @@ def _quality(db, tenant):
 
 @_drills_into("cmms")
 def _maintenance(db, tenant):
-    m = build_maintenance_summary(db, tenant)
+    return say_maintenance(build_maintenance_summary(db, tenant))
+
+
+def say_maintenance(m):
     if m["open"] == 0:
         return "No open maintenance tasks — the queue is clear.", "cmms"
     ans = f"{m['open']} open maintenance task(s)"
@@ -142,7 +172,10 @@ def _maintenance(db, tenant):
 
 @_drills_into("documents")
 def _compliance(db, tenant):
-    c = build_compliance_summary(db, tenant)
+    return say_compliance(build_compliance_summary(db, tenant))
+
+
+def say_compliance(c):
     if c["total"] == 0:
         return "No controlled documents on file.", "documents"
     ans = f"{c['total']} controlled documents"
@@ -160,7 +193,10 @@ def _compliance(db, tenant):
 
 @_drills_into("downtime")
 def _downtime(db, tenant):
-    dt = build_downtime_summary(db, tenant)
+    return say_downtime(build_downtime_summary(db, tenant))
+
+
+def say_downtime(dt):
     if dt["total_events"] == 0:
         return "No downtime events in the last 7 days.", "downtime"
     ans = f"{dt['total_events']} downtime events in the last {dt['days']} days."
@@ -193,7 +229,14 @@ def _machines(db, tenant):
     scheduling matter and planned maintenance is not a fault; this does not
     promote either to an alarm, it stops the sentence calling them running.
     """
-    machines = db.query(models.Machine).all()
+    return say_machines(db.query(models.Machine).all())
+
+
+def say_machines(machines):
+    # With no machines, "all 0 machines are running" is true of nothing and reads
+    # as a status report; say what is actually the case.
+    if not machines:
+        return "No machines are registered in this workspace yet.", "machines"
     running = [m for m in machines if (m.status or "") == RUNNING]
     if len(running) == len(machines):
         return f"All {len(machines)} machines are running.", "machines"
@@ -216,7 +259,10 @@ def _machines(db, tenant):
 
 @_drills_into("analytics")
 def _production(db, tenant):
-    p = build_production_summary(db, tenant)
+    return say_production(build_production_summary(db, tenant))
+
+
+def say_production(p):
     if p["runs"] == 0:
         return "No production runs recorded in the last 7 days.", "analytics"
     ans = f"{p['good']:,} good units of {p['total']:,} ({p['good_rate']}% good) over {p['runs']} runs this week."
@@ -227,7 +273,10 @@ def _production(db, tenant):
 
 @_drills_into("workorders")
 def _flow(db, tenant):
-    f = build_flow_summary(db, tenant)
+    return say_flow(build_flow_summary(db, tenant))
+
+
+def say_flow(f):
     if f["total"] == 0:
         return "No work orders on the floor right now.", "workorders"
     stages = ", ".join(f"{s['label']} {s['count']}" for s in f["stages"])
@@ -237,7 +286,10 @@ def _flow(db, tenant):
 
 @_drills_into("shifts")
 def _shift(db, tenant):
-    sh = build_shift_summary(db, tenant)
+    return say_shift(build_shift_summary(db, tenant))
+
+
+def say_shift(sh):
     if sh["entries"] == 0:
         return "No shift data recorded yet.", "shifts"
     if sh["attainment"] is None:
@@ -255,7 +307,10 @@ def _shift(db, tenant):
 
 @_drills_into("executive")
 def _oee(db, tenant):
-    o = build_oee_summary(db, tenant)
+    return say_oee(build_oee_summary(db, tenant))
+
+
+def say_oee(o):
     plant = o["plant"]
     if not plant["has_data"]:
         return "No production yet this week, so there's no OEE to report.", "executive"
@@ -278,13 +333,22 @@ def _find(db, tenant, question):
     the global entity search, phrasing the top hits with where to open them."""
     from ai.search import build_search  # lazy: avoids widening import chains
 
+    term = find_term(question)
+    return say_find(term, build_search(db, tenant, term)["results"])
+
+
+def find_term(question):
+    """The search term inside a 'find ...' question."""
     q = (question or "").strip().lower()
     term = next((q[len(p):] for p in _FIND_PREFIXES if q.startswith(p)), q)
     term = term.strip(" ?.!\"'")
     for noise in ("the ", "my ", "our "):
         if term.startswith(noise):
             term = term[len(noise):]
-    hits = build_search(db, tenant, term)["results"]
+    return term
+
+
+def say_find(term, hits):
     if not hits:
         return f"I couldn't find anything matching \"{term}\".", "overview"
     top = hits[0]
@@ -322,8 +386,12 @@ def _machine_named(db, question):
 def _machine_answer(db, tenant, machine):
     from ai.twin import build_twins   # lazy: twin imports pull in the pillar modules
     tw = next((t for t in build_twins(db, tenant) if t["machine_id"] == machine.id), None)
+    return say_machine(machine.name, tw)
+
+
+def say_machine(machine_name, tw):
     if tw is None:
-        return f"{machine.name}: no data yet.", "machines"
+        return f"{machine_name}: no data yet.", "machines"
     parts = [f"{tw['name']} is {tw['status']}", f"health {tw['health_score']}/100"]
     if tw.get("oee") and tw["oee"].get("has_data"):
         parts.append(f"OEE {tw['oee']['oee']}%")
@@ -338,7 +406,10 @@ def _machine_answer(db, tenant, machine):
 
 @_drills_into("executive")
 def _trend(db, tenant):
-    sc = build_scorecard(db, tenant)
+    return say_trend(build_scorecard(db, tenant))
+
+
+def say_trend(sc):
     if not sc["has_data"]:
         return "No production data yet, so there's nothing to compare.", "overview"
     moves = []
@@ -356,7 +427,10 @@ def _trend(db, tenant):
 
 @_drills_into("overview")
 def _briefing(db, tenant):
-    b = build_briefing(db, tenant)
+    return say_briefing(build_briefing(db, tenant))
+
+
+def say_briefing(b):
     if not b["has_data"]:
         # "No production data" is about OEE, not about the plant. A machine can be
         # hard-down before anything has been produced, and build_briefing now
@@ -368,10 +442,15 @@ def _briefing(db, tenant):
             return (f"No production data yet, but {lead}"
                     + (f" ({detail})." if detail else "."), "overview")
         return "No production data yet — nothing to report.", "overview"
+    # A plant OEE states its coverage (OEE contract s4). This sentence was the one
+    # copilot answer that printed the plant figure bare, while the headline it
+    # came from beside it said "from 3 of 4 machines".
+    covered = oee_contract.coverage_phrase(b.get("coverage"))
+    oee = f"Plant OEE {b['oee']}%{', measured ' + covered if covered else ''}"
     if not b["alerts"]:
-        return f"Plant OEE {b['oee']}% and nothing needs attention right now.", "overview"
+        return f"{oee} and nothing needs attention right now.", "overview"
     lead = "; ".join(a["title"] for a in b["alerts"][:3])
-    return f"Right now: {lead}. Plant OEE {b['oee']}% ({b['oee_trend']}).", "overview"
+    return f"Right now: {lead}. {oee} ({b['oee_trend']}).", "overview"
 
 
 # Ordered keyword routes — first match wins. Inventory before delivery so
@@ -566,12 +645,40 @@ def answer(db, tenant: str, question: str, chosen_route=None, proposer=None) -> 
     decision's confidence and model version) or "keywords". Without one the
     response is byte-for-byte what it was before.
     """
+    r = route(db, question, chosen_route=chosen_route, proposer=proposer)
+    if r.kind == "machine":
+        text, view = _machine_answer(db, tenant, r.machine)
+    elif r.kind == "find":
+        text, view = _find(db, tenant, question)
+    else:
+        text, view = r.pillar(db, tenant)
+    return {"question": question, "answer": text, "view": view, "matched": r.matched, **r.labels}
+
+
+class Route:
+    """WHICH answer a question gets, decided without producing it.
+
+    kind "machine"  a machine named in the question (`machine` is the row)
+         "find"     an explicit find/locate phrase (`term` is the search term)
+         "pillar"   one of the routed pillars (`pillar` is the function)
+    `labels` are the response fields that say who routed it (route_source, and
+    the model's confidence and version when the model did).
+    """
+    __slots__ = ("kind", "matched", "pillar", "machine", "term", "labels")
+
+    def __init__(self, kind, matched, pillar=None, machine=None, term=None, labels=None):
+        self.kind, self.matched, self.pillar = kind, matched, pillar
+        self.machine, self.term, self.labels = machine, term, dict(labels or {})
+
+
+def route(db, question: str, chosen_route=None, proposer=None) -> Route:
+    """The routing half of `answer`, shared with the typed-tool Copilot
+    (ai/orchestrator.py) so both answer the same question the same way. Reads at
+    most the machine list (for the name lookup); runs no pillar."""
     if chosen_route is not None:
         fn = _pillar(chosen_route)
         if fn is not None:
-            text, view = fn(db, tenant)
-            return {"question": question, "answer": text, "view": view,
-                    "matched": fn.__name__.lstrip("_"), "route_source": "model"}
+            return Route("pillar", fn.__name__.lstrip("_"), pillar=fn, labels={"route_source": "model"})
         # Unrecognised: fall through to the keyword router below. Deliberately
         # silent to the caller -- an invalid proposal is not an error condition,
         # it is a model being wrong, and the user still gets an answer.
@@ -579,21 +686,18 @@ def answer(db, tenant: str, question: str, chosen_route=None, proposer=None) -> 
     labelled = {} if proposer is None else {"route_source": "keywords"}
     named = _machine_named(db, question)
     if named is not None:
-        text, view = _machine_answer(db, tenant, named)
-        return {"question": question, "answer": text, "view": view, "matched": "machine_detail", **labelled}
+        return Route("machine", "machine_detail", machine=named, labels=labelled)
 
     # An explicit find/locate phrase runs the global entity search.
     if (question or "").strip().lower().startswith(_FIND_PREFIXES):
-        text, view = _find(db, tenant, question)
-        return {"question": question, "answer": text, "view": view, "matched": "find", **labelled}
+        return Route("find", "find", term=find_term(question), labels=labelled)
 
     if proposer is not None:
         fn, decision = _proposed_pillar(proposer, question)
         if fn is not None:
-            text, view = fn(db, tenant)
-            return {"question": question, "answer": text, "view": view, "matched": fn.__name__.lstrip("_"),
-                    "route_source": "model", "confidence": decision.confidence,
-                    "model_version": decision.model_version}
+            return Route("pillar", fn.__name__.lstrip("_"), pillar=fn,
+                         labels={"route_source": "model", "confidence": decision.confidence,
+                                 "model_version": decision.model_version})
 
     q = f" {(question or '').lower()} "
     # FIRST MATCH WINS, and the order of _ROUTES is load-bearing.
@@ -612,8 +716,5 @@ def answer(db, tenant: str, question: str, chosen_route=None, proposer=None) -> 
     # the winner is chosen. See test_ai_evaluation.py sections 1b and 1c.
     for keys, fn in _ROUTES:
         if any(k in q for k in keys):
-            text, view = fn(db, tenant)
-            return {"question": question, "answer": text, "view": view, "matched": fn.__name__.lstrip("_"),
-                    **labelled}
-    text, view = _briefing(db, tenant)
-    return {"question": question, "answer": text, "view": view, "matched": "briefing", **labelled}
+            return Route("pillar", fn.__name__.lstrip("_"), pillar=fn, labels=labelled)
+    return Route("pillar", "briefing", pillar=_briefing, labels=labelled)

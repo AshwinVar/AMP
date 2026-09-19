@@ -103,6 +103,7 @@ def build_briefing(db, tenant: str) -> dict:
             "headline": ("No production data yet."if down_alert is None else
                          f"No production data yet — but {down_alert['title'].lower()}."),
             "alerts": [down_alert] if down_alert else [], "wins": [],
+            "coverage": oee["coverage"],
         }
 
     downtime = build_downtime_summary(db, tenant)
@@ -268,4 +269,7 @@ def build_briefing(db, tenant: str) -> dict:
         "headline": headline,
         "alerts": alerts,
         "wins": wins[:3],
+        # The plant OEE above is a pooled figure; this says how much of the plant
+        # it came from, so a sentence built on it can say so (OEE contract s4).
+        "coverage": oee["coverage"],
     }

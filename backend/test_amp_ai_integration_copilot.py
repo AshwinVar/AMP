@@ -318,12 +318,20 @@ def section_endpoints(engine, Session):
             tenancy.reset_current_tenant(tok)
             db.close()
 
-    same = all(endpoint(qq) == ask(Session, qq) for qq in questions)
+    # /copilot/ask now answers through the typed-tool orchestrator (ADR-0022),
+    # which returns the rule copilot's fields PLUS the evidence behind them. The
+    # property pinned here is unchanged: every field the keyword answer has, the
+    # endpoint returns with the same value (`same_answer`).
+    def same_answer(qq):
+        got, want = endpoint(qq), ask(Session, qq)
+        return all(got.get(k) == v for k, v in want.items())
+
+    same = all(same_answer(qq) for qq in questions)
     check("committed (not adopted) model: /copilot/ask == the keyword answer, for every question", same)
     os.environ["AMP_NATIVE_COPILOT"] = "off"
     with Patched(lambda: FakeClassifier(route="downtime", adopted=True)):
         check("adopted but AMP_NATIVE_COPILOT=off: identical to the keyword answer",
-              all(endpoint(qq) == ask(Session, qq) for qq in questions))
+              all(same_answer(qq) for qq in questions))
     clean_env()
 
     # --- no network, real weights ------------------------------------------------

@@ -30,6 +30,7 @@ Guiding principles: incremental (strangler) evolution, never a rewrite; backward
 | [0022](0022-copilot-typed-tools-evidence-and-grounding.md) | The Copilot answers through typed, authorized AMP tools, with evidence; a model may only word it | Accepted |
 | [0023](0023-self-hosted-model-behind-an-earned-switch.md) | A self-hosted model behind the Copilot, switched on only when it has earned it | Accepted |
 | [0024](0024-factory-command-centre.md) | The Factory Command Centre ranks problems by what they cost, and never totals them | Accepted |
+| [0025](0025-root-cause-explorer.md) | The Root-Cause Explorer separates what AMP measured from what has a reason | Accepted |
 
 **Recommended order:** 0001 first (smaller, proves the pattern; events carry `tenant_code`), then 0002.
 

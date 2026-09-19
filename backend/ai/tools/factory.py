@@ -358,6 +358,30 @@ def get_production_vs_target(db, tenant):
     return _result("get_production_vs_target", ev.OK, said, facts)
 
 
+@tool("explain_production_gap",
+      "Why the plant is behind: the gap against the plans that came due, the losses AMP can "
+      "measure in the same window (slow running, scrap, logged stoppages), how much of that has "
+      "a recorded reason, and the part nothing in the data explains. Use for 'why are we behind', "
+      "'explain the shortfall', 'what went wrong'.",
+      mirrors="/root-cause", view="executive", domain="production")
+def explain_production_gap(db, tenant):
+    from ai.root_cause import explain_production_gap as explain   # lazy: pulls in the pillar modules
+    r = explain(db, tenant)
+    facts = [ev.Fact(key=f["key"], label=f["label"], value=f["value"], provenance=f["provenance"],
+                     unit=f["unit"], source=f["source"], window=f["window"], detail=f["detail"])
+             for f in r["facts"]]
+    for c in r["contributors"][:6]:
+        if c["units"] is not None:
+            facts.append(_fact(f"cause.{c['key']}", f"{c['label']} ({c['cause_label']})", c["units"], D, "units",
+                               c["basis"]))
+        elif c["minutes"] is not None:
+            facts.append(_fact(f"cause.{c['key']}", f"{c['label']} ({c['cause_label']})", c["minutes"], M, "min",
+                               c["basis"]))
+    state = r["state"] if r["state"] in ev.DATA_STATES else ev.OK
+    return _result("explain_production_gap", state, (r["headline"], "executive"), facts,
+                   notes=[r["denominator_note"]])
+
+
 @tool("get_shift_attainment",
       "Shift output against shift targets over the last 7 days, with the best and the "
       "worst shift.",

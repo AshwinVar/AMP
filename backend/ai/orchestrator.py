@@ -72,6 +72,12 @@ _PLAN_PHRASES = ("target", "behind plan", "on plan", "against plan", "vs plan", 
                  "met plan", "meet plan", "meet the plan", "are we behind", "falling behind",
                  "behind on production")
 _PLAN_PILLARS = ("briefing", "production")
+# A plan question that asks WHY goes to the Root-Cause Explorer (ADR-0025), which
+# answers with the measured losses and what it cannot explain; one that asks
+# WHETHER goes to the plan figures. Deliberately narrow: "why is my OEE low?"
+# still reaches the OEE pillar, so /copilot/ask keeps answering the pinned
+# questions exactly as the rule copilot does.
+_WHY_WORDS = ("why", "explain", "what went wrong", "root cause", "reason we", "how come")
 _SHIFT_WORDS = ("shift", "crew", "night", "evening")
 _CAUSE_PHRASES = ("top causes", "main causes", "biggest causes", "causes of downtime", "downtime causes",
                   "reasons for downtime", "downtime reasons", "pareto", "top reasons", "main reasons")
@@ -88,6 +94,8 @@ def plan_rules(db, question, proposer=None) -> Plan:
     q = f" {(question or '').lower()} "
     if (r.matched in _PLAN_PILLARS and any(p in q for p in _PLAN_PHRASES)
             and not any(w in q for w in _SHIFT_WORDS)):
+        if any(w in q for w in _WHY_WORDS):
+            return Plan([("explain_production_gap", {})], "production_gap", r.labels)
         return Plan([("get_production_vs_target", {})], "production_vs_target", r.labels)
     if r.matched in _CAUSE_PILLARS and any(p in q for p in _CAUSE_PHRASES):
         return Plan([("get_top_downtime_causes", {})], "downtime_causes", r.labels)

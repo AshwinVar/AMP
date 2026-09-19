@@ -68,8 +68,8 @@ Until then:
 | 3 | Tool-using AI, typed and authorized | DONE (18 tools) | `ai/tools/`, `test_copilot_tools.py`, `test_copilot_tools_no_wider_than_routes.py` |
 | 4 | Evidence-backed answers with provenance labels | DONE (API) · UI in this PR | `ai/evidence.py`, `CopilotEvidence.tsx` |
 | 5 | Daily Factory Brief | NOT STARTED | — |
-| 6 | Root-Cause Explorer | NOT STARTED (labels defined) | `ai/evidence.CAUSE_LABELS` |
-| 7 | Financial loss intelligence (never fabricated) | PARTIAL | `get_financial_losses` and the Command Centre: every problem sized in good units, money only with a unit value, UNKNOWN otherwise, and figures never totalled across overlapping problems |
+| 6 | Root-Cause Explorer | BUILT | ADR-0025: `GET /root-cause`, the `explain_production_gap` tool and a card on Executive; measured mechanisms labelled CAUSE CONFIRMED / LIKELY CONTRIBUTOR / CORRELATED EVENT / INSUFFICIENT EVIDENCE, with the unexplained remainder stated |
+| 7 | Financial loss intelligence (never fabricated) | PARTIAL | `get_financial_losses`: money only with a unit value, UNKNOWN otherwise |
 | 8 | Production Risk Radar | NOT STARTED | — |
 | 9 | Machine Health, every score explained | PARTIAL | `get_machine_history`: health is RULE-BASED ASSESSMENT with its factors |
 | 10 | Anomaly engine end-to-end | NOT STARTED (experimental engine exists, ADR-0020) | — |

@@ -56,6 +56,7 @@ import FlowSnapshot from "../../components/FlowSnapshot";
 import ShiftSnapshot from "../../components/ShiftSnapshot";
 import BriefingSnapshot from "../../components/BriefingSnapshot";
 import CommandCentreSection from "../../components/CommandCentreSection";
+import RootCauseSection from "../../components/RootCauseSection";
 import DeliverySnapshot from "../../components/DeliverySnapshot";
 import SupplySnapshot from "../../components/SupplySnapshot";
 import CostSnapshot from "../../components/CostSnapshot";
@@ -2806,6 +2807,9 @@ export default function DashboardPage() {
       {renderSection("executive", (
         <>
           <ExecutiveOeeSection data={executiveOee} />
+          {/* The Root-Cause Explorer (ADR-0025): where the output went, and what
+              AMP cannot explain from the data it has. */}
+          <RootCauseSection />
           <MoneyStorySnapshot isAdmin={isAdmin} />
         </>
       ))}

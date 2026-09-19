@@ -141,7 +141,9 @@ def main():
     print("3. PLAN-VS-TARGET AND CAUSES: REFINING, NOT RE-ROUTING")
     print("=" * 74)
     for q, tool in [("Did we hit the production target?", "get_production_vs_target"),
-                    ("Why are we behind?", "get_production_vs_target"),
+                    # ADR-0025: a plan question that asks WHY reaches the Root-Cause
+                    # Explorer; one that asks WHETHER reaches the plan figures.
+                    ("Why are we behind?", "explain_production_gap"),
                     ("Are we behind plan this week?", "get_production_vs_target"),
                     ("What are the top causes of downtime?", "get_top_downtime_causes"),
                     ("Show me the downtime pareto", "get_top_downtime_causes")]:
@@ -152,7 +154,11 @@ def main():
         r = ask(Session, Bp, q)
         check(f"{q!r} stays with {tool}", [t["tool"] for t in r["tools"]] == [tool], str([t["tool"] for t in r["tools"]]))
     r = ask(Session, Bp, "Why are we behind?")
-    check("B: 'why are we behind' states the plan shortfall from the plan's own numbers",
+    check("B: 'why are we behind' states the gap and what the losses do and do not explain",
+          "1,200 units short" in r["answer"] and "with a reason recorded" in r["answer"]
+          and "carries no stoppage reason" in r["answer"], r["answer"])
+    r = ask(Session, Bp, "Are we behind plan this week?")
+    check("B: 'are we behind plan' still answers with the plan's own numbers",
           "1,300 of 2,500" in r["answer"] and "PLAN-B2" in r["answer"], r["answer"])
 
     # With NO ambient tenant (a background job, a direct caller), asking about a

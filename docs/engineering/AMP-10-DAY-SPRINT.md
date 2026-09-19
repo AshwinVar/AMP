@@ -17,10 +17,11 @@ A feature that can't be built honestly is marked **BLOCKED** with the reason, an
 | Field | Value |
 |---|---|
 | Sprint start | 2026-09-19 |
-| Day | 1–2 (baseline, Copilot foundation) |
+| Day | 2 (Copilot foundation merged; self-hosted provider in review) |
 | Master SHA at start | `eaf66c8` |
 | Production SHA at start | `eaf66c8`. Checked 2026-09-19 00:00 UTC: `/health` ok, `/readiness` at migration `0010_outcome_contracts`, frontend returned 200. |
-| Open PRs | this one (typed Copilot tools, evidence, grounding, evaluation) |
+| Merged | #645 (`d0d50aa`): typed Copilot tools, evidence, grounding gate, evaluation. Production verified at `d0d50aa` on 2026-09-19 01:50 UTC: `/health` ok (database, schema), `/readiness` 200, frontend 200, `/copilot/ask` refuses an unauthenticated call (401). |
+| Open PRs | the self-hosted provider, the adoption record, `/ai/ask` through the orchestrator (ADR-0023) |
 | Production status | healthy. Current SHA: see CHIEF-ENGINEER-STATE.md after each merge. |
 
 ## Day 1: baseline
@@ -63,7 +64,7 @@ Until then:
 | # | Differentiator | Status | Evidence |
 |---|---|---|---|
 | 1 | Factory Command Centre | NOT STARTED | — |
-| 2 | AMP Native Copilot (self-hosted, provider abstraction) | IN PROGRESS | ADR-0022 orchestrator; provider adapter next; model download BLOCKED |
+| 2 | AMP Native Copilot (self-hosted, provider abstraction) | BUILT, model BLOCKED | ADR-0023: `LocalOpenAIProvider` and `ai/llm.py` adapter, with an earned switch (`ai/adopted_models.json`); tested end to end over HTTP against a stub model; a real model is blocked on the download permission |
 | 3 | Tool-using AI, typed and authorized | DONE (18 tools) | `ai/tools/`, `test_copilot_tools.py`, `test_copilot_tools_no_wider_than_routes.py` |
 | 4 | Evidence-backed answers with provenance labels | DONE (API) · UI in this PR | `ai/evidence.py`, `CopilotEvidence.tsx` |
 | 5 | Daily Factory Brief | NOT STARTED | — |
@@ -124,10 +125,8 @@ The scripted model behaviours test what AMP does with a model; they are not a mo
 
 ## Next tasks
 
-1. **Provider adapter.** Add a local OpenAI-compatible provider with tool calling to the `ai_copilot` registry, keeping Gemini as the optional fallback.
-   - Route `/ai/ask` through the orchestrator. This also fixes its token-claim tenant.
-   - Require per-tenant consent before factory data goes to an external provider.
-   - Test the adapter against a stub HTTP server, with no model needed.
+1. ~~**Provider adapter.**~~ Done in ADR-0023. `/ai/ask` now goes through the orchestrator, which also fixed its tenant. The model is used only once it is adopted. The adapter is tested over HTTP against a stub.
+   - **Still open:** per-company consent before factory data goes to an **external** provider (Anthropic or Gemini). That is the next change.
 2. **Command Centre and Daily Brief** (Day 5), built from the tools and evidence.
 3. **Root-Cause Explorer and Risk Radar** (Day 6), with CAUSE labels.
 4. **Machine Health, anomaly and failure-risk surfaced honestly** (Day 7).

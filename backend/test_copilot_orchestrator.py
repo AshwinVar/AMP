@@ -155,6 +155,23 @@ def main():
     check("B: 'why are we behind' states the plan shortfall from the plan's own numbers",
           "1,300 of 2,500" in r["answer"] and "PLAN-B2" in r["answer"], r["answer"])
 
+    # With NO ambient tenant (a background job, a direct caller), asking about a
+    # machine only ANOTHER company has must read exactly like asking about one
+    # nobody has: the routing step must not see other companies' machine lists.
+    def unbound(principal, question):
+        db = Session()
+        try:
+            return orchestrator.ask(db, principal, question)
+        finally:
+            db.close()
+    others = unbound(A, "How is WELD-07 doing?")          # FACTORY_B's machine
+    nobody = unbound(A, "How is ZETA-99 doing?")          # no company's machine
+    check("unbound: another company's machine name routes like a name nobody has",
+          [t["tool"] for t in others["tools"]] == [t["tool"] for t in nobody["tools"]]
+          and others["matched"] == nobody["matched"], f"{others['matched']} vs {nobody['matched']}")
+    check("...and the ambient tenant is left as it was", tenancy.current_tenant() is None,
+          str(tenancy.current_tenant()))
+
     print()
     print("=" * 74)
     print("4. INPUT LIMITS")

@@ -236,22 +236,28 @@ def main():
         def _count(conn, cur, statement, params, context, many):
             counted.append(statement)
 
+        # ADR-0023 moved /ai/ask onto the typed-tool orchestrator, so the baseline
+        # is no longer the snapshot prompt's context build (which /ai/ask no
+        # longer runs): it is the SAME orchestrator answering the same question
+        # with no model at all. The model and the view must add nothing to that.
+        from ai import orchestrator
+        from ai.tools import Principal
         tok = tenancy.set_current_tenant(T)
-        ai_copilot._build_factory_context(db, T)          # warm any lazy imports
+        orchestrator.ask(db, Principal(tenant=T, role=""), "what needs my attention?")   # warm lazy imports
         counted.clear()
-        ai_copilot._build_factory_context(db, T)
+        orchestrator.ask(db, Principal(tenant=T, role=""), "what needs my attention?")
         context_only = len(counted)
         counted.clear()
         ai_copilot.ai_ask({"question": "what needs my attention?"}, db, {"tenant": T})
         with_view = len(counted)
         tenancy.reset_current_tenant(tok)
         event.remove(engine, "before_cursor_execute", _count)
-        check(f"the context build costs {context_only} queries", context_only > 0,
+        check(f"AMP's own answer (no model) costs {context_only} queries", context_only > 0,
               str(context_only))
-        check(f"...and /ai/ask on the fallback route costs the same {context_only}, "
+        check(f"...and /ai/ask with a model on the fallback route costs the same {context_only}, "
               f"not more", with_view == context_only,
-              f"context={context_only} endpoint={with_view} "
-              f"(+{with_view - context_only} for the view)")
+              f"no-model={context_only} endpoint={with_view} "
+              f"(+{with_view - context_only} for the model and the view)")
 
         print()
         print("=" * 74)

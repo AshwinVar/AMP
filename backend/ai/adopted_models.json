@@ -1,0 +1,4 @@
+{
+  "_comment": "Self-hosted models that passed the Copilot evaluation gate (ADR-0023). Each record is produced by `python -m copilot_eval --provider local --record <file>` against the real model, reviewed, and committed. test_copilot_model_adoption.py checks every record's verdict against its own metrics. Empty until a real model has been evaluated: downloading one is waiting on the founder's permission (AMP-10-DAY-SPRINT.md).",
+  "models": []
+}

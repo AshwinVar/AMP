@@ -36,7 +36,8 @@ def check(label, condition, detail=""):
 
 
 def clear_env():
-    for k in ("AI_PROVIDER", "ANTHROPIC_API_KEY", "GEMINI_API_KEY", "STUB_AI_KEY"):
+    for k in ("AI_PROVIDER", "ANTHROPIC_API_KEY", "GEMINI_API_KEY", "STUB_AI_KEY",
+              "AMP_LLM_BASE_URL", "AMP_LLM_MODEL"):
         os.environ.pop(k, None)
 
 
@@ -61,9 +62,16 @@ def main():
         print("1. THE SHIPPED PROVIDERS ARE DESCRIBED BY THE TABLE, NOT BY BRANCHES")
         print("=" * 74)
         names = [p.name for p in ai_copilot.PROVIDERS]
-        check("both providers are registered", names == ["anthropic", "gemini"], str(names))
-        check("...in auto-detect precedence, paid tier first",
-              names[0] == "anthropic", str(names))
+        # ADR-0023 added the self-hosted provider as the THIRD entry -- one class and
+        # one tuple entry, the change this suite exists to keep that small. It is
+        # last on purpose: configuring it must not silently take over from a hosted
+        # provider an operator already relies on (AI_PROVIDER=local selects it).
+        check("the three providers are registered", names == ["anthropic", "gemini", "local"], str(names))
+        check("...in auto-detect precedence, paid tier first, self-hosted last",
+              names[0] == "anthropic" and names[-1] == "local", str(names))
+        check("only the self-hosted one keeps factory data on AMP's infrastructure",
+              [p.name for p in ai_copilot.PROVIDERS if not p.external] == ["local"],
+              str([(p.name, p.external) for p in ai_copilot.PROVIDERS]))
         check("each declares the env var that configures it",
               all(p.env_key for p in ai_copilot.PROVIDERS),
               str([p.env_key for p in ai_copilot.PROVIDERS]))

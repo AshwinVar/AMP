@@ -70,6 +70,9 @@ class AIProvider:
 
     name = ""
     env_key = ""
+    # Does factory data leave AMP's own infrastructure when this provider is
+    # asked? True for the hosted APIs; False only for a model AMP runs itself.
+    external = True
 
     def is_configured(self) -> bool:
         return bool(os.environ.get(self.env_key))
@@ -103,10 +106,103 @@ class GeminiProvider(AIProvider):
         return _ask_gemini(system, user)
 
 
+class LocalOpenAIProvider(AIProvider):
+    """A self-hosted, open-weight model behind an OpenAI-compatible endpoint (ADR-0023).
+
+    Ollama, the llama.cpp server and vLLM all serve `POST {base}/chat/completions`
+    with tool calling, so one small class covers them. Configured by environment:
+
+      AMP_LLM_BASE_URL   e.g. http://127.0.0.1:11434/v1. It must be infrastructure
+                         AMP runs: pointing it at a third party's service makes
+                         the "local" model an external one, and nothing here can
+                         tell the difference.
+      AMP_LLM_MODEL      e.g. qwen3:8b
+      AMP_LLM_API_KEY    optional bearer token (vLLM --api-key)
+      AMP_LLM_TIMEOUT    seconds per call, default 30
+
+    Configured is not trusted. /ai/ask uses this model's wording only once the
+    model has passed the Copilot evaluation and its record is committed
+    (copilot_eval/adopted_models.json): a model is switched on when it has
+    EARNED it (ADR-0020's rule, applied to language models).
+    """
+
+    name = "local"
+    env_key = "AMP_LLM_BASE_URL"
+    external = False
+
+    @staticmethod
+    def _base():
+        return os.environ.get("AMP_LLM_BASE_URL", "").strip().rstrip("/")
+
+    def is_configured(self) -> bool:
+        base = self._base()
+        # http(s) only: urllib would also open file:// and ftp://, and a mistyped
+        # setting must not turn the copilot into a file reader.
+        return base.lower().startswith(("http://", "https://")) and bool(self.model())
+
+    def model(self):
+        return os.environ.get("AMP_LLM_MODEL", "").strip() or None
+
+    def chat(self, messages, tools=None, max_tokens=500):
+        """One chat completion. Returns {"content": str, "tool_calls": list}.
+        Raises RuntimeError on any transport, HTTP or shape failure; the message
+        names the failure, never the response body (it can echo the prompt)."""
+        import json
+        import urllib.error
+        import urllib.request
+
+        if not self.is_configured():
+            raise RuntimeError("local model not configured")
+        body = {"model": self.model(), "messages": messages, "temperature": 0,
+                "max_tokens": max_tokens, "stream": False}
+        if tools:
+            body["tools"] = tools
+            body["tool_choice"] = "auto"
+        headers = {"content-type": "application/json"}
+        key = os.environ.get("AMP_LLM_API_KEY", "").strip()
+        if key:
+            headers["authorization"] = f"Bearer {key}"
+        try:
+            timeout = float(os.environ.get("AMP_LLM_TIMEOUT", "30"))
+        except ValueError:
+            timeout = 30.0
+        req = urllib.request.Request(self._base() + "/chat/completions",
+                                     data=json.dumps(body).encode("utf-8"), headers=headers, method="POST")
+        try:
+            with urllib.request.urlopen(req, timeout=timeout) as resp:
+                data = json.loads(resp.read().decode("utf-8"))
+        except urllib.error.HTTPError as e:
+            raise RuntimeError(f"local model HTTP {e.code}")
+        except (urllib.error.URLError, TimeoutError, OSError) as e:
+            raise RuntimeError(f"local model unreachable ({type(e).__name__})")
+        except ValueError:
+            raise RuntimeError("local model returned something that is not JSON")
+        try:
+            message = data["choices"][0]["message"]
+        except (KeyError, IndexError, TypeError):
+            raise RuntimeError("local model returned no message")
+        if not isinstance(message, dict):
+            raise RuntimeError("local model returned no message")
+        calls = message.get("tool_calls")
+        return {"content": message.get("content") if isinstance(message.get("content"), str) else "",
+                "tool_calls": calls if isinstance(calls, list) else []}
+
+    def ask(self, system, user):
+        out = self.chat([{"role": "system", "content": system}, {"role": "user", "content": user}],
+                        max_tokens=1500)
+        return out["content"].strip()
+
+
 # Order is the AUTO-DETECT PRECEDENCE when AI_PROVIDER is unset: Anthropic first
 # because it is the paid tier with commercial data terms, Gemini second because
 # it is the free one. An explicit AI_PROVIDER always wins over this order.
-PROVIDERS = (AnthropicProvider(), GeminiProvider())
+#
+# The self-hosted model is LAST on purpose. Configuring it is not the same as
+# trusting it: an operator switches to it with AI_PROVIDER=local, and even then
+# its wording is used only after it has passed the Copilot evaluation (ADR-0023).
+# Appending it leaves the precedence of the two hosted providers exactly as it was.
+PROVIDERS = (AnthropicProvider(), GeminiProvider(), LocalOpenAIProvider())
+LOCAL = PROVIDERS[2]
 
 
 def _resolve_provider():
@@ -527,6 +623,12 @@ def _ask_gemini(system: str, user: str) -> str:
 _LAST_LLM_ERROR = None
 
 
+def _record_llm_error(e):
+    global _LAST_LLM_ERROR
+    from datetime import datetime
+    _LAST_LLM_ERROR = {"at": datetime.utcnow().isoformat(), "provider": _provider(), "error": str(e)[:300]}
+
+
 def _ask_llm(system: str, user: str) -> str:
     """Route one question to the active provider; remember the last failure."""
     global _LAST_LLM_ERROR
@@ -537,12 +639,29 @@ def _ask_llm(system: str, user: str) -> str:
         # is the honest failure rather than a silent None.
         result = (provider or PROVIDERS[0]).ask(system, user)
     except Exception as e:
-        from datetime import datetime
-        _LAST_LLM_ERROR = {"at": datetime.utcnow().isoformat(), "provider": _provider(),
-                           "error": str(e)[:300]}
+        _record_llm_error(e)
         raise
     _LAST_LLM_ERROR = None
     return result
+
+
+def _copilot_llm():
+    """(the model the Copilot may use for /ai/ask, or None, and why not).
+
+    A hosted provider is used as it always was: configured means used. The
+    self-hosted one is used only once its exact model has passed the Copilot
+    evaluation (ai/adopted_models.json, ADR-0023); until then /ai/ask answers from
+    AMP's own engine and says why."""
+    from ai import llm_adoption
+    from ai.llm import ProviderLLM
+    provider = _resolve_provider()
+    if provider is None or not provider.is_configured():
+        return None, None
+    if not provider.external:
+        adopted, reason = llm_adoption.is_adopted(provider.name, provider.model())
+        if not adopted:
+            return None, reason
+    return ProviderLLM(provider, ask=_ask_llm, on_error=_record_llm_error), None
 
 
 router = APIRouter(prefix="/ai", tags=["AI Copilot"], dependencies=[Depends(get_current_user)])
@@ -567,6 +686,13 @@ def ai_status(current_user: dict = Depends(get_current_user)):
     result["engine"] = _answer_engine()
     result["native"] = {"available": native["available"], "adopted": native["adopted"],
                         "version": native["version"]}
+    # ADR-0023: the self-hosted model, whether it is configured and whether it has
+    # passed the evaluation. The model name only: the endpoint address is
+    # infrastructure, not something a workspace needs to see.
+    from ai import llm_adoption
+    adopted, why = llm_adoption.is_adopted(LOCAL.name, LOCAL.model()) if LOCAL.is_configured() else (False, None)
+    result["local"] = {"configured": LOCAL.is_configured(), "model": LOCAL.model() if LOCAL.is_configured() else None,
+                       "adopted": adopted, "reason": why}
     # The last LLM failure is founder-only: error strings can carry upstream
     # details a client workspace shouldn't see, and it is process-wide, so it may
     # come from any tenant's request. The founder, not the founder's workspace:
@@ -578,55 +704,47 @@ def ai_status(current_user: dict = Depends(get_current_user)):
 
 @router.post("/ask")
 def ai_ask(payload: dict, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
+    """A plant question, answered through the typed-tool orchestrator (ADR-0022/0023).
+
+    AMP plans (or, with a tool-calling model, the model may plan), AMP's tools
+    read the data for THIS request's principal, and the model may word the answer
+    only if its text passes the grounding gate. So the model never sees a tenant,
+    never reads the database, and never puts a figure in front of the user that
+    the evidence does not hold.
+
+    What changed from the snapshot prompt this replaces:
+      * the tenant is `request_tenant` (via Principal.from_user), as on every
+        read-model route. It used to be the token's own claim, so a founder
+        previewing a company got the company's rows priced at the founder's own
+        unit value, and OEE filtered twice to nothing;
+      * the answer carries its evidence, tools and data state, like /copilot/ask;
+      * the drill-in view is still AMP's: it comes from the tools AMP ran.
+    """
     if not _ai_enabled():
-        raise HTTPException(status_code=503, detail="AI copilot not connected. Set ANTHROPIC_API_KEY to enable.")
-    question = (payload.get("question") or "").strip()
+        raise HTTPException(status_code=503, detail="AI copilot not connected. Set ANTHROPIC_API_KEY, "
+                                                    "GEMINI_API_KEY or a self-hosted model (AMP_LLM_BASE_URL "
+                                                    "and AMP_LLM_MODEL) to enable.")
+    question = payload.get("question") if isinstance(payload, dict) else None
+    question = question.strip() if isinstance(question, str) else ""
     if not question:
         raise HTTPException(status_code=400, detail="Ask a question.")
-    tenant = current_user.get("tenant", "DEFAULT")
-    context = _build_factory_context(db, tenant)
-    system = (
-        "You are AMP Copilot, a no-nonsense assistant for a factory manager at an Indian SME "
-        "manufacturer. Answer using ONLY the factory data provided. If the data doesn't contain the "
-        "answer, say so plainly. Be concise and practical — give shop-floor advice a supervisor can act on. "
-        "When asked 'why', do a short root-cause analysis from the data."
-    )
-    try:
-        answer = _ask_llm(system, f"Factory data:\n{context}\n\nQuestion: {question}")
-    except Exception as e:
-        # Graceful degradation: an LLM failure (no credits, rate limit,
-        # outage) must never surface a raw API error in a customer's
-        # copilot. Answer from the rule-based assistant instead, honestly
-        # labelled — the factory data is all local, so this always works.
-        log.info(f"[AI COPILOT] LLM failed, answering from rules: {e}")
-        import ai
-        # An ADOPTED native model may propose the pillar here too (ADR-0020);
-        # otherwise this is exactly the keyword router it always was.
-        fallback = ai.assistant.answer(db, tenant, question,
-                                       proposer=NATIVE.route if NATIVE.is_configured() else None)
-        return {
-            "answer": fallback.get("answer", "I couldn't reach the AI model just now — try again shortly."),
-            "view": fallback.get("view"),
-            "model": None,
-            "source": "rules",
-            "note": "AI model temporarily unavailable — answered from live factory data.",
-        }
-    # The drill-in view is AMP's, not the model's. The rules fallback above has
-    # always returned one and the UI renders "Open <view> ->" from it
-    # (AICopilot.tsx), so without this the button disappeared exactly when a key
-    # was configured: turning AI ON took a feature away. `route_view` reads the
-    # same routing table with NO queries — measured, running the pillar instead
-    # would cost up to 116% of this endpoint's context build (ai/assistant.py).
-    import ai
-    view = ai.assistant.route_view(question)
-    if NATIVE.is_configured():
-        # ADR-0020: an adopted native model may pick the drill-in view instead.
-        # Still zero queries: the proposal is a NAME, and the view is read off
-        # the allowlisted pillar AMP looks up; a refused proposal keeps route_view's.
-        fn, _decision = ai.assistant._proposed_pillar(NATIVE.route, question)
-        if fn is not None:
-            view = fn.view
-    return {"answer": answer, "view": view, "model": _current_model(), "source": "llm"}
+    from ai import orchestrator
+    from ai.tools import Principal
+    llm, not_used = _copilot_llm()
+    # An ADOPTED native intent model may still propose the pillar AMP's plan uses
+    # (ADR-0020); a model that plans for itself replaces that plan when it can.
+    out = orchestrator.ask(db, Principal.from_user(current_user), question,
+                           proposer=NATIVE.route if NATIVE.is_configured() else None, llm=llm)
+    worded = out["engine"] == "llm"
+    out["source"] = "llm" if worded else "rules"
+    out["model"] = out.get("model") if worded else None
+    if not_used:
+        out["note"] = not_used
+    elif not worded:
+        # The model failed, timed out, or its wording did not pass the gate: the
+        # answer is AMP's own, from the same tools, and says so.
+        out["note"] = "AI model's wording not used this time; answered from live factory data."
+    return out
 
 
 @router.post("/report")

@@ -91,8 +91,11 @@ export default function AICopilot({ onOpen }: { onOpen?: (viewKey: string) => vo
       let turn: Turn;
       if (ai.enabled) {
         try {
-          const res = await apiPost<{ answer: string; view?: string; source?: string; model?: string | null; note?: string }>("/ai/ask", { question: query });
-          turn = { q: query, a: res.answer, view: res.view, source: res.source, model: res.model, note: res.note };
+          // /ai/ask answers through the same typed-tool orchestrator (ADR-0023), so
+          // it carries the same evidence; `source` says whether a model worded it.
+          const res = await apiPost<RulesAnswer & { source?: string; model?: string | null; note?: string }>(
+            "/ai/ask", { question: query });
+          turn = { ...rulesTurn(query, res), source: res.source, model: res.model, note: res.note };
         } catch {
           const res = await apiPost<RulesAnswer>("/copilot/ask", { question: query });
           turn = rulesTurn(query, res);
@@ -215,7 +218,7 @@ export default function AICopilot({ onOpen }: { onOpen?: (viewKey: string) => vo
           ? <>Conversational answers by <span className="text-slate-400">{ai.model}</span>, grounded in your live plant data — with instant rule-based answers as backup.</>
           : ai.engine === "amp-native"
             ? <>Questions are routed by AMP&apos;s own intent model, running inside AMP with no external AI service, with keyword rules as backup.</>
-            : <>Rule-based answers over your live data · connect an AI key (Anthropic or Gemini) for free-form conversational answers.</>}
+            : <>Answers from AMP&apos;s own engine over your live data, with the evidence behind each figure. A self-hosted model can word them once it passes AMP&apos;s evaluation.</>}
       </p>
     </section>
   );

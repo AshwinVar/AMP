@@ -154,8 +154,13 @@ def section_not_a_provider():
     print("1. AMP-NATIVE IS NOT AN LLM PROVIDER, AND IS OFF UNLESS ADOPTED")
     print("=" * 74)
     clean_env()
-    check("PROVIDERS is still exactly anthropic, gemini", [p.name for p in ai_copilot.PROVIDERS]
-          == ["anthropic", "gemini"], str([p.name for p in ai_copilot.PROVIDERS]))
+    # ADR-0023 added the self-hosted LLM provider ("local"). What this section
+    # pins is that the NATIVE INTENT MODEL is not an LLM provider: it is still
+    # absent from PROVIDERS, and the LLM precedence is still exactly this list.
+    check("PROVIDERS is exactly anthropic, gemini, local", [p.name for p in ai_copilot.PROVIDERS]
+          == ["anthropic", "gemini", "local"], str([p.name for p in ai_copilot.PROVIDERS]))
+    check("...and the native intent model is not among them",
+          ai_copilot.NATIVE not in ai_copilot.PROVIDERS and "amp-native" not in [p.name for p in ai_copilot.PROVIDERS])
     check("with no keys: no provider, AI disabled", ai_copilot._provider() is None
           and ai_copilot._ai_enabled() is False)
     check("NATIVE is an AIProvider named amp-native", isinstance(ai_copilot.NATIVE, ai_copilot.AIProvider)
@@ -392,7 +397,23 @@ def section_endpoints(engine, Session):
               == assistant.route_view(q) == "overview", str(plain.get("view")))
         check("an adopted model's proposal chooses the drill-in view", native.get("view") == "cmms",
               str(native.get("view")))
-        check("...at zero extra queries", native_n == plain_n, f"{native_n} vs {plain_n}")
+        # ADR-0023: /ai/ask now runs the tool the plan picks, so a different
+        # pillar costs that pillar's queries. The invariant is unchanged: the
+        # PROPOSAL (and the model's wording) adds nothing to what AMP's own
+        # answer for that same pillar costs.
+        from ai import orchestrator
+        from ai.tools import Principal
+        counter["n"] = 0
+        counter2, stop2 = count_statements(engine)
+        db = Session()
+        try:
+            with Patched(lambda: FakeClassifier(route="maintenance", adopted=True)):
+                orchestrator.ask(db, Principal(tenant=T, role="Admin"), q, proposer=ai_copilot.NATIVE.route)
+        finally:
+            stop2()
+            db.close()
+        check("...at zero extra queries over AMP's own answer for that pillar", native_n == counter2["n"],
+              f"{native_n} vs {counter2['n']}")
         check("...the prose is still the LLM's and labelled llm", native.get("answer") == "Some prose."
               and native.get("source") == "llm")
         check("a NOT adopted model changes nothing", unadopted.get("view") == plain.get("view"))

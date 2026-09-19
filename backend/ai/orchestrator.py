@@ -150,7 +150,26 @@ def _overall_state(results) -> str:
 
 def ask(db, principal: Principal, question, proposer=None, llm=None) -> dict:
     """Answer one question for one authenticated principal. Never raises for the
-    question's content or for a model's behaviour."""
+    question's content or for a model's behaviour.
+
+    The principal's tenant is bound for the WHOLE question, routing included, not
+    only inside each tool. Routing reads the machine list to spot a named
+    machine, and unbound that read saw every company's machines: tenant A asking
+    "how is WELD-07?" got a different KIND of answer when some other company had
+    a WELD-07 than when nobody did, which says the other company's machine
+    exists. A request is bound by the middleware anyway; a background brief, a
+    test or any future caller is bound here."""
+    import tenancy
+    if isinstance(principal, Principal) and principal.tenant and not tenancy.is_reserved_tenant_code(principal.tenant):
+        token = tenancy.set_current_tenant(principal.tenant)
+        try:
+            return _ask(db, principal, question, proposer, llm)
+        finally:
+            tenancy.reset_current_tenant(token)
+    return _ask(db, principal, question, proposer, llm)
+
+
+def _ask(db, principal, question, proposer, llm) -> dict:
     started = time.perf_counter()
     q = question.strip() if isinstance(question, str) else ""
     if len(q) > MAX_QUESTION:
@@ -163,7 +182,9 @@ def ask(db, principal: Principal, question, proposer=None, llm=None) -> dict:
     notes = []
     rules = plan_rules(db, q, proposer)
     plan = rules
-    if llm is not None:
+    # A model without native tool calling words answers but does not plan
+    # (`can_plan = False`, ai/llm.py): AMP's router plans, as it always did.
+    if llm is not None and getattr(llm, "can_plan", True):
         llm_plan, why = _plan_with_llm(llm, q, principal)
         if llm_plan is not None:
             plan = llm_plan

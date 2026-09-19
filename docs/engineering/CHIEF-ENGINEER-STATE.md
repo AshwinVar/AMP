@@ -3,27 +3,20 @@
 > Handover file. A new session should be able to read only this and continue.
 > Keep it short. Update it at the end of every completed task.
 
-**Updated:** 2026-09-18 (#631–#644: verification that had stopped verifying.
-The founder's preview could reach an OEM namespace. The specialist audit had
-gone stale. Five OEE surfaces stated no coverage. 13 mutation tests applied to
-nothing, 11 in Python and 2 in the UI. One guard lost its proof to #631. Four
-money cards had no thousands separator. Every audit that can fail now runs on
-every push, and the whole mutation fleet runs every Monday. See the section of
-that date below.)
-**Master SHA:** `48583f4` (#644). A docs-only merge on top of it changes nothing
-that runs.
-**Production SHA:** `48583f4`, verified live, not assumed:
-`{"status":"ok","database":"ok","schema":"ok","version":"48583f4"}` from
-`https://flowmes-production.up.railway.app/health`, read at 22:26 UTC;
-`/readiness` 200 at `0010_outcome_contracts`; the frontend
-(`https://flow-mes.vercel.app`) answers 200. Railway auto-deploys master, so
-prod tracks HEAD; re-check `/health` rather than trusting this line's age.
-**Vercel was slow this evening, not broken.** Its deploys queued for over an
-hour from 20:08 UTC. By 22:15 UTC they were back to deploying previews within
-minutes. Nothing that ships in the frontend has changed since `c217bcf` (#636),
-whose production deploy completed.
-
-**Awaiting review:** none.
+**Updated:** 2026-09-19. The 10-day differentiation sprint began. #645
+(ADR-0022): the Copilot answers through typed, authorized AMP tools, with
+evidence, behind a grounding gate and an evaluation gate. The self-hosted model
+provider (ADR-0023) is in review. See AMP-10-DAY-SPRINT.md.
+**Master SHA:** `d0d50aa` (#645).
+**Production SHA:** `d0d50aa`, verified live, not assumed:
+`{"status":"ok","database":"ok","schema":"ok","version":"d0d50aa"}` from
+`https://flowmes-production.up.railway.app/health`, read at 01:50 UTC on
+2026-09-19; `/readiness` 200; the frontend (`https://flow-mes.vercel.app`)
+answers 200; `POST /copilot/ask` refuses an unauthenticated call with 401.
+Railway auto-deploys master, so prod tracks HEAD; re-check `/health` rather than
+trusting this line's age.
+**Awaiting review:** the self-hosted model provider, the adoption record and
+`/ai/ask` through the orchestrator (ADR-0023), branch `feat/copilot-local-provider`.
 
 **THE 10-DAY DIFFERENTIATION SPRINT started 2026-09-19.** Its own tracker is
 [`AMP-10-DAY-SPRINT.md`](AMP-10-DAY-SPRINT.md): day, SHAs, the 16

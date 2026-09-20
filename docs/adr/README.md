@@ -39,6 +39,7 @@ Guiding principles: incremental (strangler) evolution, never a rewrite; backward
 | [0031](0031-proactive-restraint.md) | AMP speaks first, and mostly decides not to | Accepted |
 | [0032](0032-anomaly-sweep.md) | The anomaly check runs over the whole fleet, and says why for every machine it could not score | Accepted |
 | [0033](0033-oem-intelligence-floor.md) | An aggregate can disclose what a field could not, so every cross-customer figure has a floor | Accepted |
+| [0034](0034-real-local-model.md) | A reasoning model needs room to name a tool, and AMP gave it none | Accepted |
 
 **Recommended order:** 0001 first (smaller, proves the pattern; events carry `tenant_code`), then 0002.
 

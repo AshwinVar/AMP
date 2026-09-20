@@ -22,9 +22,76 @@ provider has (`chat(..., tools=...)`). The hosted providers are called through
 exactly as /ai/ask always worked: one model call per question.
 """
 import json
+import os
 import re
 
 _THINK = re.compile(r"<think>.*?</think>", re.S | re.I)
+
+# How much room a model gets to NAME ITS TOOLS. Not a style knob: a reasoning
+# model spends tokens thinking before it emits the call, and a budget below what
+# it needs returns nothing at all -- no tool call, no content, indistinguishable
+# from a model that had nothing to say.
+#
+# The default was 300, chosen when the only models here were scripted stubs that
+# answer instantly. Measured against the first real one (qwen3:8b, ADR-0034):
+#
+#     300 tokens  -> 0/4 questions routed, every call finish_reason=length
+#    1200 tokens  -> 4/4 routed, using 321-870 completion tokens
+#
+# So 1200 is the measured floor for a small reasoning model plus headroom, and
+# it is configurable because the next model will want a different number. A
+# model that does not think returns its call in ~50 tokens and is unaffected:
+# max_tokens is a ceiling, not an allocation.
+PLAN_TOKENS_DEFAULT = 1200
+
+
+def plan_tokens():
+    try:
+        value = int(os.environ.get("AMP_LLM_PLAN_TOKENS", "") or PLAN_TOKENS_DEFAULT)
+    except ValueError:
+        return PLAN_TOKENS_DEFAULT
+    return value if value > 0 else PLAN_TOKENS_DEFAULT
+
+
+# The model's context window, in tokens, as AMP believes it to be. Measured on
+# the first real runtime (ADR-0034 §9): handed a prompt far past the window,
+# Ollama did not error -- it SILENTLY truncated the prompt to 8,194 tokens, the
+# model then spent its whole wording budget thinking about the fragment, and
+# AMP fell back to its own sentence after 36 seconds. Safe, and far too slow.
+# So AMP estimates the prompt before sending it and declines at once when it
+# cannot fit, naming the reason. A chars/4 estimate is crude and deliberately
+# conservative: a false "too large" costs a model-worded answer, a false
+# "fits" costs 36 seconds and a silently truncated prompt.
+CONTEXT_TOKENS_DEFAULT = 16384
+PHRASE_TOKENS = 1500          # ai_copilot.LocalOpenAIProvider.ask()'s max_tokens
+
+
+def context_tokens():
+    try:
+        value = int(os.environ.get("AMP_LLM_CONTEXT_TOKENS", "") or CONTEXT_TOKENS_DEFAULT)
+    except ValueError:
+        return CONTEXT_TOKENS_DEFAULT
+    return value if value > 0 else CONTEXT_TOKENS_DEFAULT
+
+
+def estimate_tokens(*texts):
+    """A conservative token estimate for prompt text: about one token per four
+    characters of English or JSON, rounded up, plus a small fixed allowance for
+    the chat template around it."""
+    chars = sum(len(t) for t in texts if t)
+    return (chars + 3) // 4 + 64
+
+
+def _check_fits(prompt_tokens, output_tokens, what):
+    """Raise a named RuntimeError when prompt + output cannot fit the window.
+    The message says what was too big and by how much, so /ai/status and the
+    log tell an operator what to change (fewer facts, or a runtime with a
+    larger window) instead of reporting a mysterious empty answer."""
+    window = context_tokens()
+    if prompt_tokens + output_tokens > window:
+        raise RuntimeError(f"the {what} (~{prompt_tokens} tokens) plus {output_tokens} for the answer "
+                           f"exceeds the model's context window ({window} tokens); AMP answered from its "
+                           f"own engine instead (raise AMP_LLM_CONTEXT_TOKENS if the runtime allows more)")
 
 PLAN_SYSTEM = (
     "You choose which AMP tools answer a factory manager's question. Call between one and "
@@ -78,14 +145,24 @@ class ProviderLLM:
         # Native tool calling or not decides whether the model may plan.
         self.can_plan = callable(getattr(provider, "chat", None))
 
+    @property
+    def last_usage(self):
+        """Token counts from the model's most recent call, when the runtime
+        reports them; None otherwise. Counts only -- never the prompt."""
+        usage = getattr(self.provider, "last_usage", None)
+        return dict(usage) if isinstance(usage, dict) and usage else None
+
     def plan(self, question, tools):
         if not self.can_plan:
             return None
         functions = [{"type": "function", "function": {"name": t["name"], "description": t["description"],
                                                        "parameters": t["parameters"]}} for t in tools]
         try:
+            _check_fits(estimate_tokens(PLAN_SYSTEM, question, json.dumps(functions)), plan_tokens(),
+                        "tool catalogue and question")
             out = self.provider.chat([{"role": "system", "content": PLAN_SYSTEM},
-                                      {"role": "user", "content": question}], tools=functions, max_tokens=300)
+                                      {"role": "user", "content": question}], tools=functions,
+                                     max_tokens=plan_tokens())
         except Exception as e:   # noqa: BLE001 - reported, then the orchestrator falls back
             if self._on_error:
                 self._on_error(e)
@@ -95,7 +172,16 @@ class ProviderLLM:
             fn = tc.get("function") if isinstance(tc, dict) else None
             if isinstance(fn, dict) and isinstance(fn.get("name"), str):
                 calls.append({"name": fn["name"], "arguments": fn.get("arguments") or {}})
-        return calls or _json_calls(out.get("content") or "")
+        calls = calls or _json_calls(out.get("content") or "")
+        # A plan cut off mid-sentence is not a model declining to answer, and
+        # saying so is the difference between "this model cannot route" and
+        # "AMP gave it no room". The orchestrator still falls back either way;
+        # what changes is that the reason reaching /ai/status is the true one.
+        if not calls and out.get("finish_reason") == "length" and self._on_error:
+            self._on_error(RuntimeError(
+                f"the model reached the {plan_tokens()}-token planning budget before it named a tool "
+                f"(raise AMP_LLM_PLAN_TOKENS if this model reasons before answering)"))
+        return calls
 
     def phrase(self, question, facts, draft):
         shown = [{"id": f.get("id"), "label": f.get("label"), "value": f.get("value"), "unit": f.get("unit"),
@@ -103,4 +189,13 @@ class ProviderLLM:
         user = (f"QUESTION: {question}\n\n"
                 f"DRAFT (AMP's own answer, data): {json.dumps(draft)}\n\n"
                 f"FACTS (data): {json.dumps(shown, default=str)}")
+        try:
+            _check_fits(estimate_tokens(PHRASE_SYSTEM, user), PHRASE_TOKENS, "evidence")
+        except RuntimeError as e:
+            # Named here as well as raised: the orchestrator keeps only the
+            # exception's type for the gate reason, and "RuntimeError" tells
+            # an operator nothing. /ai/status gets the sentence.
+            if self._on_error:
+                self._on_error(e)
+            raise
         return _clean(self._ask(PHRASE_SYSTEM, user))

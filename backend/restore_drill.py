@@ -27,6 +27,7 @@ from the schedule, and the drill verifies data completeness rather than age.
 Run:  python backend/restore_drill.py                (the drill as first measured: 12 / 7 / 3 machines)
       python backend/restore_drill.py --scale 100    (1,200 / 700 / 300 machines, a month of daily
                                                        production records each -- a production-sized dump)
+      python backend/restore_drill.py --scale 100 --days 365    (the same plant, a year of production)
 """
 import json
 import os
@@ -80,14 +81,15 @@ class phase:
         return False
 
 
-def seed(url, scale=1):
+def seed(url, scale=1, days=30):
     """Three customers with overlapping identifiers, as a real deployment.
 
     `scale` multiplies the machine counts (12 / 7 / 3 at scale 1) and, above 1,
-    gives every machine a month of daily production records instead of one, so
-    the dump is a production-sized one rather than a demo's. Scale 1 is the
-    drill as first measured (7.47 s); the larger scales exist because that
-    figure was recorded with the caveat "for a small dataset"."""
+    gives every machine `days` daily production records instead of one (30 by
+    default, a month; 365 is a year), so the dump is a production-sized one
+    rather than a demo's. Scale 1 is the drill as first measured (7.47 s); the
+    larger scales exist because that figure was recorded with the caveat "for
+    a small dataset"."""
     env = dict(os.environ, DATABASE_URL=url)
     script = f'''
 import os, sys
@@ -103,7 +105,7 @@ now = datetime.utcnow()
 sites = {{"FACTORY_A": "Chennai", "FACTORY_B": "Pune", "FACTORY_C": "Coimbatore"}}
 scale = {scale}
 counts = {{"FACTORY_A": 12 * scale, "FACTORY_B": 7 * scale, "FACTORY_C": 3 * scale}}
-history = 1 if scale == 1 else 30      # daily production records per machine
+history = 1 if scale == 1 else {days}      # daily production records per machine
 for t in {TENANTS!r}:
     db.add(models.User(username=t.lower() + "-admin",
                        password=hash_password({PASSWORD!r}),
@@ -161,14 +163,18 @@ def main():
 
     # --scale N: a production-sized source (see seed). Default 1 keeps the drill
     # exactly as first measured.
-    scale = 1
+    scale, days = 1, 30
     if "--scale" in sys.argv:
         scale = max(1, int(sys.argv[sys.argv.index("--scale") + 1]))
+    if "--days" in sys.argv:
+        days = max(1, int(sys.argv[sys.argv.index("--days") + 1]))
     # Timed for the record but NOT a phase: seeding is not part of a recovery,
     # and the RTO below is the sum of the phases only.
     t_seed = time.perf_counter()
-    before = seed(src_url, scale)
-    print(f"seeded three customers at scale {scale} in {time.perf_counter() - t_seed:.1f} s: {before}")
+    before = seed(src_url, scale, days)
+    print(f"seeded three customers at scale {scale}"
+          f"{f', {days} days of production per machine' if scale > 1 else ''} "
+          f"in {time.perf_counter() - t_seed:.1f} s: {before}")
 
     env = dict(os.environ, PGPASSWORD=_password(admin))
 

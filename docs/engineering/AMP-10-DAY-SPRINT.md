@@ -131,7 +131,23 @@ The scripted model behaviours test what AMP does with a model; they are not a mo
 3. ~~**Root-Cause Explorer and Risk Radar**~~ (Day 6). ADR-0025 and ADR-0026.
 4. ~~**Machine Health, anomaly and failure-risk surfaced honestly**~~ (Day 7). ADR-0027 and ADR-0032.
 5. ~~**Smart inventory, closed loop with a measured result, proactive alerts, OEM intelligence**~~ (Day 8). ADR-0030, ADR-0029, ADR-0031 and ADR-0033.
-6. **Adversarial campaign, the three-factory and OEM journeys, release candidate** (Days 9–10). ← next.
+6. **Adversarial campaign, the three-factory and OEM journeys, release candidate** (Days 9–10). ← in progress.
+   - **Done: the owner's eight questions, across four factory shapes.**
+     `audit_owner_questions.py` asks all eight of the questions this sprint
+     promised an owner could answer, on four shapes in ONE process — healthy
+     and priced, in trouble and UNPRICED, partially covered, and brand new —
+     through the same functions the routes call. It runs in CI on every push.
+     It exists for the rules that only hold BETWEEN surfaces and that no
+     per-surface suite can hold: money appearing nowhere across nine screens
+     for a factory with no unit value, and no factory's words on another's
+     screen when four tenants share one database and the same machine names.
+   - **It found two defects on its first run, both now fixed:** the shortage
+     card reported a workspace with no stock at all as OK with zero units at
+     risk (the "empty stock is healthy" defect, in a surface written after
+     that lesson), and the proactive plan told a brand-new workspace it had
+     "no problems and no risks" while its own state said NO DATA. Both have a
+     test and a mutation; `mutate_shortage_impact` is now 19/19 and
+     `mutate_proactive` 17/17.
    - Fifteen of the sixteen differentiators are BUILT. The one that is not is
      #2's *model*: the provider, the switch and the evaluation exist and are
      tested against stubs, and no real model has been measured because the

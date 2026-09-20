@@ -833,10 +833,17 @@ def get_action_outcomes(db, tenant):
 def get_shortage_risk(db, tenant):
     from ai.shortage import build_shortage_impact, say_shortage   # lazy: pulls the pillar modules
     s = build_shortage_impact(db, tenant)
+    # A workspace with no stock records has no units at risk to derive, so the
+    # figure is None and must say UNKNOWN rather than claim a derivation it did
+    # not do. ai.evidence enforces this pairing and raised on it, which is the
+    # rule working: a null labelled DERIVED reads as a measured zero.
+    at_risk = s["units_at_risk"]
     facts = [
         _fact("shortage.units_at_risk", "Units that cannot be made from stock on hand",
-              s["units_at_risk"], D, "units", "work_orders x bills_of_materials", "now",
-              detail=s["note"]),
+              at_risk, D if at_risk is not None else U, "units",
+              "work_orders x bills_of_materials", "now",
+              detail=s["note"] if at_risk is not None
+              else "no stock items are set up, so there is nothing to size a shortage against"),
         _fact("shortage.items_sized", "Short items AMP could size", len(s["shortages"]), M, "items",
               "inventory_items", "now"),
         # The items AMP could NOT size are a fact too. Leaving them out would

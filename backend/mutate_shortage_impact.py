@@ -74,6 +74,25 @@ MUTATIONS = [
     ("the tool claims a money figure with no unit value", TOOLS,
      '        facts.append(_fact("shortage.money_at_risk", "Value of the units at risk", None, U, CURRENCY,',
      '        facts.append(_fact("shortage.money_at_risk", "Value of the units at risk", 0, D, CURRENCY,'),
+
+    # --- an empty workspace is not a healthy one ----------------------------
+    # An empty at-risk list means two different things, and only one of them is
+    # "nothing is low". Each of these collapses the distinction again.
+    ("a workspace with NO stock is reported as OK", SH,
+     "        if not inv[\"total_items\"]:", "        if False:"),
+    ("an unlooked-at workspace is given a zero rather than nothing", SH,
+     '                    "shortages": [], "unlinked": [], "units_at_risk": None, "money_at_risk": None,\n'
+     '                    "currency": None, "priced": bool(unit_value is not None),\n'
+     '                    "note": ALLOCATION_RULE}',
+     '                    "shortages": [], "unlinked": [], "units_at_risk": 0, "money_at_risk": None,\n'
+     '                    "currency": None, "priced": bool(unit_value is not None),\n'
+     '                    "note": ALLOCATION_RULE}'),
+    ("the empty workspace stops denying that stock is healthy", SH,
+     '                                 "would stop. This is not a report that stock is healthy."),',
+     '                                 "would stop."),'),
+    ("the empty and the stocked workspace get the same sentence", SH,
+     '                    "headline": ("No stock items are set up, so AMP cannot say what a shortage "',
+     '                    "headline": ("Nothing is at or below its reorder level. "'),
 ]
 
 

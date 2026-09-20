@@ -76,6 +76,19 @@ MUTATIONS = [
     ("the tool hides how much it held back", TOOLS,
      '        _fact("raise.held_back", "Held back", len(p["suppressed"]), R, "findings",',
      '        _fact("raise.held_back", "Held back", 0, R, "findings",'),
+
+    # --- the sentence has to agree with the state ---------------------------
+    # NO DATA says AMP had nothing to look at. Any wording that instead reports
+    # on the plant is a claim it has not earned, and a brand-new workspace is
+    # exactly who reads it.
+    ("an empty workspace is told it has no problems", PA,
+     'ev.NO_DATA, ("Nothing reached AMP to consider raising. That is not the "\n'
+     '                                       "same as a clear plant: with nothing to look at, there is "\n'
+     '                                       "nothing to hold back either.")',
+     'ev.NO_DATA, "There is nothing to raise: no problems and no risks."'),
+    ("the empty workspace stops denying that the plant is clear", PA,
+     '                                       "same as a clear plant: with nothing to look at, there is "',
+     '                                       "same as this: with nothing to look at, there is "'),
 ]
 
 

@@ -130,7 +130,16 @@ def _order_risks(delivery, daily_rate, unit_value, today):
     return out
 
 
-def _stock_risks(coverage):
+def _stock_risks(coverage, impact, unit_value):
+    """`impact` is {item_code: units of production that cannot be made}, measured
+    through the tenant's own bills of materials (ADR-0030).
+
+    ADR-0026 shipped this rule with NO size at all, and said why: *"a stock-out
+    carries no units, because AMP has no measured link from a shortage to the
+    units not made."* That link now exists, so a risk gets a size when the item
+    is in a recipe — and still none when it is not, which is the same refusal as
+    before rather than a new guess.
+    """
     out = []
     for item in (coverage.get("items") or [])[:5]:
         cover = item.get("days_of_cover")
@@ -163,7 +172,8 @@ def _stock_risks(coverage):
              f"days of cover ({cover}) is at or below the "
              f"{COVER_LIKELY_DAYS if likelihood == ev.LIKELY else COVER_POSSIBLE_DAYS}-day threshold, "
              "at the item's own measured use"),
-            "now" if empty else f"{cover} days", "inventory", "inventory", facts))
+            "now" if empty else f"{cover} days", "inventory", "inventory", facts,
+            units=impact.get(item["item_code"]), unit_value=unit_value))
     return out
 
 
@@ -245,9 +255,16 @@ def build_risk_radar(db, tenant: str, now=None) -> dict:
     quality = build_quality_trend(db, tenant)
     unit_value = tenant_unit_value(db, tenant)
     daily_rate = (production["good"] / production["days"]) if production["runs"] else None
+    # What each shortage would actually stop, through the tenant's own bills of
+    # materials (ADR-0030). An item in no recipe is absent from this map and its
+    # risk stays unsized, exactly as it was before the link existed.
+    from ai.shortage import build_shortage_impact      # lazy: composes inventory, BOM and orders
+    stock_impact = {s["item_code"]: s["units_at_risk"]
+                    for s in build_shortage_impact(db, tenant, now=now)["shortages"]
+                    if s["units_at_risk"]}
 
     risks = (_order_risks(delivery, daily_rate, unit_value, today)
-             + _stock_risks(coverage)
+             + _stock_risks(coverage, stock_impact, unit_value)
              + _machine_risks(db)
              + _maintenance_risks(forecast))
     drift = _quality_risk(quality)

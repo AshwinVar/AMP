@@ -27,6 +27,7 @@ import PredictiveMaintenanceSection from "../../components/PredictiveMaintenance
 import ProductionPlanSection from "../../components/ProductionPlanSection";
 import EscalationSection from "../../components/EscalationSection";
 import InventorySection from "../../components/InventorySection";
+import ShortageImpactSection from "../../components/ShortageImpactSection";
 import EnterpriseInventory from "../../components/EnterpriseInventory";
 import GmatsInventory from "../../components/GmatsInventory";
 import UsersSection from "../../components/UsersSection";
@@ -2744,6 +2745,10 @@ export default function DashboardPage() {
           <GmatsInventory tenant="GMATS" isAdmin={isAdmin} />
         ) : (
         <>
+          {/* ADR-0030: what each shortage will actually stop, before the stock
+              tables. A buyer's first question is which shortage matters most,
+              and that is production, not the shelf. */}
+          <div className="mt-8"><ShortageImpactSection /></div>
           <div className="mt-8"><StockIntegrityCards /></div>
           <EnterpriseInventory items={inventoryItems} />
           <InventorySection

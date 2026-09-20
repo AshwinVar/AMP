@@ -103,6 +103,14 @@ _OUTCOME_PHRASES = ("did it help", "did that help", "did it work", "did that wor
                     "did approving", "after we approved", "after the actions",
                     "recommendations working", "are the agents helping", "what happened after")
 _OUTCOME_PILLARS = ("briefing", "help")
+# What a shortage will STOP (ADR-0030), as against what is short. Applied from
+# the inventory pillar and the fallback: "what should I reorder" keeps its
+# answer, "what will running out cost us" now has one.
+_SHORTAGE_PHRASES = ("what will the shortage", "shortage stop", "stock-out stopping",
+                     "stockout stopping", "running out cost", "at risk from stock",
+                     "stop production", "hold up production", "which orders are at risk from",
+                     "what does the shortage")
+_SHORTAGE_PILLARS = ("inventory", "briefing")
 
 
 def plan_rules(db, question, proposer=None) -> Plan:
@@ -126,6 +134,8 @@ def plan_rules(db, question, proposer=None) -> Plan:
         return Plan([("get_daily_brief", {})], "daily_brief", r.labels)
     if r.matched in _OUTCOME_PILLARS and any(p in q for p in _OUTCOME_PHRASES):
         return Plan([("get_action_outcomes", {})], "action_outcomes", r.labels)
+    if r.matched in _SHORTAGE_PILLARS and any(p in q for p in _SHORTAGE_PHRASES):
+        return Plan([("get_shortage_risk", {})], "shortage_impact", r.labels)
     name = PILLAR_TOOL.get(r.matched)
     return Plan([(name, {})] if name else [], r.matched, r.labels)
 

@@ -9,19 +9,22 @@ evaluation), #646 (ADR-0023, the self-hosted provider behind an earned switch),
 #647 (ADR-0024, the Command Centre), #648 (ADR-0025, the Root-Cause Explorer),
 #649 (ADR-0026, the Risk Radar), #650 (ADR-0027, the explained health score and
 the failure-risk model's first screen) and #651 (ADR-0028, the Daily Factory
-Brief). In review: the closed loop — what changed after an approved action
-(ADR-0029). See AMP-10-DAY-SPRINT.md.
-**Master SHA:** `3e15d9c` (#651).
-**Production SHA:** `3e15d9c`, verified live, not assumed:
-`{"status":"ok","database":"ok","schema":"ok","version":"3e15d9c"}` from
-`https://flowmes-production.up.railway.app/health`, read at 02:14 UTC on
-2026-09-20; `/readiness` 200; the frontend (`https://flow-mes.vercel.app`)
-answers 200; `GET /daily-brief` refuses an unauthenticated call with 401.
+Brief) and #652 (ADR-0029, the closed loop — what changed after an approved
+action, the sprint's first schema change). In review: the shortage-to-production
+link (ADR-0030). See AMP-10-DAY-SPRINT.md.
+**Master SHA:** `82ac27f` (#652).
+**Production SHA:** `82ac27f`, verified live, not assumed:
+`{"status":"ok","database":"ok","schema":"ok","version":"82ac27f"}` from
+`https://flowmes-production.up.railway.app/health`, read at 03:16 UTC on
+2026-09-20. The migration ran there too: `/readiness` reports
+`expected_revision` and `current_revision` both `0011_action_outcomes`. The
+frontend (`https://flow-mes.vercel.app`) answers 200; `GET /action-outcomes`
+refuses an unauthenticated call with 401.
 Railway auto-deploys master, so prod tracks HEAD; re-check `/health` rather than
 trusting this line's age.
-**Awaiting review:** the closed loop (ADR-0029, `feat/closed-loop`) — the first
-schema change of the sprint, so it carries migration `0011`, its own migration
-suite and `verify_pg_action_outcomes.py` in the PostgreSQL gate.
+**Awaiting review:** the shortage-to-production link (ADR-0030,
+`feat/smart-inventory`), which supplies the measured link ADR-0026 said was
+missing and which the Risk Radar now adopts.
 
 **THE 10-DAY DIFFERENTIATION SPRINT started 2026-09-19.** Its own tracker is
 [`AMP-10-DAY-SPRINT.md`](AMP-10-DAY-SPRINT.md): day, SHAs, the 16

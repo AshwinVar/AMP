@@ -21,6 +21,7 @@ and the harness does it through the API like everything else.
 """
 import asyncio
 import json
+import re
 import os
 import sys
 from datetime import date, timedelta
@@ -36,6 +37,22 @@ def step(label, ok, detail=""):
     print(f"  {'OK  ' if ok else 'FAIL'}  {label}" + (f"   [{detail}]" if detail and not ok else ""))
     if not ok:
         FAILURES.append(f"{label}: {detail}")
+
+
+_TIMESTAMP = re.compile(r"\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}(?:\.\d+)?")
+
+
+def says(payload, figure) -> bool:
+    """Is `figure` read out anywhere in this payload, as a FIGURE?
+
+    Timestamps are removed first. A microsecond stamp like
+    "2026-09-20T03:33:13.412000" contains "4120", and a substring search over
+    the raw JSON therefore fails at random on a payload that does not mention
+    the hours at all -- which is exactly how this audit failed CI once while
+    passing locally every time. The rule being enforced is "the withheld figure
+    is not shown", not "these four digits appear nowhere in the document".
+    """
+    return figure in _TIMESTAMP.sub(" ", json.dumps(payload))
 
 
 def main():
@@ -411,11 +428,15 @@ def main():
     # whose entire point is that it cannot be.
     c, svc_after = GET("/oem/service", oem)
     hours_text = str(int(OVER))
+    # CONTROL for the helper itself: stripping timestamps must not have made the
+    # check unable to fail. A payload that DOES read the figure out still trips it.
+    step("CONTROL: the hours check can still fail",
+         says({"hours_since_service": float(OVER), "at": "2026-09-20T03:33:13.412000"}, hours_text))
     step("THE SERVICE QUEUE LOSES THE HOURS TOO, prose included",
-         hours_text not in json.dumps(svc_after), json.dumps(svc_after)[:300])
+         not says(svc_after, hours_text), json.dumps(svc_after)[:300])
     c, ms_after = GET(f"/oem/machines/{inst_id}/service", oem)
     step("...and so does the machine's own service panel",
-         hours_text not in json.dumps(ms_after), json.dumps(ms_after)[:300])
+         not says(ms_after, hours_text), json.dumps(ms_after)[:300])
     step("...while the service VERDICT, which the customer did grant, stands",
          ms_after.get("service", {}).get("state") not in (None, "not_shared"),
          str(ms_after.get("service")))

@@ -16,6 +16,7 @@ vi.mock("../lib/api", () => ({
   apiGet: (p: string) => apiGet(p),
   apiPost: (p: string, b: unknown) => apiPost(p, b),
 }));
+vi.mock("./ActionOutcomesSection", () => ({ default: () => null }));
 vi.mock("./AgentPolicyPanel", () => ({ default: () => null }));
 vi.mock("./AgentDetailDrawer", () => ({ default: () => null }));
 // The AMP-native AI panels this section also mounts (ADR-0020) have their own

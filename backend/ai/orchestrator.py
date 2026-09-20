@@ -95,6 +95,14 @@ _BRIEF_PHRASES = ("brief me", "the brief", "a brief", "daily brief", "factory br
                   "daily update", "need to know today", "morning update", "read me in",
                   "catch me up", "bring me up to speed")
 _BRIEF_PILLARS = ("briefing",)
+# "Did it help?" (ADR-0029). Applied from the fallback pillar AND from `help`,
+# because these questions reached nothing at all before: "did it help?" routed to
+# the help text, and "did that work?" to the plant summary. Narrow phrases only —
+# a question about whether a MACHINE is working still goes to the machine.
+_OUTCOME_PHRASES = ("did it help", "did that help", "did it work", "did that work",
+                    "did approving", "after we approved", "after the actions",
+                    "recommendations working", "are the agents helping", "what happened after")
+_OUTCOME_PILLARS = ("briefing", "help")
 
 
 def plan_rules(db, question, proposer=None) -> Plan:
@@ -116,6 +124,8 @@ def plan_rules(db, question, proposer=None) -> Plan:
         return Plan([("get_production_risks", {})], "production_risks", r.labels)
     if r.matched in _BRIEF_PILLARS and any(p in q for p in _BRIEF_PHRASES):
         return Plan([("get_daily_brief", {})], "daily_brief", r.labels)
+    if r.matched in _OUTCOME_PILLARS and any(p in q for p in _OUTCOME_PHRASES):
+        return Plan([("get_action_outcomes", {})], "action_outcomes", r.labels)
     name = PILLAR_TOOL.get(r.matched)
     return Plan([(name, {})] if name else [], r.matched, r.labels)
 

@@ -86,6 +86,10 @@ CORE_TENANT_TABLES = [
     # tables of that ADR are deliberately NOT here: they carry oem_code and
     # factory_tenant_code, never tenant_code (see models.ServiceContract).
     "machine_telemetry_spans",
+    # ADR-0029. Also created WITH tenant_code (a new table), so
+    # ensure_tenant_columns finds the column present and does nothing; listed to
+    # keep this list and SCOPED_MODELS in lockstep, which test_tenancy asserts.
+    "action_outcomes",
 ]
 
 # Tables that gain tenant_code but must NOT be blind-backfilled to DEFAULT: the
@@ -209,6 +213,10 @@ SCOPED_MODELS = (
     # reads. A factory's own data; the engine ALSO filters by tenant explicitly,
     # because an OEM-triggered compute runs outside any factory binding.
     models.MachineTelemetrySpan,
+    # ADR-0029: what changed after an approved action. The engine filters by
+    # tenant explicitly as well — an outcome is evidence about one company's
+    # plant, and it is the last place to rely on an ambient binding.
+    models.ActionOutcome,
 )
 
 

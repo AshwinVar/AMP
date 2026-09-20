@@ -5,6 +5,7 @@ import { apiGet, apiPost } from "../lib/api";
 import AgentDetailDrawer from "./AgentDetailDrawer";
 import AgentPolicyPanel from "./AgentPolicyPanel";
 import AILearningConsentCard from "./AILearningConsentCard";
+import ActionOutcomesSection from "./ActionOutcomesSection";
 import AINativeModelsPanel from "./AIModelCard";
 import { parseApiDate } from "../lib/apiDate";
 import {
@@ -186,6 +187,11 @@ export default function AgentActivitySection() {
           </div>
         </div>
       )}
+
+      {/* ADR-0029: what changed after the actions a human approved. Placed above
+          the policy panel because it is the evidence anyone deciding how much to
+          automate should read first. */}
+      <ActionOutcomesSection />
 
       <AgentPolicyPanel />
 

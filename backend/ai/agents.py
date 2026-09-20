@@ -11,12 +11,13 @@ Approve advances the item, reject cancels it. Five agents today:
   * Escalation  — on repeated downtime, proposes an escalation.
   * Yield       — on a machine's good-rate dropping, proposes an investigation task.
 """
+import logging
 import os
 from datetime import datetime, timedelta
 
 import approvals
 import models
-from ai import escalations, maintenance, prediction
+from ai import escalations, maintenance, outcomes, prediction
 from events import (
     ProductionCompleted, DowntimeStarted, InventoryLow, QualityInspectionFailed, event_bus,
 )
@@ -135,6 +136,21 @@ def apply_decision(db, action, decision, decided_by=None, actor=None,
         item = db.query(models.Escalation).filter(models.Escalation.id == action.ref_id).first()
         if item and item.status == "Proposed":
             item.status = "Open" if approve else "Cancelled"
+    if approve:
+        # CLOSE THE LOOP (ADR-0029). Freeze the metric this action was meant to
+        # move, as it reads at this instant — that reading cannot be recovered
+        # later, which is the whole reason the row exists. A rejected action
+        # changes nothing, so there is nothing to follow up.
+        #
+        # Best effort, deliberately: an outcome record is evidence AMP would
+        # like to have, never a precondition for a decision a person has already
+        # made. test_action_outcomes.py section 6 approves with the follow-up
+        # broken and asserts the approval still stands.
+        try:
+            outcomes.record_baseline(db, action.tenant_code, action)
+        except Exception:   # noqa: BLE001 - the decision is what matters
+            logging.getLogger(__name__).info(
+                "[outcomes] could not record a baseline for action %s", action.id)
 
 
 def _propose(db, tenant, agent, action_type, summary, ref_kind, ref_id,

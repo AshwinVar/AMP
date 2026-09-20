@@ -9,8 +9,11 @@ depends on is one of those:
   * `metric`, `scope_kind` and `verdict` are bounded, so a vocabulary that grows
     past its column fails loudly here instead of truncating silently in
     production;
-  * `action_id` is a foreign key onto agent_actions, and unique — "did it help?"
-    may not have two answers;
+  * `action_id` is unique — "did it help?" may not have two answers. It is
+    deliberately NOT a foreign key: agent_actions is created by create_all and
+    by no migration, so the constraint could not hold on a database built from
+    migrations alone, and an outcome is evidence that should outlive its
+    decision (the same call ADR-0021 made for its snapshot ids);
   * `tenant_code` is NOT NULL with no default, so an outcome written without its
     tenant is refused rather than handed to the founder workspace;
   * `baseline_value` and `measured_value` are NULLABLE, because "no reading" and
@@ -206,9 +209,15 @@ def main():
                                      metric="'downtime_minutes'", baseline="10.0"))
     check("a SECOND outcome for the same action is refused", ok, why)
 
+    # ACCEPTED on purpose: action_id is not a foreign key (see models.py). An
+    # outcome is evidence about a decision and outlives the row it describes,
+    # and no migration creates agent_actions, so the constraint could not exist
+    # on a migrate-only database anyway.
     ok, why = refuses(OUTCOME.format(tenant="'FACTORY_A'", action="9999",
                                      metric="'downtime_minutes'", baseline="10.0"))
-    check("an outcome for an action that does not exist is refused", ok, why)
+    check("an outcome whose action row is gone is KEPT, not refused", not ok, why)
+    with engine.begin() as c:
+        c.execute(text("DELETE FROM action_outcomes WHERE action_id = 9999"))
 
     ok, why = refuses(OUTCOME.format(tenant="NULL", action="1",
                                      metric="'downtime_minutes'", baseline="10.0"))

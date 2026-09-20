@@ -31,6 +31,14 @@ WHY BOTH VALUE COLUMNS ARE NULLABLE
 either side makes the verdict NOT MEASURABLE; writing 0.0 in its place would
 manufacture an improvement out of an absence.
 
+WHY action_id IS NOT A FOREIGN KEY
+----------------------------------
+`agent_actions` is created by the application's create_all, not by any
+migration, so a database built from migrations alone does not have it when this
+revision runs. It is also the right call on its own terms: an outcome is
+evidence about a decision, and evidence should outlive the row it describes —
+the same reasoning ADR-0021 applied to its snapshot ids.
+
 THE UNIQUE KEY
 --------------
   uq_action_outcome_action   (action_id)
@@ -70,7 +78,9 @@ def upgrade() -> None:
         TABLE,
         sa.Column("id", sa.Integer(), primary_key=True),
         sa.Column("tenant_code", sa.String(), nullable=False),
-        sa.Column("action_id", sa.Integer(), sa.ForeignKey("agent_actions.id"), nullable=False),
+        # No ForeignKey: agent_actions is created by boot's create_all and by no
+        # migration, so it is absent on a migrate-only path (see models.py).
+        sa.Column("action_id", sa.Integer(), nullable=False),
         sa.Column("metric", sa.String(length=48), nullable=False),
         sa.Column("scope_kind", sa.String(length=16), nullable=False),
         sa.Column("scope_id", sa.Integer(), nullable=True),

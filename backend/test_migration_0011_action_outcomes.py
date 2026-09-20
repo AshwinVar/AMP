@@ -175,13 +175,16 @@ def test_one_outcome_per_action_is_declared():
            for con in t.constraints if isinstance(con, UniqueConstraint)}
     got |= {tuple(c.name for c in ix.columns) for ix in t.indexes if ix.unique}
     assert got == {("action_id",)}, got
-    targets = {f"{fk.column.table.name}.{fk.column.name}"
-               for fk in t.columns["action_id"].foreign_keys}
-    assert targets == {"agent_actions.id"}, targets
+    # DELIBERATELY NOT a foreign key. agent_actions is created by create_all and
+    # by no migration, so a database built from migrations alone does not have
+    # it when 0011 runs — PostgreSQL refused the upgrade outright. And an
+    # outcome is evidence about a decision, which should outlive it.
+    assert not t.columns["action_id"].foreign_keys, \
+        "action_id must NOT be a foreign key: no migration creates agent_actions"
     names = {ix.name for ix in t.indexes}
     assert f"ix_{TABLE}_id" in names, names
     assert "ix_action_outcomes_tenant_created" in names, names
-    print("PASS one outcome per action, pointing at agent_actions.id, with the read index")
+    print("PASS one outcome per action, with no foreign key and with the read index")
 
 
 def test_the_lengths_the_vocabularies_need():

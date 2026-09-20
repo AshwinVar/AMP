@@ -1645,7 +1645,20 @@ class ActionOutcome(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     tenant_code = Column(String, index=True, nullable=False)
-    action_id = Column(Integer, ForeignKey("agent_actions.id"), index=True, nullable=False)
+    # DELIBERATELY NOT A FOREIGN KEY, for two reasons that point the same way.
+    #
+    # The practical one: `agent_actions` is created by boot's create_all and by
+    # no migration, so a database built by migrations alone — the shape
+    # verify_pg_migration.py section 4 builds, and the shape a long-lived
+    # deployment can have — does not contain it when 0011 runs. PostgreSQL
+    # refused the whole upgrade; SQLite had not noticed, because it does not
+    # enforce foreign keys by default.
+    #
+    # The better one: an outcome is EVIDENCE about a decision, and evidence
+    # should outlive the row it is about. ADR-0021 made the same call for its
+    # snapshot ids. The unique key below still means one outcome per action, so
+    # "did it help?" cannot have two answers.
+    action_id = Column(Integer, index=True, nullable=False)
     # What is being watched, and over what. Both are AMP's own vocabulary, not
     # free text: ai/outcomes.py owns the lists and the test pins them.
     metric = Column(String(48), nullable=False)

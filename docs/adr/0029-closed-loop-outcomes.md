@@ -62,7 +62,20 @@ the numbers rather than under them:
 There is **no confidence score and no p-value**, because an uncontrolled before
 and after cannot produce one, and the schema has nowhere to put one.
 
-### 4. Null is not zero, in the column type itself
+### 4. `action_id` is unique, and deliberately not a foreign key
+
+PostgreSQL found this and SQLite could not. `verify_pg_migration.py` builds the
+shape a long-lived deployment actually has — a legacy schema with only `users`
+and `machines` — and runs every migration on top of it. `agent_actions` is
+created by the application's `create_all` and by **no migration**, so the
+foreign key could not be satisfied and the whole upgrade failed.
+
+Removing it is right on its own terms too: an outcome is **evidence about a
+decision**, and evidence should outlive the row it describes. ADR-0021 made the
+same call for its snapshot ids. The unique key on `action_id` stays, so "did it
+help?" still cannot have two answers.
+
+### 5. Null is not zero, in the column type itself
 
 `baseline_value` and `measured_value` are nullable with no default. A `NOT NULL`
 there would force `0.0` into the slot meant for "AMP had no reading", and
@@ -70,7 +83,7 @@ manufacture an improvement out of an absence. A NULL on either side gives
 `NOT MEASURABLE`. PostgreSQL proves the nullability by insertion
 (`verify_pg_action_outcomes.py`), because SQLite would not.
 
-### 5. Only metrics the action has a claim on
+### 6. Only metrics the action has a claim on
 
 | Action | Metric | Good direction |
 |---|---|---|
@@ -83,7 +96,7 @@ the reverse too: every kind a human can approve (`approvals.PENDING`) must have
 a metric here, so a fourth kind cannot be added and then silently never looked
 at again.
 
-### 6. The noise floor is stated, not buried
+### 7. The noise floor is stated, not buried
 
 A change is `NO CHANGE` unless it exceeds **both** 10% of the baseline and a
 per-metric absolute floor (5 minutes; 1 unit). Both are judgement. They are

@@ -3,8 +3,10 @@
 > Handover file. A new session should be able to read only this and continue.
 > Keep it short. Update it at the end of every completed task.
 
-**Updated:** 2026-09-20. The 10-day differentiation sprint is running, and
-**fifteen of its sixteen differentiators are built**. Merged: #645 (ADR-0022,
+**Updated:** 2026-09-20. The 10-day differentiation sprint closed on Day 10
+with a release candidate (AMP-SPRINT-ACCEPTANCE.md: twelve acceptance items,
+each with its script, today's result and its limit), and
+**fifteen of its sixteen differentiators are built** (row 7 partial by design). Merged: #645 (ADR-0022,
 typed authorized tools + evidence + grounding + the evaluation), #646
 (ADR-0023, the self-hosted provider behind an earned switch), #647 (ADR-0024,
 the Command Centre), #648 (ADR-0025, the Root-Cause Explorer), #649 (ADR-0026,
@@ -27,15 +29,16 @@ the simulator's tenant guard: a tick with no tenant bound now refuses instead
 of filing every tenant's activity under DEFAULT — ADR-0002 postmortem). See
 AMP-10-DAY-SPRINT.md, AMP-NATIVE-MODEL-ACCEPTANCE.md and, for the twelve
 acceptance items with their evidence, AMP-SPRINT-ACCEPTANCE.md.
-**Master SHA:** `5e8b863` (#662).
-**Production SHA:** `5e8b863`, verified live, not assumed:
-`{"status":"ok","database":"ok","schema":"ok","version":"5e8b863"}` from
-`https://flowmes-production.up.railway.app/health`, read 3 s after the deploy
+**Master SHA:** `ba06970` (#665).
+**Production SHA:** `ba06970`, verified live, not assumed:
+`{"status":"ok","database":"ok","schema":"ok","version":"ba06970"}` from
+`https://flowmes-production.up.railway.app/health`, read 48 s after the deploy
 on 2026-09-20; `/readiness` 200. The frontend (`https://flow-mes.vercel.app`)
-answers 200; `/ai/status` and `/platform/status` each refuse an unauthenticated
-call with 401. Production has no GPU and no `AMP_LLM_BASE_URL`, so the Copilot
-there answers from AMP's own engine; the promoted model runs on the founder's
-laptop (Ollama on loopback, see the acceptance report §1).
+answers 200; `/ai/status` refuses an unauthenticated call with 401, and so does
+`POST /copilot/ask` sent a valid `{question, thread}` body. Production has no
+GPU and no `AMP_LLM_BASE_URL`, and no self-hosted model is currently adopted
+anywhere (the committed record is the failing one, below), so the Copilot
+answers from AMP's own engine everywhere.
 Railway auto-deploys master, so prod tracks HEAD; re-check `/health` rather than
 trusting this line's age.
 **Sprint closed on Day 10 with a release candidate.** `AMP-SPRINT-ACCEPTANCE.md`
@@ -51,8 +54,8 @@ production-sized restore). The load driver was re-run the same day and
 "Re-run 2026-09-20" explains why its own floor-normalised verdict reads
 "regressed" at 50 machines while every raw p50 fell).
 
-**In flight (after the sprint): follow-up questions in the Copilot (ADR-0035),
-branch `feat/copilot-follow-ups`.** "How is CNC-01 doing?" then "and its
+**Merged after the sprint: follow-up questions in the Copilot (ADR-0035),
+#665 `ba06970`.** "How is CNC-01 doing?" then "and its
 downtime?" now answers about CNC-01. The screen sends its own prior turns
 (each question and the calls AMP ran — never an answer or its evidence); the
 server stores nothing, resolves a pronoun through the caller's own scoped

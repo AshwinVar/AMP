@@ -865,3 +865,36 @@ def get_shortage_risk(db, tenant):
                            row["orders_affected"], M, "orders", "work_orders", "now"))
     state = s["state"] if s["state"] in ev.DATA_STATES else ev.OK
     return _result("get_shortage_risk", state, say_shortage(s), facts, notes=[s["note"]])
+
+
+@tool("get_what_to_raise",
+      "What AMP judges worth interrupting someone for right now, and -- the point of it -- "
+      "everything it is holding back and why. Use for 'should you be telling me anything', "
+      "'what would you alert me about', 'are you sitting on anything', 'why did you not tell me'.",
+      mirrors="/proactive", view="overview", domain="plant")
+def get_what_to_raise(db, tenant):
+    from ai.proactive import build_proactive, say_proactive   # lazy: composes the pillars
+    p = build_proactive(db, tenant)
+    held = {}
+    for s in p["suppressed"]:
+        held[s["suppressed_by"]] = held.get(s["suppressed_by"], 0) + 1
+    facts = [
+        _fact("raise.considered", "Things the engines raised", p["considered"], M, "findings",
+              "command centre, risk radar, outcomes", "now"),
+        _fact("raise.qualified", "Worth interrupting you for", len(p["qualified"]), R, "findings",
+              "the published bar", "now", detail=p["bar"]),
+        # The held-back count is the honest half. A proactive feature that
+        # reported only what it sent would be unable to be argued with.
+        _fact("raise.held_back", "Held back", len(p["suppressed"]), R, "findings",
+              "the published bar", "now",
+              detail=f"cooldown {p['cooldown_hours']}h, at most {p['max_per_run']} in one run"),
+    ]
+    for reason, count in sorted(held.items()):
+        facts.append(_fact(f"raise.held.{reason.lower().replace(' ', '_')}",
+                           f"Held back: {reason.lower()}", count, R, "findings",
+                           "the published bar", "now"))
+    for q in p["qualified"][:3]:
+        facts.append(_fact(f"raise.{q['signature']}", f"{q['severity']}: {q['title']}",
+                           q["why"], R, source=q["kind"], window="now"))
+    state = p["state"] if p["state"] in ev.DATA_STATES else ev.OK
+    return _result("get_what_to_raise", state, say_proactive(p), facts, notes=[p["bar"]])

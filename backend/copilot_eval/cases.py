@@ -65,6 +65,8 @@ QUESTIONS = [
     ("wip", "What is sitting half-built between operations?", {"get_work_order_status"}, [], "unseen"),
     ("audit", "Are we ready for the ISO audit?", {"get_compliance_status"}, [], "unseen"),
     ("worry", "What should I worry about this week?", {"get_production_risks"}, [], "unseen"),
+    ("should_tell", "Should you be telling me anything?", {"get_what_to_raise"}, [], "unseen"),
+    ("holding_back", "Are you holding back anything?", {"get_what_to_raise"}, [], "unseen"),
     ("did_it_help", "Did approving those actions help?", {"get_action_outcomes"}, [], "unseen"),
     ("after_approval", "What happened after the actions we approved?", {"get_action_outcomes"}, [], "unseen"),
     ("shortage_stop", "What will the shortage stop?", {"get_shortage_risk"}, [], "unseen"),

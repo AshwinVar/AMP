@@ -245,6 +245,12 @@ def get_shortage_impact(db: Session = Depends(_get_db), current_user: dict = Dep
     # tenant's own bill of materials, stock allocated in due-date order. An item
     # with no BOM line gets no figure at all; it is listed with the reason.
     return ai.shortage.build_shortage_impact(db, request_tenant(current_user))
+@router.get("/proactive")
+def get_proactive(db: Session = Depends(_get_db), current_user: dict = Depends(get_current_user)):
+    # Proactive intelligence (ADR-0031): what AMP would tell you now, and --
+    # the point of the card -- everything it is holding back, each with the
+    # reason. Computes only; POST /proactive/send is the only thing that writes.
+    return ai.proactive.build_proactive(db, request_tenant(current_user))
 
 
 @router.get("/root-cause")

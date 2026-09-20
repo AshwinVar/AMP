@@ -30,7 +30,8 @@ READ_ENDPOINTS = [
     "/delivery-summary", "/cost-summary", "/handover", "/scorecard", "/briefing",
     "/maintenance-summary", "/twin-overlay", "/weekly-report",
     "/reliability-summary", "/command-centre", "/root-cause", "/risk-radar",
-    "/daily-brief", "/action-outcomes", "/shortage-impact",
+    "/reliability-summary", "/command-centre", "/root-cause", "/risk-radar",
+    "/daily-brief", "/action-outcomes", "/shortage-impact", "/proactive",
 ]
 
 

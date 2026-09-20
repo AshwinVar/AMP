@@ -95,6 +95,13 @@ _BRIEF_PHRASES = ("brief me", "the brief", "a brief", "daily brief", "factory br
                   "daily update", "need to know today", "morning update", "read me in",
                   "catch me up", "bring me up to speed")
 _BRIEF_PILLARS = ("briefing",)
+# "Should you be telling me anything?" (ADR-0031). The restraint is the feature,
+# so a question ABOUT the notifications gets the plan and its held-back list,
+# not the notifications themselves.
+_RAISE_PHRASES = ("should you be telling me", "would you alert", "sitting on anything",
+                  "why did you not tell me", "why didn't you tell me", "what would you raise",
+                  "anything i should know", "holding back", "worth interrupting")
+_RAISE_PILLARS = ("briefing", "help")
 # "Did it help?" (ADR-0029). Applied from the fallback pillar AND from `help`,
 # because these questions reached nothing at all before: "did it help?" routed to
 # the help text, and "did that work?" to the plant summary. Narrow phrases only —
@@ -132,6 +139,8 @@ def plan_rules(db, question, proposer=None) -> Plan:
         return Plan([("get_production_risks", {})], "production_risks", r.labels)
     if r.matched in _BRIEF_PILLARS and any(p in q for p in _BRIEF_PHRASES):
         return Plan([("get_daily_brief", {})], "daily_brief", r.labels)
+    if r.matched in _RAISE_PILLARS and any(p in q for p in _RAISE_PHRASES):
+        return Plan([("get_what_to_raise", {})], "proactive", r.labels)
     if r.matched in _OUTCOME_PILLARS and any(p in q for p in _OUTCOME_PHRASES):
         return Plan([("get_action_outcomes", {})], "action_outcomes", r.labels)
     if r.matched in _SHORTAGE_PILLARS and any(p in q for p in _SHORTAGE_PHRASES):

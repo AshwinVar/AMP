@@ -245,6 +245,8 @@ def oracle(tenant):
     if due:
         planned = sum(p[3] for p in due)
         actual = sum(p[4] for p in due)
+        # The Root-Cause Explorer's gap is the same shortfall, from the same rows.
+        out["rc.gap_units"] = max(0, planned - actual)
         out.update({"plan.planned_units": planned, "plan.actual_units": actual,
                     "plan.attainment": actual / planned * 100,
                     "plan.behind": sum(1 for p in due if 0 < p[4] < p[3] and p[5] != "Completed"),

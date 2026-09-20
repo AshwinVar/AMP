@@ -221,6 +221,13 @@ def get_command_centre(db: Session = Depends(_get_db), current_user: dict = Depe
     # why, what it is costing (money only when a unit value is set), and what to
     # do next. Composes the existing read-models; adds no storage.
     return ai.command_centre.build_command_centre(db, request_tenant(current_user))
+@router.get("/root-cause")
+def get_root_cause(db: Session = Depends(_get_db), current_user: dict = Depends(get_current_user)):
+    # The Root-Cause Explorer (ADR-0025): the gap against plan, the losses AMP can
+    # MEASURE in the same window (scrap, slow running, logged stoppages), each
+    # labelled by how well the evidence supports it, and the part of the gap
+    # nothing in the data explains.
+    return ai.root_cause.explain_production_gap(db, request_tenant(current_user))
 
 
 @router.get("/briefing")

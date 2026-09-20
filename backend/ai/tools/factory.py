@@ -824,3 +824,44 @@ def get_action_outcomes(db, tenant):
                            detail=f"{row['action'] or 'an approved action'}; {CAUSATION_NOTE}"))
     state = s["state"] if s["state"] in ev.DATA_STATES else ev.OK
     return _result("get_action_outcomes", state, say_outcomes(s), facts, notes=[s["note"]])
+@tool("get_shortage_risk",
+      "What a stock shortage will actually stop: for each item at or below its reorder level, "
+      "the open work orders that need it, and how many units of production cannot be made from "
+      "the stock on hand. Use for 'what will the shortage cost us', 'what is the stock-out "
+      "stopping', 'which orders are at risk from stock'.",
+      mirrors="/shortage-impact", view="inventory", domain="inventory")
+def get_shortage_risk(db, tenant):
+    from ai.shortage import build_shortage_impact, say_shortage   # lazy: pulls the pillar modules
+    s = build_shortage_impact(db, tenant)
+    facts = [
+        _fact("shortage.units_at_risk", "Units that cannot be made from stock on hand",
+              s["units_at_risk"], D, "units", "work_orders x bills_of_materials", "now",
+              detail=s["note"]),
+        _fact("shortage.items_sized", "Short items AMP could size", len(s["shortages"]), M, "items",
+              "inventory_items", "now"),
+        # The items AMP could NOT size are a fact too. Leaving them out would
+        # make the sized list read as the whole shortage.
+        _fact("shortage.items_unlinked", "Short items with no recipe linking them to production",
+              len(s["unlinked"]), M, "items", "bills_of_materials", "now",
+              detail="AMP will not guess what an item outside every bill of materials would stop"),
+    ]
+    if s["money_at_risk"] is not None:
+        facts.append(_fact("shortage.money_at_risk", "Value of the units at risk", s["money_at_risk"],
+                           D, CURRENCY, "cost model (ADR-0010)", "now"))
+    else:
+        facts.append(_fact("shortage.money_at_risk", "Value of the units at risk", None, U, CURRENCY,
+                           "tenant configuration", "now",
+                           detail="no unit value is set, so AMP will not put a money figure on it"))
+    for row in s["shortages"][:3]:
+        facts.append(_fact(f"shortage.{row['item_code']}", f"{row['item_name']}: units at risk",
+                           row["units_at_risk"], D, "units", "work_orders x bills_of_materials", "now",
+                           detail=f"{row['on_hand']} {row['unit']} on hand against "
+                                  f"{row['required_units']} the open orders need"))
+        # The headline says "across N open orders", so N has to be a fact. The
+        # grounding gate caught this: AMP's own sentence quoted a figure that was
+        # in no evidence, which is the thing the gate exists to stop.
+        facts.append(_fact(f"shortage.{row['item_code']}.orders",
+                           f"{row['item_name']}: open orders it would hold up",
+                           row["orders_affected"], M, "orders", "work_orders", "now"))
+    state = s["state"] if s["state"] in ev.DATA_STATES else ev.OK
+    return _result("get_shortage_risk", state, say_shortage(s), facts, notes=[s["note"]])

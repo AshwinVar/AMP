@@ -238,6 +238,15 @@ def get_action_outcomes(db: Session = Depends(_get_db), current_user: dict = Dep
     return ai.outcomes.build_outcome_summary(db, request_tenant(current_user))
 
 
+@router.get("/shortage-impact")
+def get_shortage_impact(db: Session = Depends(_get_db), current_user: dict = Depends(get_current_user)):
+    # Smart inventory (ADR-0030): for every item at or below its reorder level,
+    # the production it will actually stop -- open work orders through the
+    # tenant's own bill of materials, stock allocated in due-date order. An item
+    # with no BOM line gets no figure at all; it is listed with the reason.
+    return ai.shortage.build_shortage_impact(db, request_tenant(current_user))
+
+
 @router.get("/root-cause")
 def get_root_cause(db: Session = Depends(_get_db), current_user: dict = Depends(get_current_user)):
     # The Root-Cause Explorer (ADR-0025): the gap against plan, the losses AMP can

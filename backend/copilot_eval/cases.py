@@ -67,6 +67,8 @@ QUESTIONS = [
     ("worry", "What should I worry about this week?", {"get_production_risks"}, [], "unseen"),
     ("did_it_help", "Did approving those actions help?", {"get_action_outcomes"}, [], "unseen"),
     ("after_approval", "What happened after the actions we approved?", {"get_action_outcomes"}, [], "unseen"),
+    ("shortage_stop", "What will the shortage stop?", {"get_shortage_risk"}, [], "unseen"),
+    ("stock_cost", "What will running out cost us?", {"get_shortage_risk"}, [], "unseen"),
     ("why_health", "Why is CNC-01's health score so low?", {"get_machine_history"}, [], "unseen"),
     ("health_points", "What is taking points off CNC-01?", {"get_machine_history"}, [], "unseen"),
     ("brief", "Give me the daily brief", {"get_daily_brief"}, [], "core"),

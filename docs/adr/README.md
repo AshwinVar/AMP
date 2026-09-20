@@ -31,6 +31,7 @@ Guiding principles: incremental (strangler) evolution, never a rewrite; backward
 | [0023](0023-self-hosted-model-behind-an-earned-switch.md) | A self-hosted model behind the Copilot, switched on only when it has earned it | Accepted |
 | [0024](0024-factory-command-centre.md) | The Factory Command Centre ranks problems by what they cost, and never totals them | Accepted |
 | [0025](0025-root-cause-explorer.md) | The Root-Cause Explorer separates what AMP measured from what has a reason | Accepted |
+| [0026](0026-production-risk-radar.md) | The Risk Radar states a rule and a measurement, never a probability | Accepted |
 
 **Recommended order:** 0001 first (smaller, proves the pattern; events carry `tenant_code`), then 0002.
 

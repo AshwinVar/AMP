@@ -7,16 +7,17 @@
 (ADR-0022): the Copilot answers through typed, authorized AMP tools, with
 evidence, behind a grounding gate and an evaluation gate. The self-hosted model
 provider (ADR-0023) is in review. See AMP-10-DAY-SPRINT.md.
-**Master SHA:** `d0d50aa` (#645).
-**Production SHA:** `d0d50aa`, verified live, not assumed:
-`{"status":"ok","database":"ok","schema":"ok","version":"d0d50aa"}` from
-`https://flowmes-production.up.railway.app/health`, read at 01:50 UTC on
-2026-09-19; `/readiness` 200; the frontend (`https://flow-mes.vercel.app`)
-answers 200; `POST /copilot/ask` refuses an unauthenticated call with 401.
+**Master SHA:** `6bbaa7e` (#647).
+**Production SHA:** `6bbaa7e`, verified live, not assumed:
+`{"status":"ok","database":"ok","schema":"ok","version":"6bbaa7e"}` from
+`https://flowmes-production.up.railway.app/health`, read at 00:07 UTC on
+2026-09-20; `/readiness` 200; the frontend (`https://flow-mes.vercel.app`)
+answers 200; `POST /copilot/ask` and `GET /command-centre` both refuse an
+unauthenticated call with 401.
 Railway auto-deploys master, so prod tracks HEAD; re-check `/health` rather than
 trusting this line's age.
-**Awaiting review:** the self-hosted model provider, the adoption record and
-`/ai/ask` through the orchestrator (ADR-0023), branch `feat/copilot-local-provider`.
+**Awaiting review:** the Root-Cause Explorer (ADR-0025, `feat/root-cause`) and
+the Risk Radar (ADR-0026, `feat/risk-radar`).
 
 **THE 10-DAY DIFFERENTIATION SPRINT started 2026-09-19.** Its own tracker is
 [`AMP-10-DAY-SPRINT.md`](AMP-10-DAY-SPRINT.md): day, SHAs, the 16
@@ -668,6 +669,21 @@ The downtime-scan defect below was P2 and is fixed.
 ---
 
 ## AI ROADMAP PHASE
+
+**2026-09-20 — ADR-0024, ADR-0025, ADR-0026: the owner's three views.** The
+Factory Command Centre ranks problems by what they cost and never totals them
+(#647, merged). The Root-Cause Explorer separates what AMP measured from what
+has a reason recorded, and states the remainder. The Risk Radar says what is
+likely to become a problem, with the rule and the threshold on the card and no
+probability anywhere. All three read the same read-models and carry the same
+evidence vocabulary as the Copilot.
+
+**2026-09-19 — ADR-0023: a self-hosted model behind an earned switch.** The
+local OpenAI-compatible provider, the adapter, and an adoption record: a model
+is used only once THAT model has passed the Copilot evaluation. `/ai/ask` moved
+onto the orchestrator, which fixed its tenant (it used the token claim, so a
+founder previewing a company priced that company's rows at the founder's own
+unit value).
 
 **2026-09-19 — ADR-0022: the Copilot answers through typed AMP tools, with
 evidence, and a model may only word it.**

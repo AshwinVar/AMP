@@ -61,6 +61,16 @@ INVALID_ARGUMENTS = "INVALID ARGUMENTS"
 FAILED = "FAILED"
 REFUSALS = (NOT_PERMITTED, NOT_LICENSED, NOT_FOUND, INVALID_ARGUMENTS, FAILED)
 
+# ── Likelihood: how a RULE rates something that has not happened yet ─
+#
+# Words, not probabilities. AMP has no calibrated forecast of a stoppage or a
+# missed date, and a number would imply one; each risk states the rule and the
+# threshold that earned its word (ai/risk_radar.py).
+LIKELY = "LIKELY"
+POSSIBLE = "POSSIBLE"
+WATCH = "WATCH"
+LIKELIHOOD = (LIKELY, POSSIBLE, WATCH)
+
 # ── Root-cause labels (the Root-Cause Explorer) ─────────────────────
 CAUSE_CONFIRMED = "CAUSE CONFIRMED"
 LIKELY_CONTRIBUTOR = "LIKELY CONTRIBUTOR"

@@ -29,6 +29,10 @@ export const DATA_STATES = [
 
 export const REFUSALS = ["NOT PERMITTED", "NOT LICENSED", "NOT FOUND", "INVALID ARGUMENTS", "FAILED"] as const;
 
+// Words, not probabilities: AMP has no calibrated forecast, and a number would
+// imply one. Each risk states the rule that earned its word (ADR-0026).
+export const LIKELIHOOD = ["LIKELY", "POSSIBLE", "WATCH"] as const;
+
 export const CAUSE_LABELS = [
   "CAUSE CONFIRMED",
   "LIKELY CONTRIBUTOR",

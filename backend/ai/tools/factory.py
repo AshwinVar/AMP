@@ -380,6 +380,34 @@ def explain_production_gap(db, tenant):
     state = r["state"] if r["state"] in ev.DATA_STATES else ev.OK
     return _result("explain_production_gap", state, (r["headline"], "executive"), facts,
                    notes=[r["denominator_note"]])
+@tool("get_production_risks",
+      "What is likely to become a problem: orders that cannot be made in the days they have "
+      "left at the plant's measured rate, items about to run out, machines over the rule-score "
+      "threshold, overdue maintenance and quality drift. Each risk states the rule behind it. "
+      "Use for 'what is likely to go wrong', 'what should I worry about', 'what is at risk'.",
+      mirrors="/risk-radar", view="overview", domain="plant")
+def get_production_risks(db, tenant):
+    from ai.risk_radar import build_risk_radar   # lazy: pulls in the pillar modules
+    r = build_risk_radar(db, tenant)
+    # The counts the headline states, as facts: every number AMP says has to be
+    # in the evidence beside it (the grounding gate checks exactly this).
+    likely = [x for x in r["risks"] if x["likelihood"] == ev.LIKELY]
+    facts = [
+        _fact("risk.likely_count", "Things likely to become a problem", len(likely), R, "risks",
+              "risk radar rules", "now"),
+        _fact("risk.total_count", "Things on the radar", len(r["risks"]), R, "risks", "risk radar rules", "now"),
+    ]
+    for risk in r["risks"][:4]:
+        facts.append(_fact(f"risk.{risk['key']}", f"{risk['title']} ({risk['likelihood']})",
+                           risk["rule"], R, source=risk["module"], window=risk["horizon"]))
+        for f in risk["facts"][:2]:
+            facts.append(ev.Fact(key=f["key"], label=f["label"], value=f["value"], provenance=f["provenance"],
+                                 unit=f["unit"], source=f["source"], window=f["window"], detail=f["detail"]))
+    if r["measured_rate_per_day"] is not None:
+        facts.append(_fact("risk.measured_rate", "Plant good units a day (measured)",
+                           r["measured_rate_per_day"], M, "units/day", "production_records"))
+    state = r["state"] if r["state"] in ev.DATA_STATES else ev.OK
+    return _result("get_production_risks", state, (r["headline"], "overview"), facts, notes=[r["note"]])
 
 
 @tool("get_shift_attainment",

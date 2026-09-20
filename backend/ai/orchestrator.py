@@ -82,6 +82,11 @@ _SHIFT_WORDS = ("shift", "crew", "night", "evening")
 _CAUSE_PHRASES = ("top causes", "main causes", "biggest causes", "causes of downtime", "downtime causes",
                   "reasons for downtime", "downtime reasons", "pareto", "top reasons", "main reasons")
 _CAUSE_PILLARS = ("downtime", "machines", "briefing")
+# The radar answers "what is ABOUT to go wrong" (ADR-0026). Applied only from the
+# fallback pillar, so every question the router already answers keeps its answer.
+_RISK_PHRASES = ("likely to", "about to", "going to go wrong", "worry about", "should i worry",
+                 "risk radar", "what risks", "any risks", "coming up")
+_RISK_PILLARS = ("briefing",)
 
 
 def plan_rules(db, question, proposer=None) -> Plan:
@@ -99,6 +104,8 @@ def plan_rules(db, question, proposer=None) -> Plan:
         return Plan([("get_production_vs_target", {})], "production_vs_target", r.labels)
     if r.matched in _CAUSE_PILLARS and any(p in q for p in _CAUSE_PHRASES):
         return Plan([("get_top_downtime_causes", {})], "downtime_causes", r.labels)
+    if r.matched in _RISK_PILLARS and any(p in q for p in _RISK_PHRASES):
+        return Plan([("get_production_risks", {})], "production_risks", r.labels)
     name = PILLAR_TOOL.get(r.matched)
     return Plan([(name, {})] if name else [], r.matched, r.labels)
 

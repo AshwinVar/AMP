@@ -80,4 +80,23 @@ test.describe("dashboard shell", () => {
     await expect(page.getByText("68.4%")).toBeVisible();
     await expect(page.getByText("97.2%")).toBeVisible();
   });
+
+  test("the factory brief states its window and what AMP could not see", async ({ page }) => {
+    test.skip(LIVE_API, "asserts on the mocked fixture values");
+
+    await nav(page).getByRole("button", { name: "Overview" }).click();
+
+    // The two things that make it a brief rather than a summary, both visible
+    // without a click: the window it covers, and the gaps in what it knows.
+    await expect(page.getByText("the last 7 days, ending 2026-08-03")).toBeVisible();
+    await expect(page.getByText("What AMP could not see (2)")).toBeVisible();
+    await expect(page.getByText(/1 of 2 machines reported production/)).toBeVisible();
+    await expect(page.getByText(/No unit value is set for this workspace/)).toBeVisible();
+
+    // A section body IS behind a click, and carries its own data state.
+    const section = page.getByRole("button", { name: /Where we are/ });
+    await expect(page.getByText("Plant OEE is 48% from 1 of 2 machines.")).toBeHidden();
+    await section.click();
+    await expect(page.getByText("Plant OEE is 48% from 1 of 2 machines.")).toBeVisible();
+  });
 });

@@ -429,12 +429,53 @@ export function defaultMockTable(): MockTable {
     "/mission-control/pulse": PULSE,
     "/scorecard": SCORECARD,
     "/machine-health": MACHINE_TWINS,
+    "/daily-brief": DAILY_BRIEF,
     "/users": [
       { id: 1, username: "alice", role: "Admin" },
       { id: 2, username: "bob", role: "Operator" },
     ],
   };
 }
+
+// The Daily Factory Brief (ADR-0028). Deliberately a PARTIAL brief: one machine
+// that never reported and a workspace with no unit value, so the spec can assert
+// that the card says what AMP could not see rather than only what it knows.
+const DAILY_BRIEF = {
+  generated_at: "2026-08-03T08:00:00",
+  window: "the last 7 days, ending 2026-08-03",
+  state: "PARTIAL DATA",
+  headline:
+    "AOI Station stopped leads the day. 2 things AMP could not see — see the last section.",
+  sections: [
+    {
+      key: "position",
+      title: "Where we are",
+      lines: ["Plant OEE is 48% from 1 of 2 machines."],
+      state: "PARTIAL DATA",
+      view: "overview",
+    },
+    {
+      key: "actions",
+      title: "What to do next",
+      lines: ["Nothing here runs by itself: each one waits for a person to approve it."],
+      state: "OK",
+      view: "agents",
+    },
+  ],
+  blind_spots: [
+    {
+      key: "coverage",
+      state: "PARTIAL DATA",
+      text: "1 of 2 machines reported production. Everything above covers only those; the rest are not zero, they are unmeasured.",
+    },
+    {
+      key: "no_unit_value",
+      state: "NOT CONFIGURED",
+      text: "No unit value is set for this workspace, so AMP puts no money figure on anything here. Losses are given in good units not made.",
+    },
+  ],
+  note: "Every figure here comes from a read-model you can open: the Command Centre, the Root-Cause Explorer and the Risk Radar.",
+};
 
 // Kept out of session.ts so that file stays about planting a session; this is
 // the server's half of the login exchange.

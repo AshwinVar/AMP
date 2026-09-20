@@ -67,7 +67,7 @@ Until then:
 | 2 | AMP Native Copilot (self-hosted, provider abstraction) | BUILT, model BLOCKED | ADR-0023: `LocalOpenAIProvider` and `ai/llm.py` adapter, with an earned switch (`ai/adopted_models.json`); tested end to end over HTTP against a stub model; a real model is blocked on the download permission |
 | 3 | Tool-using AI, typed and authorized | DONE (18 tools) | `ai/tools/`, `test_copilot_tools.py`, `test_copilot_tools_no_wider_than_routes.py` |
 | 4 | Evidence-backed answers with provenance labels | DONE (API) · UI in this PR | `ai/evidence.py`, `CopilotEvidence.tsx` |
-| 5 | Daily Factory Brief | NOT STARTED | — |
+| 5 | Daily Factory Brief | BUILT | ADR-0028: `GET /daily-brief`, the `get_daily_brief` tool and `DailyBriefSection` — seven sections quoting the engines that already answer each question, the window always stated, and a closing section listing what AMP could NOT see (coverage gaps, no unit value, no plan, unlogged stoppage reasons, no measured rate) |
 | 6 | Root-Cause Explorer | BUILT | ADR-0025: `GET /root-cause`, the `explain_production_gap` tool and a card on Executive; measured mechanisms labelled CAUSE CONFIRMED / LIKELY CONTRIBUTOR / CORRELATED EVENT / INSUFFICIENT EVIDENCE, with the unexplained remainder stated |
 | 7 | Financial loss intelligence (never fabricated) | PARTIAL | `get_financial_losses`, the Command Centre and the Root-Cause Explorer: every loss sized in good units, money only with a unit value, UNKNOWN otherwise, and figures never totalled across overlapping problems |
 | 8 | Production Risk Radar | BUILT | ADR-0026: `GET /risk-radar`, the `get_production_risks` tool and a card on the Overview; every risk states its rule and threshold, likelihood is LIKELY/POSSIBLE/WATCH, and the tests fail on the word "probability" or an unqualified "machine learning" |
@@ -80,16 +80,16 @@ Until then:
 | 15 | OEM intelligence from consented data | NOT STARTED | — |
 | 16 | Honest data states | DONE (Copilot) | `ai/evidence.DATA_STATES`; empty stock is no longer called "healthy" and an empty plant is no longer "All 0 machines running" |
 
-## AI benchmark (copilot_eval, three factories, 32 questions + 15 adversarial prompts × 3 factories × 3 roles)
+## AI benchmark (copilot_eval, three factories, 37 questions + 15 adversarial prompts × 3 factories × 3 roles)
 
 AMP's own engine, measured when this PR was written (`python -m copilot_eval`):
 
 | Measure | Result |
 |---|---|
-| Tool selection, core questions | 63/63 |
-| Tool selection, unseen questions | 30/33 (CI floor 27) |
-| Factual accuracy against the oracle | 96/96 |
-| Answers grounded in their own evidence | 231/231 |
+| Tool selection, core questions | 69/69 |
+| Tool selection, unseen questions | 36/42 (CI floor 27) |
+| Factual accuracy against the oracle | 93/93 |
+| Answers grounded in their own evidence | 246/246 |
 | Honest data states | 14/14 |
 | Money fabrications | 0 |
 | **Unauthorized disclosures** | **0** |
@@ -98,11 +98,11 @@ AMP's own engine, measured when this PR was written (`python -m copilot_eval`):
 The scripted model behaviours test what AMP does with a model; they are not a model. Every behaviour had zero disclosures and zero ungrounded text shown:
 
 - faithful;
-- hallucinating: all 231 texts rejected;
+- hallucinating: all 246 texts rejected;
 - wrong tool and scope injection: fell back to AMP's plan;
 - cross-factory names: nothing echoed;
 - timeout and garbage: AMP's answer exactly;
-- injection-follower: all 231 rejected;
+- injection-follower: all 246 rejected;
 - flood: at most 4 tools ran.
 
 **Real model: not measured.** It is blocked on the download permission above.

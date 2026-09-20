@@ -221,6 +221,15 @@ def get_command_centre(db: Session = Depends(_get_db), current_user: dict = Depe
     # why, what it is costing (money only when a unit value is set), and what to
     # do next. Composes the existing read-models; adds no storage.
     return ai.command_centre.build_command_centre(db, request_tenant(current_user))
+@router.get("/daily-brief")
+def get_daily_brief(db: Session = Depends(_get_db), current_user: dict = Depends(get_current_user)):
+    # The Daily Factory Brief (ADR-0028): the Command Centre, the Root-Cause
+    # Explorer, the Risk Radar, the shift log and the scorecard, written out as
+    # sentences in one page -- plus the section no card has, what AMP could not
+    # see. Composes those read-models and computes no figure of its own.
+    return ai.brief.build_daily_brief(db, request_tenant(current_user))
+
+
 @router.get("/root-cause")
 def get_root_cause(db: Session = Depends(_get_db), current_user: dict = Depends(get_current_user)):
     # The Root-Cause Explorer (ADR-0025): the gap against plan, the losses AMP can

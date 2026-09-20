@@ -87,6 +87,14 @@ _CAUSE_PILLARS = ("downtime", "machines", "briefing")
 _RISK_PHRASES = ("likely to", "about to", "going to go wrong", "worry about", "should i worry",
                  "risk radar", "what risks", "any risks", "coming up")
 _RISK_PILLARS = ("briefing",)
+# The written brief (ADR-0028) answers "tell me everything", where the briefing
+# pillar answers "what needs attention". Applied only from the fallback pillar,
+# and only for phrases that ask to be BRIEFED rather than for a figure, so every
+# question the router already answers keeps its answer.
+_BRIEF_PHRASES = ("brief me", "the brief", "a brief", "daily brief", "factory brief",
+                  "daily update", "need to know today", "morning update", "read me in",
+                  "catch me up", "bring me up to speed")
+_BRIEF_PILLARS = ("briefing",)
 
 
 def plan_rules(db, question, proposer=None) -> Plan:
@@ -106,6 +114,8 @@ def plan_rules(db, question, proposer=None) -> Plan:
         return Plan([("get_top_downtime_causes", {})], "downtime_causes", r.labels)
     if r.matched in _RISK_PILLARS and any(p in q for p in _RISK_PHRASES):
         return Plan([("get_production_risks", {})], "production_risks", r.labels)
+    if r.matched in _BRIEF_PILLARS and any(p in q for p in _BRIEF_PHRASES):
+        return Plan([("get_daily_brief", {})], "daily_brief", r.labels)
     name = PILLAR_TOOL.get(r.matched)
     return Plan([(name, {})] if name else [], r.matched, r.labels)
 

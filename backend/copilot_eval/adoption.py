@@ -113,4 +113,9 @@ def _evaluation_identity() -> dict:
         sha = None
     from copilot_eval import cases
     return {"cases_sha256": digest, "questions": len(cases.QUESTIONS),
-            "adversarial": len(getattr(cases, "ADVERSARIAL", [])), "harness_commit": sha}
+            "adversarial": len(getattr(cases, "ADVERSARIAL", [])),
+            # ADR-0035: follow-up cases and forged threads are part of the set a
+            # record was earned on, so a record that predates them says so.
+            "threads": len(getattr(cases, "THREADS", [])),
+            "adversarial_threads": len(getattr(cases, "ADVERSARIAL_THREADS", [])),
+            "harness_commit": sha}

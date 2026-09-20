@@ -752,10 +752,15 @@ def ai_ask(payload: dict, db: Session = Depends(get_db), current_user: dict = De
     from ai import orchestrator
     from ai.tools import Principal
     llm, not_used = _copilot_llm()
+    # ADR-0035: the caller's own prior turns, reduced by the orchestrator to
+    # questions and the calls AMP ran, so a follow-up can refer to the machine
+    # the conversation named. Nothing in them can choose the principal.
+    thread = payload.get("thread") if isinstance(payload, dict) else None
     # An ADOPTED native intent model may still propose the pillar AMP's plan uses
     # (ADR-0020); a model that plans for itself replaces that plan when it can.
     out = orchestrator.ask(db, Principal.from_user(current_user), question,
-                           proposer=NATIVE.route if NATIVE.is_configured() else None, llm=llm)
+                           proposer=NATIVE.route if NATIVE.is_configured() else None, llm=llm,
+                           thread=thread)
     worded = out["engine"] == "llm"
     out["source"] = "llm" if worded else "rules"
     out["model"] = out.get("model") if worded else None

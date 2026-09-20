@@ -3,8 +3,12 @@
 `ProviderLLM(provider)` gives any `ai_copilot` provider the two methods the
 orchestrator calls, and nothing more:
 
-  plan(question, tools)          -> [{"name", "arguments"}]  which AMP tools to run
-  phrase(question, facts, draft) -> str                     the answer, in words
+  plan(question, tools, thread=None) -> [{"name", "arguments"}]  which AMP tools to run
+  phrase(question, facts, draft)     -> str                     the answer, in words
+
+`thread` (ADR-0035) is the caller's own prior turns, already reduced by the
+orchestrator to each question and the calls AMP ran for it: the model may use
+them to see what a follow-up refers to, and nothing else is in them.
 
 What a model is told, and what it is not:
   * it sees the QUESTION, the TOOL CATALOGUE the asker's role may call, and
@@ -97,7 +101,9 @@ PLAN_SYSTEM = (
     "You choose which AMP tools answer a factory manager's question. Call between one and "
     "four of the tools provided, and only those. AMP already knows which company is asking: "
     "never pass a company, tenant, site or user. If the question names a machine, pass its "
-    "name exactly as written. If no tool fits, call get_factory_summary."
+    "name exactly as written. If no tool fits, call get_factory_summary. Earlier questions from this "
+    "conversation may appear before the current one, each followed by the tools AMP ran for it; use them "
+    "only to understand what the current question refers to."
 )
 
 PHRASE_SYSTEM = (
@@ -152,17 +158,30 @@ class ProviderLLM:
         usage = getattr(self.provider, "last_usage", None)
         return dict(usage) if isinstance(usage, dict) and usage else None
 
-    def plan(self, question, tools):
+    def plan(self, question, tools, thread=None):
         if not self.can_plan:
             return None
         functions = [{"type": "function", "function": {"name": t["name"], "description": t["description"],
                                                        "parameters": t["parameters"]}} for t in tools]
+        # A follow-up's context (ADR-0035): each prior question as the user said
+        # it, followed by one line naming the tools AMP ran for it -- never an
+        # answer, never evidence. The thread arrives already cleaned by the
+        # orchestrator (questions and calls only), so there is nothing else here
+        # to leave out.
+        messages = [{"role": "system", "content": PLAN_SYSTEM}]
+        for turn in thread or []:
+            if turn.get("question"):
+                messages.append({"role": "user", "content": turn["question"]})
+            if turn.get("calls"):
+                ran = "; ".join(
+                    c["tool"] + "(" + ", ".join(f"{k}={v}" for k, v in (c.get("arguments") or {}).items()) + ")"
+                    for c in turn["calls"])
+                messages.append({"role": "assistant", "content": f"AMP ran: {ran}"})
+        messages.append({"role": "user", "content": question})
         try:
-            _check_fits(estimate_tokens(PLAN_SYSTEM, question, json.dumps(functions)), plan_tokens(),
-                        "tool catalogue and question")
-            out = self.provider.chat([{"role": "system", "content": PLAN_SYSTEM},
-                                      {"role": "user", "content": question}], tools=functions,
-                                     max_tokens=plan_tokens())
+            _check_fits(estimate_tokens(json.dumps(functions), *[m["content"] for m in messages]), plan_tokens(),
+                        "tool catalogue, conversation and question")
+            out = self.provider.chat(messages, tools=functions, max_tokens=plan_tokens())
         except Exception as e:   # noqa: BLE001 - reported, then the orchestrator falls back
             if self._on_error:
                 self._on_error(e)

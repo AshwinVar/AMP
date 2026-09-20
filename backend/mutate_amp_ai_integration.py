@@ -207,7 +207,8 @@ MUTATIONS = [
      '    return NATIVE.route if _answer_engine() == "amp-native" else None',
      "    return NATIVE.route if NATIVE.is_configured() else None", COPILOT),
     ("copilot: /copilot/ask always passes the native proposer", RMR,
-     "proposer=ai_copilot.native_proposer())", "proposer=ai_copilot.NATIVE.route)", COPILOT),
+     "proposer=ai_copilot.native_proposer(), thread=thread)",
+     "proposer=ai_copilot.NATIVE.route, thread=thread)", COPILOT),
     ("copilot: the native path phones home", COP,
      "        return self._load().route(question)",
      '        import urllib.request\n        urllib.request.urlopen("http://127.0.0.1:9/")\n'

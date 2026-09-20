@@ -22,6 +22,11 @@ type Turn = {
   state?: string;
   grounding?: Grounding;
   engine?: string;
+  // ADR-0035: what AMP ran for this turn, sent back as the thread of the next
+  // question so a follow-up can refer to the machine this turn named; and the
+  // machine a pronoun in THIS question resolved to, when one did.
+  calls?: { tool: string; arguments: Record<string, unknown> }[];
+  resolved?: { machine?: string } | null;
 };
 type AiStatus = {
   enabled: boolean;
@@ -30,6 +35,10 @@ type AiStatus = {
   engine?: "llm" | "amp-native" | "rules";
 };
 type RulesAnswer = {
+  // ADR-0035: the calls AMP ran (sent back as the thread of a follow-up) and
+  // what the follow-up machinery resolved a pronoun to, if anything.
+  plan?: { planner: string; calls: { tool: string; arguments: Record<string, unknown> }[] };
+  thread?: { turns: number; resolved: { machine?: string } | null };
   answer: string;
   view?: string;
   route_source?: string;
@@ -47,6 +56,7 @@ function rulesTurn(q: string, res: RulesAnswer): Turn {
     q, a: res.answer, view: res.view, source: "rules", route_source: res.route_source,
     confidence: res.confidence, evidence: res.evidence, tools: res.tools, state: res.state,
     grounding: res.grounding, engine: res.engine,
+    calls: res.plan?.calls, resolved: res.thread?.resolved ?? null,
   };
 }
 
@@ -86,6 +96,13 @@ export default function AICopilot({ onOpen }: { onOpen?: (viewKey: string) => vo
   async function ask(q?: string) {
     const query = (q ?? question).trim();
     if (!query || loading) return;
+    // ADR-0035: the conversation so far, as the server may use it -- each prior
+    // question and the calls AMP ran for it (never an answer or its evidence).
+    // The server keeps nothing; a follow-up like "and its downtime?" is resolved
+    // from this and every tool is authorized afresh.
+    // `thread` is kept newest-first for display; the server wants the six most
+    // recent turns oldest-first, the way the conversation happened.
+    const history = thread.slice(0, 6).reverse().map((t) => ({ question: t.q, calls: t.calls ?? [] }));
     setLoading(true); setErr("");
     try {
       let turn: Turn;
@@ -94,14 +111,14 @@ export default function AICopilot({ onOpen }: { onOpen?: (viewKey: string) => vo
           // /ai/ask answers through the same typed-tool orchestrator (ADR-0023), so
           // it carries the same evidence; `source` says whether a model worded it.
           const res = await apiPost<RulesAnswer & { source?: string; model?: string | null; note?: string }>(
-            "/ai/ask", { question: query });
+            "/ai/ask", { question: query, thread: history });
           turn = { ...rulesTurn(query, res), source: res.source, model: res.model, note: res.note };
         } catch {
-          const res = await apiPost<RulesAnswer>("/copilot/ask", { question: query });
+          const res = await apiPost<RulesAnswer>("/copilot/ask", { question: query, thread: history });
           turn = rulesTurn(query, res);
         }
       } else {
-        const res = await apiPost<RulesAnswer>("/copilot/ask", { question: query });
+        const res = await apiPost<RulesAnswer>("/copilot/ask", { question: query, thread: history });
         turn = rulesTurn(query, res);
       }
       setThread((t) => [turn, ...t]);
@@ -179,7 +196,13 @@ export default function AICopilot({ onOpen }: { onOpen?: (viewKey: string) => vo
         {thread.map((t, i) => (
           <div key={i} className="rounded-2xl bg-slate-900 border border-slate-800 p-5">
             <div className="flex items-center justify-between gap-2 mb-2">
-              <p className="text-indigo-300 text-sm font-semibold">{t.q}</p>
+              <div>
+                <p className="text-indigo-300 text-sm font-semibold">{t.q}</p>
+                {t.resolved?.machine && (
+                  // ADR-0035: a pronoun in the question was taken to mean this machine.
+                  <p className="text-slate-500 text-[11px] mt-0.5">About {t.resolved.machine}</p>
+                )}
+              </div>
               {t.source && (() => {
                 const badge = copilotBadge(t);
                 const tone = badge.tone === "llm" ? "text-emerald-300 border-emerald-500/40"

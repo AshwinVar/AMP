@@ -17,8 +17,9 @@ the OEM disclosure floor), #657 (the owner's eight questions across four
 factory shapes), #659 (ADR-0033 §7, the complementary-suppression floor), #660
 (the grounding gate no longer reads an identifier's or a date's digits as
 figures) and #661 (ADR-0034, the first REAL self-hosted model: four candidates
-measured, **`qwen3:8b` promoted** in `ai/adopted_models.json`, AMP proven to
-run with no hosted key at all), #663 (every intelligence engine classified as
+measured, **`qwen3:8b` promoted** on that day's 135-question set — and, after
+follow-ups enlarged the set, **not re-earned**: see the in-flight paragraph
+below — AMP proven to run with no hosted key at all), #663 (every intelligence engine classified as
 RULE-BASED / STATISTICAL / ML MODEL / LLM-ASSISTED in the handbook, with
 `test_intelligence_classification.py` failing the build if the handbook and the
 model cards disagree) and #662 (the three-factory SIMULATION audit in CI, and
@@ -50,7 +51,31 @@ production-sized restore). The load driver was re-run the same day and
 "Re-run 2026-09-20" explains why its own floor-normalised verdict reads
 "regressed" at 50 machines while every raw p50 fell).
 
-**Nothing is awaiting review.** What a next session would do first, in order:
+**In flight (after the sprint): follow-up questions in the Copilot (ADR-0035),
+branch `feat/copilot-follow-ups`.** "How is CNC-01 doing?" then "and its
+downtime?" now answers about CNC-01. The screen sends its own prior turns
+(each question and the calls AMP ran — never an answer or its evidence); the
+server stores nothing, resolves a pronoun through the caller's own scoped
+machine list, and authorizes every tool afresh, so a forged thread naming
+another company's machine resolves to nothing. Evaluation re-run with five
+thread cases and five forged threads: AMP's rules 78/78 core, 66/72 unseen
+(the same six misses as before), 339/339 grounded, **0 disclosures across 189
+adversarial prompts in each of ten configurations**. Pinned by
+`test_copilot_follow_ups.py` (10 sections), `mutate_copilot_follow_ups.py`
+(16/16 caught), the component test, and two qwen3:8b re-evaluations on the
+enlarged question set: **NOT PASSED both times** — core 75/78, the same one
+case three times (`is it running now?` about a named machine, answered with
+the plant-wide status list, a defensible reading of the catalogue but not
+AMP's planner's), 0 disclosures across 378 adversarial prompts. The committed
+record is now the failing one, so **no self-hosted model is adopted** and the
+rules answer everywhere (production never had a model). Two things were
+deliberately not done to change the verdict — widening the case after seeing
+the model's choice, and rewording tool descriptions to steer it —
+AMP-NATIVE-MODEL-ACCEPTANCE.md §10 records both runs and leaves the "is the
+plant-wide status list an acceptable answer?" judgement to the founder,
+before any next run.
+
+**Nothing else is awaiting review.** What a next session would do first, in order:
 (1) the OEM journey re-check against a real OEM's edge agent is still simulated
 (handbook ch. 31); (2) row 7 of the differentiator table (financial loss
 intelligence) is PARTIAL by design — money only where a unit value is set —

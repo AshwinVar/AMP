@@ -10,21 +10,23 @@ evaluation), #646 (ADR-0023, the self-hosted provider behind an earned switch),
 #649 (ADR-0026, the Risk Radar), #650 (ADR-0027, the explained health score and
 the failure-risk model's first screen) and #651 (ADR-0028, the Daily Factory
 Brief) and #652 (ADR-0029, the closed loop — what changed after an approved
-action, the sprint's first schema change). In review: the shortage-to-production
-link (ADR-0030). See AMP-10-DAY-SPRINT.md.
-**Master SHA:** `82ac27f` (#652).
-**Production SHA:** `82ac27f`, verified live, not assumed:
-`{"status":"ok","database":"ok","schema":"ok","version":"82ac27f"}` from
-`https://flowmes-production.up.railway.app/health`, read at 03:16 UTC on
-2026-09-20. The migration ran there too: `/readiness` reports
-`expected_revision` and `current_revision` both `0011_action_outcomes`. The
-frontend (`https://flow-mes.vercel.app`) answers 200; `GET /action-outcomes`
-refuses an unauthenticated call with 401.
+action, the sprint's first schema change) and #653 (ADR-0030, the
+shortage-to-production link). In review: proactive restraint — what AMP would
+say unprompted, and everything it holds back (ADR-0031). See
+AMP-10-DAY-SPRINT.md.
+**Master SHA:** `e0671ca` (#653).
+**Production SHA:** `e0671ca`, verified live, not assumed:
+`{"status":"ok","database":"ok","schema":"ok","version":"e0671ca"}` from
+`https://flowmes-production.up.railway.app/health`, read at 03:56 UTC on
+2026-09-20; `/readiness` 200 and still at `0011_action_outcomes` (the migration
+that shipped with #652 ran in production and was verified there). The frontend
+(`https://flow-mes.vercel.app`) answers 200; `GET /shortage-impact` refuses an
+unauthenticated call with 401.
 Railway auto-deploys master, so prod tracks HEAD; re-check `/health` rather than
 trusting this line's age.
-**Awaiting review:** the shortage-to-production link (ADR-0030,
-`feat/smart-inventory`), which supplies the measured link ADR-0026 said was
-missing and which the Risk Radar now adopts.
+**Awaiting review:** proactive restraint (ADR-0031, `feat/proactive`) — AMP
+speaks first, and mostly decides not to, reporting everything it held back and
+why.
 
 **THE 10-DAY DIFFERENTIATION SPRINT started 2026-09-19.** Its own tracker is
 [`AMP-10-DAY-SPRINT.md`](AMP-10-DAY-SPRINT.md): day, SHAs, the 16

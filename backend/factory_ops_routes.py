@@ -668,6 +668,21 @@ def mark_all_notifications_read(db: Session = Depends(_get_db),
     return {"marked": marked}
 
 
+@router.post("/proactive/send")
+def send_proactive(db: Session = Depends(_get_db),
+                   current_user: dict = Depends(require_roles(["Admin", "Supervisor"]))):
+    """Write the notifications AMP judges worth interrupting someone for (ADR-0031).
+
+    The ONLY write in the proactive path. Idempotent within the cooldown by
+    construction: a signature just written is SAID RECENTLY on the next call, so
+    running this twice in a row sends nothing the second time. GET /proactive
+    shows exactly what this would do, and what it would hold back, first.
+    """
+    import ai.proactive
+    from tenancy import request_tenant          # imported locally, as elsewhere in this file
+    return ai.proactive.send_proactive(db, request_tenant(current_user))
+
+
 @router.post("/notifications/generate-system-notifications")
 def generate_system_notifications(db: Session = Depends(_get_db), current_user: dict = Depends(require_roles(["Admin", "Supervisor"]))):
     created = 0

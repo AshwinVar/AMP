@@ -58,6 +58,7 @@ import ShiftSnapshot from "../../components/ShiftSnapshot";
 import BriefingSnapshot from "../../components/BriefingSnapshot";
 import CommandCentreSection from "../../components/CommandCentreSection";
 import DailyBriefSection from "../../components/DailyBriefSection";
+import ProactiveSection from "../../components/ProactiveSection";
 import RootCauseSection from "../../components/RootCauseSection";
 import RiskRadarSection from "../../components/RiskRadarSection";
 import DeliverySnapshot from "../../components/DeliverySnapshot";
@@ -2084,6 +2085,12 @@ export default function DashboardPage() {
             window.scrollTo({ top: 0, behavior: "smooth" });
           }}
         />
+      </div>
+
+      {/* ADR-0031: what AMP would tell you unprompted -- and, the point of the
+          card, everything it is holding back and why. */}
+      <div className="mb-8">
+        <ProactiveSection />
       </div>
 
       {/* The Risk Radar (ADR-0026): what is likely to become a problem, each with

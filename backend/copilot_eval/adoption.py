@@ -47,6 +47,70 @@ def record(provider: str, model: str, report, baseline_report) -> dict:
             "latency_ms_p50", "latency_ms_p95")
     return {"provider": provider, "model": model,
             "evaluated_at": datetime.utcnow().replace(microsecond=0).isoformat() + "Z",
+            # WHAT EXACTLY WAS MEASURED (ADR-0034 §12). A record that names
+            # "qwen3:8b" and nothing else cannot tell a reviewer whether the
+            # runtime, the planning budget or the question set has changed
+            # since -- and any of those changing is a reason to re-evaluate.
+            "runtime": _runtime_identity(provider, model),
+            "configuration": _configuration(),
+            "evaluation": _evaluation_identity(),
             "metrics": {k: metrics.get(k) for k in keep},
             "baseline": {k: baseline.get(k) for k in keep},
             "passed": passed, "reasons": reasons}
+
+
+def _runtime_identity(provider, model) -> dict:
+    """The runtime behind a self-hosted model, from the OpenAI-standard
+    `GET /v1/models` every supported runtime serves. Best effort: a record must
+    still be writable when the runtime has been stopped, so a failed probe is
+    recorded as exactly that rather than raising."""
+    import json
+    import os
+    import urllib.parse
+    import urllib.request
+
+    if provider != "local":
+        return {"kind": "hosted", "provider": provider}
+    base = os.environ.get("AMP_LLM_BASE_URL", "").strip().rstrip("/")
+    out = {"kind": "self-hosted", "host": urllib.parse.urlsplit(base).netloc or None, "model": None}
+    try:
+        with urllib.request.urlopen(base + "/models", timeout=5) as resp:
+            listed = json.loads(resp.read().decode("utf-8")).get("data") or []
+        entry = next((m for m in listed if isinstance(m, dict) and m.get("id") == model), None)
+        out["model"] = ({"id": entry.get("id"), "created": entry.get("created"),
+                         "owned_by": entry.get("owned_by")} if entry else None)
+        out["probe"] = "ok" if entry else "model not listed by the runtime"
+    except Exception as e:   # noqa: BLE001 - the record says the probe failed, and why
+        out["probe"] = f"unreachable ({type(e).__name__})"
+    return out
+
+
+def _configuration() -> dict:
+    """The settings that shape a model's answers. Changing any of these is
+    changing what was measured."""
+    import os
+    from ai import llm
+
+    return {"plan_tokens": llm.plan_tokens(),
+            "timeout_s": os.environ.get("AMP_LLM_TIMEOUT") or "30",
+            "temperature": 0}
+
+
+def _evaluation_identity() -> dict:
+    """Which question set produced these numbers, so a record from an older set
+    cannot be read as a result on the current one."""
+    import hashlib
+    import os
+    import subprocess
+
+    here = os.path.dirname(os.path.abspath(__file__))
+    with open(os.path.join(here, "cases.py"), "rb") as f:
+        digest = hashlib.sha256(f.read()).hexdigest()[:16]
+    try:
+        sha = subprocess.run(["git", "rev-parse", "--short", "HEAD"], capture_output=True, text=True,
+                             cwd=here, timeout=10).stdout.strip() or None
+    except Exception:   # noqa: BLE001 - not in a checkout is a fact, not a failure
+        sha = None
+    from copilot_eval import cases
+    return {"cases_sha256": digest, "questions": len(cases.QUESTIONS),
+            "adversarial": len(getattr(cases, "ADVERSARIAL", [])), "harness_commit": sha}

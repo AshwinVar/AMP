@@ -144,9 +144,17 @@ class LocalOpenAIProvider(AIProvider):
         return os.environ.get("AMP_LLM_MODEL", "").strip() or None
 
     def chat(self, messages, tools=None, max_tokens=500):
-        """One chat completion. Returns {"content": str, "tool_calls": list}.
+        """One chat completion. Returns {"content", "tool_calls", "finish_reason"}.
         Raises RuntimeError on any transport, HTTP or shape failure; the message
-        names the failure, never the response body (it can echo the prompt)."""
+        names the failure, never the response body (it can echo the prompt).
+
+        `finish_reason` is carried out because "length" is a different fact from
+        "the model had nothing to say", and AMP could not previously tell them
+        apart. A reasoning model that thinks past the token budget returns no
+        tool call and no content, which looked exactly like a refusal -- so a
+        model that routes perfectly well was scored as one that cannot route.
+        Measured on qwen3:8b: 0/4 questions routed at 300 tokens, 4/4 at 1200.
+        """
         import json
         import urllib.error
         import urllib.request
@@ -184,8 +192,21 @@ class LocalOpenAIProvider(AIProvider):
         if not isinstance(message, dict):
             raise RuntimeError("local model returned no message")
         calls = message.get("tool_calls")
+        try:
+            finish = data["choices"][0].get("finish_reason")
+        except (KeyError, IndexError, TypeError, AttributeError):
+            finish = None
+        # Token counts, when the runtime reports them (OpenAI-compatible `usage`).
+        # Kept on the provider so the orchestrator can log them per request
+        # without the prompt ever being logged: counts are observability, the
+        # prompt is customer data.
+        usage = data.get("usage") if isinstance(data.get("usage"), dict) else {}
+        self.last_usage = {k: usage.get(k) for k in ("prompt_tokens", "completion_tokens", "total_tokens")
+                           if isinstance(usage.get(k), int)}
         return {"content": message.get("content") if isinstance(message.get("content"), str) else "",
-                "tool_calls": calls if isinstance(calls, list) else []}
+                "tool_calls": calls if isinstance(calls, list) else [],
+                "finish_reason": finish if isinstance(finish, str) else None,
+                "usage": dict(self.last_usage)}
 
     def ask(self, system, user):
         out = self.chat([{"role": "system", "content": system}, {"role": "user", "content": user}],
@@ -750,20 +771,25 @@ def ai_ask(payload: dict, db: Session = Depends(get_db), current_user: dict = De
 @router.post("/report")
 def ai_report(db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
     if not _ai_enabled():
-        raise HTTPException(status_code=503, detail="AI copilot not connected. Set ANTHROPIC_API_KEY to enable.")
+        raise HTTPException(status_code=503, detail="AI copilot not connected. Set ANTHROPIC_API_KEY, "
+                                                    "GEMINI_API_KEY or a self-hosted model (AMP_LLM_BASE_URL "
+                                                    "and AMP_LLM_MODEL) to enable.")
+    # THE REPORT GOES THROUGH THE SAME GATE AS EVERY OTHER ANSWER (ADR-0034).
+    # This endpoint used to hand a raw text snapshot of the factory to whatever
+    # model was configured and return the model's prose as the report, unchecked
+    # -- the one Copilot path where a model could state a figure nobody measured.
+    # It now asks the orchestrator for the Daily Brief (ADR-0028): AMP's tools
+    # produce the evidence, the model may word it, and the grounding gate decides
+    # whether that wording is shown. A wording the gate refuses is replaced by
+    # AMP's own sentence and the response says so.
     tenant = current_user.get("tenant", "DEFAULT")
-    context = _build_factory_context(db, tenant)
-    system = (
-        "You are AMP Copilot. Write a brief daily management report for a factory manager from the data. "
-        "Use short sections with these headings: Summary, Machine status, Key issues, Recommended actions. "
-        "Be specific and concise — no fluff."
-    )
+    from ai import orchestrator
+    from ai.tools import Principal
+    llm, not_used = _copilot_llm()
     try:
-        report = _ask_llm(system, f"Factory data:\n{context}\n\nWrite today's report.")
-    except Exception as e:
-        # Same graceful degradation as /ai/ask: fall back to the
-        # rule-composed weekly report rather than erroring.
-        log.info(f"[AI COPILOT] LLM failed, reporting from rules: {e}")
+        out = orchestrator.ask(db, Principal.from_user(current_user), "Give me my morning briefing.", llm=llm)
+    except Exception as e:   # noqa: BLE001 - the report must exist even when the copilot path does not
+        log.info("[AI COPILOT] report path failed, composing from rules: %s", type(e).__name__)
         import ai
         built = ai.report.build_weekly_report(db, tenant)
         return {
@@ -772,4 +798,9 @@ def ai_report(db: Session = Depends(get_db), current_user: dict = Depends(get_cu
             "source": "rules",
             "note": "AI model temporarily unavailable — composed from live factory data.",
         }
-    return {"report": report, "model": _current_model(), "source": "llm"}
+    result = {"report": out["answer"], "model": out.get("model"), "source": out.get("engine") or "rules"}
+    if not_used:
+        result["note"] = not_used
+    elif result["source"] != "llm":
+        result["note"] = "AI model's wording not used this time; composed from live factory data."
+    return result

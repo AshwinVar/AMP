@@ -263,6 +263,60 @@ def main():
     check("a term the user typed is shown as typed", r["plan"]["calls"][0]["arguments"] == {"query": "WO-001"},
           str(r["plan"]))
 
+    print()
+    print("=" * 74)
+    print("8. ONE LOG LINE PER ANSWER, AND WHAT IT MUST NOT CARRY (ADR-0034 §11)")
+    print("=" * 74)
+    # The line is the operator's only view of the model in production: which
+    # engine answered, which model, which tools, whether the gate passed, how
+    # long, and the token counts. It is rendered through the REAL JSON formatter
+    # here because the redactor once blanked the counts -- any key containing
+    # "token" is treated as a credential, correctly -- and only the formatter
+    # can show that the renamed keys survive it.
+    import logging
+    import logging_config
+
+    class Counting(Stub):
+        last_usage = {"prompt_tokens": 2010, "completion_tokens": 416, "total_tokens": 2426}
+
+    captured = []
+    handler = logging.Handler()
+    handler.emit = captured.append
+    copilot_log = logging.getLogger("amp.copilot")
+    copilot_log.addHandler(handler)
+    copilot_log.setLevel(logging.INFO)
+    try:
+        owner_question = "How is CNC-01 doing this week, and what did Aurora Foods order?"
+        r = ask(Session, A, owner_question,
+                Counting(plan=[{"name": "get_oee", "arguments": {}}], text="Plant OEE is 92.8% this week."))
+    finally:
+        copilot_log.removeHandler(handler)
+    check("one line was logged for the answer", len(captured) == 1, str(len(captured)))
+    rec = captured[-1] if captured else None
+    line = logging_config.JsonFormatter().format(rec) if rec else ""
+    logged = json.loads(line).get("copilot", {}) if line else {}
+    check("...naming the engine and the model", logged.get("engine") == r["engine"] and logged.get("model") == "stub",
+          str(logged))
+    check("...and the tools that ran, with their states",
+          [t["tool"] for t in logged.get("tools", [])] == ["get_oee"] and logged["tools"][0].get("state"),
+          str(logged.get("tools")))
+    check("...and the gate's verdict", logged.get("gate_passed") is not None, str(logged))
+    check("...and the token COUNTS, not blanked by the redactor",
+          logged.get("usage") == {"prompt": 2010, "completion": 416, "total": 2426}, str(logged.get("usage")))
+    check("...but NOT the question", "CNC-01" not in line and "Aurora" not in line, line[:200])
+    check("...NOT the answer", r["answer"][:20] not in line, line[:200])
+    check("...and NOT the tenant", str(getattr(A, "tenant", A)) not in line, line[:200])
+    captured.clear()
+    copilot_log.addHandler(handler)
+    try:
+        ask(Session, A, "What is our OEE?")
+    finally:
+        copilot_log.removeHandler(handler)
+    line2 = logging_config.JsonFormatter().format(captured[-1]) if captured else ""
+    check("an answer from AMP's own engine logs no model and no counts",
+          captured and json.loads(line2)["copilot"].get("model") is None
+          and json.loads(line2)["copilot"].get("usage") is None, line2[:200])
+
     if failures:
         print(f"\n{len(failures)} FAILED")
         for f in failures:

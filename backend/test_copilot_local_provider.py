@@ -233,6 +233,40 @@ def main():
         os.environ.pop("AMP_LLM_TIMEOUT")
         Stub.responder = staticmethod(keyword_model)
 
+        # WHY THE MODEL STOPPED is carried out of chat() (ADR-0034). A reasoning
+        # model that thinks past the budget returns no call and no content; only
+        # finish_reason says it was cut off rather than silent, and the first
+        # real model evaluation blamed the model for three hours without it.
+        # Pinned through the REAL provider over HTTP, not a stand-in: a mutation
+        # that made chat() drop the field survived every suite that used one.
+        for label, finish, want in [("a string finish reason is carried out", "length", "length"),
+                                    ("a finish reason that is not a string becomes None", 123, None),
+                                    ("a missing finish reason is None, not an error", None, None)]:
+            choice = {"message": {"role": "assistant", "content": ""}}
+            if finish is not None:
+                choice["finish_reason"] = finish
+            Stub.responder = staticmethod(lambda b, c=choice: (200, {"choices": [c]}, 0))
+            out = local.chat([{"role": "user", "content": "x"}])
+            check(label, out.get("finish_reason") == want, repr(out.get("finish_reason")))
+        # TOKEN COUNTS ride along the same way (ADR-0034 §11): the orchestrator
+        # logs them per request, and only the counts -- the prompt never leaves
+        # the request. Anything that is not an integer count is dropped rather
+        # than logged, because a runtime could put anything in that object.
+        for label, usage, want in [
+                ("integer token counts are kept", {"prompt_tokens": 2010, "completion_tokens": 416, "total_tokens": 2426},
+                 {"prompt_tokens": 2010, "completion_tokens": 416, "total_tokens": 2426}),
+                ("a count that is not an integer is dropped, not logged",
+                 {"prompt_tokens": "2010", "completion_tokens": 416, "extra": "x"}, {"completion_tokens": 416}),
+                ("no usage object means no counts", None, {})]:
+            payload = {"choices": [{"message": {"role": "assistant", "content": "ok"}}]}
+            if usage is not None:
+                payload["usage"] = usage
+            Stub.responder = staticmethod(lambda b, p=payload: (200, p, 0))
+            out = local.chat([{"role": "user", "content": "x"}])
+            check(label, out.get("usage") == want and local.last_usage == want,
+                  f"out={out.get('usage')!r} last={local.last_usage!r}")
+        Stub.responder = staticmethod(keyword_model)
+
         print()
         print("=" * 74)
         print("3. THE ADAPTER")
@@ -280,6 +314,59 @@ def main():
         check("a hallucinating adopted model is not shown", r["source"] == "rules"
               and "99" not in r["answer"] and "WELD-07" not in json.dumps(r), r["answer"])
         Stub.responder = staticmethod(keyword_model)
+
+        print()
+        print("=" * 74)
+        print("4b. NO HOSTED KEY ANYWHERE: AMP RUNS ON THE SELF-HOSTED MODEL ALONE (ADR-0034 §14)")
+        print("=" * 74)
+        # The founder's brief: "AMP must be capable of running without a Gemini
+        # API key. Test that explicitly." So: no ANTHROPIC_API_KEY, no
+        # GEMINI_API_KEY, no AI_PROVIDER -- only the self-hosted model, adopted.
+        # Auto-detection must reach it (it is last in PROVIDERS on purpose), and
+        # every Copilot surface must answer, including the daily report, which
+        # until ADR-0034 was the one path that handed the model a raw factory
+        # snapshot and returned its prose unchecked.
+        for k in ("ANTHROPIC_API_KEY", "GEMINI_API_KEY", "AI_PROVIDER"):
+            os.environ.pop(k, None)
+        os.environ["AMP_LLM_BASE_URL"], os.environ["AMP_LLM_MODEL"] = base, MODEL
+        adopted_record(record_file, passed=True)
+        llm_adoption.RECORD_PATH = record_file
+        Stub.responder = staticmethod(keyword_model)
+        check("with no hosted key, the resolved provider is the self-hosted one",
+              ai_copilot._resolve_provider() is ai_copilot.LOCAL, str(ai_copilot._resolve_provider()))
+        check("...and the copilot counts as enabled", ai_copilot._ai_enabled() is True)
+        r = ask_endpoint(Session, admin_a, "How much downtime did we have?", F.A)
+        check("/ai/ask answers, worded by the self-hosted model", r["source"] == "llm" and r["model"] == MODEL,
+              f"{r.get('source')} {r.get('model')}")
+        db = Session()
+        tok = tenancy.set_current_tenant(F.A)
+        try:
+            rep = ai_copilot.ai_report(db=db, current_user=admin_a)
+        finally:
+            tenancy.reset_current_tenant(tok)
+            db.close()
+        check("/ai/report answers too, through the orchestrator", isinstance(rep.get("report"), str) and rep["report"],
+              str(rep)[:200])
+        check("...and it is labelled by its engine, not left as raw model prose",
+              rep.get("source") in ("llm", "rules") and "ANTHROPIC" not in json.dumps(rep), str(rep)[:200])
+        # The gate stands on this path now. A model that invents a figure in the
+        # briefing is refused and the report says it was composed from data.
+        Stub.responder = staticmethod(lambda b: keyword_model(b) if b.get("tools") else (200, {"choices": [
+            {"message": {"content": "Summary: OEE is 99% and WELD-07 stopped 40 times."}}]}, 0))
+        db = Session()
+        tok = tenancy.set_current_tenant(F.A)
+        try:
+            rep2 = ai_copilot.ai_report(db=db, current_user=admin_a)
+        finally:
+            tenancy.reset_current_tenant(tok)
+            db.close()
+        check("a report wording the gate refuses is replaced, and says so",
+              rep2.get("source") == "rules" and "99" not in rep2["report"] and "WELD-07" not in rep2["report"]
+              and "not used" in (rep2.get("note") or ""), str(rep2)[:240])
+        Stub.responder = staticmethod(keyword_model)
+        status = ai_copilot.ai_status(current_user={"tenant": "DEFAULT", "role": "Admin", "sub": "founder"})
+        check("/ai/status names the self-hosted provider as the active one",
+              status.get("provider") == "local" and status.get("enabled") is True, str(status)[:200])
 
         print()
         print("=" * 74)

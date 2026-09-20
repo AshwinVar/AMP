@@ -26,12 +26,20 @@ nonsense costs fluency, never the answer.
 harness drives scripted ones (copilot_eval); ai_copilot provides real ones.
 """
 import json
+import logging
 import time
 
 from ai import assistant
 from ai import evidence as ev
 from ai import grounding
 from ai.tools import Principal, catalog, run_tool
+
+# One structured line per answered question (ADR-0034 §11): which engine
+# answered, which model, which tools ran and how they ended, whether the gate
+# passed, how long it took, and the token counts when the runtime reports them.
+# NEVER the question, the answer, the evidence or the tenant: those are the
+# customer's, and the access log already ties this line to its request.
+log = logging.getLogger("amp.copilot")
 
 MAX_QUESTION = 1000
 MAX_TOOL_CALLS = 4
@@ -294,7 +302,30 @@ def _ask(db, principal, question, proposer, llm) -> dict:
                     "calls": [{"tool": str(n)[:80], "arguments": _shown_args(plan, a, q)} for n, a in plan.calls]},
            "tools": tools, "evidence": evidence, "grounding": gate, "notes": notes,
            "elapsed_ms": round((time.perf_counter() - started) * 1000)}
+    log.info("copilot answered", extra={"copilot": {
+        "engine": engine, "planner": plan.planner,
+        "provider": getattr(llm, "name", None) if llm is not None else None,
+        "model": getattr(llm, "model", None) if llm is not None else None,
+        "tools": [{"tool": t["tool"], "state": t["state"], "elapsed_ms": t["elapsed_ms"]} for t in tools],
+        "gate_passed": None if gate is None else bool(gate.get("passed")),
+        "gate_reasons": (gate or {}).get("reasons") or [],
+        "state": out["state"], "elapsed_ms": out["elapsed_ms"],
+        "usage": _usage_for_log(getattr(llm, "last_usage", None) if llm is not None else None)}})
     return out
+
+
+def _usage_for_log(usage):
+    """Token counts renamed for the log. The log redactor blanks any key with
+    "token" in it (logging_config._SENSITIVE_KEY_PARTS), and rightly: a key
+    called anything_token is a credential until proven otherwise. A COUNT of
+    tokens is not, but the redactor cannot know that, and loosening it for one
+    field is the wrong trade. So the counts are logged under names that carry no
+    trigger word -- "prompt", "completion", "total" -- and the runtime's own
+    OpenAI-standard names stay on the provider, where nothing logs them."""
+    if not isinstance(usage, dict) or not usage:
+        return None
+    return {"prompt": usage.get("prompt_tokens"), "completion": usage.get("completion_tokens"),
+            "total": usage.get("total_tokens")}
 
 
 # A NOT FOUND from these is an answer about the user's own data ("no machine

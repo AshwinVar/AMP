@@ -22,9 +22,35 @@ provider has (`chat(..., tools=...)`). The hosted providers are called through
 exactly as /ai/ask always worked: one model call per question.
 """
 import json
+import os
 import re
 
 _THINK = re.compile(r"<think>.*?</think>", re.S | re.I)
+
+# How much room a model gets to NAME ITS TOOLS. Not a style knob: a reasoning
+# model spends tokens thinking before it emits the call, and a budget below what
+# it needs returns nothing at all -- no tool call, no content, indistinguishable
+# from a model that had nothing to say.
+#
+# The default was 300, chosen when the only models here were scripted stubs that
+# answer instantly. Measured against the first real one (qwen3:8b, ADR-0034):
+#
+#     300 tokens  -> 0/4 questions routed, every call finish_reason=length
+#    1200 tokens  -> 4/4 routed, using 321-870 completion tokens
+#
+# So 1200 is the measured floor for a small reasoning model plus headroom, and
+# it is configurable because the next model will want a different number. A
+# model that does not think returns its call in ~50 tokens and is unaffected:
+# max_tokens is a ceiling, not an allocation.
+PLAN_TOKENS_DEFAULT = 1200
+
+
+def plan_tokens():
+    try:
+        value = int(os.environ.get("AMP_LLM_PLAN_TOKENS", "") or PLAN_TOKENS_DEFAULT)
+    except ValueError:
+        return PLAN_TOKENS_DEFAULT
+    return value if value > 0 else PLAN_TOKENS_DEFAULT
 
 PLAN_SYSTEM = (
     "You choose which AMP tools answer a factory manager's question. Call between one and "
@@ -78,6 +104,13 @@ class ProviderLLM:
         # Native tool calling or not decides whether the model may plan.
         self.can_plan = callable(getattr(provider, "chat", None))
 
+    @property
+    def last_usage(self):
+        """Token counts from the model's most recent call, when the runtime
+        reports them; None otherwise. Counts only -- never the prompt."""
+        usage = getattr(self.provider, "last_usage", None)
+        return dict(usage) if isinstance(usage, dict) and usage else None
+
     def plan(self, question, tools):
         if not self.can_plan:
             return None
@@ -85,7 +118,8 @@ class ProviderLLM:
                                                        "parameters": t["parameters"]}} for t in tools]
         try:
             out = self.provider.chat([{"role": "system", "content": PLAN_SYSTEM},
-                                      {"role": "user", "content": question}], tools=functions, max_tokens=300)
+                                      {"role": "user", "content": question}], tools=functions,
+                                     max_tokens=plan_tokens())
         except Exception as e:   # noqa: BLE001 - reported, then the orchestrator falls back
             if self._on_error:
                 self._on_error(e)
@@ -95,7 +129,16 @@ class ProviderLLM:
             fn = tc.get("function") if isinstance(tc, dict) else None
             if isinstance(fn, dict) and isinstance(fn.get("name"), str):
                 calls.append({"name": fn["name"], "arguments": fn.get("arguments") or {}})
-        return calls or _json_calls(out.get("content") or "")
+        calls = calls or _json_calls(out.get("content") or "")
+        # A plan cut off mid-sentence is not a model declining to answer, and
+        # saying so is the difference between "this model cannot route" and
+        # "AMP gave it no room". The orchestrator still falls back either way;
+        # what changes is that the reason reaching /ai/status is the true one.
+        if not calls and out.get("finish_reason") == "length" and self._on_error:
+            self._on_error(RuntimeError(
+                f"the model reached the {plan_tokens()}-token planning budget before it named a tool "
+                f"(raise AMP_LLM_PLAN_TOKENS if this model reasons before answering)"))
+        return calls
 
     def phrase(self, question, facts, draft):
         shown = [{"id": f.get("id"), "label": f.get("label"), "value": f.get("value"), "unit": f.get("unit"),

@@ -64,7 +64,7 @@ Until then:
 | # | Differentiator | Status | Evidence |
 |---|---|---|---|
 | 1 | Factory Command Centre | BUILT | ADR-0024: `GET /command-centre` and `CommandCentreSection`; problems ranked by good units not made, money only where a rate is set, `why` labelled, live stoppages first |
-| 2 | AMP Native Copilot (self-hosted, provider abstraction) | BUILT, model BLOCKED | ADR-0023: `LocalOpenAIProvider` and `ai/llm.py` adapter, with an earned switch (`ai/adopted_models.json`); tested end to end over HTTP against a stub model; a real model is blocked on the download permission |
+| 2 | AMP Native Copilot (self-hosted, provider abstraction) | BUILT · first real model MEASURED | ADR-0023 + ADR-0034: the founder approved the download on 2026-09-20. Ollama 0.34.2 on loopback, `qwen3:8b` (Apache 2.0) through the unchanged `LocalOpenAIProvider`. It **passed the adoption gate**: 69/69 core, 63/66 unseen (AMP's own: 60/66), 93/93 factual, 279/279 grounded, 0 money fabrications, 0 unauthorized disclosures, p50 8.2 s. Promotion waits for the candidate comparison (qwen3:4b, granite3.3:8b, mistral-nemo:12b) in `AMP-NATIVE-MODEL-ACCEPTANCE.md`. First lesson: AMP's 300-token planning budget scored a working model 0/8 |
 | 3 | Tool-using AI, typed and authorized | DONE (26 tools) | `ai/tools/`, `test_copilot_tools.py`, `test_copilot_tools_no_wider_than_routes.py` |
 | 4 | Evidence-backed answers with provenance labels | DONE (API and UI) | `ai/evidence.py`, `CopilotEvidence.tsx` |
 | 5 | Daily Factory Brief | BUILT | ADR-0028: `GET /daily-brief`, the `get_daily_brief` tool and `DailyBriefSection` — seven sections quoting the engines that already answer each question, the window always stated, and a closing section listing what AMP could NOT see (coverage gaps, no unit value, no plan, unlogged stoppage reasons, no measured rate) |
@@ -124,7 +124,7 @@ The scripted model behaviours test what AMP does with a model; they are not a mo
 
 | Item | Blocked on | Owner |
 |---|---|---|
-| Local model runtime and weights (benchmark and default switch) | founder permission to download | founder |
+| ~~Local model runtime and weights (benchmark and default switch)~~ | **resolved 2026-09-20** — the founder approved the download; the runtime and the first candidates are installed and the evaluation is running (`AMP-NATIVE-MODEL-ACCEPTANCE.md`) | — |
 | Production local-model server | an infrastructure and cost decision: Railway has no GPU | founder |
 | GMATS credential rotation | a production credential change | founder |
 
@@ -137,6 +137,14 @@ The scripted model behaviours test what AMP does with a model; they are not a mo
 4. ~~**Machine Health, anomaly and failure-risk surfaced honestly**~~ (Day 7). ADR-0027 and ADR-0032.
 5. ~~**Smart inventory, closed loop with a measured result, proactive alerts, OEM intelligence**~~ (Day 8). ADR-0030, ADR-0029, ADR-0031 and ADR-0033.
 6. **Adversarial campaign, the three-factory and OEM journeys, release candidate** (Days 9–10). ← in progress.
+   - **The real-model campaign (2026-09-20, founder-authorised).** Runtime
+     installed on loopback; four Apache-2.0 candidates chosen for licence,
+     tool calling and 12 GB VRAM. `qwen3:8b` **passed the adoption gate** on
+     the first full run (0 disclosures, 0 ungrounded shown, routing at or
+     above AMP's own). Promotion waits for the candidate comparison and a
+     second run of the leader; the measured table is
+     `AMP-NATIVE-MODEL-ACCEPTANCE.md`. What the first run found in AMP rather
+     than in the model is ADR-0034.
    - **Done: the owner's eight questions, across four factory shapes.**
      `audit_owner_questions.py` asks all eight of the questions this sprint
      promised an owner could answer, on four shapes in ONE process — healthy

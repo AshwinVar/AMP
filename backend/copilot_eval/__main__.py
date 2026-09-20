@@ -49,6 +49,7 @@ def main(argv=None):
     ap = argparse.ArgumentParser(prog="copilot_eval")
     ap.add_argument("--provider", help="score a real model through this provider (local, anthropic, gemini)")
     ap.add_argument("--record", help="write the adoption record for --provider to this file")
+    ap.add_argument("--cases", help="write every scored case (question, tool chosen, gate verdict, answer) to this JSON file, so a wrong tool or a rejected wording can be read rather than counted")
     args = ap.parse_args(argv)
     Session = session()
     baseline = harness.run(Session)
@@ -70,6 +71,13 @@ def main(argv=None):
     print("ADOPTION GATE:", "PASSED" if rec["passed"] else "NOT PASSED")
     for r in rec["reasons"]:
         print("  -", r)
+    if args.cases:
+        # The summary counts what happened; the acceptance report has to say WHAT.
+        # Three wrong tools are three questions; 36 gate rejections are 36 texts.
+        with open(args.cases, "w", encoding="utf-8") as f:
+            json.dump({"label": report.label, "rows": report.rows, "adversarial": report.adversarial},
+                      f, indent=1, default=str)
+        print(f"cases written to {args.cases}")
     if args.record:
         with open(args.record, "w", encoding="utf-8") as f:
             json.dump(rec, f, indent=2)

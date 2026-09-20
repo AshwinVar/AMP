@@ -457,7 +457,10 @@ app.include_router(oem_admin_routes.router)
 app.include_router(oem_contract_routes.router)
 app.include_router(service_contract_routes.router)
 
-# Register the AI Factory Copilot behind the platform (off until ANTHROPIC_API_KEY is set).
+# Register the AI Factory Copilot behind the platform. AMP's own engine always
+# answers; a language model words the answer only when one is configured and,
+# for the self-hosted kind, only once it has passed the evaluation gate
+# (ADR-0023, ADR-0034). No hosted key is required.
 ai.copilot.register(app)
 
 # Register the industrial connectivity adapter framework (OPC UA, Modbus, S7,

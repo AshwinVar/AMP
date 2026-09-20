@@ -57,6 +57,7 @@ import ShiftSnapshot from "../../components/ShiftSnapshot";
 import BriefingSnapshot from "../../components/BriefingSnapshot";
 import CommandCentreSection from "../../components/CommandCentreSection";
 import RootCauseSection from "../../components/RootCauseSection";
+import RiskRadarSection from "../../components/RiskRadarSection";
 import DeliverySnapshot from "../../components/DeliverySnapshot";
 import SupplySnapshot from "../../components/SupplySnapshot";
 import CostSnapshot from "../../components/CostSnapshot";
@@ -2070,6 +2071,17 @@ export default function DashboardPage() {
           by what it cost, why, what it is costing, and what to do next. */}
       <div className="mb-8">
         <CommandCentreSection
+          onOpen={(view) => {
+            setActiveView(view);
+            window.scrollTo({ top: 0, behavior: "smooth" });
+          }}
+        />
+      </div>
+
+      {/* The Risk Radar (ADR-0026): what is likely to become a problem, each with
+          the rule and the measurement behind it. */}
+      <div className="mb-8">
+        <RiskRadarSection
           onOpen={(view) => {
             setActiveView(view);
             window.scrollTo({ top: 0, behavior: "smooth" });

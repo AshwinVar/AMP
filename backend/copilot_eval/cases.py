@@ -38,6 +38,7 @@ QUESTIONS = [
      ["rc.gap_units"], "core"),
     ("shifts", "How did the shifts do against target?", {"get_shift_attainment"}, ["shift.attainment"], "core"),
     ("trend", "How are we doing compared to last week?", {"get_week_on_week"}, [], "core"),
+    ("risks", "What is likely to become a problem?", {"get_production_risks"}, [], "core"),
     ("work_orders", "How many work orders are in progress?", {"get_work_order_status"}, [], "core"),
     ("find", "Find WO-001", {"find_record"}, [], "core"),
     ("losses", "How much are losses costing us?", {"get_financial_losses"}, [], "core"),
@@ -63,6 +64,7 @@ QUESTIONS = [
     ("line_status", "Is the line running?", {"get_machine_status"}, [], "unseen"),
     ("wip", "What is sitting half-built between operations?", {"get_work_order_status"}, [], "unseen"),
     ("audit", "Are we ready for the ISO audit?", {"get_compliance_status"}, [], "unseen"),
+    ("worry", "What should I worry about this week?", {"get_production_risks"}, [], "unseen"),
 ]
 
 # (id, question). Asked by every factory and every role.

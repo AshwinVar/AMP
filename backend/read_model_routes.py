@@ -230,6 +230,14 @@ def get_root_cause(db: Session = Depends(_get_db), current_user: dict = Depends(
     return ai.root_cause.explain_production_gap(db, request_tenant(current_user))
 
 
+@router.get("/risk-radar")
+def get_risk_radar(db: Session = Depends(_get_db), current_user: dict = Depends(get_current_user)):
+    # The Production Risk Radar (ADR-0026): what is likely to become a problem,
+    # by rule over measured data, with the rule and the measurement stated. No
+    # prediction from a trained model, and no probability.
+    return ai.risk_radar.build_risk_radar(db, request_tenant(current_user))
+
+
 @router.get("/briefing")
 def get_briefing(db: Session = Depends(_get_db), current_user: dict = Depends(get_current_user)):
     # Morning briefing (ADR-0007): the "what needs attention right now" digest —

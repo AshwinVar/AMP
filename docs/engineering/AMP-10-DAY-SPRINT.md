@@ -69,8 +69,8 @@ Until then:
 | 4 | Evidence-backed answers with provenance labels | DONE (API) · UI in this PR | `ai/evidence.py`, `CopilotEvidence.tsx` |
 | 5 | Daily Factory Brief | NOT STARTED | — |
 | 6 | Root-Cause Explorer | BUILT | ADR-0025: `GET /root-cause`, the `explain_production_gap` tool and a card on Executive; measured mechanisms labelled CAUSE CONFIRMED / LIKELY CONTRIBUTOR / CORRELATED EVENT / INSUFFICIENT EVIDENCE, with the unexplained remainder stated |
-| 7 | Financial loss intelligence (never fabricated) | PARTIAL | `get_financial_losses`: money only with a unit value, UNKNOWN otherwise |
-| 8 | Production Risk Radar | NOT STARTED | — |
+| 7 | Financial loss intelligence (never fabricated) | PARTIAL | `get_financial_losses`, the Command Centre and the Root-Cause Explorer: every loss sized in good units, money only with a unit value, UNKNOWN otherwise, and figures never totalled across overlapping problems |
+| 8 | Production Risk Radar | BUILT | ADR-0026: `GET /risk-radar`, the `get_production_risks` tool and a card on the Overview; every risk states its rule and threshold, likelihood is LIKELY/POSSIBLE/WATCH, and the tests fail on the word "probability" or an unqualified "machine learning" |
 | 9 | Machine Health, every score explained | PARTIAL | `get_machine_history`: health is RULE-BASED ASSESSMENT with its factors |
 | 10 | Anomaly engine end-to-end | NOT STARTED (experimental engine exists, ADR-0020) | — |
 | 11 | Failure-risk hardening; synthetic separate from real validation | NOT STARTED | — |

@@ -36,7 +36,8 @@ def ts_list(source, name):
 def main():
     source = open(TS, encoding="utf-8").read()
     for name, py in (("PROVENANCE", ev.PROVENANCE), ("DATA_STATES", ev.DATA_STATES),
-                     ("REFUSALS", ev.REFUSALS), ("CAUSE_LABELS", ev.CAUSE_LABELS)):
+                     ("REFUSALS", ev.REFUSALS), ("CAUSE_LABELS", ev.CAUSE_LABELS),
+                     ("LIKELIHOOD", ev.LIKELIHOOD)):
         ts = ts_list(source, name)
         check(f"frontend {name} is present", ts is not None)
         check(f"frontend {name} == backend {name}, in order", ts == list(py), f"ts={ts} py={list(py)}")

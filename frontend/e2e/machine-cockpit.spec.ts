@@ -74,7 +74,12 @@ test.describe("machine cockpit", () => {
       .filter({ hasText: /^health score$/ })
       .locator("xpath=preceding-sibling::*[1]");
     await expect(healthScore).toHaveText("78");
-    await expect(dialog.getByText("Preventive task overdue by 4 days")).toBeVisible();
+    // The health score, taken apart (ADR-0027): the rule, what it read, what it
+    // cost. A points figure with no rule beside it is what this card exists not
+    // to be, so the rule text is asserted, not only the number.
+    await expect(dialog.getByText("Repeated breakdown transitions")).toBeVisible();
+    await expect(dialog.getByText("read 4 events · rule: 3 or more transitions into Breakdown")).toBeVisible();
+    await expect(dialog.getByText("−20")).toBeVisible();
     await expect(dialog.getByText("Solder bridging").first()).toBeVisible();
     await expect(dialog.getByRole("button", { name: "Approve" }).first()).toBeVisible();
   });

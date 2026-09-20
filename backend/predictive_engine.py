@@ -124,6 +124,21 @@ def calculate_predictive_risk(machines, downtime_logs, production_records,
     for machine in machines:
         score = 0
         reasons = []
+        # EVERY CHECK THIS SCORE MADE, fired or not (ADR-0027). A machine health
+        # score a plant cannot take apart is a number to be believed or ignored;
+        # this records, for each rule, its points, the measured value it read and
+        # the threshold it compared against. The score itself is untouched: the
+        # if-chain below is the same chain in the same order, and
+        # test_machine_health_explained.py asserts the fired points still sum to
+        # the score and the reasons are still the fired rules' own words.
+        components = []
+
+        def check(key, label, points, fired, measured, unit, threshold, reason=None):
+            components.append({"key": key, "label": label, "points": points if fired else 0,
+                               "max_points": points, "fired": bool(fired), "measured": measured,
+                               "unit": unit, "threshold": threshold, "reason": reason})
+            return bool(fired)
+
         downtime_minutes = downtime_by_machine[machine.id]
         downtime_events = downtime_events_by_machine[machine.id]
         breakdown_events = breakdown_events_by_machine[machine.id]
@@ -135,40 +150,54 @@ def calculate_predictive_risk(machines, downtime_logs, production_records,
         if total_by_machine[machine.id]:
             reject_rate = round((reject_by_machine[machine.id] / total_by_machine[machine.id]) * 100, 1)
 
-        if machine.status == "Breakdown":
+        if check("breakdown_now", "Currently in breakdown", 35, machine.status == "Breakdown",
+                 machine.status, "", "status is Breakdown", "machine currently in breakdown"):
             score += 35
             reasons.append("machine currently in breakdown")
-        if machine.status == "Maintenance":
+        if check("maintenance_now", "Currently in maintenance", 15, machine.status == "Maintenance",
+                 machine.status, "", "status is Maintenance", "machine currently in maintenance"):
             score += 15
             reasons.append("machine currently in maintenance")
-        if utilization < 40:
+        if check("low_utilization", "Low utilisation", 20, utilization < 40, utilization, "%",
+                 "utilisation below 40%", "low utilization below 40%"):
             score += 20
             reasons.append("low utilization below 40%")
-        if utilization > 90:
+        if check("high_utilization", "High utilisation", 12, utilization > 90, utilization, "%",
+                 "utilisation above 90%", "high utilization above 90%"):
             score += 12
             reasons.append("high utilization above 90%")
-        if downtime_minutes >= 120:
+        if check("downtime_high", "High accumulated downtime", 25, downtime_minutes >= 120, downtime_minutes,
+                 "min", "120 minutes or more in the risk window", "high accumulated downtime"):
             score += 25
             reasons.append("high accumulated downtime")
-        elif downtime_minutes >= 60:
+        elif check("downtime_moderate", "Moderate accumulated downtime", 15, downtime_minutes >= 60,
+                   downtime_minutes, "min", "60 minutes or more in the risk window",
+                   "moderate accumulated downtime"):
             score += 15
             reasons.append("moderate accumulated downtime")
-        if downtime_events >= 5:
+        if check("downtime_frequent", "Frequent stoppages", 15, downtime_events >= 5, downtime_events,
+                 "events", "5 or more stoppages in the risk window", "frequent downtime events"):
             score += 15
             reasons.append("frequent downtime events")
-        if breakdown_events >= 3:
+        if check("breakdown_repeat", "Repeated breakdown transitions", 20, breakdown_events >= 3,
+                 breakdown_events, "events", "3 or more transitions into Breakdown",
+                 "repeated breakdown transitions"):
             score += 20
             reasons.append("repeated breakdown transitions")
-        if reject_rate >= 8:
+        if check("reject_high", "High reject rate", 20, reject_rate >= 8, reject_rate, "%",
+                 "8% or more of units rejected", "high reject rate"):
             score += 20
             reasons.append("high reject rate")
-        elif reject_rate >= 5:
+        elif check("reject_moderate", "Moderate reject rate", 10, reject_rate >= 5, reject_rate, "%",
+                   "5% or more of units rejected", "moderate reject rate"):
             score += 10
             reasons.append("moderate reject rate")
-        if pressure >= 500:
+        if check("work_order_load", "High open work-order load", 10, pressure >= 500, pressure, "units",
+                 "500 or more outstanding units on open orders", "high active work-order load"):
             score += 10
             reasons.append("high active work-order load")
 
+        raw_score = score
         score = min(score, 100)
         if not reasons:
             reasons.append("no major risk indicators detected")
@@ -186,6 +215,11 @@ def calculate_predictive_risk(machines, downtime_logs, production_records,
             "reject_rate": reject_rate,
             "work_order_pressure": pressure,
             "reasons": reasons,
+            # The explanation travels WITH the score, so no surface can show one
+            # without the other. `capped` says when the points were cut to 100.
+            "components": components,
+            "points_before_cap": raw_score,
+            "capped": raw_score > 100,
             "recommendation": recommendation(score),
         })
 

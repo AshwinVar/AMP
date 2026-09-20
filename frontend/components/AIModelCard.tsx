@@ -7,6 +7,7 @@ import {
   dataLabel,
   describeAnomaly,
   describeAnomalyError,
+  describeFailureRisk,
   formatDifference,
   formatInterval,
   formatMetricValue,
@@ -14,6 +15,7 @@ import {
   verdictBadge,
   type AnomalyResult,
   type AnomalyView,
+  type FailureRiskResponse,
   type HeadlineRow,
   type ModelCard,
   type ModelCardsResponse,
@@ -236,6 +238,72 @@ function AnomalyCheck() {
   );
 }
 
+/**
+ * The failure-risk model's per-machine estimates (ADR-0027).
+ *
+ * The model has had a card here since ADR-0020, but its actual output had no
+ * screen at all — it existed only at /ai/native/failure-risk. Showing it matters
+ * as much as HOW it is shown: it is loaded on request rather than on every
+ * dashboard, each estimate sits beside the rule score for the same machine, and
+ * nothing is coloured as an alarm. A number styled red would say "act on this",
+ * which an evaluation on synthetic machines cannot support.
+ */
+function FailureRiskScores() {
+  const [view, setView] = useState<ReturnType<typeof describeFailureRisk> | null>(null);
+  const [busy, setBusy] = useState(false);
+  const { error, track } = useLoadError();
+
+  const run = useCallback(() => {
+    setBusy(true);
+    track(apiGet<FailureRiskResponse>("/ai/native/failure-risk"), (r) => setView(describeFailureRisk(r)),
+      "failure risk").finally(() => setBusy(false));
+  }, [track]);
+
+  return (
+    <div className="mt-3 border-t border-slate-800 pt-3">
+      <LoadError message={error} />
+      <button
+        type="button"
+        onClick={run}
+        disabled={busy}
+        className="rounded-lg border border-slate-600 text-slate-300 text-xs px-3 py-1 disabled:opacity-50"
+      >
+        {busy ? "Scoring…" : "Show this model's estimates"}
+      </button>
+      {view && (
+        <div className="mt-2">
+          <p className="text-[11px] text-slate-500">{view.headline}</p>
+          {view.unavailable && <p className="text-xs text-slate-300 mt-2">{view.unavailable}</p>}
+          {view.rows.length > 0 && (
+            <table className="w-full text-xs mt-2" aria-label="Failure-risk model estimates">
+              <thead>
+                <tr className="text-slate-500 text-left">
+                  <th className="font-normal py-1 pr-3">Machine</th>
+                  <th className="font-normal py-1 pr-3">Model estimate</th>
+                  <th className="font-normal py-1 pr-3">Band</th>
+                  <th className="font-normal py-1">Rule score</th>
+                </tr>
+              </thead>
+              <tbody>
+                {view.rows.map((r) => (
+                  <tr key={r.id} className="border-t border-slate-800">
+                    <td className="py-1 pr-3 text-slate-300">{r.name}</td>
+                    {/* Deliberately not colour-coded: see the doc comment. */}
+                    <td className="py-1 pr-3 text-slate-300 tabular-nums">{r.estimate}</td>
+                    <td className="py-1 pr-3 text-slate-400">{r.band}</td>
+                    <td className="py-1 text-slate-400 tabular-nums">{r.rule}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+          {view.excluded && <p className="text-[11px] text-slate-500 mt-2">{view.excluded}</p>}
+        </div>
+      )}
+    </div>
+  );
+}
+
 /** Every registered AMP-native model's card. Hidden (not an error) when the plan does not include it. */
 export default function AINativeModelsPanel() {
   const [data, setData] = useState<ModelCardsResponse | null>(null);
@@ -261,6 +329,7 @@ export default function AINativeModelsPanel() {
         {data.models.map((card) => (
           <AIModelCard key={card.name} card={card}>
             {card.name === "telemetry_anomaly" && card.available && canCheck && <AnomalyCheck />}
+            {card.name === "failure_risk" && card.available && canCheck && <FailureRiskScores />}
           </AIModelCard>
         ))}
       </div>

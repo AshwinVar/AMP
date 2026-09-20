@@ -21,7 +21,7 @@ import tenancy
 # shared with build_management_summary / analytics_summary so every surface agrees.
 # Re-exported under the name the pillar modules (oee, losses, scorecard) import.
 from analytics_engine import pooled_oee as _oee_from_records
-from ai import prediction
+from ai import machine_health, prediction
 
 name = "twin"
 
@@ -418,6 +418,10 @@ def build_machine_detail(db, tenant: str, machine_id: int):
         _open_task_counts(db).get(machine_id, 0),
         _pending_action_counts(db, tenant).get(machine_id, 0))
     detail["risk_factors"] = list(risk["reasons"]) if risk and risk.get("reasons") else []
+    # The score and its arithmetic travel together (ADR-0027), so no screen can
+    # show one without the other. `risk_factors` above is the same information
+    # in the older, wordier shape its consumers already read.
+    detail["health_explanation"] = machine_health.explain(risk)
     detail["downtime_7d"] = _downtime_trend(db, machine_id, now=window.end)
     detail["production_7d"] = _machine_production(db, machine_id, now=window.end)
     detail["quality"] = _machine_quality(db, machine_id, now=window.end)

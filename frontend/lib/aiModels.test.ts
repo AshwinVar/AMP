@@ -7,12 +7,14 @@ import {
   dataLabel,
   describeAnomaly,
   describeAnomalyError,
+  describeFailureRisk,
   formatDifference,
   formatInterval,
   formatMetricValue,
   modelIdentity,
   verdictBadge,
   type ConsentCapability,
+  type FailureRiskResponse,
   type HeadlineRow,
 } from "./aiModels";
 
@@ -332,5 +334,58 @@ describe("describeAnomaly", () => {
     expect(v.detail).toMatch(/1\.6% of clean hours/);
     expect(v.detail).toMatch(/99%/);
     expect(v.detail).toMatch(/synthetic/);
+  });
+});
+
+describe("describeFailureRisk", () => {
+  const res = (over: Partial<FailureRiskResponse> = {}): FailureRiskResponse => ({
+    status: "ok",
+    model_version: "failure_risk@v1",
+    adopted: true,
+    caveat: "Evaluated on synthetic machines only; not evidence of accuracy on real plants.",
+    horizon_days: 7,
+    machines: [
+      { machine_id: 1, name: "CNC-01", probability: 0.0821, band: "elevated", rule_score: 35, rule_level: "Medium", excluded_reason: null },
+      { machine_id: 2, name: "LINE-01", probability: 0.2013, band: "high", rule_score: 15, rule_level: "Low", excluded_reason: null },
+      { machine_id: 3, name: "WELD-07", probability: null, band: null, rule_score: 80, rule_level: "Critical", excluded_reason: "already_in_breakdown" },
+    ],
+    ...over,
+  });
+
+  it("puts the highest estimate first and shows it as a percentage", () => {
+    const v = describeFailureRisk(res());
+    expect(v.rows.map((r) => r.name)).toEqual(["LINE-01", "CNC-01"]);
+    expect(v.rows[0].estimate).toBe("20.1%");
+    expect(v.rows[1].estimate).toBe("8.2%");
+  });
+
+  it("never gives an estimate without the rule score beside it", () => {
+    const v = describeFailureRisk(res());
+    for (const row of v.rows) {
+      expect(row.estimate).toMatch(/%$/);
+      expect(row.rule).toMatch(/\d+\/100 · \w+/);
+    }
+  });
+
+  it("calls it an estimate, not a measurement", () => {
+    const v = describeFailureRisk(res());
+    expect(v.headline).toContain("An estimate, not a measurement");
+    expect(v.headline).toContain("next 7 days");
+  });
+
+  it("says why a machine was left out instead of showing a blank", () => {
+    const v = describeFailureRisk(res());
+    expect(v.rows.find((r) => r.name === "WELD-07")).toBeUndefined();
+    expect(v.excluded).toContain("1 machine already in breakdown was not scored");
+    expect(v.excluded).toContain("NEW breakdown");
+  });
+
+  it("gives no number at all when the model could not be verified", () => {
+    for (const bad of [null, res({ status: "model_unavailable", machines: [] })]) {
+      const v = describeFailureRisk(bad);
+      expect(v.rows).toEqual([]);
+      expect(v.unavailable).toContain("not available");
+      expect(v.unavailable).toContain("rule-based health score is unaffected");
+    }
   });
 });

@@ -303,7 +303,41 @@ export function machineDetail(machineId: number) {
     risk_score: twin.risk_score,
     risk_level: twin.risk_level,
     oee: twin.oee,
-    risk_factors: ["Breakdowns above fleet median", "Preventive task overdue by 4 days"],
+    risk_factors: ["repeated breakdown transitions", "moderate accumulated downtime"],
+    // The same rules with their arithmetic (ADR-0027), as /machine-health/{id}
+    // now returns them. The spec asserts on these to prove the drill-down
+    // fetched its own detail rather than reusing the card behind it.
+    health_explanation: {
+      health_score: 78,
+      band: "Watch",
+      band_rule: "80 or more is Healthy · 55 Watch · 35 At risk · below 35 Critical",
+      start: 100,
+      deductions: [
+        {
+          key: "breakdown_repeat", label: "Repeated breakdown transitions", points: 20, max_points: 20,
+          reading: "4 events", measured: 4, unit: "events",
+          threshold: "3 or more transitions into Breakdown", reason: "repeated breakdown transitions",
+        },
+        {
+          key: "downtime_moderate", label: "Moderate accumulated downtime", points: 15, max_points: 15,
+          reading: "95 min", measured: 95, unit: "min",
+          threshold: "60 minutes or more in the risk window", reason: "moderate accumulated downtime",
+        },
+      ],
+      clear: [
+        {
+          key: "breakdown_now", label: "Currently in breakdown", points: 0, max_points: 35,
+          reading: "Running", measured: "Running", unit: "",
+          threshold: "status is Breakdown", reason: "machine currently in breakdown",
+        },
+      ],
+      checks_run: 3,
+      points_deducted: 35,
+      points_before_cap: 35,
+      capped: false,
+      state: "OK",
+      note: "Health starts at 100 and each rule below takes its points away. Every rule is a fixed threshold over recorded data, hand-weighted by AMP — not machine learning, and not a prediction of failure.",
+    },
     downtime_7d: [
       { date: "2026-07-27", count: 1 },
       { date: "2026-07-28", count: 0 },

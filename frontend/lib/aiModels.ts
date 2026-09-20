@@ -369,3 +369,77 @@ export function describeAnomaly(result: AnomalyResult): AnomalyView {
     detail: parts.length ? parts.join(" ") : null,
   };
 }
+
+// ── The failure-risk model's own estimates (ADR-0027) ─────────────────────────
+
+/** One machine as /ai/native/failure-risk returns it. */
+export type FailureRiskRow = {
+  machine_id: number;
+  name: string;
+  probability: number | null;
+  band: string | null;
+  rule_score: number;
+  rule_level: string;
+  excluded_reason: string | null;
+};
+
+export type FailureRiskResponse = {
+  status: string;
+  model_version: string | null;
+  adopted: boolean | null;
+  caveat: string;
+  horizon_days?: number;
+  machines: FailureRiskRow[];
+};
+
+export type FailureRiskView = {
+  unavailable: string | null;
+  headline: string;
+  rows: { id: number; name: string; estimate: string; band: string; rule: string }[];
+  excluded: string | null;
+};
+
+/**
+ * How the failure-risk model's numbers may be said on a screen.
+ *
+ * Three rules, and they are the reason this lives here rather than in the
+ * component: the estimate is never shown without the rule score beside it, the
+ * word "estimate" is never dropped, and a machine the model refused to score
+ * says so instead of showing a blank that reads as zero. The model is adopted
+ * but evaluated on SYNTHETIC machines only, so nothing here may be worded as a
+ * measurement, a forecast or an instruction.
+ */
+export function describeFailureRisk(res: FailureRiskResponse | null): FailureRiskView {
+  const horizon = res?.horizon_days ? `next ${res.horizon_days} days` : "coming days";
+  const headline =
+    `Estimated chance each machine STARTS a new breakdown in the ${horizon}, beside the rule score ` +
+    `for the same machine. An estimate, not a measurement.`;
+  if (!res || res.status !== "ok") {
+    return {
+      unavailable:
+        "AMP's failure-risk model is not available right now, so there is no estimate to show. " +
+        "The rule-based health score is unaffected.",
+      headline,
+      rows: [],
+      excluded: null,
+    };
+  }
+  const scored = res.machines.filter((m) => m.probability != null);
+  const skipped = res.machines.filter((m) => m.excluded_reason === "already_in_breakdown");
+  scored.sort((a, b) => (b.probability as number) - (a.probability as number));
+  return {
+    unavailable: null,
+    headline,
+    rows: scored.map((m) => ({
+      id: m.machine_id,
+      name: m.name,
+      estimate: `${((m.probability as number) * 100).toFixed(1)}%`,
+      band: m.band ?? "—",
+      rule: `${Math.round(m.rule_score)}/100 · ${m.rule_level}`,
+    })),
+    excluded: skipped.length
+      ? `${skipped.length} machine${skipped.length === 1 ? "" : "s"} already in breakdown ` +
+        `${skipped.length === 1 ? "was" : "were"} not scored: the model estimates a NEW breakdown starting.`
+      : null,
+  };
+}

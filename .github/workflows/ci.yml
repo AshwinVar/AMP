@@ -102,6 +102,18 @@ jobs:
         env:
           DATABASE_URL: "sqlite:///./audit_owner_questions.db"
         run: python audit_owner_questions.py
+      # The simulator is the one writer with no request, no user and no JWT:
+      # it animates several tenants from ONE loop, every 45 s, and its only
+      # scoping is a contextvar the loop binds per tick. This runs the loop's
+      # exact tick sequence for three factories at once and proves every row
+      # landed with the tenant it ran for, no row points at another tenant's
+      # machine, and a tick with no tenant bound refuses (it used to file
+      # every tenant's activity under DEFAULT).
+      - name: Three factories animated by one simulator loop never cross (audit)
+        working-directory: backend
+        env:
+          DATABASE_URL: "sqlite:///./audit_three_factory_simulation.db"
+        run: python audit_three_factory_simulation.py
 
   # THE MIGRATION GATE (ADR-0018). A separate job because it needs a real
   # PostgreSQL server, and because its answer is a different question from "do

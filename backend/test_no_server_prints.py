@@ -93,6 +93,7 @@ CLI_ONLY_FUNCTIONS = {
         "tick_escalation": "not imported by main.py's simulation loop; reached only from seed/CLI paths",
         "tick_customer_order": "not imported by main.py's simulation loop; reached only from seed/CLI paths",
         "run_simulation": "CLI runner; prints which seeder failed, for the person watching",
+        "run_cli": "the CLI's tick loop (bound to DEFAULT); prints the tick number for the person watching",
         "_module_or_class_level": "the `if __name__` block: this file doubles as the seeding CLI",
     },
     "reset_factory.py": {

@@ -158,6 +158,25 @@ The scripted model behaviours test what AMP does with a model; they are not a mo
      per-surface suite can hold: money appearing nowhere across nine screens
      for a factory with no unit value, and no factory's words on another's
      screen when four tenants share one database and the same machine names.
+   - **Done: the three-factory simulation.** `audit_three_factory_simulation.py`
+     runs main's exact tick sequence — work orders, telemetry, PLC poll,
+     production, status, stock, quality, shifts, operators, the heartbeat and
+     the escalation agent — for FACTORY_A, B and C from one loop, twenty
+     rounds each, and proves it against the raw tables: every row a tick wrote
+     belongs to the tenant it ran for (52 tenant-carrying tables), no row
+     points at another tenant's machine, order, item or plan (40 parent
+     links), each factory advanced and only where it had something to advance,
+     nothing landed in DEFAULT or the OEM namespace, A and B issued the same
+     document numbers from their own sequences, and each owner's surfaces
+     carry only their own factory's words afterwards. It runs in CI on every
+     push. It found one defect on the way: with **no** tenant bound, every
+     tick read every tenant's rows and filed what it wrote under DEFAULT — 41
+     rows in twelve unbound rounds, telemetry and inspections for FACTORY_B's
+     machines under the demo tenant. The loop never runs unbound; the CLI and
+     any direct caller did. Every tick now refuses with none bound
+     (`factory_simulator._bound_tenant`, the heartbeat's ADR-0021 rule made
+     universal), the CLI binds DEFAULT itself, and the guard is pinned per
+     tick by `test_sim_ticks_need_a_tenant.py` and 16 mutations.
    - **It found two defects on its first run, both now fixed:** the shortage
      card reported a workspace with no stock at all as OK with zero units at
      risk (the "empty stock is healthy" defect, in a surface written after

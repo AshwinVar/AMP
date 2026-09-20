@@ -147,9 +147,12 @@ MUTATIONS = [
     ("MQTT records the defaulted status, not the raw one", _one(MQTT,
         "            payload.get(\"status\"), telemetry_coverage.received_at())",
         "            payload.get(\"status\", \"Idle\"), telemetry_coverage.received_at())")),
+    # The heartbeat's own check became the shared _bound_tenant() guard every
+    # tick now calls (mutate_sim_tenant_guard.py bends the guard itself); this
+    # keeps the heartbeat's refusal pinned from the contract side too.
     ("the simulator heartbeat runs with no tenant bound", _one(SIM,
-        "    if not tenant:\n        raise ValueError(\"tick_status_heartbeat needs a bound tenant\")",
-        "    if False:\n        raise ValueError(\"tick_status_heartbeat needs a bound tenant\")")),
+        "    tenant = _bound_tenant()",
+        "    tenant = tenancy.current_tenant() or \"DEFAULT\"")),
 
     # --- contract_linkage ---------------------------------------------------------
     ("the linkage listener is never registered", _one(LINKAGE,

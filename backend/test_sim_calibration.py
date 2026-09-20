@@ -19,6 +19,14 @@ from database import Base
 from factory_simulator import drift_utilization, tick_production, tick_shift_entry
 
 
+import tenancy
+
+# A simulator tick runs for ONE bound tenant and refuses otherwise
+# (factory_simulator._bound_tenant). Every row these single-tenant fixtures
+# write is DEFAULT's, so DEFAULT is bound once for the module.
+tenancy.set_current_tenant(tenancy.DEFAULT_TENANT)
+
+
 def _fresh_session():
     engine = create_engine("sqlite://", connect_args={"check_same_thread": False})
     Base.metadata.create_all(bind=engine)

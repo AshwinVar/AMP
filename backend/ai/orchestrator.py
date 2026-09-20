@@ -21,12 +21,15 @@ rule copilot plus its evidence: the same routing (ai.assistant.route) and the
 same sentences (ai.assistant.say_*). A model that errors, times out or returns
 nonsense costs fluency, never the answer.
 
-`llm` is duck-typed: `.name`, `.model`, `.plan(question, tools) -> [{"name",
-"arguments"}]` and `.phrase(question, facts, draft) -> str`. The evaluation
+`llm` is duck-typed: `.name`, `.model`, `.plan(question, tools, thread=None) ->
+[{"name", "arguments"}]` and `.phrase(question, facts, draft) -> str`. `thread`
+is a follow-up's context (ADR-0035): the caller's prior questions and the calls
+AMP ran for them, cleaned here before any planner sees them. The evaluation
 harness drives scripted ones (copilot_eval); ai_copilot provides real ones.
 """
 import json
 import logging
+import re
 import time
 
 from ai import assistant
@@ -45,6 +48,23 @@ MAX_QUESTION = 1000
 MAX_TOOL_CALLS = 4
 MAX_ANSWER = 2000
 
+# Follow-up questions (ADR-0035). The client may send the turns of ITS OWN
+# conversation -- each prior question and the tool calls AMP itself ran for
+# it -- so that "and its downtime?" can mean the machine the last question
+# named. Nothing is stored server-side; the thread is text the caller typed or
+# was shown, and it can NAME things, never AUTHORIZE them: every tool the
+# follow-up runs goes through run_tool for THIS principal, and a prior turn's
+# results are not accepted at all.
+MAX_THREAD_TURNS = 6      # the turns considered, from the most recent
+MAX_THREAD_CALLS = 4      # a turn ran at most MAX_TOOL_CALLS
+# A follow-up refers to a machine when it says so, with a pronoun or a
+# demonstrative. "and what about the plant OEE?" says neither and routes on its
+# own words: a conversation about CNC-01 must not turn every later question
+# into a question about CNC-01.
+_REFERENT_WORDS = ("it", "its", "it's", "that machine", "this machine", "the machine",
+                   "same machine", "that one", "the same one")
+_REFERENT_PUNCT = re.compile(r"[^a-z0-9' ]+")
+
 # Each routed pillar's typed tool. `help` answers from static text and reads nothing.
 # test_copilot_orchestrator.py checks this covers assistant.route_names() exactly,
 # so a pillar added to the router cannot be missing a tool.
@@ -60,11 +80,12 @@ PILLAR_TOOL = {
 
 
 class Plan:
-    __slots__ = ("calls", "matched", "labels", "planner")
+    __slots__ = ("calls", "matched", "labels", "planner", "resolved")
 
-    def __init__(self, calls, matched, labels=None, planner="rules"):
+    def __init__(self, calls, matched, labels=None, planner="rules", resolved=None):
         self.calls, self.matched = list(calls), matched
         self.labels, self.planner = dict(labels or {}), planner
+        self.resolved = resolved     # {"machine": name} when a follow-up's referent was filled (ADR-0035)
 
 
 # Two tools answer questions no pillar owns: output against the PLAN (the rule
@@ -128,7 +149,80 @@ _SHORTAGE_PHRASES = ("what will the shortage", "shortage stop", "stock-out stopp
 _SHORTAGE_PILLARS = ("inventory", "briefing")
 
 
-def plan_rules(db, question, proposer=None) -> Plan:
+def clean_thread(thread) -> list:
+    """The client's conversation, reduced to what a follow-up may use: the last
+    MAX_THREAD_TURNS turns, each a question (a string, cut to MAX_QUESTION) and
+    the calls AMP ran for it (a tool name and scalar arguments only). Anything
+    else a turn carries -- an answer, evidence, a result, a role, a tenant, a
+    claim -- is dropped here, so nothing downstream can be tempted by it.
+    Never raises for the caller's input."""
+    if not isinstance(thread, list):
+        return []
+    out = []
+    for turn in thread:
+        if not isinstance(turn, dict):
+            continue
+        question = turn.get("question")
+        question = question.strip()[:MAX_QUESTION] if isinstance(question, str) else ""
+        raw_calls = turn.get("calls")
+        calls = []
+        for c in (raw_calls if isinstance(raw_calls, list) else [])[:MAX_THREAD_CALLS]:
+            if not isinstance(c, dict) or not isinstance(c.get("tool"), str):
+                continue
+            args = c.get("arguments")
+            args = ({str(k)[:40]: v for k, v in args.items()
+                     if isinstance(k, str) and isinstance(v, (str, int, float, bool))}
+                    if isinstance(args, dict) else {})
+            calls.append({"tool": c["tool"][:80], "arguments": args})
+        if question or calls:
+            out.append({"question": question, "calls": calls})
+    return out[-MAX_THREAD_TURNS:]
+
+
+def _refers_to_a_machine(question) -> bool:
+    """Whether the question points at a machine with a pronoun or a demonstrative
+    rather than a name: "is it running?", "and its downtime?", "that machine"."""
+    q = " " + _REFERENT_PUNCT.sub(" ", (question or "").lower()) + " "
+    return any(f" {w} " in q for w in _REFERENT_WORDS)
+
+
+def _referent(db, thread):
+    """The machine a follow-up refers to: from the most recent prior turn that
+    named one, either in a call AMP ran (get_machine_history's `machine`) or in
+    the question itself. Looked up by name through the SCOPED machine list --
+    the tenant is bound for the whole question (ask) -- so a name from another
+    company's plant resolves to nothing, whoever typed it."""
+    for turn in reversed(thread or []):
+        for c in reversed(turn["calls"]):
+            name = c["arguments"].get("machine") if c["tool"] == "get_machine_history" else None
+            if isinstance(name, str) and name:
+                m = assistant._machine_named(db, name)
+                if m is not None:
+                    return m
+        m = assistant._machine_named(db, turn["question"]) if turn["question"] else None
+        if m is not None:
+            return m
+    return None
+
+
+def plan_rules(db, question, proposer=None, thread=None) -> Plan:
+    """AMP's own plan, with a follow-up's referent filled in (ADR-0035): a
+    question that points at a machine with a pronoun, names none itself, and
+    follows a turn that named one is routed as if it named that machine. The
+    name can only be one from this tenant's own machine list, and the plan
+    says what it resolved."""
+    resolved = None
+    if thread and _refers_to_a_machine(question) and assistant._machine_named(db, question) is None:
+        machine = _referent(db, thread)
+        if machine is not None:
+            question = f"{question} ({machine.name})"
+            resolved = {"machine": machine.name}
+    plan = _plan_rules(db, question, proposer)
+    plan.resolved = resolved
+    return plan
+
+
+def _plan_rules(db, question, proposer=None) -> Plan:
     """AMP's own plan: the rule copilot's routing, mapped onto typed tools."""
     r = assistant.route(db, question, proposer=proposer)
     if r.kind == "machine":
@@ -157,11 +251,13 @@ def plan_rules(db, question, proposer=None) -> Plan:
     return Plan([(name, {})] if name else [], r.matched, r.labels)
 
 
-def _plan_with_llm(llm, question, principal):
+def _plan_with_llm(llm, question, principal, thread=None):
     """(Plan, None) from the model, or (None, why not). Only the SHAPE is
-    checked here; whether each step may run is run_tool's decision."""
+    checked here; whether each step may run is run_tool's decision. The thread
+    (already cleaned: prior questions and the calls AMP ran, nothing else) is
+    what the model may use to see what a follow-up refers to (ADR-0035)."""
     try:
-        raw = llm.plan(question, catalog(principal))
+        raw = llm.plan(question, catalog(principal), thread=thread or None)
     except Exception as e:   # noqa: BLE001 - a failing model falls back to AMP's plan
         return None, f"the language model could not plan ({type(e).__name__})"
     if not isinstance(raw, list):
@@ -210,7 +306,7 @@ def _overall_state(results) -> str:
     return ev.PARTIAL_DATA
 
 
-def ask(db, principal: Principal, question, proposer=None, llm=None) -> dict:
+def ask(db, principal: Principal, question, proposer=None, llm=None, thread=None) -> dict:
     """Answer one question for one authenticated principal. Never raises for the
     question's content or for a model's behaviour.
 
@@ -225,13 +321,13 @@ def ask(db, principal: Principal, question, proposer=None, llm=None) -> dict:
     if isinstance(principal, Principal) and principal.tenant and not tenancy.is_reserved_tenant_code(principal.tenant):
         token = tenancy.set_current_tenant(principal.tenant)
         try:
-            return _ask(db, principal, question, proposer, llm)
+            return _ask(db, principal, question, proposer, llm, thread)
         finally:
             tenancy.reset_current_tenant(token)
-    return _ask(db, principal, question, proposer, llm)
+    return _ask(db, principal, question, proposer, llm, thread)
 
 
-def _ask(db, principal, question, proposer, llm) -> dict:
+def _ask(db, principal, question, proposer, llm, thread=None) -> dict:
     started = time.perf_counter()
     q = question.strip() if isinstance(question, str) else ""
     if len(q) > MAX_QUESTION:
@@ -239,15 +335,20 @@ def _ask(db, principal, question, proposer, llm) -> dict:
                 f"{MAX_QUESTION:,} characters.", "view": None, "matched": "too_long", "engine": "rules",
                 "state": ev.INVALID_ARGUMENTS, "plan": {"planner": "rules", "calls": []},
                 "tools": [], "evidence": [], "grounding": None, "notes": [],
+                "thread": {"turns": 0, "resolved": None},
                 "elapsed_ms": round((time.perf_counter() - started) * 1000)}
 
     notes = []
-    rules = plan_rules(db, q, proposer)
+    # The caller's own prior turns, reduced to questions and the calls AMP ran
+    # (ADR-0035). Nothing in them is trusted: they may help a planner see what a
+    # follow-up refers to, and every tool still runs through run_tool below.
+    thread = clean_thread(thread)
+    rules = plan_rules(db, q, proposer, thread)
     plan = rules
     # A model without native tool calling words answers but does not plan
     # (`can_plan = False`, ai/llm.py): AMP's router plans, as it always did.
     if llm is not None and getattr(llm, "can_plan", True):
-        llm_plan, why = _plan_with_llm(llm, q, principal)
+        llm_plan, why = _plan_with_llm(llm, q, principal, thread)
         if llm_plan is not None:
             plan = llm_plan
         if why:
@@ -301,9 +402,13 @@ def _ask(db, principal, question, proposer, llm) -> dict:
            "plan": {"planner": plan.planner,
                     "calls": [{"tool": str(n)[:80], "arguments": _shown_args(plan, a, q)} for n, a in plan.calls]},
            "tools": tools, "evidence": evidence, "grounding": gate, "notes": notes,
+           # What the follow-up machinery did with the caller's thread (ADR-0035):
+           # how many prior turns were considered and, when AMP's planner filled
+           # a pronoun with a machine, which one -- so the screen can say so.
+           "thread": {"turns": len(thread), "resolved": plan.resolved if plan.planner == "rules" else None},
            "elapsed_ms": round((time.perf_counter() - started) * 1000)}
     log.info("copilot answered", extra={"copilot": {
-        "engine": engine, "planner": plan.planner,
+        "engine": engine, "planner": plan.planner, "thread_turns": len(thread),
         "provider": getattr(llm, "name", None) if llm is not None else None,
         "model": getattr(llm, "model", None) if llm is not None else None,
         "tools": [{"tool": t["tool"], "state": t["state"], "elapsed_ms": t["elapsed_ms"]} for t in tools],

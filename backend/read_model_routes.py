@@ -505,9 +505,14 @@ def copilot_ask(payload: dict, db: Session = Depends(_get_db), current_user: dic
     # request's; the model sees the question and nothing else. Not adopted (the
     # committed v1) -> no proposer -> the routing is exactly the keyword router.
     question = payload.get("question") if isinstance(payload, dict) else None
+    # ADR-0035: the caller's own prior turns, so a follow-up can refer to the
+    # machine the conversation named. The orchestrator reduces them to
+    # questions and the calls AMP ran; nothing in them can choose the
+    # principal or skip a tool's checks.
+    thread = payload.get("thread") if isinstance(payload, dict) else None
     return ai_orchestrator.ask(db, Principal.from_user(current_user),
                                question if isinstance(question, str) else "",
-                               proposer=ai_copilot.native_proposer())
+                               proposer=ai_copilot.native_proposer(), thread=thread)
 
 
 @router.get("/copilot/digest")

@@ -639,7 +639,7 @@ GET    /analytics/things  → summary/KPIs for that module
 | `POST` | `/ai/generate-recommendations` | Generate rule‑based recommendations. |
 | `GET` | `/analytics/ai-insights` | AI‑insights analytics. |
 | `GET` | `/ai/status` | Is the Claude copilot connected? |
-| `POST` | `/ai/ask` | Ask the copilot a question via the connected LLM *(needs an LLM key; falls back to rules on failure)*. |
+| `POST` | `/ai/ask` | Ask the copilot a question via the connected model *(a hosted key **or** a self-hosted model; falls back to rules on failure)*. Body `{question, thread?}` — `thread` is the caller's own prior turns (each question and the calls AMP ran), so a follow-up like "and its downtime?" resolves to the machine the conversation named; nothing is stored and every turn is authorized afresh (ADR-0035). `/copilot/ask` takes the same body. |
 | `POST` | `/ai/report` | Generate a daily AI management report *(needs key)*. |
 
 ### Industrial IoT & connectivity

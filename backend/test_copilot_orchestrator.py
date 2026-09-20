@@ -90,7 +90,7 @@ class Stub:
         self.name = self.model = "stub"
         self._plan, self._text = plan, text
 
-    def plan(self, question, tools):
+    def plan(self, question, tools, thread=None):
         return self._plan
 
     def phrase(self, question, facts, draft):

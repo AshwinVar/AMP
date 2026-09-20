@@ -37,8 +37,8 @@ MUTATIONS = [
     ("bad configuration raises instead of falling back", L,
      "    except ValueError:\n        return PLAN_TOKENS_DEFAULT", "    except TypeError:\n        return PLAN_TOKENS_DEFAULT"),
     ("planning stops asking for the configured budget", L,
-     "                                     max_tokens=plan_tokens())",
-     "                                     max_tokens=300)"),
+     "tools=functions, max_tokens=plan_tokens())",
+     "tools=functions, max_tokens=300)"),
 
     # --- the diagnosis --------------------------------------------------------
     ("a truncated plan is silently treated as a refusal again", L,
@@ -84,8 +84,8 @@ MUTATIONS = [
      '            _check_fits(estimate_tokens(PHRASE_SYSTEM, user), PHRASE_TOKENS, "evidence")',
      '            pass'),
     ("an oversized catalogue is sent to the model anyway", L,
-     '            _check_fits(estimate_tokens(PLAN_SYSTEM, question, json.dumps(functions)), plan_tokens(),\n'
-     '                        "tool catalogue and question")',
+     '            _check_fits(estimate_tokens(json.dumps(functions), *[m["content"] for m in messages]), plan_tokens(),\n'
+     '                        "tool catalogue, conversation and question")',
      '            pass'),
     ("the window is assumed to be a thousand times larger than measured", L,
      "CONTEXT_TOKENS_DEFAULT = 16384", "CONTEXT_TOKENS_DEFAULT = 16384000"),

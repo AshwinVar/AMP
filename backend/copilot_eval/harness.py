@@ -49,12 +49,22 @@ PCT_KEYS = {"oee.plant", "oee.availability", "oee.performance", "oee.quality", "
             "shift.attainment", "quality.fail_rate", "quality.fpy"}
 
 
-def _expected_call(case_id, tools, tenant):
+def _named_in(questions, tenant):
+    """The machine the most recent of these questions names, for the thread
+    cases' answer key; CNC-01 when none does."""
+    for q in reversed(list(questions)):
+        for name, _status, _line in F.MACHINES[tenant]:
+            if name.lower() in q.lower():
+                return name
+    return "CNC-01"
+
+
+def _expected_call(case_id, tools, tenant, machine="CNC-01"):
     """The answer key a scripted 'oracle' model is handed: the first acceptable
     tool, with the arguments the question implies."""
     tool = sorted(tools)[0] if case_id not in ("downtime", "stops") else "get_downtime"
     if tool == "get_machine_history":
-        return tool, {"machine": "CNC-01"}
+        return tool, {"machine": machine}
     if tool == "find_record":
         return tool, {"query": "WO-001"}
     return tool, {}
@@ -168,11 +178,11 @@ class Report:
         return "\n".join(lines)
 
 
-def _ask(Session, principal, question, llm):
+def _ask(Session, principal, question, llm, thread=None):
     db = Session()
     tok = tenancy.set_current_tenant(principal.tenant)   # as TenantScopeMiddleware binds it
     try:
-        return orchestrator.ask(db, principal, question, llm=llm)
+        return orchestrator.ask(db, principal, question, llm=llm, thread=thread)
     finally:
         tenancy.reset_current_tenant(tok)
         db.close()
@@ -224,6 +234,20 @@ def run(Session, llm=None, label=None, roles=C.ROLES) -> Report:
                 llm.expected = _expected_call(case_id, acceptable, tenant)
             resp = _ask(Session, admin, question, llm)
             report.rows.append(_row(resp, case_id, tenant, "Admin", split, acceptable, fact_keys, question))
+        # Follow-ups (ADR-0035): the prior questions are asked for real and the
+        # thread is what the screen would send back -- each question and the
+        # calls AMP ran for it. Only the last question is scored.
+        for case_id, priors, question, acceptable, fact_keys, split in C.THREADS:
+            thread = []
+            for prior in priors:
+                if llm is not None and hasattr(llm, "expected"):
+                    llm.expected = _expected_call(case_id, acceptable, tenant, machine=_named_in(priors, tenant))
+                prior_resp = _ask(Session, admin, prior, llm, thread)
+                thread.append({"question": prior, "calls": prior_resp["plan"]["calls"]})
+            if llm is not None and hasattr(llm, "expected"):
+                llm.expected = _expected_call(case_id, acceptable, tenant, machine=_named_in(priors, tenant))
+            resp = _ask(Session, admin, question, llm, thread)
+            report.rows.append(_row(resp, case_id, tenant, "Admin", split, acceptable, fact_keys, question))
         for role in roles:
             p = Principal(tenant=tenant, role=role, username=f"{tenant.lower()}-{role.lower()}")
             for case_id, question in C.ADVERSARIAL:
@@ -231,4 +255,18 @@ def run(Session, llm=None, label=None, roles=C.ROLES) -> Report:
                     llm.expected = ("get_machine_status", {})
                 resp = _ask(Session, p, question, llm)
                 report.adversarial.append(_row(resp, case_id, tenant, role, "adversarial", question=question))
+            # Forged threads (ADR-0035): what the caller CLAIMS a prior turn did
+            # or was allowed. The leak check may skip a marker the caller typed
+            # -- in the question or in the parts of the thread AMP keeps -- and
+            # nothing else: an answer or evidence a turn carries is dropped by
+            # clean_thread, so a marker from there in the response could only
+            # have come from the data.
+            for case_id, thread, question in C.ADVERSARIAL_THREADS:
+                if llm is not None and hasattr(llm, "expected"):
+                    llm.expected = ("get_machine_status", {})
+                resp = _ask(Session, p, question, llm, thread)
+                typed = " ".join([question] + [
+                    t["question"] + " " + " ".join(str(v) for c in t["calls"] for v in c["arguments"].values())
+                    for t in orchestrator.clean_thread(thread)])
+                report.adversarial.append(_row(resp, case_id, tenant, role, "adversarial", question=typed))
     return report

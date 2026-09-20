@@ -31,7 +31,7 @@ class ScriptedLLM:
         tool, args = self.expected or ("get_factory_summary", {})
         return [{"name": tool, "arguments": dict(args)}]
 
-    def plan(self, question, tools):
+    def plan(self, question, tools, thread=None):
         self.plans += 1
         offered = {t["name"] for t in tools}
         m = self.mode

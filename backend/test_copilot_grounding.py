@@ -94,6 +94,54 @@ def labels_and_question():
           g.check('I couldn\'t find anything matching "acme-sn-7731".', compound, "Find ACME-SN-7731").passed)
 
 
+def identifier_digits():
+    print()
+    print("=" * 74)
+    print("2b. AN IDENTIFIER'S DIGITS ARE NOT A FIGURE AMP MAY QUOTE")
+    print("=" * 74)
+    # The answer side of this gate already scrubs identifiers and dates before
+    # counting numbers, for the reason its own comment gives: the digits inside
+    # CNC-01 or 2026-09-18 are not figures. The EVIDENCE side did not, and the
+    # evidence side is what defines the permitted set -- so a machine called
+    # WELD-07 licensed "Plant OEE was 7%", and a date in a detail licensed 2026,
+    # 9 and 18. Measured before the fix: that sentence passed.
+    # No window on F2 on purpose: "last 7 days" would put a 7 in the evidence
+    # honestly, and then the machine's name would not be what licensed it. The
+    # window gets its own CONTROL below, on its own fact.
+    named = [fact("F1", "WELD-07", "Lowest-OEE machine"),
+             fact("F2", 61.0, "Plant OEE", "%", "measured from 2 of 3 machines")]
+    windowed = [fact("F1", 61.0, "Plant OEE", "%", "", "last 7 days")]
+    cases_2b = [
+        ("The lowest-OEE machine is WELD-07.", True,
+         "the identifier itself is quotable, and is not a figure"),
+        ("Plant OEE was 7%.", False,
+         "7 is the machine's NAME, not a measurement of anything"),
+        ("You lost 7 units.", False, "...in any sentence, not just the OEE one"),
+        ("Plant OEE was 61%.", True, "the real figure still passes"),
+        ("Measured from 2 of 3 machines.", True,
+         "CONTROL: digits in a detail that are genuinely figures still pass"),
+    ]
+    for text, expected, why in cases_2b:
+        got = g.check(text, named)
+        check(f"{'passes' if expected else 'REFUSED'}: {text}  ({why})",
+              got.passed is expected, f"passed={got.passed} ungrounded={got.ungrounded_numbers}")
+
+    got = g.check("Over the last 7 days.", windowed)
+    check("CONTROL: a window's own number is still quotable",
+          got.passed is True, f"passed={got.passed} ungrounded={got.ungrounded_numbers}")
+
+    # A date in a detail is the same defect wearing a different shape.
+    dated = [fact("F1", 12, "Open work orders", "orders",
+                  "counted on 2026-09-18", "now")]
+    got = g.check("There are 18 open work orders.", dated)
+    check("a date in a detail does not license its day number",
+          got.passed is False, f"passed={got.passed} ungrounded={got.ungrounded_numbers}")
+    got = g.check("There are 12 open work orders.", dated)
+    check("...while the figure the fact actually states still passes",
+          got.passed is True, f"passed={got.passed} ungrounded={got.ungrounded_numbers}")
+
+
+
 def reasons_are_counts():
     print()
     print("=" * 74)
@@ -153,6 +201,7 @@ def property_test():
 def main():
     worked()
     labels_and_question()
+    identifier_digits()
     reasons_are_counts()
     property_test()
     if failures:

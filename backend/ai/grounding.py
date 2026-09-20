@@ -77,11 +77,23 @@ def _dec(text):
         return None
 
 
+_ORDINAL = re.compile(r"(?i)(st|nd|rd|th)\b")
+
+
 def _numbers_in(text):
-    """[(shown_text, value, decimals)] for each number in `text`."""
+    """[(shown_text, value, decimals)] for each FIGURE in `text`.
+
+    An ordinal is not a figure. "the 1st shift" names a shift; "83%" states a
+    measurement, and only the second is something AMP could have got wrong.
+    This suite has always said so; until the evidence side stopped reading
+    identifiers as numbers, "1st" was grounded by accident -- a machine called
+    CNC-01 happened to supply a 1 -- so the rule was never actually exercised.
+    """
     out = []
     for m in _NUMBER.finditer(text):
         whole, frac, suffix = m.group(1), m.group(2) or "", m.group(3)
+        if _ORDINAL.match(text, m.end()):
+            continue
         value = _dec(whole.replace(",", "") + frac)
         if value is None:
             continue
@@ -91,10 +103,31 @@ def _numbers_in(text):
     return out
 
 
+_DATE = re.compile(r"\d{4}-\d{2}-\d{2}(?:[T ][\d:.]+)?")
+
+
+def _figures_in(text):
+    """The numbers a string STATES, with identifiers and dates taken out first.
+
+    The answer side of this gate already does exactly this, and for the reason
+    written beside it: the digits inside "CNC-01" or "2026-09-18" are not
+    figures. The evidence side used to skip it -- and the evidence side is what
+    decides which numbers AMP is allowed to show, so a machine called WELD-07
+    licensed "Plant OEE was 7%" and a date in a detail licensed 2026, 9 and 18.
+    A permissive definition of "grounded" is worse than a strict one here,
+    because this gate is the only thing between a model's sentence and a reader.
+    """
+    cleaned = _DATE.sub(" ", text or "")
+    for tok in _identifiers(cleaned):
+        cleaned = cleaned.replace(tok, " ", 1)
+    return _numbers_in(cleaned)
+
+
 def _evidence_numbers(facts):
     """Every number the evidence states: fact values, and numbers inside the
     evidence's own strings (values, details, windows, units). Labels are left
-    out: "Alert 2" and "Cause 3" are positions in a list, not figures."""
+    out: "Alert 2" and "Cause 3" are positions in a list, not figures. So are
+    the digits inside an identifier or a date (see `_figures_in`)."""
     nums = set()
     for f in facts:
         v = f.get("value")
@@ -104,7 +137,7 @@ def _evidence_numbers(facts):
                 nums.add(d)
         for text in (v if isinstance(v, str) else "", f.get("detail") or "", f.get("window") or "",
                      f.get("unit") or ""):
-            for _shown, value, _dp, _scale in _numbers_in(text):
+            for _shown, value, _dp, _scale in _figures_in(text):
                 nums.add(value)
     return nums
 
@@ -159,8 +192,14 @@ def check(text: str, facts: list, question: str = "") -> Grounding:
             unknown.append(tok)
         scrubbed = scrubbed.replace(tok, " ", 1)
 
+    # A date is not a figure, on EITHER side. The evidence side stopped reading
+    # "2026-09-18" as 2026, 9 and 18 (see `_figures_in`), so the answer side has
+    # to stop too, or the brief's own "ending 2026-09-20" becomes six ungrounded
+    # numbers. The evaluation caught exactly that: 273/279 until this line.
+    # Symmetry is the whole point -- a rule applied to one side of a comparison
+    # and not the other is not a rule, it is a coin toss.
     evidence = _evidence_numbers(facts)
-    shown = _numbers_in(scrubbed)
+    shown = _numbers_in(_DATE.sub(" ", scrubbed))
     ungrounded = [s for s, value, dp, scale in shown if not _matches(value, dp, scale, evidence)]
 
     return Grounding(passed=not (ungrounded or unknown or bad_citations or links),

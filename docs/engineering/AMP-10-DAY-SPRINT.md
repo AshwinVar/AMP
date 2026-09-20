@@ -64,7 +64,7 @@ Until then:
 | # | Differentiator | Status | Evidence |
 |---|---|---|---|
 | 1 | Factory Command Centre | BUILT | ADR-0024: `GET /command-centre` and `CommandCentreSection`; problems ranked by good units not made, money only where a rate is set, `why` labelled, live stoppages first |
-| 2 | AMP Native Copilot (self-hosted, provider abstraction) | BUILT · first real model MEASURED | ADR-0023 + ADR-0034: the founder approved the download on 2026-09-20. Ollama 0.34.2 on loopback, `qwen3:8b` (Apache 2.0) through the unchanged `LocalOpenAIProvider`. It **passed the adoption gate**: 69/69 core, 63/66 unseen (AMP's own: 60/66), 93/93 factual, 279/279 grounded, 0 money fabrications, 0 unauthorized disclosures, p50 8.2 s. Promotion waits for the candidate comparison (qwen3:4b, granite3.3:8b, mistral-nemo:12b) in `AMP-NATIVE-MODEL-ACCEPTANCE.md`. First lesson: AMP's 300-token planning budget scored a working model 0/8 |
+| 2 | AMP Native Copilot (self-hosted, provider abstraction) | BUILT · real model **MEASURED and PROMOTED** | ADR-0023 + ADR-0034: the founder approved the download on 2026-09-20. Four Apache-2.0 candidates through the unchanged `LocalOpenAIProvider` on Ollama 0.34.2 (loopback). **`qwen3:8b` passed the gate and is promoted** (`ai/adopted_models.json`): 69/69 core, 63/66 unseen (AMP's own: 60/66), 93/93 factual, 279/279 grounded, 0 money fabrications, 0 unauthorized disclosures, p50 8.2 s — reproduced exactly on a second run. qwen3:4b passed but is slower and refused twice as often; granite3.3:8b and mistral-nemo:12b did not pass (routing below AMP's own). Every figure and every failure by case: `AMP-NATIVE-MODEL-ACCEPTANCE.md`. Production has no GPU, so production still answers from AMP's own engine until an infrastructure decision. First lesson: AMP's 300-token planning budget scored a working model 0/8 |
 | 3 | Tool-using AI, typed and authorized | DONE (26 tools) | `ai/tools/`, `test_copilot_tools.py`, `test_copilot_tools_no_wider_than_routes.py` |
 | 4 | Evidence-backed answers with provenance labels | DONE (API and UI) | `ai/evidence.py`, `CopilotEvidence.tsx` |
 | 5 | Daily Factory Brief | BUILT | ADR-0028: `GET /daily-brief`, the `get_daily_brief` tool and `DailyBriefSection` — seven sections quoting the engines that already answer each question, the window always stated, and a closing section listing what AMP could NOT see (coverage gaps, no unit value, no plan, unlogged stoppage reasons, no measured rate) |
@@ -139,12 +139,16 @@ The scripted model behaviours test what AMP does with a model; they are not a mo
 6. **Adversarial campaign, the three-factory and OEM journeys, release candidate** (Days 9–10). ← in progress.
    - **The real-model campaign (2026-09-20, founder-authorised).** Runtime
      installed on loopback; four Apache-2.0 candidates chosen for licence,
-     tool calling and 12 GB VRAM. `qwen3:8b` **passed the adoption gate** on
-     the first full run (0 disclosures, 0 ungrounded shown, routing at or
-     above AMP's own). Promotion waits for the candidate comparison and a
-     second run of the leader; the measured table is
-     `AMP-NATIVE-MODEL-ACCEPTANCE.md`. What the first run found in AMP rather
-     than in the model is ADR-0034.
+     tool calling and 12 GB VRAM. All four measured through the unchanged
+     harness: **`qwen3:8b` passed and is promoted** (`ai/adopted_models.json`,
+     reproduced exactly on a second run); qwen3:4b passed but is slower and
+     refused twice as often; granite3.3:8b and mistral-nemo:12b did not pass
+     on routing. Four models, 576 adversarial prompts, zero disclosures. The
+     measured table and every failure by case: `AMP-NATIVE-MODEL-ACCEPTANCE.md`.
+     What the real runtime found in AMP rather than in the models — a
+     300-token planning ceiling, an ungated report path, a redactor blanking
+     token counts, silent prompt truncation — is ADR-0034. Production has no
+     GPU, so it still answers from AMP's own engine.
    - **Done: the owner's eight questions, across four factory shapes.**
      `audit_owner_questions.py` asks all eight of the questions this sprint
      promised an owner could answer, on four shapes in ONE process — healthy

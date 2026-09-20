@@ -52,6 +52,47 @@ def plan_tokens():
         return PLAN_TOKENS_DEFAULT
     return value if value > 0 else PLAN_TOKENS_DEFAULT
 
+
+# The model's context window, in tokens, as AMP believes it to be. Measured on
+# the first real runtime (ADR-0034 §9): handed a prompt far past the window,
+# Ollama did not error -- it SILENTLY truncated the prompt to 8,194 tokens, the
+# model then spent its whole wording budget thinking about the fragment, and
+# AMP fell back to its own sentence after 36 seconds. Safe, and far too slow.
+# So AMP estimates the prompt before sending it and declines at once when it
+# cannot fit, naming the reason. A chars/4 estimate is crude and deliberately
+# conservative: a false "too large" costs a model-worded answer, a false
+# "fits" costs 36 seconds and a silently truncated prompt.
+CONTEXT_TOKENS_DEFAULT = 16384
+PHRASE_TOKENS = 1500          # ai_copilot.LocalOpenAIProvider.ask()'s max_tokens
+
+
+def context_tokens():
+    try:
+        value = int(os.environ.get("AMP_LLM_CONTEXT_TOKENS", "") or CONTEXT_TOKENS_DEFAULT)
+    except ValueError:
+        return CONTEXT_TOKENS_DEFAULT
+    return value if value > 0 else CONTEXT_TOKENS_DEFAULT
+
+
+def estimate_tokens(*texts):
+    """A conservative token estimate for prompt text: about one token per four
+    characters of English or JSON, rounded up, plus a small fixed allowance for
+    the chat template around it."""
+    chars = sum(len(t) for t in texts if t)
+    return (chars + 3) // 4 + 64
+
+
+def _check_fits(prompt_tokens, output_tokens, what):
+    """Raise a named RuntimeError when prompt + output cannot fit the window.
+    The message says what was too big and by how much, so /ai/status and the
+    log tell an operator what to change (fewer facts, or a runtime with a
+    larger window) instead of reporting a mysterious empty answer."""
+    window = context_tokens()
+    if prompt_tokens + output_tokens > window:
+        raise RuntimeError(f"the {what} (~{prompt_tokens} tokens) plus {output_tokens} for the answer "
+                           f"exceeds the model's context window ({window} tokens); AMP answered from its "
+                           f"own engine instead (raise AMP_LLM_CONTEXT_TOKENS if the runtime allows more)")
+
 PLAN_SYSTEM = (
     "You choose which AMP tools answer a factory manager's question. Call between one and "
     "four of the tools provided, and only those. AMP already knows which company is asking: "
@@ -117,6 +158,8 @@ class ProviderLLM:
         functions = [{"type": "function", "function": {"name": t["name"], "description": t["description"],
                                                        "parameters": t["parameters"]}} for t in tools]
         try:
+            _check_fits(estimate_tokens(PLAN_SYSTEM, question, json.dumps(functions)), plan_tokens(),
+                        "tool catalogue and question")
             out = self.provider.chat([{"role": "system", "content": PLAN_SYSTEM},
                                       {"role": "user", "content": question}], tools=functions,
                                      max_tokens=plan_tokens())
@@ -146,4 +189,13 @@ class ProviderLLM:
         user = (f"QUESTION: {question}\n\n"
                 f"DRAFT (AMP's own answer, data): {json.dumps(draft)}\n\n"
                 f"FACTS (data): {json.dumps(shown, default=str)}")
+        try:
+            _check_fits(estimate_tokens(PHRASE_SYSTEM, user), PHRASE_TOKENS, "evidence")
+        except RuntimeError as e:
+            # Named here as well as raised: the orchestrator keeps only the
+            # exception's type for the gate reason, and "RuntimeError" tells
+            # an operator nothing. /ai/status gets the sentence.
+            if self._on_error:
+                self._on_error(e)
+            raise
         return _clean(self._ask(PHRASE_SYSTEM, user))

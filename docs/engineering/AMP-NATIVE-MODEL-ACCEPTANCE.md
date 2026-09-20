@@ -1,6 +1,6 @@
 # AMP Native Model Acceptance Report
 
-**Status:** in progress · **Started:** 2026-09-20 · **Authorised by:** the founder, 2026-09-20 ("APPROVED — PROCEED WITH THE REAL AMP NATIVE MODEL PHASE")
+**Status:** complete — **qwen3:8b promoted** (§8) · **Started and completed:** 2026-09-20 · **Authorised by:** the founder, 2026-09-20 ("APPROVED — PROCEED WITH THE REAL AMP NATIVE MODEL PHASE")
 
 This report records what was **measured**. Nothing in it is a claim about a
 model that the evaluation harness did not produce. Where a number is pending,
@@ -72,19 +72,31 @@ Baseline is AMP's own rule engine, measured in the same run.
 
 | Measure | AMP rules | qwen3:8b | qwen3:4b | granite3.3:8b | mistral-nemo:12b |
 |---|---|---|---|---|---|
-| Core tool selection | 69/69 | **69/69** | **69/69** | 63/69 (91%) | pending |
-| Unseen tool selection | 60/66 (91%) | **63/66 (95%)** | **63/66 (95%)** | 60/66 (91%) | pending |
-| Wrong tool | 6/135 | **3/135** | **3/135** | 12/135 | pending |
-| Factual accuracy | 93/93 | **93/93** | **93/93** | 86/93 (92%) | pending |
-| Answers grounded | 279/279 | **279/279** | **279/279** | **279/279** | pending |
-| Honest data states | 14/14 | **14/14** | **14/14** | 12/14 | pending |
-| Money fabrications | 0 | **0** | **0** | **0** | pending |
-| **Unauthorized disclosures** | 0 | **0** | **0** | **0** | pending |
-| Worded by the model | — | 237 | 191 | 255 | pending |
-| Rejected by the grounding gate | — | 36 | 76 | 6 | pending |
-| Ungrounded texts shown | — | **0** | **0** | **0** | pending |
-| Latency p50 / p95 | 4 / 38 ms | **8.2 s / 17.5 s** | 14.1 s / 21.0 s | **1.6 s / 3.1 s** | pending |
-| **Gate** | — | **PASSED** | **PASSED** | **NOT PASSED** | pending |
+| Core tool selection | 69/69 | **69/69** | **69/69** | 63/69 (91%) | **69/69** |
+| Unseen tool selection | 60/66 (91%) | **63/66 (95%)** | **63/66 (95%)** | 60/66 (91%) | 51/66 (77%) |
+| Wrong tool | 6/135 | **3/135** | **3/135** | 12/135 | 15/135 |
+| Factual accuracy | 93/93 | **93/93** | **93/93** | 86/93 (92%) | **93/93** |
+| Answers grounded | 279/279 | **279/279** | **279/279** | **279/279** | **279/279** |
+| Honest data states | 14/14 | **14/14** | **14/14** | 12/14 | **14/14** |
+| Money fabrications | 0 | **0** | **0** | **0** | **0** |
+| **Unauthorized disclosures** | 0 | **0** | **0** | **0** | **0** |
+| Worded by the model | — | 237 | 191 | 255 | 275 |
+| Rejected by the grounding gate | — | 36 | 76 | 6 | 4 |
+| Ungrounded texts shown | — | **0** | **0** | **0** | **0** |
+| Latency p50 / p95 | 4 / 38 ms | **8.2 s / 17.5 s** | 14.1 s / 21.0 s | **1.6 s / 3.1 s** | 2.0 s / 4.5 s |
+| **Gate** | — | **PASSED** | **PASSED** | **NOT PASSED** | **NOT PASSED** |
+
+**mistral-nemo:12b, read by case.** It fails the gate on one measure only:
+unseen routing, 51/66 against AMP's own 60/66. Five unseen phrasings are
+mis-routed on all three factories — *worst_asset* (it runs machine status,
+downtime and quality instead of the losses tool), *plan_gap* (the root-cause
+explorer instead of the plan tool), *wip*, *audit* and *catch_up* (the factory
+summary or the proactive tool instead of the specific one). Core routing,
+facts, honest states and safety are all perfect, it is four times faster than
+qwen3:8b, and the gate refused its wording only 4 times in 279 — it worded
+**all 144** adversarial answers and leaked in none. A more fluent writer, a
+worse router on phrasings it has not seen; the gate measures the second, and
+the owner's unseen phrasings are exactly the ones that matter in production.
 
 **granite3.3:8b, read by case rather than by count.** It fails on exactly two
 questions, on all three factories: *losses* ("what are we losing?"), where it
@@ -111,9 +123,16 @@ to its own sentence more. Routing and safety are identical; fluency is not.
 
 | | qwen3:8b | qwen3:4b | granite3.3:8b | mistral-nemo:12b |
 |---|---|---|---|---|
-| Cross-tenant disclosure | **0** | **0** | **0** | pending |
-| Cross-OEM disclosure | **0** | **0** | **0** | pending |
-| Consent / authorization bypass | **0** (AMP decides, never the model) | **0** | **0** | pending |
+| Cross-tenant disclosure | **0** | **0** | **0** | **0** |
+| Cross-OEM disclosure | **0** | **0** | **0** | **0** |
+| Consent / authorization bypass | **0** (AMP decides, never the model) | **0** | **0** | **0** |
+
+Four models, 576 adversarial prompts between them, **zero** disclosures. That
+is not because the models were careful: two of them were refused by the gate
+dozens of times for wording the evidence did not support. It is because the
+model never sees a tenant, a role or another factory's data, and never decides
+what runs — AMP does (ADR-0022). The security result is a property of the
+architecture, and the models confirmed it rather than earned it.
 
 ## 5. What the first model taught AMP (ADR-0034)
 
@@ -174,3 +193,51 @@ Defence in depth, measured rather than assumed.
   prompts, not a proof. The adversarial set is versioned for that reason.
 - The failure-risk and anomaly models are unaffected by any of this and remain
   unvalidated on real factory data (ADR-0020, ADR-0027, ADR-0032).
+
+## 8. Verdict
+
+| Candidate | Gate | Why |
+|---|---|---|
+| **qwen3:8b** | **PASSED — PROMOTED** | The only candidate that passed *and* the better of the two passers: half the latency of qwen3:4b and half its gate refusals, with identical routing and safety. Reproduced exactly on a second run. |
+| qwen3:4b | passed, not promoted | Identical routing and safety, but slower on this GPU and its wording refused twice as often. It remains the fallback candidate for hardware that cannot hold the 8B. |
+| granite3.3:8b | not passed | Mis-routes *losses* and *fpy* on every factory (63/69 core, 86/93 factual). Fast and fluent; the gate is right. |
+| mistral-nemo:12b | not passed | 51/66 on unseen phrasings against AMP's own 60/66. Perfect on everything else; the gate is right. |
+
+**What promotion means, exactly.** The second-run record for `local/qwen3:8b`
+is committed to `ai/adopted_models.json`. `test_copilot_model_adoption.py`
+re-derives its verdict from its own metrics on every CI run. Wherever AMP is
+configured with `AMP_LLM_BASE_URL` pointing at a runtime that serves that
+exact model, the Copilot now plans with it and words answers with it, behind
+the grounding gate, with AMP's own engine as the fallback on any failure.
+
+**What it does not mean.** Production (Railway) has no GPU and no
+`AMP_LLM_BASE_URL`, so production still answers from AMP's own engine — or
+from a hosted provider if one is configured. Running the promoted model in
+production is an infrastructure decision (a GPU host, or a CPU box with a
+smaller quantisation) that this report informs and does not make. Nothing
+here trains on customer data, and nothing here changes what the model is
+allowed to see.
+
+**Changing anything re-opens this.** A different model tag, quantisation,
+runtime, planning budget or question set is a different measurement; the
+record names all five so that a reviewer can tell.
+
+## 9. Failure modes exercised (founder's brief §10)
+
+Pinned in `test_copilot_local_provider.py` and `test_llm_plan_budget.py`, all
+against the real provider over HTTP unless noted:
+
+| Failure | AMP's behaviour |
+|---|---|
+| Runtime stopped / unreachable | `/ai/ask` answers from AMP's engine, labelled `rules`; `/ai/status` shows the failure |
+| Model missing at the runtime | HTTP error → same fallback, the failure named without echoing the body |
+| Timeout | `AMP_LLM_TIMEOUT` enforced; fallback |
+| Invalid JSON / no message | refused with the failure named, never the body; fallback |
+| Model thinks past the planning budget | plan reported as truncated, not as a refusal; AMP's own plan answers |
+| Malformed tool request | `run_tool` refuses: unknown tool, wrong role, unlicensed pack, bad arguments |
+| Hallucinated wording | grounding gate refuses; AMP's sentence shown, response says so |
+| Wrong tool chosen | scored by the evaluation; AMP's evidence is still what is shown |
+| Context too large | **measured**: handed ~2,500 facts (far past the 16k window), Ollama did not error — it **silently truncated the prompt to 8,194 tokens**, the model spent its whole 1,500-token wording budget thinking about the fragment and returned nothing, and AMP fell back to its own sentence after **36 s**. Safe, and too slow. AMP now estimates the prompt (chars/4, conservative) and **declines before sending**, naming the size, the window and the knob (`AMP_LLM_CONTEXT_TOKENS`); the model is never called. Pinned in `test_llm_plan_budget.py` §6 with five mutations |
+
+AMP's core MES is unaffected by any of these: the Copilot is a read path on
+top of the same read-models, and no write goes through a model (ADR-0022).

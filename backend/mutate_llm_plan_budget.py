@@ -76,6 +76,24 @@ MUTATIONS = [
     ("the counts are logged under the runtime's own names, which the redactor blanks", O,
      '        "usage": _usage_for_log(getattr(llm, "last_usage", None) if llm is not None else None)}})',
      '        "usage": (getattr(llm, "last_usage", None) if llm is not None else None)}})'),
+
+    # --- a prompt that cannot fit the window (§9) ---------------------------
+    # Measured: the runtime truncates silently and the fallback arrives after
+    # 36 seconds. Each of these sends the prompt anyway.
+    ("oversized evidence is sent to the model anyway", L,
+     '            _check_fits(estimate_tokens(PHRASE_SYSTEM, user), PHRASE_TOKENS, "evidence")',
+     '            pass'),
+    ("an oversized catalogue is sent to the model anyway", L,
+     '            _check_fits(estimate_tokens(PLAN_SYSTEM, question, json.dumps(functions)), plan_tokens(),\n'
+     '                        "tool catalogue and question")',
+     '            pass'),
+    ("the window is assumed to be a thousand times larger than measured", L,
+     "CONTEXT_TOKENS_DEFAULT = 16384", "CONTEXT_TOKENS_DEFAULT = 16384000"),
+    ("the estimate stops being conservative", L,
+     "    return (chars + 3) // 4 + 64", "    return chars // 40"),
+    ("the refusal stops naming the knob", L,
+     '                           f"own engine instead (raise AMP_LLM_CONTEXT_TOKENS if the runtime allows more)")',
+     '                           f"own engine instead")'),
 ]
 
 

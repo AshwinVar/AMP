@@ -117,6 +117,24 @@ entry, or the reason the probe failed), the configuration that shapes answers
 cannot say which runtime, which budget or which questions is a record of
 nothing in particular — and any of those changing is a reason to re-evaluate.
 
+### 7. A prompt that cannot fit is declined before it is sent
+
+Handed evidence far past the 16k window, the runtime did not error. It
+**silently truncated the prompt to 8,194 tokens**, the model spent its whole
+1,500-token wording budget thinking about the fragment and returned nothing,
+and AMP fell back to its own sentence after **36 seconds**. Safe, and too slow
+— and silent: nothing told an operator that the model had seen half the
+evidence.
+
+AMP now estimates the prompt (chars/4, deliberately conservative, plus a fixed
+allowance for the chat template) against `AMP_LLM_CONTEXT_TOKENS` (default
+16,384, the measured runtime setting) and **declines before sending** when
+the prompt plus the answer budget cannot fit. The refusal names the size, the
+window and the knob, reaches `/ai/status`, and the model is never called:
+the same call now takes 4 ms. A false "too large" costs a model-worded answer;
+a false "fits" costs 36 seconds and a truncated prompt, so the estimate errs
+the first way.
+
 ## Consequences
 
 **Positive.** The first real model routes 8/8 on the owner's own questions.

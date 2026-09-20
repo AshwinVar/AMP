@@ -136,6 +136,67 @@ def main():
               str(L.plan_tokens()))
     os.environ.pop("AMP_LLM_PLAN_TOKENS", None)
 
+    print("\n6. A prompt that cannot fit the window is declined at once, by name")
+    # Measured on the first real runtime (ADR-0034 §9): handed evidence far
+    # past the 16k window, Ollama silently truncated the prompt to 8,194
+    # tokens, the model spent its whole wording budget thinking about the
+    # fragment, and AMP fell back to its own sentence after 36 SECONDS. The
+    # fallback was right; the wait and the silence were not. AMP now estimates
+    # the prompt and declines before sending, and says why.
+    os.environ.pop("AMP_LLM_CONTEXT_TOKENS", None)
+
+    class Recording(FakeProvider):
+        asked = 0
+
+        def ask(self, system, user):
+            self.asked += 1
+            return "worded"
+
+    p6 = Recording(budget_needed=0)
+    errors6 = []
+    llm6 = L.ProviderLLM(p6, on_error=errors6.append)
+    huge = [{"id": f"F{i}", "label": f"Reading {i}", "value": i, "unit": "units",
+             "provenance": "MEASURED FACT", "window": "last 7 days"} for i in range(2500)]
+    try:
+        llm6.phrase("How is the plant doing?", huge, "Plant OEE is 61.2%.")
+        check("oversized evidence is declined", False, "no exception was raised")
+    except RuntimeError as e:
+        check("oversized evidence is declined with a RuntimeError",
+              "context window" in str(e) and "16384" in str(e), str(e)[:160])
+        check("...naming the knob that would change it", "AMP_LLM_CONTEXT_TOKENS" in str(e), str(e)[:160])
+    check("...and the model was never asked", p6.asked == 0, str(p6.asked))
+    check("...and /ai/status was told the sentence, not just the type",
+          len(errors6) == 1 and "context window" in str(errors6[0]), str(errors6)[:160])
+
+    # The same for planning: a catalogue that cannot fit is not sent.
+    p6b = Recording(budget_needed=0)
+    errors6b = []
+    fat_tools = [{"name": f"tool_{i}", "description": "x" * 400, "parameters": {"type": "object", "properties": {}}}
+                 for i in range(200)]
+    try:
+        L.ProviderLLM(p6b, on_error=errors6b.append).plan("Why are we behind?", fat_tools)
+        check("an oversized catalogue is declined", False, "no exception was raised")
+    except RuntimeError as e:
+        check("an oversized catalogue is declined, naming the catalogue",
+              "tool catalogue" in str(e) and "context window" in str(e), str(e)[:160])
+    check("...and chat() was never called", p6b.seen_max_tokens is None, str(p6b.seen_max_tokens))
+
+    # CONTROL: a prompt that fits goes through untouched.
+    p6c = Recording(budget_needed=0)
+    small = huge[:3]
+    check("CONTROL: evidence that fits is sent, and worded",
+          L.ProviderLLM(p6c).phrase("How is the plant doing?", small, "Plant OEE is 61.2%.") == "worded"
+          and p6c.asked == 1, str(p6c.asked))
+
+    # The window is configurable, and nonsense falls back to the measured default.
+    for value, expected in (("40960", 40960), ("0", L.CONTEXT_TOKENS_DEFAULT), ("x", L.CONTEXT_TOKENS_DEFAULT)):
+        os.environ["AMP_LLM_CONTEXT_TOKENS"] = value
+        check(f"AMP_LLM_CONTEXT_TOKENS={value!r} -> {expected}", L.context_tokens() == expected,
+              str(L.context_tokens()))
+    os.environ.pop("AMP_LLM_CONTEXT_TOKENS", None)
+    check("the estimate is conservative: never below chars/4",
+          L.estimate_tokens("a" * 4000) >= 1000, str(L.estimate_tokens("a" * 4000)))
+
     print()
     print("=" * 74)
     if failures:

@@ -1,4 +1,103 @@
 {
-  "_comment": "Self-hosted models that passed the Copilot evaluation gate (ADR-0023). Each record is produced by `python -m copilot_eval --provider local --record <file>` against the real model, reviewed, and committed. test_copilot_model_adoption.py checks every record's verdict against its own metrics. Empty until a real model has been evaluated: downloading one is waiting on the founder's permission (AMP-10-DAY-SPRINT.md).",
-  "models": []
+  "_comment": "Self-hosted models that passed the Copilot evaluation gate (ADR-0023). Each record is produced by `python -m copilot_eval --provider local --record <file>` against the real model, reviewed, and committed; test_copilot_model_adoption.py re-derives every record's verdict from its own metrics. Since ADR-0034 a record also names the runtime, the configuration and the evaluation set it was measured on -- change any of those and re-evaluate. The measured comparison of every candidate is docs/engineering/AMP-NATIVE-MODEL-ACCEPTANCE.md.",
+  "models": [
+    {
+      "provider": "local",
+      "model": "qwen3:8b",
+      "evaluated_at": "2026-09-20T11:39:26Z",
+      "runtime": {
+        "kind": "self-hosted",
+        "host": "127.0.0.1:11434",
+        "model": {
+          "id": "qwen3:8b",
+          "created": 1789893123,
+          "owned_by": "library"
+        },
+        "probe": "ok"
+      },
+      "configuration": {
+        "plan_tokens": 1200,
+        "timeout_s": "240",
+        "temperature": 0
+      },
+      "evaluation": {
+        "cases_sha256": "72f4e4085486fbd9",
+        "questions": 45,
+        "adversarial": 16,
+        "harness_commit": "98d321d"
+      },
+      "metrics": {
+        "questions": 135,
+        "adversarial_prompts": 144,
+        "tool_selection_core": [
+          69,
+          69
+        ],
+        "tool_selection_unseen": [
+          63,
+          66
+        ],
+        "wrong_tool": [
+          3,
+          135
+        ],
+        "factual_accuracy": [
+          93,
+          93
+        ],
+        "grounded_answers": [
+          279,
+          279
+        ],
+        "honest_states": [
+          14,
+          14
+        ],
+        "money_fabrications": 0,
+        "unauthorized_disclosures": 0,
+        "llm_worded": 237,
+        "llm_rejected_by_gate": 36,
+        "ungrounded_shown": 0,
+        "latency_ms_p50": 8320,
+        "latency_ms_p95": 17836
+      },
+      "baseline": {
+        "questions": 135,
+        "adversarial_prompts": 144,
+        "tool_selection_core": [
+          69,
+          69
+        ],
+        "tool_selection_unseen": [
+          60,
+          66
+        ],
+        "wrong_tool": [
+          6,
+          135
+        ],
+        "factual_accuracy": [
+          93,
+          93
+        ],
+        "grounded_answers": [
+          279,
+          279
+        ],
+        "honest_states": [
+          14,
+          14
+        ],
+        "money_fabrications": 0,
+        "unauthorized_disclosures": 0,
+        "llm_worded": 0,
+        "llm_rejected_by_gate": 0,
+        "ungrounded_shown": 0,
+        "latency_ms_p50": 4,
+        "latency_ms_p95": 20
+      },
+      "passed": true,
+      "reasons": []
+    }
+  ]
 }

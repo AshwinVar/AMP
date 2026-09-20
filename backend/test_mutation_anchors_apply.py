@@ -58,7 +58,11 @@ PINNED = {
         (2, "generate_late_order_escalations precedes generate_overdue_po_escalations"),
 }
 
-_SOURCE_SUFFIXES = (".py", ".ts", ".tsx", ".js", ".mjs")
+# .md and .json too: mutate_intelligence_classification.py bends the founder's
+# handbook and the adopted-LLM record rather than code, because the guard it
+# exercises holds a DOCUMENT to the model cards. Its anchors must apply once,
+# like everyone else's.
+_SOURCE_SUFFIXES = (".py", ".ts", ".tsx", ".js", ".mjs", ".md", ".json")
 failures = []
 
 

@@ -31,6 +31,7 @@ Run: DATABASE_URL="sqlite:///./ci.db" python backend/test_oem_service_consent.py
 import asyncio
 import json
 import os
+import re
 from datetime import date, datetime, timedelta
 
 from jose import jwt as pyjwt
@@ -184,9 +185,26 @@ def set_grants(grants):
     db.close()
 
 
+_TIMESTAMP = re.compile(r"\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}(?:\.\d+)?")
+
+
 def leaked(body, needles):
-    """Which forbidden strings appear ANYWHERE in the serialised response."""
-    blob = json.dumps(body)
+    """Which forbidden strings appear ANYWHERE in the serialised response.
+
+    Timestamps are removed first. `generated_at` carries six digits of
+    microseconds, and a four-digit needle lands inside them by chance -- a
+    reading of "...T05:09:41.266600" contains "2666", so a substring search
+    over the raw JSON reports a disclosure on a payload that does not mention
+    the meter at all. That is precisely how this suite failed CI once while
+    passing locally every time, and it is the same defect
+    audit_oem_demo_journey.says() already carries the same fix for.
+
+    The rule being enforced is "the withheld figure is not read out", not
+    "these four digits appear nowhere in the document". The two CONTROLs below
+    pin both halves, so stripping cannot quietly turn this into a search that
+    finds nothing.
+    """
+    blob = _TIMESTAMP.sub(" ", json.dumps(body))
     return [n for n in needles if n in blob]
 
 
@@ -199,6 +217,17 @@ async def run_all():
     print("=" * 74)
     print("1. CONTROL — WITH CONSENT, THE MANUFACTURER SEES EVERYTHING")
     print("=" * 74)
+    # CONTROL FOR THE SEARCH ITSELF, before it is trusted anywhere below.
+    # A clock reading that happens to spell the meter is not a disclosure; the
+    # meter in a field is. Without the first, this suite fails at random on a
+    # payload that says nothing; without the second, `leaked` could return []
+    # for everything and all fourteen checks after it would pass vacuously.
+    check("a timestamp that spells the meter is NOT a disclosure",
+          not leaked({"generated_at": "2026-09-20T05:09:41.266600"}, HOUR_DIGITS),
+          "stripping timestamps is what makes this suite deterministic")
+    check("...but the same digits in a field still are",
+          leaked({"operating_hours": 2666.0}, HOUR_DIGITS) == ["2666"],
+          str(leaked({"operating_hours": 2666.0}, HOUR_DIGITS)))
     # Without this the rest of the suite could pass on a route that returns 500.
     set_grants(["SHARE_SERVICE_STATUS", "SHARE_OPERATING_HOURS",
                 "SHARE_MACHINE_HEALTH"])

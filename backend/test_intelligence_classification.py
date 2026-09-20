@@ -89,9 +89,13 @@ def main():
               "synthetic" in (card.get("caveat") or "").lower(), str(card.get("caveat")))
     adopted = {name: bool(card.get("adopted")) for name, card in cards.items()}
     llms = [m for m in json.load(io.open(ADOPTED_LLMS, encoding="utf-8"))["models"] if m.get("passed")]
-    check("exactly one self-hosted LLM record has passed the gate", len(llms) == 1,
+    # A passed record means a promoted model; none means the rules answer
+    # everywhere. Either is a truth the handbook must state (ADR-0035 §10 of
+    # the model report: qwen3:8b passed one question set and not the next).
+    check("at most one self-hosted LLM record has passed the gate", len(llms) <= 1,
           str([(m.get("provider"), m.get("model")) for m in llms]))
     llm_name = llms[0]["model"] if llms else None
+    print(f"        passed self-hosted record: {llm_name or 'none -- no model is promoted on the current question set'}")
     check("the provenance vocabulary still distinguishes a rule from a model estimate",
           ev.RULE == "RULE-BASED ASSESSMENT" and ev.MODEL == "MODEL ESTIMATE")
 
@@ -121,8 +125,11 @@ def main():
 
     r = row("Copilot planning and wording")
     check("the copilot's model use is classed LLM-ASSISTED", "**LLM-ASSISTED**" in r, r[:120])
-    check(f"the promoted self-hosted model is named in the row ({llm_name})",
-          bool(llm_name) and f"`{llm_name}`" in r)
+    if llm_name:
+        check(f"the promoted self-hosted model is named in the row ({llm_name})", f"`{llm_name}`" in r, r[:160])
+    else:
+        check("with no passed record, the row says no self-hosted model currently passes",
+              "No self-hosted model currently passes" in r, r[:160])
     check("the row says production answers from the rules", "production answers from the rules" in r)
     check("the row says the model never invents a figure", "never invents a figure" in r)
 
@@ -140,7 +147,9 @@ def main():
     llm_row = [ln for ln in text.splitlines() if ln.startswith("| LLM copilot |")]
     check("Current Reality: the LLM copilot row says no hosted key is required and names production's engine",
           len(llm_row) == 1 and "no hosted key required" in llm_row[0]
-          and "answers from AMP's own engine" in llm_row[0] and (llm_name or "") in llm_row[0])
+          and "answers from AMP's own engine" in llm_row[0]
+          and ((llm_name in llm_row[0]) if llm_name else ("no model currently promoted" in llm_row[0])),
+          llm_row[0][:200] if llm_row else "no row")
 
     # ---- retired claims, anywhere in the training docs ---------------------
     for path in TRAINING_DOCS + ([COMPLETE] if os.path.exists(COMPLETE) else []):

@@ -1,10 +1,10 @@
 {
-  "_comment": "Self-hosted models that passed the Copilot evaluation gate (ADR-0023). Each record is produced by `python -m copilot_eval --provider local --record <file>` against the real model, reviewed, and committed; test_copilot_model_adoption.py re-derives every record's verdict from its own metrics. Since ADR-0034 a record also names the runtime, the configuration and the evaluation set it was measured on -- change any of those and re-evaluate. The measured comparison of every candidate is docs/engineering/AMP-NATIVE-MODEL-ACCEPTANCE.md.",
+  "_comment": "Self-hosted models that passed the Copilot evaluation gate (ADR-0023). Each record is produced by `python -m copilot_eval --provider local --record <file>` against the real model, reviewed, and committed; test_copilot_model_adoption.py re-derives every record's verdict from its own metrics. Since ADR-0034 a record also names the runtime, the configuration and the evaluation set it was measured on -- change any of those and re-evaluate. The measured comparison of every candidate is docs/engineering/AMP-NATIVE-MODEL-ACCEPTANCE.md. A record with passed=false is also committed when a model that once passed was re-evaluated on a changed question set and did not: the file states the CURRENT verdict on the CURRENT set, and is_adopted reads it as not adopted (ADR-0035; AMP-NATIVE-MODEL-ACCEPTANCE.md \u00a710).",
   "models": [
     {
       "provider": "local",
       "model": "qwen3:8b",
-      "evaluated_at": "2026-09-20T11:39:26Z",
+      "evaluated_at": "2026-09-20T21:33:27Z",
       "runtime": {
         "kind": "self-hosted",
         "host": "127.0.0.1:11434",
@@ -21,33 +21,35 @@
         "temperature": 0
       },
       "evaluation": {
-        "cases_sha256": "72f4e4085486fbd9",
+        "cases_sha256": "f1e0826a1cf66fb6",
         "questions": 45,
         "adversarial": 16,
-        "harness_commit": "98d321d"
+        "threads": 5,
+        "adversarial_threads": 5,
+        "harness_commit": "0abce46"
       },
       "metrics": {
-        "questions": 135,
-        "adversarial_prompts": 144,
+        "questions": 150,
+        "adversarial_prompts": 189,
         "tool_selection_core": [
-          69,
-          69
+          75,
+          78
         ],
         "tool_selection_unseen": [
-          63,
-          66
+          69,
+          72
         ],
         "wrong_tool": [
-          3,
-          135
+          6,
+          150
         ],
         "factual_accuracy": [
-          93,
-          93
+          96,
+          96
         ],
         "grounded_answers": [
-          279,
-          279
+          339,
+          339
         ],
         "honest_states": [
           14,
@@ -55,34 +57,34 @@
         ],
         "money_fabrications": 0,
         "unauthorized_disclosures": 0,
-        "llm_worded": 237,
-        "llm_rejected_by_gate": 36,
+        "llm_worded": 286,
+        "llm_rejected_by_gate": 41,
         "ungrounded_shown": 0,
-        "latency_ms_p50": 8320,
-        "latency_ms_p95": 17836
+        "latency_ms_p50": 8451,
+        "latency_ms_p95": 18634
       },
       "baseline": {
-        "questions": 135,
-        "adversarial_prompts": 144,
+        "questions": 150,
+        "adversarial_prompts": 189,
         "tool_selection_core": [
-          69,
-          69
+          78,
+          78
         ],
         "tool_selection_unseen": [
-          60,
-          66
+          66,
+          72
         ],
         "wrong_tool": [
           6,
-          135
+          150
         ],
         "factual_accuracy": [
-          93,
-          93
+          96,
+          96
         ],
         "grounded_answers": [
-          279,
-          279
+          339,
+          339
         ],
         "honest_states": [
           14,
@@ -94,10 +96,12 @@
         "llm_rejected_by_gate": 0,
         "ungrounded_shown": 0,
         "latency_ms_p50": 4,
-        "latency_ms_p95": 20
+        "latency_ms_p95": 19
       },
-      "passed": true,
-      "reasons": []
+      "passed": false,
+      "reasons": [
+        "core tool selection 75/78 is below AMP's own 78/78"
+      ]
     }
   ]
 }

@@ -32,6 +32,7 @@ from ai.flow import build_flow_summary
 from ai.inventory import build_inventory_summary
 from ai.maintenance import build_maintenance_summary
 from ai.oee import build_oee_summary
+from ai.outcomes import CAUSATION_NOTE
 from ai.production import build_production_summary
 from ai.quality import build_quality_summary
 from ai.schedule import build_schedule_adherence
@@ -783,3 +784,43 @@ def get_daily_brief(db, tenant):
                            source="daily brief", window=b["window"]))
     state = b["state"] if b["state"] in ev.DATA_STATES else ev.OK
     return _result("get_daily_brief", state, say_brief(b), facts, notes=[b["note"]])
+
+
+# ── Did it help? ────────────────────────────────────────────────────
+
+@tool("get_action_outcomes",
+      "What changed after the actions that were approved: the metric each one was meant to "
+      "move, what it read before and after, and which way it went. A measured change, never "
+      "a claim that the action caused it. Use for 'did it help', 'did that work', "
+      "'what happened after we approved', 'are the recommendations working'.",
+      mirrors="/action-outcomes", view="agentactivity", domain="agents")
+def get_action_outcomes(db, tenant):
+    from ai.outcomes import build_outcome_summary, say_outcomes   # lazy: pulls the pillar modules
+    s = build_outcome_summary(db, tenant)
+    facts = [
+        _fact("outcomes.followed_up", "Approved actions being followed up", s["followed_up"], M,
+              "actions", "action_outcomes", "now"),
+        _fact("outcomes.measured", "Followed up long enough to judge", s["measured"], M, "actions",
+              "action_outcomes", "now",
+              detail=f"a window of {s['window_days']} days each side of the decision"),
+        _fact("outcomes.waiting", "Still inside the window", s["waiting"], M, "actions",
+              "action_outcomes", "now", detail="nothing is judged before the window has elapsed"),
+    ]
+    for verdict, count in s["counts"].items():
+        # The counts are RULE: which side of the noise floor a change fell on is
+        # a threshold AMP chose, and that threshold is stated on the card.
+        facts.append(_fact(f"outcomes.{verdict.lower().replace(' ', '_')}",
+                           f"Metric {verdict.lower()} after the action", count, R, "actions",
+                           "action_outcomes", "now"))
+    for row in s["outcomes"][:3]:
+        if row["change"] is None:
+            continue
+        # The CHANGE is the one figure a reader will quote, so it carries the
+        # caveat in its own detail, not only in the card's footnote.
+        facts.append(_fact(f"outcomes.change.{row['id']}",
+                           f"{row['metric_label']} change on {row['scope_label'] or 'it'}",
+                           row["change"], ev.CORRELATION, row["unit"], "action_outcomes",
+                           f"{row['window_days']} days each side",
+                           detail=f"{row['action'] or 'an approved action'}; {CAUSATION_NOTE}"))
+    state = s["state"] if s["state"] in ev.DATA_STATES else ev.OK
+    return _result("get_action_outcomes", state, say_outcomes(s), facts, notes=[s["note"]])

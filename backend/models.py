@@ -1596,3 +1596,70 @@ class MachineTelemetrySpan(Base):
     # Indexed for retention, which prunes by span_end across all tenants.
     span_end = Column(DateTime, index=True, nullable=False)
     message_count = Column(Integer, nullable=False, default=1, server_default="1")
+
+
+class ActionOutcome(Base):
+    """What changed after an approved action — measured, never claimed as a cause (ADR-0029).
+
+    AMP has been able to propose, rank and approve work since ADR-0005, and has
+    never once looked back to see whether any of it helped. Two ADRs already
+    carry that as an honest limit in writing: the Risk Radar cannot say how often
+    a LIKELY risk became a problem (ADR-0026), and the health score's weights are
+    "judgement, not evidence" because nothing records what happened next
+    (ADR-0027). This table is what those sentences were waiting for.
+
+    ONE ROW PER APPROVED ACTION. Written when a human approves, carrying the
+    measurement AMP took of the thing the action was meant to change, at that
+    moment. Later the same metric is measured again over the same length of
+    window, and the two are stated side by side.
+
+    WHAT IT DOES NOT CLAIM. The verdict describes THE METRIC, not the action:
+    `BETTER` means the number improved after the approval, not because of it. A
+    factory is not a laboratory — a machine's downtime can fall because the
+    order book emptied — so every surface that shows this labels it CORRELATION
+    (ai/evidence.py) and says in words that AMP cannot show the action caused it.
+    Claiming otherwise from an uncontrolled before/after is the single easiest
+    lie in this product, and the tests are written to stop it.
+
+    NULL IS NOT ZERO. `baseline_value` and `measured_value` are nullable because
+    "no reading" and "a reading of 0" are different claims — the same rule as
+    every other measurement in AMP (ADR-0014). A NULL on either side gives the
+    verdict NOT MEASURABLE, never an improvement from nothing.
+
+    `scope_label` freezes the machine or item name as it read when the baseline
+    was taken. A later rename must not silently rewrite the history of what was
+    measured.
+
+    Tenant-owned and in tenancy.SCOPED_MODELS; `tenant_code` has no default,
+    because an outcome written without its tenant is a bug to surface.
+    """
+
+    __tablename__ = "action_outcomes"
+    __table_args__ = (
+        # One outcome per action: a second row would let two different answers
+        # to "did it help?" both be true.
+        UniqueConstraint("action_id", name="uq_action_outcome_action"),
+        # The read path: this tenant's outcomes, newest first.
+        Index("ix_action_outcomes_tenant_created", "tenant_code", "created_at"),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    tenant_code = Column(String, index=True, nullable=False)
+    action_id = Column(Integer, ForeignKey("agent_actions.id"), index=True, nullable=False)
+    # What is being watched, and over what. Both are AMP's own vocabulary, not
+    # free text: ai/outcomes.py owns the lists and the test pins them.
+    metric = Column(String(48), nullable=False)
+    scope_kind = Column(String(16), nullable=False)          # machine | item | plant
+    scope_id = Column(Integer, nullable=True)
+    scope_label = Column(String, nullable=True)
+    window_days = Column(Integer, nullable=False, default=7, server_default="7")
+    # The reading at approval time. NULL means AMP had no reading, which is why
+    # the column is nullable and why 0.0 may never be written in its place.
+    baseline_value = Column(Float, nullable=True)
+    baseline_at = Column(DateTime, nullable=False)
+    # Filled in once the window has actually elapsed — never before.
+    measured_value = Column(Float, nullable=True)
+    measured_at = Column(DateTime, nullable=True)
+    # BETTER | NO CHANGE | WORSE | NOT MEASURABLE, and NULL until measured.
+    verdict = Column(String(16), nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, index=True)

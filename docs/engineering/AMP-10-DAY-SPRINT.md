@@ -75,7 +75,7 @@ Until then:
 | 10 | Anomaly engine end-to-end | NOT STARTED (experimental engine exists, ADR-0020) | — |
 | 11 | Failure-risk hardening; synthetic separate from real validation | BUILT | ADR-0027: the adopted model finally has a screen — per-machine estimates under its own card and the role-restricted `get_failure_risk` tool, always MODEL NOT VALIDATED, MODEL ESTIMATE provenance, the synthetic-only caveat on every row, the rule score beside it, and no number at all when the artifact does not verify |
 | 12 | Smart inventory linked to production | NOT STARTED | — |
-| 13 | Closed-loop actions, with the result measured | NOT STARTED | — |
+| 13 | Closed-loop actions, with the result measured | BUILT | ADR-0029: migration `0011` and `action_outcomes`; an approval freezes the metric it was meant to move, the window is left to elapse before anything is judged, the reading is frozen once, and every change is labelled CORRELATION with the caveat attached. `GET /action-outcomes`, the `get_action_outcomes` tool and a card on the agent view |
 | 14 | Proactive intelligence without alert spam | NOT STARTED | — |
 | 15 | OEM intelligence from consented data | NOT STARTED | — |
 | 16 | Honest data states | DONE (Copilot) | `ai/evidence.DATA_STATES`; empty stock is no longer called "healthy" and an empty plant is no longer "All 0 machines running" |

@@ -228,6 +228,14 @@ def get_daily_brief(db: Session = Depends(_get_db), current_user: dict = Depends
     # sentences in one page -- plus the section no card has, what AMP could not
     # see. Composes those read-models and computes no figure of its own.
     return ai.brief.build_daily_brief(db, request_tenant(current_user))
+@router.get("/action-outcomes")
+def get_action_outcomes(db: Session = Depends(_get_db), current_user: dict = Depends(get_current_user)):
+    # Closed-loop outcomes (ADR-0029): every approved action AMP is following up,
+    # the metric it was meant to move, and what that metric read before and
+    # after. Freezes any reading whose window has elapsed (see ai/outcomes.py for
+    # why a read writes). Labelled CORRELATION: AMP measured the change, it did
+    # not show the action caused it.
+    return ai.outcomes.build_outcome_summary(db, request_tenant(current_user))
 
 
 @router.get("/root-cause")

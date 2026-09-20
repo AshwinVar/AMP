@@ -175,8 +175,12 @@ MUTATIONS = [
         '    machine_id = Column(Integer, ForeignKey("machines.id"), index=True, nullable=False)',
         '    tenant_code = Column(String, index=True, nullable=False, default="DEFAULT")\n'
         '    machine_id = Column(Integer, ForeignKey("machines.id"), index=True, nullable=False)')),
+    # Anchored on the span entry AND the comment that follows it, not on the
+    # tuple's closing bracket: a new scoped table appended after the spans would
+    # otherwise move this mutation onto a different model without anyone
+    # noticing which guard it had started testing.
     ("spans are not tenant-scoped", _one("tenancy.py",
-        "    models.MachineTelemetrySpan,\n)", ")")),
+        "    models.MachineTelemetrySpan,\n    # ADR-0029", "    # ADR-0029")),
     ("a contract gets a tenant_code the offboarding sweep would delete",
      _one("models.py",
           "    factory_tenant_code = Column(String, index=True, nullable=False)\n"

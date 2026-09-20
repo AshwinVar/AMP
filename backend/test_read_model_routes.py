@@ -24,6 +24,7 @@ EXPECTED = {
     "/connectivity-summary", "/connectivity-machine", "/work-order-trace",
     "/maintenance-execution", "/maintenance-forecast",
     "/command-centre", "/root-cause", "/risk-radar", "/daily-brief",
+    "/action-outcomes",
 }
 
 

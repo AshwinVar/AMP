@@ -34,6 +34,7 @@ Guiding principles: incremental (strangler) evolution, never a rewrite; backward
 | [0026](0026-production-risk-radar.md) | The Risk Radar states a rule and a measurement, never a probability | Accepted |
 | [0027](0027-machine-health-explained.md) | Every health score shows its arithmetic, and the trained model is shown as a model | Accepted |
 | [0028](0028-daily-factory-brief.md) | The Daily Factory Brief, and the section that says what AMP could not see | Accepted |
+| [0029](0029-closed-loop-outcomes.md) | Did it help? Measured, and never claimed as a cause | Accepted |
 
 **Recommended order:** 0001 first (smaller, proves the pattern; events carry `tenant_code`), then 0002.
 

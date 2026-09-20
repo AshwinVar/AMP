@@ -284,6 +284,16 @@ jobs:
         working-directory: backend
         run: python verify_pg_outcome_contracts.py 5432
 
+      # 2c. ADR-0029's closed-loop table (0011), migrated from a POPULATED
+      #     previous revision: every row survives, the schema matches models.py,
+      #     and PostgreSQL itself refuses a second outcome for one action, an
+      #     outcome with no tenant, and a metric or verdict past its column --
+      #     while ACCEPTING a NULL reading, which is the design. SQLite shows
+      #     none of the length, NOT NULL or foreign-key behaviour.
+      - name: Closed-loop outcome table (0011) on PostgreSQL
+        working-directory: backend
+        run: python verify_pg_action_outcomes.py 5432
+
       # 3. The suites that specifically guard this area, on PostgreSQL rather
       #    than SQLite — SQLite hid a foreign-key failure in the OEM work and
       #    would hide these too.

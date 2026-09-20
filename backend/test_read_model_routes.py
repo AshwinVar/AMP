@@ -23,6 +23,7 @@ EXPECTED = {
     "/wip-aging",
     "/connectivity-summary", "/connectivity-machine", "/work-order-trace",
     "/maintenance-execution", "/maintenance-forecast",
+    "/command-centre",
 }
 
 

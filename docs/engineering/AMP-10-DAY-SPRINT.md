@@ -63,13 +63,13 @@ Until then:
 
 | # | Differentiator | Status | Evidence |
 |---|---|---|---|
-| 1 | Factory Command Centre | NOT STARTED | — |
+| 1 | Factory Command Centre | BUILT | ADR-0024: `GET /command-centre` and `CommandCentreSection`; problems ranked by good units not made, money only where a rate is set, `why` labelled, live stoppages first |
 | 2 | AMP Native Copilot (self-hosted, provider abstraction) | BUILT, model BLOCKED | ADR-0023: `LocalOpenAIProvider` and `ai/llm.py` adapter, with an earned switch (`ai/adopted_models.json`); tested end to end over HTTP against a stub model; a real model is blocked on the download permission |
 | 3 | Tool-using AI, typed and authorized | DONE (18 tools) | `ai/tools/`, `test_copilot_tools.py`, `test_copilot_tools_no_wider_than_routes.py` |
 | 4 | Evidence-backed answers with provenance labels | DONE (API) · UI in this PR | `ai/evidence.py`, `CopilotEvidence.tsx` |
 | 5 | Daily Factory Brief | NOT STARTED | — |
 | 6 | Root-Cause Explorer | NOT STARTED (labels defined) | `ai/evidence.CAUSE_LABELS` |
-| 7 | Financial loss intelligence (never fabricated) | PARTIAL | `get_financial_losses`: money only with a unit value, UNKNOWN otherwise |
+| 7 | Financial loss intelligence (never fabricated) | PARTIAL | `get_financial_losses` and the Command Centre: every problem sized in good units, money only with a unit value, UNKNOWN otherwise, and figures never totalled across overlapping problems |
 | 8 | Production Risk Radar | NOT STARTED | — |
 | 9 | Machine Health, every score explained | PARTIAL | `get_machine_history`: health is RULE-BASED ASSESSMENT with its factors |
 | 10 | Anomaly engine end-to-end | NOT STARTED (experimental engine exists, ADR-0020) | — |

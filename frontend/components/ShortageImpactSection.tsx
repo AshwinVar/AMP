@@ -34,7 +34,9 @@ type Unlinked = { item_code: string; item_name: string; on_hand: number; unit: s
 type Impact = {
   state: string;
   headline: string;
-  units_at_risk: number;
+  /** Null when no stock items are set up at all: AMP has not looked, so it
+   *  will not claim a zero (ADR-0014, and ADR-0030's honest-states section). */
+  units_at_risk: number | null;
   money_at_risk: number | null;
   priced: boolean;
   shortages: Shortage[];

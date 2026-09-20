@@ -91,6 +91,17 @@ jobs:
         env:
           DATABASE_URL: "sqlite:///./audit_contracts_adversarial.db"
         run: python audit_oem_contracts_adversarial.py
+      # THE OWNER'S EIGHT QUESTIONS, across four factory shapes in ONE process.
+      # Its own step rather than a test_*.py file, for the same reason as the
+      # demo journey above: it holds four tenants in one database at once, and
+      # the rules it checks (money nowhere on nine surfaces, no factory's words
+      # on another's screen) only exist BETWEEN surfaces, so no per-surface
+      # suite can hold them.
+      - name: The owner's eight questions, across four factory shapes (audit)
+        working-directory: backend
+        env:
+          DATABASE_URL: "sqlite:///./audit_owner_questions.db"
+        run: python audit_owner_questions.py
 
   # THE MIGRATION GATE (ADR-0018). A separate job because it needs a real
   # PostgreSQL server, and because its answer is a different question from "do

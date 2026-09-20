@@ -170,6 +170,27 @@ def main_():
         check(f"{t}: it did not claim the plant is fine", "all good" not in p["headline"].lower()
               and "no issues" not in p["headline"].lower(), p["headline"])
 
+    print("\n3b. A quiet factory and an EMPTY one are different answers")
+    # Section 3's factory is instrumented and genuinely calm: things were
+    # considered and held back, so it has earned the right to say so. A
+    # workspace with nothing in it reaches the same `not candidates` branch for
+    # the opposite reason -- AMP had nothing to look at. The state was already
+    # NO DATA and honest; the SENTENCE said "no problems and no risks", which is
+    # a claim about the plant, and the two have to agree.
+    empty = within(Session, "TENANT_EMPTY",
+                   lambda db: pa.build_proactive(db, "TENANT_EMPTY", now=NOW))
+    check("an empty workspace reports NO DATA", empty["state"] == "NO DATA", empty["state"])
+    check("...and nothing qualified or was held back",
+          not empty["qualified"] and not empty["suppressed"], str(empty)[:160])
+    check("...and it does NOT say there are no problems",
+          "no problems" not in empty["headline"].lower(), empty["headline"])
+    check("...and says outright that this is not a clear plant",
+          "not the same as a clear plant" in empty["headline"].lower(), empty["headline"])
+    # CONTROL: the instrumented-but-calm factory still gets its own sentence, so
+    # the change above cannot be "say the empty thing for everyone".
+    check("CONTROL: the quiet factory still reports what it held back",
+          "considered and held back" in plans[F.C]["headline"], plans[F.C]["headline"])
+
     print("\n4. The read writes nothing")
     before = {t: len(notifications(Session, t)) for t in F.TENANTS}
     for t in F.TENANTS:

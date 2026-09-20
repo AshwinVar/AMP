@@ -169,6 +169,21 @@ def build_shortage_impact(db, tenant: str, now=None) -> dict:
 
     items = inv["items"]
     if not items:
+        # TWO DIFFERENT FACTS WEAR THE SAME EMPTY LIST, and only one of them is
+        # "nothing is low": a workspace with fifty stock items and none below
+        # its reorder level, and a workspace with no stock records at all. The
+        # second has not been looked at. Reporting it as OK with zero units at
+        # risk is the "empty stock is healthy" defect the evaluation already
+        # caught once, and a brand-new workspace is the first thing a prospect
+        # sees. `total_items` counts every item, not just the low ones, so the
+        # two can be told apart.
+        if not inv["total_items"]:
+            return {"generated_at": at.isoformat(), "state": ev.NOT_CONFIGURED,
+                    "headline": ("No stock items are set up, so AMP cannot say what a shortage "
+                                 "would stop. This is not a report that stock is healthy."),
+                    "shortages": [], "unlinked": [], "units_at_risk": None, "money_at_risk": None,
+                    "currency": None, "priced": bool(unit_value is not None),
+                    "note": ALLOCATION_RULE}
         return {"generated_at": at.isoformat(), "state": ev.OK,
                 "headline": "Nothing is at or below its reorder level.",
                 "shortages": [], "unlinked": [], "units_at_risk": 0, "money_at_risk": None,

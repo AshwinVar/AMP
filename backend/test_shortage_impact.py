@@ -224,6 +224,39 @@ def main_():
     check("A's payload never mentions B", B not in repr(s))
     check("B's payload never mentions A", A not in repr(b))
 
+    print("\n6b. An empty workspace is not a healthy one")
+    # TWO DIFFERENT FACTS WEAR THE SAME EMPTY LIST. A workspace with stock, none
+    # of it low, is genuinely fine. A workspace with NO stock records has not
+    # been looked at, and calling that OK with zero units at risk is the "empty
+    # stock is healthy" defect the evaluation caught once already. A brand-new
+    # workspace is the first thing a prospect sees.
+    empty = within(Session, "TENANT_EMPTY",
+                   lambda db: sh.build_shortage_impact(db, "TENANT_EMPTY", now=NOW))
+    check("a workspace with no stock items is NOT_CONFIGURED, not OK",
+          empty["state"] == "NOT CONFIGURED", empty["state"])
+    check("...and is given NO units figure, not a zero",
+          empty["units_at_risk"] is None, str(empty["units_at_risk"]))
+    check("...and says so, rather than reporting stock as fine",
+          "no stock items are set up" in empty["headline"].lower(), empty["headline"])
+    check("...and denies being a health report in the same breath",
+          "not a report that stock is healthy" in empty["headline"].lower(), empty["headline"])
+    # CONTROL: stock that exists and is not low still reads as the clean OK it
+    # is, so the branch above cannot be "return NOT_CONFIGURED for everything".
+    # One item, well above its reorder level, and nothing else -- the point is
+    # the difference between an empty list and an empty WORKSPACE.
+    within(Session, "TENANT_FULL", lambda db: (
+        db.add(models.InventoryItem(
+            tenant_code="TENANT_FULL", item_code="RM-PLENTY", item_name="Plenty",
+            category="Raw", unit="kg", current_stock=9999.0, reorder_level=10)),
+        db.commit()))
+    stocked = within(Session, "TENANT_FULL",
+                     lambda db: sh.build_shortage_impact(db, "TENANT_FULL", now=NOW))
+    check("CONTROL: stock that exists and is not low is still OK with a zero",
+          stocked["state"] == "OK" and stocked["units_at_risk"] == 0,
+          f"{stocked['state']} {stocked['units_at_risk']}")
+    check("...and says nothing is low, which is a claim it has earned",
+          "at or below its reorder level" in stocked["headline"], stocked["headline"])
+
     print("\n7. It writes nothing")
     before = within(Session, A, lambda db: (
         db.query(models.PurchaseOrder).count(), db.query(models.AgentAction).count()))

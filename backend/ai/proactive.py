@@ -169,7 +169,15 @@ def build_proactive(db, tenant: str, now=None) -> dict:
                            "why": f"more than {MAX_PER_RUN} things cleared the bar in one run"})
 
     if not candidates:
-        state, headline = ev.NO_DATA, "There is nothing to raise: no problems and no risks."
+        # The STATE here is NO DATA, and the sentence has to agree with it.
+        # "No problems and no risks" is a claim about the plant; NO DATA says
+        # AMP had nothing to look at. A brand-new workspace reaches this branch
+        # for exactly that reason, and it must not be told its plant is clear.
+        # The quiet-but-instrumented plant is the `elif not qualified` branch
+        # below, which can say so because something was actually considered.
+        state, headline = ev.NO_DATA, ("Nothing reached AMP to consider raising. That is not the "
+                                       "same as a clear plant: with nothing to look at, there is "
+                                       "nothing to hold back either.")
     elif not qualified:
         state = ev.OK
         headline = (f"Nothing worth interrupting you for. {len(suppressed)} thing"

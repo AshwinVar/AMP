@@ -18,26 +18,46 @@ factory shapes), #659 (ADR-0033 §7, the complementary-suppression floor), #660
 (the grounding gate no longer reads an identifier's or a date's digits as
 figures) and #661 (ADR-0034, the first REAL self-hosted model: four candidates
 measured, **`qwen3:8b` promoted** in `ai/adopted_models.json`, AMP proven to
-run with no hosted key at all). See AMP-10-DAY-SPRINT.md and
-AMP-NATIVE-MODEL-ACCEPTANCE.md.
-**Master SHA:** `b8cffca` (#661).
-**Production SHA:** `b8cffca`, verified live, not assumed:
-`{"status":"ok","database":"ok","schema":"ok","version":"b8cffca"}` from
-`https://flowmes-production.up.railway.app/health`, read 49 s after the merge
+run with no hosted key at all), #663 (every intelligence engine classified as
+RULE-BASED / STATISTICAL / ML MODEL / LLM-ASSISTED in the handbook, with
+`test_intelligence_classification.py` failing the build if the handbook and the
+model cards disagree) and #662 (the three-factory SIMULATION audit in CI, and
+the simulator's tenant guard: a tick with no tenant bound now refuses instead
+of filing every tenant's activity under DEFAULT — ADR-0002 postmortem). See
+AMP-10-DAY-SPRINT.md, AMP-NATIVE-MODEL-ACCEPTANCE.md and, for the twelve
+acceptance items with their evidence, AMP-SPRINT-ACCEPTANCE.md.
+**Master SHA:** `5e8b863` (#662).
+**Production SHA:** `5e8b863`, verified live, not assumed:
+`{"status":"ok","database":"ok","schema":"ok","version":"5e8b863"}` from
+`https://flowmes-production.up.railway.app/health`, read 3 s after the deploy
 on 2026-09-20; `/readiness` 200. The frontend (`https://flow-mes.vercel.app`)
-answers 200; `/ai/status` and `POST /ai/report` each refuse an unauthenticated
+answers 200; `/ai/status` and `/platform/status` each refuse an unauthenticated
 call with 401. Production has no GPU and no `AMP_LLM_BASE_URL`, so the Copilot
 there answers from AMP's own engine; the promoted model runs on the founder's
 laptop (Ollama on loopback, see the acceptance report §1).
 Railway auto-deploys master, so prod tracks HEAD; re-check `/health` rather than
 trusting this line's age.
-**In flight:** the three-factory SIMULATION acceptance
-(`audit_three_factory_simulation.py`, branch `feat/three-factory-simulation-audit`):
-main's exact tick sequence for three factories from one loop, proved against
-the raw tables, wired into CI. It found and fixed one defect — a simulator tick
-with no tenant bound read every tenant's rows and filed what it wrote under
-DEFAULT; every tick now refuses (`factory_simulator._bound_tenant`). Days 9–10
-remain: the OEM journey re-check and the release-candidate documents.
+**Sprint closed on Day 10 with a release candidate.** `AMP-SPRINT-ACCEPTANCE.md`
+records the founder's twelve final-acceptance items — three-factory
+simulation, OEM simulation, owner journey, Copilot journey, AI adversarial
+testing, tenant isolation, OEM consent, PostgreSQL, performance, recovery,
+model-outage test, production smoke test — each with the script that proves
+it, where it runs, the result measured on 2026-09-20 and what it does *not*
+prove. All twelve are green; §3 of that record lists what is not proven (the
+failure-risk model on real failures, a model in production, k6 baselines, a
+production-sized restore). The load driver was re-run the same day and
+`backend/loadtest_results.json` is today's baseline (`docs/PERFORMANCE.md`
+"Re-run 2026-09-20" explains why its own floor-normalised verdict reads
+"regressed" at 50 machines while every raw p50 fell).
+
+**Nothing is awaiting review.** What a next session would do first, in order:
+(1) the OEM journey re-check against a real OEM's edge agent is still simulated
+(handbook ch. 31); (2) row 7 of the differentiator table (financial loss
+intelligence) is PARTIAL by design — money only where a unit value is set —
+and stays so until a customer sets one; (3) a production model needs an
+infrastructure decision the founder owns (a GPU or a hosted OpenAI-compatible
+endpoint, then `AMP_LLM_BASE_URL`/`AMP_LLM_MODEL`; the promotion record does
+not need re-earning unless the model, runtime or question set changes).
 
 **The one differentiator that is NOT built is #2's model.** The provider, the
 earned switch and the evaluation all exist and are tested end to end over HTTP

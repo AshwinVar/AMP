@@ -8,9 +8,9 @@ than recalled?
 hidden.** Every item below names the file that proves it, where it runs, the
 measured result and its date, and what it does *not* prove.
 
-Date: 2026-09-20 · master `<!-- TODO-FINAL: sha -->` · production verified at
-the same SHA (§2, item 12) · local re-runs on PostgreSQL 18.3 and SQLite the
-same day.
+Date: 2026-09-20 · master `5e8b863` (#662, the last code change of the sprint)
+· production verified at the same SHA (§2, item 12) · local re-runs on
+PostgreSQL 18.3 and SQLite the same day.
 
 ---
 
@@ -45,7 +45,7 @@ anchors `test_mutation_anchors_apply.py` proves still name one line each.
 | 9 | **Performance** | `backend/loadtest.py` (real uvicorn, disposable PostgreSQL, 10/50/250/1000 machines), `backend/dashboard_perf.py` (statements per endpoint), `backend/audit_perf.py` (read-model latency) | By hand; recorded in `backend/loadtest_results.json` and `docs/PERFORMANCE.md` | **Re-run today (2026-09-20 13:12 UTC, PostgreSQL 18.3, 8 requests in flight).** At 1,000 machines: `/analytics/executive-oee` p50 436 ms (was 575 on 2026-09-03), p95/p99 622/678 ms; `/analytics/summary` p50 306 (was 466); `/inventory/items` 68 (was 163); `/machines` 178 (was 184); `/oee/summary` 42 (was 40); every other endpoint p50 under 51 ms; **zero errors at every scale**; WebSocket fan-out 1,306 frames/s to 1,000 sockets; MQTT ingest 44,527 msg/s. Absolute p50 equal or lower than the 2026-09-03 run at every endpoint and scale; p95 at 50 machines is 20–50% higher (e.g. `/machines` 90 → 127 ms) while p50 fell — the driver's floor-normalised comparison flags this because its own client floor fell 22–37% (9.1 → 5.7 ms), not because service time rose | **The k6 baseline tables in `docs/PERFORMANCE.md` remain UNMEASURED** (k6 is not installed; the Python driver reports its own floor beside every number and the p50s above are queueing under 8 concurrent callers, not one user's latency — one user waits ~54 ms on the slowest endpoint). No concurrent-user p95 on production hardware |
 | 10 | **Recovery** | Nightly off-box `pg_dump` and a restore into a throwaway PostgreSQL (`.github/workflows/backup.yml`, job `restore-drill`) | GitHub Actions schedule, 02:17 UTC daily | Last run **2026-09-20 07:46 UTC, success**; measured RTO **7.47 s** for a small dataset with the dump already local (2026-08-09) | RTO on a production-sized dump has not been timed; the backup interval (daily) bounds the data loss, and nothing shorter is claimed |
 | 11 | **Model-outage test** | `test_copilot_local_provider.py` and `test_llm_plan_budget.py`, against the real provider over HTTP: runtime stopped, model missing, timeout, invalid JSON, planning budget exhausted, malformed tool request, hallucinated wording, wrong tool, context too large | CI backend job, every push | All nine degrade to AMP's own engine with the failure named in `/ai/status`; the core MES is untouched (the Copilot is a read path). Context too large: declined in **4 ms** before sending (was 36 s of silent truncation) — ADR-0034 §7 | Behaviour on a CPU-only SME box has not been timed |
-| 12 | **Production smoke test** | After every merge: `/health` version equals the merge SHA, `/readiness` 200, frontend 200, protected endpoints refuse an unauthenticated call | By hand, every merge (`CHIEF-ENGINEER-STATE.md`) | `<!-- TODO-FINAL: latest smoke line -->` | A smoke test is not a customer's day; the load and recovery items say what else is known |
+| 12 | **Production smoke test** | After every merge: `/health` version equals the merge SHA, `/readiness` 200, frontend 200, protected endpoints refuse an unauthenticated call | By hand, every merge (`CHIEF-ENGINEER-STATE.md`) | Master `5e8b863`, 2026-09-20: `/health` `{"status":"ok","database":"ok","schema":"ok","version":"5e8b863"}` three seconds after the deploy, `/readiness` 200, frontend 200, `/ai/status` and `/platform/status` 401 unauthenticated. The same check passed at `b8cffca` (#661) and `c355457` (#663) earlier today | A smoke test is not a customer's day; the load and recovery items say what else is known |
 
 ## 3. What is not proven, in one place
 

@@ -23,7 +23,7 @@ Run: DATABASE_URL="sqlite://" python backend/test_sim_ticks_need_a_tenant.py
 import os
 import random
 import sys
-from datetime import date
+from datetime import datetime
 
 os.environ.setdefault("DATABASE_URL", "sqlite://")
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -81,7 +81,7 @@ def world():
                                         current_stock=500, reorder_level=50, unit="kg", supplier="Local"))
             db.add(models.CustomerOrder(tenant_code=t, order_no="ORD-1", customer_name=f"{t} customer",
                                         product_name="FG-001", order_quantity=100, dispatched_quantity=0,
-                                        due_date=date.today(), status="In Production"))
+                                        due_date=datetime.utcnow().date(), status="In Production"))
         db.commit()
     finally:
         tenancy.reset_current_tenant(tok)

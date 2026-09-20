@@ -17,12 +17,12 @@ A feature that can't be built honestly is marked **BLOCKED** with the reason, an
 | Field | Value |
 |---|---|
 | Sprint start | 2026-09-19 |
-| Day | 8 (fifteen of the sixteen differentiators built; Days 9–10 remain) |
+| Day | 9 (fifteen of the sixteen differentiators built; the acceptance journey is in CI) |
 | Master SHA at start | `eaf66c8` |
 | Production SHA at start | `eaf66c8`. Checked 2026-09-19 00:00 UTC: `/health` ok, `/readiness` at migration `0010_outcome_contracts`, frontend returned 200. |
-| Merged | #645 `d0d50aa` (typed tools, evidence, grounding gate, evaluation) · #646–#648 the provider, the adoption record and the orchestrator · #649 `04f9c02` Risk Radar · #650 `a1071d1` machine health explained · #651 `3e15d9c` Daily Brief · #652 `82ac27f` closed loop (migration `0011`) · #653 `e0671ca` shortage impact · #654 `ed0e226` proactive restraint · #655 `d7a93e3` anomaly sweep. |
-| Open PRs | ADR-0033, the OEM disclosure floor. |
-| Production status | healthy at `d7a93e3`, verified 2026-09-20 05:47 UTC: `/health` ok (database, schema, version), `/readiness` 200 at migration `0011_action_outcomes`, frontend 200, and `/ai/native/anomaly/sweep`, `/proactive` and `/action-outcomes` each refuse an unauthenticated call (401). |
+| Merged | #645 `d0d50aa` (typed tools, evidence, grounding gate, evaluation) · #646–#648 the provider, the adoption record and the orchestrator · #649 `04f9c02` Risk Radar · #650 `a1071d1` machine health explained · #651 `3e15d9c` Daily Brief · #652 `82ac27f` closed loop (migration `0011`) · #653 `e0671ca` shortage impact · #654 `ed0e226` proactive restraint · #655 `d7a93e3` anomaly sweep · #656 `564afac` OEM disclosure floor · #657 `baa35a5` the owner's eight questions across four factory shapes. |
+| Open PRs | none. |
+| Production status | healthy at `baa35a5`, verified 2026-09-20 06:39 UTC: `/health` ok (database, schema, version), `/readiness` 200 at migration `0011_action_outcomes`, frontend 200, and `/ai/native/anomaly/sweep`, `/oem/intelligence`, `/shortage-impact`, `/proactive` and `/action-outcomes` each refuse an unauthenticated call (401). |
 
 ## Day 1: baseline
 
@@ -82,18 +82,23 @@ Until then:
 
 ## AI benchmark (copilot_eval, three factories, 37 questions + 15 adversarial prompts × 3 factories × 3 roles)
 
-AMP's own engine, measured when this PR was written (`python -m copilot_eval`):
+AMP's own engine, re-measured on master at `baa35a5` (`python -m copilot_eval`,
+2026-09-20 — 135 questions plus 144 adversarial prompts):
 
 | Measure | Result |
 |---|---|
 | Tool selection, core questions | 69/69 |
-| Tool selection, unseen questions | 36/42 (CI floor 27) |
+| Tool selection, unseen questions | 60/66 (CI floor 27) |
 | Factual accuracy against the oracle | 93/93 |
-| Answers grounded in their own evidence | 246/246 |
+| Answers grounded in their own evidence | 279/279 |
 | Honest data states | 14/14 |
 | Money fabrications | 0 |
 | **Unauthorized disclosures** | **0** |
-| Latency p50 / p95 | ~6 ms / ~45 ms (in-memory SQLite, AMP side only) |
+| Latency p50 / p95 | 4 ms / 37 ms (in-memory SQLite, AMP side only) |
+
+The six unseen questions AMP's own router misses are routed correctly by every
+scripted model behaviour (66/66), which is the case for the model this sprint
+has not been allowed to measure — and is stated here rather than averaged away.
 
 The scripted model behaviours test what AMP does with a model; they are not a model. Every behaviour had zero disclosures and zero ungrounded text shown:
 

@@ -24,7 +24,9 @@ production, quality and inventory movements. This drill can only show that the
 dump it took loses nothing, which is a different claim. The 24h figure is read
 from the schedule, and the drill verifies data completeness rather than age.
 
-Run:  python backend/restore_drill.py
+Run:  python backend/restore_drill.py                (the drill as first measured: 12 / 7 / 3 machines)
+      python backend/restore_drill.py --scale 100    (1,200 / 700 / 300 machines, a month of daily
+                                                       production records each -- a production-sized dump)
 """
 import json
 import os
@@ -78,8 +80,14 @@ class phase:
         return False
 
 
-def seed(url):
-    """Three customers with overlapping identifiers, as a real deployment."""
+def seed(url, scale=1):
+    """Three customers with overlapping identifiers, as a real deployment.
+
+    `scale` multiplies the machine counts (12 / 7 / 3 at scale 1) and, above 1,
+    gives every machine a month of daily production records instead of one, so
+    the dump is a production-sized one rather than a demo's. Scale 1 is the
+    drill as first measured (7.47 s); the larger scales exist because that
+    figure was recorded with the caveat "for a small dataset"."""
     env = dict(os.environ, DATABASE_URL=url)
     script = f'''
 import os, sys
@@ -93,7 +101,9 @@ Base.metadata.create_all(bind=engine)
 db = SessionLocal()
 now = datetime.utcnow()
 sites = {{"FACTORY_A": "Chennai", "FACTORY_B": "Pune", "FACTORY_C": "Coimbatore"}}
-counts = {{"FACTORY_A": 12, "FACTORY_B": 7, "FACTORY_C": 3}}
+scale = {scale}
+counts = {{"FACTORY_A": 12 * scale, "FACTORY_B": 7 * scale, "FACTORY_C": 3 * scale}}
+history = 1 if scale == 1 else 30      # daily production records per machine
 for t in {TENANTS!r}:
     db.add(models.User(username=t.lower() + "-admin",
                        password=hash_password({PASSWORD!r}),
@@ -102,11 +112,12 @@ for t in {TENANTS!r}:
         m = models.Machine(tenant_code=t, name=f"CNC-{{i:02d}}", site=sites[t],
                            status="Running", utilization=60 + i)
         db.add(m); db.flush()
-        db.add(models.ProductionRecord(
-            tenant_code=t, machine_id=m.id, planned_minutes=480,
-            runtime_minutes=400, ideal_cycle_time_seconds=30,
-            total_count=600, good_count=570, rejected_count=30,
-            created_at=now - timedelta(hours=i)))
+        for d in range(history):
+            db.add(models.ProductionRecord(
+                tenant_code=t, machine_id=m.id, planned_minutes=480,
+                runtime_minutes=400, ideal_cycle_time_seconds=30,
+                total_count=600, good_count=570, rejected_count=30,
+                created_at=now - timedelta(hours=i) - timedelta(days=d)))
         db.add(models.InventoryItem(
             tenant_code=t, item_code=f"INV-{{i:03d}}", item_name=f"{{t}} part {{i}}",
             category="Raw", unit="kg", current_stock=100 + i, reorder_level=5))
@@ -148,8 +159,16 @@ def main():
     print(pg_scratch.ensure(5432, SOURCE_DB).split(",")[0])
     print(f"source: {SOURCE_DB}   restored into: {RESTORED_DB}")
 
-    before = seed(src_url)
-    print(f"seeded three customers: {before}")
+    # --scale N: a production-sized source (see seed). Default 1 keeps the drill
+    # exactly as first measured.
+    scale = 1
+    if "--scale" in sys.argv:
+        scale = max(1, int(sys.argv[sys.argv.index("--scale") + 1]))
+    # Timed for the record but NOT a phase: seeding is not part of a recovery,
+    # and the RTO below is the sum of the phases only.
+    t_seed = time.perf_counter()
+    before = seed(src_url, scale)
+    print(f"seeded three customers at scale {scale} in {time.perf_counter() - t_seed:.1f} s: {before}")
 
     env = dict(os.environ, PGPASSWORD=_password(admin))
 
@@ -160,6 +179,8 @@ def main():
              "--file", dump_path],
             env=env, capture_output=True, text=True, errors="replace")
         check("pg_dump exited 0", r.returncode == 0, r.stderr[-300:])
+        if os.path.exists(dump_path):
+            print(f"     dump size: {os.path.getsize(dump_path) / 1e6:.1f} MB")
     size = os.path.getsize(dump_path) if os.path.exists(dump_path) else 0
     print(f"     dump: {size / 1024:.0f} KiB")
 
@@ -186,14 +207,22 @@ def main():
 
     # ---------------------------------------------------------------- 5 ----
     proc = None
+    # The server's output goes to a FILE, never to a pipe nobody reads. The
+    # first version piped it and read nothing; since AMP began writing a JSON
+    # access line per request the pipe filled after a dozen requests, the
+    # server's next log write blocked, the event loop froze with it, and phase
+    # 7 timed out at 30 s on /inventory/items -- at scale 1, twelve items --
+    # while every request in phases 5 and 6 had answered. A hung drill that
+    # looks like a slow restore is the worst kind of measurement.
+    server_log_path = os.path.join(HERE, "dr_server.log")
+    server_log = open(server_log_path, "w", encoding="utf-8", errors="replace")
     with phase("boot AMP against the restored database"):
         proc = subprocess.Popen(
             [sys.executable, "-m", "uvicorn", "main:app", "--host", "127.0.0.1",
              "--port", str(PORT), "--log-level", "error"],
             cwd=HERE, env=dict(os.environ, DATABASE_URL=dst_url,
                                SECRET_KEY="drill-secret-key-32-chars-minimum"),
-            stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
-            errors="replace")
+            stdout=server_log, stderr=subprocess.STDOUT)
         up = False
         for _ in range(120):
             try:
@@ -253,6 +282,13 @@ def main():
                 proc.wait(timeout=10)
             except Exception:
                 proc.kill()
+        server_log.close()
+        if failures and os.path.exists(server_log_path):
+            with open(server_log_path, encoding="utf-8", errors="replace") as f:
+                tail = f.read()[-2000:]
+            print(f"\n--- last of the server's output ({server_log_path}) ---\n{tail}")
+        elif os.path.exists(server_log_path):
+            os.remove(server_log_path)
         if os.path.exists(dump_path):
             os.remove(dump_path)
 

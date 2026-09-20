@@ -62,11 +62,19 @@ class _Env:
 
 
 def _db(tag, populate=True, revision="__head__"):
-    """A throwaway SQLite database in a chosen schema state."""
+    """A throwaway SQLite database in a chosen schema state.
+
+    NullPool, deliberately: pytest collects the five tests AND test_schema_guard()
+    below, which runs them all again in the same process, so `_db("head")` is
+    asked twice for the same file. With the default pool the first engine keeps
+    a connection -- and on Windows a file handle -- open, and the second call's
+    os.remove raised PermissionError (WinError 32) under one pytest process
+    while every standalone run was green. No pooled connection, no held file."""
+    from sqlalchemy.pool import NullPool
     path = os.path.join(tempfile.gettempdir(), f"amp_guard_{tag}.db")
     if os.path.exists(path):
         os.remove(path)
-    engine = create_engine(f"sqlite:///{path}")
+    engine = create_engine(f"sqlite:///{path}", poolclass=NullPool)
     if populate:
         import models  # noqa: F401
         from database import Base

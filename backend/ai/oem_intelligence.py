@@ -18,6 +18,12 @@ least MIN_CUSTOMERS *distinct customers* contributed to it. Below the floor the
 figure is withheld with the reason — never rounded, never noised, never silently
 dropped, because a missing row reads as a fleet with nothing in it.
 
+AND A FLOOR ON EACH CELL IS NOT A FLOOR ON THE TABLE. With the fleet figure
+published beside the slices, one withheld slice is one equation with one
+unknown, and it solves: a withheld 900.0 came back as 900.1 the first time this
+was tried. `complementary_suppression` leaves either no slice withheld or at
+least two, so the arithmetic never closes.
+
 WHAT IS ALWAYS VISIBLE. Counts of the OEM's OWN records — how many machines it
 shipped, of which model, to how many customers — come from the manufacturer's
 own paperwork, not from any factory's operations. Those need no grant, exactly
@@ -50,6 +56,11 @@ MAX_MODELS = 12
 WITHHELD = ("Fewer than {n} customers share this, so a figure here would be one customer's reading "
             "with a new label. AMP does not publish it.")
 OWN_RECORDS = "from the manufacturer's own records, not from any customer's operations"
+COMPLEMENT = ("Withheld so that another model's withheld figure cannot be recovered by "
+              "subtracting the published rows from the fleet figure. This row could have been "
+              "published on its own; the arithmetic around it is what AMP is withholding.")
+MARGIN_IS_THE_CELL = ("Every model below the floor and none above it, so a fleet figure here "
+                      "would be those same customers' reading with a wider label.")
 
 
 def _fact(key, label, value, prov, unit="", source="", window="now", detail=""):
@@ -76,6 +87,55 @@ def _pooled(values_by_customer, label):
     flat = [x for v in contributing.values() for x in v]
     return {"label": label, "value": round(sum(flat) / len(flat), 1), "customers": customers,
             "machines": machines, "state": ev.OK, "withheld": False, "reason": None}
+
+
+def complementary_suppression(model_rows, fleet):
+    """A floor on each cell is not a floor on the table (ADR-0033 §7).
+
+    The per-model slice obeying the floor is not enough, because the MARGIN is
+    published beside it. With the fleet figure shown and every slice but one:
+
+        withheld_total = fleet.value x fleet.machines - sum(published totals)
+        withheld_mean  = withheld_total / that slice's own machine count
+
+    and for a slice with a single customer, that IS that customer's reading.
+    Suppressing the cell while publishing the margin withholds nothing; the
+    arithmetic is the disclosure, not the row. Measured against the fixture in
+    test_oem_intelligence: a withheld 900.0 came back as 900.1.
+
+    So the table must leave either NO slice withheld or at least TWO: one
+    withheld slice is the only case that solves. When exactly one is withheld,
+    the smallest publishable slice is suppressed with it -- smallest because it
+    is the least the manufacturer loses. When there is nothing to suppress
+    alongside it, the FLEET figure goes instead, because a margin over one
+    unknown is that unknown.
+
+    This is ordinary complementary cell suppression, and like the floor itself
+    it is a bound, not a guarantee: two withheld cells still publish their
+    combined total, and an OEM that knows one of them by other means recovers
+    the other. ADR-0033 says so rather than implying the table is safe.
+    """
+    if fleet.get("withheld"):
+        return                                  # no margin to subtract from
+    # Only a slice that CONTRIBUTES to the margin can be subtracted out of it.
+    # A model whose customers share nothing is not in the fleet total, so its
+    # withheld row is protected by the consent, not by this arithmetic -- and
+    # suppressing a good row to shield it would cost the manufacturer a figure
+    # for no gain.
+    withheld = [r for r in model_rows if r["average_operating_hours"]["withheld"]
+                and r["average_operating_hours"]["machines"] > 0]
+    if len(withheld) != 1:
+        return                                  # none to protect, or already unsolvable
+    publishable = [r for r in model_rows if not r["average_operating_hours"]["withheld"]]
+    if not publishable:
+        # The one withheld slice IS the whole margin. Withhold the margin.
+        fleet.update({"value": None, "withheld": True, "state": ev.PARTIAL_DATA,
+                      "reason": MARGIN_IS_THE_CELL})
+        return
+    victim = min(publishable, key=lambda r: (r["average_operating_hours"]["machines"],
+                                             str(r["model_code"])))
+    victim["average_operating_hours"].update({
+        "value": None, "withheld": True, "state": ev.PARTIAL_DATA, "reason": COMPLEMENT})
 
 
 def build_oem_intelligence(db, oem_code: str, now=None) -> dict:
@@ -142,6 +202,7 @@ def build_oem_intelligence(db, oem_code: str, now=None) -> dict:
 
     hours = _pooled(hours_by_customer, "Average operating hours across the fleet")
     utilisation = _pooled(util_by_customer, "Average utilisation across the fleet")
+    complementary_suppression(model_rows, hours)
 
     # ── coverage, stated ────────────────────────────────────────────────
     shared_machines = sum(len(v) for v in hours_by_customer.values())

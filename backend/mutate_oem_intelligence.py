@@ -70,6 +70,31 @@ MUTATIONS = [
      '        "customers_sharing_anything": len(customers),'),
     ("a fleet where nobody shares is reported as OK", OI,
      "    elif not sharing_customers:", "    elif False:"),
+
+    # --- the margin gives back what the cell withheld (§7) -------------------
+    # A floor on each cell is not a floor on the table. Each of these restores
+    # the one-equation-one-unknown table that hands the withheld figure back.
+    ("the complementary suppression is skipped entirely", OI,
+     "    complementary_suppression(model_rows, hours)", "    pass"),
+    ("one withheld slice is left solvable", OI,
+     "    if len(withheld) != 1:", "    if True:"),
+    ("a withheld slice that is not in the margin costs a good row anyway", OI,
+     '    withheld = [r for r in model_rows if r["average_operating_hours"]["withheld"]\n'
+     '                and r["average_operating_hours"]["machines"] > 0]',
+     '    withheld = [r for r in model_rows if r["average_operating_hours"]["withheld"]]'),
+    ("the suppressed complement keeps its value", OI,
+     '        "value": None, "withheld": True, "state": ev.PARTIAL_DATA, "reason": COMPLEMENT})',
+     '        "withheld": True, "state": ev.PARTIAL_DATA, "reason": COMPLEMENT})'),
+    ("the suppressed complement stops saying it was suppressed", OI,
+     '        "value": None, "withheld": True, "state": ev.PARTIAL_DATA, "reason": COMPLEMENT})',
+     '        "value": None, "withheld": False, "state": ev.OK, "reason": COMPLEMENT})'),
+    ("a margin over a single unknown is published anyway", OI,
+     '        fleet.update({"value": None, "withheld": True, "state": ev.PARTIAL_DATA,\n'
+     '                      "reason": MARGIN_IS_THE_CELL})\n        return',
+     '        return'),
+    ("the suppression runs even when the margin is already withheld", OI,
+     '    if fleet.get("withheld"):\n        return                                  # no margin to subtract from',
+     '    if False:\n        return                                  # no margin to subtract from'),
 ]
 
 

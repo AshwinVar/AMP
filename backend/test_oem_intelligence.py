@@ -184,6 +184,122 @@ def main_():
     check("...while the fleet-wide figure, which spans three, is published",
           three["operating_hours"]["withheld"] is False, str(three["operating_hours"]))
 
+    print("\n4c. THE MARGIN GIVES BACK WHAT THE CELL WITHHELD (ADR-0033 §7)")
+    # A floor on each cell is not a floor on the table. In `three`, every
+    # customer shares: the fleet figure is published, ACX-75 spans two so it is
+    # published, and BDX-10 spans one so it is withheld. That is one equation
+    # with one unknown:
+    #
+    #     fleet.value x fleet.machines - ACX.value x ACX.machines
+    #     ------------------------------------------------------  =  BDX
+    #                        BDX.machines
+    #
+    # Measured before the fix: BDX's withheld 900.0 came back as 900.1, which
+    # is C's own reading. The cell said no and the arithmetic said yes -- the
+    # same failure as ADR-0033's opening paragraph, one level up.
+    rows3 = {m["model_code"]: m for m in three["models"]}
+    hidden = [m for m in three["models"]
+              if m["average_operating_hours"]["withheld"]
+              and m["average_operating_hours"]["machines"] > 0]
+    check("a solvable table leaves at least TWO slices withheld, never one",
+          len(hidden) >= 2, str([m["model_code"] for m in hidden]))
+    check("...so the model that was ALONE at one customer is still withheld",
+          rows3["BDX-10"]["average_operating_hours"]["withheld"] is True,
+          str(rows3["BDX-10"]["average_operating_hours"]))
+    check("...and the publishable one is suppressed WITH it, not instead of it",
+          rows3["ACX-75"]["average_operating_hours"]["withheld"] is True,
+          str(rows3["ACX-75"]["average_operating_hours"]))
+    check("...saying it is the arithmetic being withheld, not the row",
+          "subtracting" in (rows3["ACX-75"]["average_operating_hours"]["reason"] or ""),
+          str(rows3["ACX-75"]["average_operating_hours"]["reason"]))
+    # A row flagged withheld that still CARRIES its number is not withheld: the
+    # screen hides it and the API hands it over. Both withheld rows must be
+    # empty of a value, and both must keep their counts, which are the OEM's
+    # own records and were never the secret.
+    for code in ("ACX-75", "BDX-10"):
+        fig = rows3[code]["average_operating_hours"]
+        check(f"{code} carries NO value, not merely a withheld flag",
+              fig["value"] is None, str(fig))
+        check(f"...while {code}'s machine count survives, being the OEM's own record",
+              fig["machines"] == 3 and rows3[code]["machines"] == 3, str(fig["machines"]))
+    # The attack itself, run: the subtraction must no longer produce EITHER
+    # true value. A is 4000 x2 and B 2000 x1 (ACX = 3333.3); C is 900 x3 (BDX).
+    published = [m["average_operating_hours"] for m in three["models"]
+                 if not m["average_operating_hours"]["withheld"]]
+    fleet_total = three["operating_hours"]["value"] * three["operating_hours"]["machines"]
+    left = fleet_total - sum(p["value"] * p["machines"] for p in published)
+    recovered = {round(left / m["average_operating_hours"]["machines"], 1) for m in hidden}
+    check("the subtraction recovers NEITHER withheld figure",
+          900.0 not in recovered and 3333.3 not in recovered, str(sorted(recovered)))
+    check("...because one equation now has two unknowns", len(hidden) == 2,
+          str([m["model_code"] for m in hidden]))
+
+    # CONTROL 1: nothing is suppressed when nothing needs to be. `two` has A and
+    # B sharing and C not, so BDX-10 contributes NOTHING to the fleet total --
+    # its row is protected by the consent, and ACX-75 must keep its figure.
+    check("CONTROL: a withheld slice that is not IN the margin costs nobody a figure",
+          per_model["ACX-75"]["average_operating_hours"]["withheld"] is False,
+          str(per_model["ACX-75"]["average_operating_hours"]))
+    # CONTROL 2: the smallest publishable slice is the one suppressed, because
+    # it is the least the manufacturer loses.
+    check("CONTROL: the suppressed row is one that COULD have been published",
+          rows3["ACX-75"]["average_operating_hours"]["customers"] >= oi.MIN_CUSTOMERS,
+          str(rows3["ACX-75"]["average_operating_hours"]["customers"]))
+    # CONTROL 3: with nothing publishable to suppress alongside it, the MARGIN
+    # goes instead -- a fleet figure over one unknown is that unknown.
+    only_c = build(seed(session(), sharing=[C]))
+    check("CONTROL: when every slice is below the floor, the FLEET figure goes",
+          only_c["operating_hours"]["withheld"] is True,
+          str(only_c["operating_hours"]))
+
+    print("\n4d. The suppression rule itself, at its edges")
+    # The `no publishable slice` branch needs a fleet that spans two customers
+    # while every SHOWN slice is below the floor, which happens when
+    # contributing machines sit outside the shown rows -- past MAX_MODELS, or
+    # on installations with no model. Thirteen models is a heavy fixture for
+    # one branch, and the rule is a pure function over rows, so it is exercised
+    # here directly. A mutation that deleted this branch survived the fixture
+    # above; that is why this section exists.
+    def row(code, value, customers, machines):
+        withheld = value is None
+        return {"model_code": code, "machines": machines, "customers": customers,
+                "average_operating_hours": {
+                    "label": "Average operating hours", "value": value,
+                    "customers": customers, "machines": machines,
+                    "state": "PARTIAL DATA" if withheld else "OK",
+                    "withheld": withheld, "reason": "floor" if withheld else None}}
+
+    margin = {"value": 2000.0, "machines": 4, "withheld": False, "state": "OK", "reason": None}
+    rows = [row("ONLY", None, 1, 2)]           # one withheld slice, nothing publishable
+    oi.complementary_suppression(rows, margin)
+    check("with no publishable slice, the MARGIN is withheld instead",
+          margin["withheld"] is True and margin["value"] is None, str(margin))
+    check("...and says a margin over one unknown IS that unknown",
+          margin["reason"] == oi.MARGIN_IS_THE_CELL, str(margin["reason"]))
+    check("...and the slice itself is left as the floor left it",
+          rows[0]["average_operating_hours"]["reason"] == "floor",
+          str(rows[0]["average_operating_hours"]))
+
+    # The victim is the SMALLEST publishable slice, because it is the least the
+    # manufacturer loses. With 5 and 2 machines publishable, the 2 goes.
+    margin2 = {"value": 1000.0, "machines": 9, "withheld": False, "state": "OK", "reason": None}
+    rows2 = [row("HIDDEN", None, 1, 2), row("BIG", 900.0, 3, 5), row("SMALL", 1200.0, 2, 2)]
+    oi.complementary_suppression(rows2, margin2)
+    by_code = {r["model_code"]: r["average_operating_hours"] for r in rows2}
+    check("the SMALLEST publishable slice is the one suppressed",
+          by_code["SMALL"]["withheld"] is True and by_code["BIG"]["withheld"] is False,
+          f"SMALL={by_code['SMALL']['withheld']} BIG={by_code['BIG']['withheld']}")
+    check("...and the margin is left alone, since a slice could carry the cost",
+          margin2["withheld"] is False, str(margin2))
+
+    # Two already withheld: one equation, two unknowns. Nothing more is taken.
+    margin3 = {"value": 1000.0, "machines": 9, "withheld": False, "state": "OK", "reason": None}
+    rows3u = [row("H1", None, 1, 2), row("H2", None, 1, 2), row("OK1", 900.0, 3, 5)]
+    oi.complementary_suppression(rows3u, margin3)
+    check("two withheld slices are already unsolvable, so nothing else is taken",
+          not [r for r in rows3u if r["model_code"] == "OK1"][0]["average_operating_hours"]["withheld"]
+          and margin3["withheld"] is False, str(margin3))
+
     print("\n4b. The health grant is independent of the hours grant")
     # A and B share HOURS. Only A shares HEALTH. Utilisation therefore has ONE
     # contributing customer and must be withheld even though the fleet-wide

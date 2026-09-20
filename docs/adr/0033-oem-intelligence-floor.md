@@ -66,6 +66,39 @@ The per-customer breakdown names only counts the OEM already knows. Operational
 figures are pooled across customers or not shown at all. The test asserts that
 no customer code appears anywhere in the aggregate payload.
 
+### 7. A floor on each cell is not a floor on the table
+
+§3 closes slicing. It does not close the **complement**, and an adversarial
+pass found that out: with the fleet figure published and every slice but one,
+
+```
+withheld_total = fleet.value × fleet.machines − Σ(published slice totals)
+withheld_mean  = withheld_total ÷ that slice's own machine count
+```
+
+and for a slice with a single customer, that **is** that customer's reading.
+Measured against this module's own fixture, a withheld `900.0` came back as
+`900.1`. Suppressing the cell while publishing the margin withheld nothing —
+the arithmetic was the disclosure, not the row.
+
+So the table must leave **either no slice withheld, or at least two**. One
+withheld slice is the only case that solves. When exactly one is withheld:
+
+- the **smallest publishable slice is suppressed with it**, smallest because it
+  is the least the manufacturer loses, and it says on screen that the
+  arithmetic is what is being withheld rather than the row itself;
+- when there is nothing publishable to suppress alongside it, the **fleet
+  figure goes instead**, because a margin over a single unknown is that
+  unknown.
+
+A withheld slice whose customers share **nothing** is not in the fleet total at
+all, so it needs no complement — its protection is the consent, and suppressing
+a good row to shield it would cost the manufacturer a figure for no gain.
+
+This is ordinary complementary cell suppression, borrowed from official
+statistics, and it is a bound rather than a guarantee for the same reason the
+floor is (see *Honest limits*).
+
 ### 6. Coverage is stated, not implied
 
 *"2 of 3 customers share anything at all; operating hours come from 3 of 6
@@ -96,6 +129,16 @@ them is true.
   of them can subtract its own machines from a pooled average and infer the
   other's. Proper protection needs a larger floor or added noise, and AMP has
   neither — this ADR says so rather than implying the number is safe.
+- **Complementary suppression is a bound too.** Two withheld cells still
+  publish their *combined* total through the margin, so an OEM that learns one
+  of them by other means recovers the other. It removes the case that solves
+  outright; it does not make the table safe. Proper protection is the same
+  answer as above: a larger floor, or noise.
+- **The rule protects the table AMP publishes, not every table.** The fleet
+  figure is capped at `MAX_MODELS` rows, so contributing machines can sit
+  outside the shown slices; the suppression reasons about the rows it emits.
+  Another margin added later — service intervals, alarm rates — must run the
+  same check, and nothing structural forces it to beyond this ADR and the test.
 - **It bounds disclosure through THIS endpoint.** Another aggregate added later
   must use the same floor; nothing structural forces it to, beyond this ADR and
   the test.

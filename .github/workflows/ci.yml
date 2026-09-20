@@ -370,6 +370,14 @@ jobs:
         run: |
           psql -h localhost -U postgres -c "CREATE DATABASE amp_isolation"
           python audit_isolation.py
+      # The simulator audit again, on PostgreSQL: the backend job runs it on
+      # SQLite, which does not enforce foreign keys or the per-tenant unique
+      # constraints by default. A tick that wrote a row pointing at a parent
+      # that does not exist, or issued a document number twice, would pass
+      # there and be refused here.
+      - name: Three factories animated by one simulator loop never cross, on PostgreSQL (audit)
+        working-directory: backend
+        run: python audit_three_factory_simulation.py --pg
 
       # 6. THE MIGRATION VERIFICATIONS THAT RAN ONLY BY HAND. Each migrates a
       #    populated scratch database on this service through one migration and

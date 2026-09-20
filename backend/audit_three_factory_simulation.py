@@ -47,15 +47,29 @@ ADR-0022 built, with colliding identifiers and per-tenant MARKERS -- and the
 owner's surfaces are built by audit_owner_questions.surfaces, the same calls
 the routes make. This audit adds only the simulation.
 
-Run: python backend/audit_three_factory_simulation.py
+Run: python backend/audit_three_factory_simulation.py            (SQLite, in memory)
+     python backend/audit_three_factory_simulation.py --pg       (a disposable PostgreSQL,
+                                                                  borrowing local credentials)
 """
 import json
 import os
 import random
 import sys
 
-os.environ.setdefault("DATABASE_URL", "sqlite://")
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+# --pg: the same audit against a disposable PostgreSQL database (pg_scratch),
+# decided BEFORE `database` is imported, because that module builds its engine
+# from DATABASE_URL at import time. PostgreSQL enforces the foreign keys and
+# unique constraints SQLite leaves unchecked by default, so a tick that wrote a
+# row pointing at a parent that does not exist, or a document number twice,
+# would pass here on SQLite and be refused there -- the difference this mode
+# exists to catch. CI runs both.
+if "--pg" in sys.argv:
+    import pg_scratch
+    print(pg_scratch.ensure(5432, "amp_three_factory_sim").split(",")[0])
+    os.environ["DATABASE_URL"] = pg_scratch.scratch_url(5432, "amp_three_factory_sim")
+else:
+    os.environ.setdefault("DATABASE_URL", "sqlite://")
 
 from sqlalchemy import create_engine, text  # noqa: E402
 from sqlalchemy.orm import sessionmaker  # noqa: E402
@@ -127,9 +141,14 @@ def banner(n, title):
 
 
 def build():
-    engine = create_engine("sqlite://", connect_args={"check_same_thread": False},
-                           poolclass=StaticPool)
-    Base.metadata.create_all(engine)
+    if os.environ["DATABASE_URL"].startswith("postgresql"):
+        from database import engine    # the disposable scratch database chosen at the top
+        Base.metadata.drop_all(engine)
+        Base.metadata.create_all(engine)
+    else:
+        engine = create_engine("sqlite://", connect_args={"check_same_thread": False},
+                               poolclass=StaticPool)
+        Base.metadata.create_all(engine)
     tenancy.install_scoping()
     Session = sessionmaker(bind=engine)
     F.seed(Session)
@@ -243,7 +262,8 @@ def main():
     engine, Session = build()
     seeded = snapshot(engine)
     seeded_tenants = {v for table in seeded.values() for v in table.values() if v}
-    print(f"tables carrying a tenant: {len(tenant_tables())}; parent links: {len(parent_links())}; "
+    print(f"database: {'PostgreSQL (disposable scratch)' if os.environ['DATABASE_URL'].startswith('postgresql') else 'SQLite, in memory'}; "
+          f"tables carrying a tenant: {len(tenant_tables())}; parent links: {len(parent_links())}; "
           f"tenants seeded: {sorted(seeded_tenants)}")
 
     # ------------------------------------------------------------ 1 + 2 + 3 --

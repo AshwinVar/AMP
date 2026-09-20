@@ -70,6 +70,13 @@ MUTATIONS = [
     ("the planner is handed the raw thread, not the cleaned one", O,
      "    thread = clean_thread(thread)\n    rules = plan_rules(db, q, proposer, thread)",
      "    thread = thread if isinstance(thread, list) else []\n    rules = plan_rules(db, q, proposer, thread)"),
+    ("the model is asked the raw question even when AMP resolved a pronoun", O,
+     "        asked = f\"{q} ({rules.resolved['machine']})\" if rules.resolved else q",
+     "        asked = q"),
+    ("the answer claims the resolved machine whatever the model's plan used", O,
+     "    used = any(isinstance(a, dict) and a.get(\"machine\") == name for _n, a in plan.calls)\n"
+     "    return dict(rules.resolved) if used else None",
+     "    return dict(rules.resolved)"),
     ("/copilot/ask drops the thread", R,
      "                               proposer=ai_copilot.native_proposer(), thread=thread)",
      "                               proposer=ai_copilot.native_proposer(), thread=None)"),

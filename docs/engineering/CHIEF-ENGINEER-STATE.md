@@ -50,7 +50,22 @@ production-sized restore). The load driver was re-run the same day and
 "Re-run 2026-09-20" explains why its own floor-normalised verdict reads
 "regressed" at 50 machines while every raw p50 fell).
 
-**Nothing is awaiting review.** What a next session would do first, in order:
+**In flight (after the sprint): follow-up questions in the Copilot (ADR-0035),
+branch `feat/copilot-follow-ups`.** "How is CNC-01 doing?" then "and its
+downtime?" now answers about CNC-01. The screen sends its own prior turns
+(each question and the calls AMP ran — never an answer or its evidence); the
+server stores nothing, resolves a pronoun through the caller's own scoped
+machine list, and authorizes every tool afresh, so a forged thread naming
+another company's machine resolves to nothing. Evaluation re-run with five
+thread cases and five forged threads: AMP's rules 78/78 core, 66/72 unseen
+(the same six misses as before), 339/339 grounded, **0 disclosures across 189
+adversarial prompts in each of ten configurations**. Pinned by
+`test_copilot_follow_ups.py` (10 sections), `mutate_copilot_follow_ups.py`
+(14/14 caught), the component test, and a qwen3:8b re-evaluation on the
+enlarged question set (its promotion record's digest changed, so the gate is
+re-earned, not assumed — see AMP-NATIVE-MODEL-ACCEPTANCE.md §10).
+
+**Nothing else is awaiting review.** What a next session would do first, in order:
 (1) the OEM journey re-check against a real OEM's edge agent is still simulated
 (handbook ch. 31); (2) row 7 of the differentiator table (financial loss
 intelligence) is PARTIAL by design — money only where a unit value is set —

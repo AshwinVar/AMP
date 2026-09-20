@@ -75,13 +75,16 @@ def markers_of(owner, resp):
 
 class RecordingStub:
     """A tool-calling model that records what it was told and plans nothing useful."""
-    def __init__(self):
+    def __init__(self, plan=None):
         self.name = self.model = "stub"
         self.seen = []
+        self.questions = []
+        self._plan = plan or [{"name": "get_factory_summary", "arguments": {}}]
 
     def plan(self, question, tools, thread=None):
         self.seen.append(thread)
-        return [{"name": "get_factory_summary", "arguments": {}}]
+        self.questions.append(question)
+        return self._plan
 
     def phrase(self, question, facts, draft):
         return None
@@ -157,9 +160,20 @@ def main():
     check("CONTROL: the same thread resolves a pronoun", ask(A, "and its downtime?", thread)["thread"]["resolved"] == {"machine": "CNC-01"})
 
     section("3. A MACHINE NAMED IN THE FOLLOW-UP ITSELF WINS OVER THE THREAD")
-    r = ask(A, "and LINE-01, is it running?", thread)
-    check("'and LINE-01, is it running?' asks about LINE-01, and nothing was resolved for it",
-          args_of(r) == [{"machine": "LINE-01"}] and r["thread"]["resolved"] is None, str(r["plan"]) + str(r["thread"]))
+    # The thread names PRESS-01 -- a LONGER name than CNC-01 on purpose. A
+    # planner that attached the thread's machine to a question that already
+    # names one would route "and CNC-01, is it running? (PRESS-01)" to PRESS-01,
+    # because the router takes the longest name it finds; with LINE-01 in the
+    # thread that mistake was invisible (CNC-01 is the shorter name either way).
+    press = [{"question": "How is PRESS-01 doing?",
+              "calls": [{"tool": "get_machine_history", "arguments": {"machine": "PRESS-01"}}]}]
+    r = ask(A, "and CNC-01, is it running?", press)
+    check("'and CNC-01, is it running?' after a PRESS-01 turn asks about CNC-01, and nothing was resolved for it",
+          args_of(r) == [{"machine": "CNC-01"}] and r["thread"]["resolved"] is None, str(r["plan"]) + str(r["thread"]))
+    named = RecordingStub(plan=[{"name": "get_machine_history", "arguments": {"machine": "CNC-01"}}])
+    ask(A, "and CNC-01, is it running?", press, llm=named)
+    check("and a model is asked that question unchanged -- no other machine attached",
+          named.questions[-1] == "and CNC-01, is it running?", str(named.questions[-1:]))
 
     section("4. WITH NO PRIOR MACHINE, A FOLLOW-UP ROUTES AS A FRESH QUESTION")
     oee_turn = [{"question": "What is our OEE this week?", "calls": [{"tool": "get_oee", "arguments": {}}]}]
@@ -297,6 +311,32 @@ def main():
         ai_copilot._ai_enabled, ai_copilot._copilot_llm = saved
     check("/ai/ask accepts a thread too, answering from the rules when no model is available",
           r["thread"] == {"turns": 1, "resolved": {"machine": "CNC-01"}} and r["source"] == "rules", str(r.get("thread")))
+
+    section("11. WHEN AMP RESOLVED A PRONOUN, THE MODEL IS TOLD, AND THE ANSWER CLAIMS ONLY WHAT RAN")
+    # Measured on the first real run (acceptance report §10): told only the
+    # thread, qwen3:8b answered "is it running now?" with the plant-wide status
+    # list three times out of three. AMP's planner had already resolved "it";
+    # the model is now handed the same resolution, as a parenthetical, and is
+    # measured on the same task as AMP's planner.
+    told = RecordingStub(plan=[{"name": "get_machine_status", "arguments": {}}])
+    r = ask(A, "is it running now?", thread, llm=told)
+    check("the model is asked the question with AMP's resolution attached",
+          told.questions[-1] == "is it running now? (CNC-01)", str(told.questions[-1:]))
+    check("a model that then chose a plant-wide tool makes the answer claim no machine",
+          r["plan"]["planner"] == "llm" and r["thread"]["resolved"] is None, str(r["plan"]) + str(r["thread"]))
+    used = RecordingStub(plan=[{"name": "get_machine_history", "arguments": {"machine": "CNC-01"}}])
+    r = ask(A, "is it running now?", thread, llm=used)
+    check("a model that used the machine makes the answer say so",
+          r["plan"]["planner"] == "llm" and r["thread"]["resolved"] == {"machine": "CNC-01"}, str(r["thread"]))
+    fresh = RecordingStub()
+    ask(A, "what about the plant OEE?", thread, llm=fresh)
+    check("a question that resolved nothing reaches the model unchanged",
+          fresh.questions[-1] == "what about the plant OEE?", str(fresh.questions[-1:]))
+    told_b = RecordingStub(plan=[{"name": "get_machine_history", "arguments": {"machine": "WELD-07"}}])
+    r = ask(A, "and its downtime this week?", forged, llm=told_b)
+    check("a forged thread gives the model no name to be told, and its own WELD-07 guess is refused",
+          told_b.questions[-1] == "and its downtime this week?" and r["thread"]["resolved"] is None
+          and not markers_of(F.B, r), str(told_b.questions[-1:]) + str(r["tools"])[:160])
 
     print()
     if failures:

@@ -348,7 +348,12 @@ def _ask(db, principal, question, proposer, llm, thread=None) -> dict:
     # A model without native tool calling words answers but does not plan
     # (`can_plan = False`, ai/llm.py): AMP's router plans, as it always did.
     if llm is not None and getattr(llm, "can_plan", True):
-        llm_plan, why = _plan_with_llm(llm, q, principal, thread)
+        # AMP resolved a pronoun to a machine for its own plan (ADR-0035); the
+        # model is told the same, as a parenthetical on the question, so it is
+        # measured on the same task as AMP's planner and not a harder one. It
+        # still only names tools; the name it is given is one of this tenant's.
+        asked = f"{q} ({rules.resolved['machine']})" if rules.resolved else q
+        llm_plan, why = _plan_with_llm(llm, asked, principal, thread)
         if llm_plan is not None:
             plan = llm_plan
         if why:
@@ -405,7 +410,7 @@ def _ask(db, principal, question, proposer, llm, thread=None) -> dict:
            # What the follow-up machinery did with the caller's thread (ADR-0035):
            # how many prior turns were considered and, when AMP's planner filled
            # a pronoun with a machine, which one -- so the screen can say so.
-           "thread": {"turns": len(thread), "resolved": plan.resolved if plan.planner == "rules" else None},
+           "thread": {"turns": len(thread), "resolved": _resolved_in(plan, rules)},
            "elapsed_ms": round((time.perf_counter() - started) * 1000)}
     log.info("copilot answered", extra={"copilot": {
         "engine": engine, "planner": plan.planner, "thread_turns": len(thread),
@@ -417,6 +422,18 @@ def _ask(db, principal, question, proposer, llm, thread=None) -> dict:
         "state": out["state"], "elapsed_ms": out["elapsed_ms"],
         "usage": _usage_for_log(getattr(llm, "last_usage", None) if llm is not None else None)}})
     return out
+
+
+def _resolved_in(plan, rules):
+    """What the answer may claim it resolved (ADR-0035): the machine AMP's
+    planner filled a pronoun with, but only when the plan that actually ran
+    used that machine -- a model told the name and choosing another tool has
+    not answered about it, and the screen must not say "About LINE-01"."""
+    if not rules.resolved:
+        return None
+    name = rules.resolved.get("machine")
+    used = any(isinstance(a, dict) and a.get("machine") == name for _n, a in plan.calls)
+    return dict(rules.resolved) if used else None
 
 
 def _usage_for_log(usage):

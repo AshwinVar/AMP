@@ -68,6 +68,16 @@ and which tools AMP chose — never an answer, never evidence — and it still
 only *names* tools; AMP authorizes and runs them. The context-window check
 (ADR-0034 §7) counts the thread.
 
+When AMP's own planner has resolved a pronoun to a machine, the model is told
+so: the question reaches it as `is it running now? (LINE-01)`. Measured
+first without this (acceptance report §10): handed only the thread, qwen3:8b
+answered "is it running now?" with the plant-wide status list three times
+out of three — it resolved six of nine core follow-ups and failed the gate.
+The resolution is AMP's fact, produced deterministically from the caller's
+own machine list, and giving it to the model measures the model on the same
+task as AMP's planner rather than a harder one. The answer then claims a
+machine only if the plan that actually ran used it (`_resolved_in`).
+
 ### 5. The answer says what it resolved
 
 The response carries `thread: {turns, resolved}`. `resolved` is

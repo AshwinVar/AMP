@@ -35,6 +35,28 @@ from database import Base
 from factory_simulator import tick_inventory, _SIM_ISSUE_NOTE, _SIM_ISSUE_CAP
 
 
+import tenancy
+
+# A simulator tick runs for ONE bound tenant and refuses otherwise
+# (factory_simulator._bound_tenant). Every row these single-tenant fixtures
+# write is DEFAULT's. Bound around EACH test, not once at import: under pytest,
+# conftest resets the binding before every test (so a leaked tenant cannot
+# scope a stranger's test), which silently undid a module-level binding -- the
+# coverage job caught it. The standalone runner below binds once for its process.
+try:
+    import pytest
+except ImportError:                      # the standalone runner needs no pytest
+    pytest = None
+if pytest is not None:
+    @pytest.fixture(autouse=True)
+    def _bind_default_tenant():
+        token = tenancy.set_current_tenant(tenancy.DEFAULT_TENANT)
+        try:
+            yield
+        finally:
+            tenancy.reset_current_tenant(token)
+
+
 def _fresh_session():
     engine = create_engine("sqlite://", connect_args={"check_same_thread": False})
     Base.metadata.create_all(bind=engine)
@@ -158,6 +180,7 @@ def test_no_eligible_item_is_a_clean_no_op():
 
 
 if __name__ == "__main__":
+    tenancy.set_current_tenant(tenancy.DEFAULT_TENANT)   # one process, one tenant
     test_written_row_is_the_row_the_guard_counts()
     test_cap_bounds_the_ledger_under_sustained_ticking()
     test_cap_boundary_lets_the_last_row_through()

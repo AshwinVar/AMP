@@ -58,3 +58,30 @@ The enforcement PR first bound the request tenant with `@app.middleware("http")`
 **Fix:** bind the tenant with a **pure-ASGI middleware** (`TenantScopeMiddleware`) that shares the endpoint's task — POST bodies stream and the contextvar reaches the ORM. Verified on a running server (`POST /login` → 200; a GMATS login saw 0 of 7 `DEFAULT` machines) before redeploy.
 
 **Rule going forward:** never use `BaseHTTPMiddleware` for request-context/tenant binding — use pure ASGI. **Any middleware or auth change must be smoke-tested against a running server (boot + `POST /login`), not only unit tests** — see the deploy checklist (`docs/Production-Setup.md` §7).
+
+## Postmortem — writers with no request (2026-09-20)
+
+The scoping above is a contextvar a request binds. The simulator
+(`factory_simulator.tick_*`) is the one writer with **no request**: it animates
+several tenants from one background loop, and main binds the tenant itself
+before each tenant's ticks. With **nothing** bound, both halves of the
+mechanism stand down — the read filter is off, and the write stamp is off — and
+each `tenant_code` column's `default="DEFAULT"` fills the gap. So an unbound
+tick read **every** tenant's machines and work orders and filed what it wrote
+under the demo tenant: measured, 41 rows in twelve unbound rounds against the
+three-factory fixtures, telemetry and inspections for FACTORY_B's machines with
+`tenant_code = DEFAULT`. The loop never ran unbound; the CLI runner and any
+direct caller did. Only the heartbeat refused (ADR-0021).
+
+**Fix:** every tick refuses with no tenant bound (`factory_simulator._bound_tenant`,
+a `ValueError` that names the rule), and the CLI binds DEFAULT explicitly.
+Pinned per tick by `test_sim_ticks_need_a_tenant.py`, bent 16 ways by
+`mutate_sim_tenant_guard.py`, and proved against the whole three-factory world
+by `audit_three_factory_simulation.py` (CI, every push).
+
+**Rule going forward:** a writer that runs outside a request — a background
+loop, a CLI, a scheduled job — must bind its tenant explicitly and **refuse to
+run unbound**. "No tenant bound" is a legitimate state for a migration or a
+founder script that reads across tenants; it is never a legitimate state for
+something that writes rows a tenant will read back. The column default is a
+schema convenience for the single-tenant past, not a scoping rule.

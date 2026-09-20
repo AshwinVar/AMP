@@ -745,6 +745,28 @@ def _machine_events(db):
     log.info("[SEED] Machine Events")
 
 
+def _bound_tenant():
+    """The tenant this tick runs for -- and a refusal when there is none.
+
+    main._simulation_loop binds each simulated tenant in turn; the CLI at the
+    bottom of this file binds DEFAULT. With NOTHING bound the read filter is
+    off, so a tick would walk EVERY tenant's machines and work orders and stamp
+    what it wrote DEFAULT (the column default): telemetry, inspections and
+    operator jobs for FACTORY_B's machines, filed under the demo tenant.
+    Measured before this guard: 41 such rows in 12 unbound rounds
+    (audit_three_factory_simulation.py §5). The heartbeat refused this from
+    the day it was written (ADR-0021); now every tick does.
+
+    tenancy is imported here, not at the top: it pulls in auth, and this module
+    is also run standalone (see _next_number)."""
+    import tenancy
+    tenant = tenancy.current_tenant()
+    if not tenant:
+        raise ValueError("simulator ticks run for one bound tenant; with none bound a tick "
+                         "would read every tenant's rows and file what it wrote under DEFAULT")
+    return tenant
+
+
 def tick_production(db):
     """Occasionally add a SHORT production interval for a running machine — keeps
     OEE trends live at a physically plausible volume.
@@ -761,6 +783,7 @@ def tick_production(db):
     machine's window creep past a physical week, which then annualised (x52) into
     absurd recovery figures. This DB-state cap is shared by every caller, so the
     7-day OEE window can hold at most a real week of production no matter what."""
+    _bound_tenant()
     if random.random() > 0.25:
         return
     machines = db.query(models.Machine).filter(models.Machine.status == "Running").all()
@@ -791,6 +814,7 @@ def tick_production(db):
 
 def tick_machine_status(db):
     """Occasionally flip a machine's status and log the event — keeps the timeline live."""
+    _bound_tenant()
     machines = db.query(models.Machine).all()
     if not machines:
         return
@@ -827,9 +851,7 @@ def tick_status_heartbeat(db):
     import tenancy
     import telemetry_coverage
 
-    tenant = tenancy.current_tenant()
-    if not tenant:
-        raise ValueError("tick_status_heartbeat needs a bound tenant")
+    tenant = _bound_tenant()
     at = telemetry_coverage.received_at()
     machines = (db.query(models.Machine)
                   .filter(models.Machine.tenant_code == tenant)
@@ -900,6 +922,7 @@ def drift_utilization(current, delta):
 
 def tick_work_order_progress(db):
     """Advance the next In Progress WO. Flip Planned → In Progress if none."""
+    _bound_tenant()
     wo = db.query(models.WorkOrder).filter(
         models.WorkOrder.status == "In Progress"
     ).order_by(models.WorkOrder.id).first()
@@ -966,6 +989,7 @@ def tick_shift_entry(db):
     start-up date — a displayed label carrying a date the row doesn't have. One
     ``now`` also drives both the shift bucket and the date, so they can't disagree
     across a midnight tick."""
+    _bound_tenant()
     now   = datetime.now()
     shift = SHIFTS[now.hour // 8 % 3]
     target = random.randint(280, 450)
@@ -992,6 +1016,7 @@ def _next_number(db, prefix, model, column, start):
 
 def tick_quality(db):
     """Add a quality inspection for an active work order."""
+    _bound_tenant()
     wos      = db.query(models.WorkOrder).filter(models.WorkOrder.status == "In Progress").all()
     machines = db.query(models.Machine).all()
     if not wos or not machines:
@@ -1020,6 +1045,7 @@ def tick_quality(db):
 
 def tick_operator(db):
     """Update an in-progress operator job or start a new one."""
+    _bound_tenant()
     job = db.query(models.OperatorJobExecution).filter(
         models.OperatorJobExecution.job_status == "In Progress"
     ).first()
@@ -1054,6 +1080,7 @@ def tick_operator(db):
 
 def tick_iot(db):
     """Push new IoT telemetry rows for a random machine."""
+    _bound_tenant()
     machines = db.query(models.Machine).all()
     if not machines:
         return
@@ -1090,6 +1117,7 @@ _SIM_ISSUE_CAP = 120
 
 def tick_inventory(db):
     """Consume raw material inventory for production — capped at _SIM_ISSUE_CAP auto transactions."""
+    _bound_tenant()
     count = db.query(models.InventoryTransaction).filter(
         models.InventoryTransaction.notes == _SIM_ISSUE_NOTE
     ).count()
@@ -1116,6 +1144,7 @@ def tick_inventory(db):
 
 def tick_escalation(db):
     """Raise an escalation when a machine is in breakdown."""
+    _bound_tenant()
     machines = db.query(models.Machine).filter(
         models.Machine.status == "Breakdown"
     ).all()
@@ -1138,6 +1167,7 @@ def tick_escalation(db):
 
 def tick_customer_order(db):
     """Advance dispatched quantity on a pending customer order."""
+    _bound_tenant()
     order = db.query(models.CustomerOrder).filter(
         models.CustomerOrder.status.in_(["In Production", "Ready to Dispatch"])
     ).first()
@@ -1161,6 +1191,9 @@ def tick_customer_order(db):
 
 def run_simulation(db):
     """One simulation tick: randomly choose 2-4 actions to simulate."""
+    # Outside the try below: an unbound runner refuses ONCE, loudly, instead
+    # of printing a WARN for every tick it chose and animating nothing.
+    _bound_tenant()
     actions = [
         (tick_work_order_progress, 30),
         (tick_shift_entry,         8),
@@ -1185,17 +1218,32 @@ def run_simulation(db):
 # ENTRY POINT
 # ─────────────────────────────────────────────────────────────────
 
+def run_cli(db, rounds=None, pause=5.0):
+    """The live CLI loop: `rounds` passes of run_simulation (None: until
+    Ctrl+C), `pause` seconds apart, bound to the founder demo workspace and
+    nothing else. Bound explicitly, because a tick with no tenant bound
+    refuses (_bound_tenant): on a database holding several customers it would
+    otherwise walk all of them and file what it wrote under DEFAULT."""
+    import tenancy
+    scope = tenancy.set_current_tenant(tenancy.DEFAULT_TENANT)
+    try:
+        tick = 0
+        while rounds is None or tick < rounds:
+            tick += 1
+            print(f"[Tick #{tick:04d}]")
+            run_simulation(db)
+            if pause:
+                time.sleep(pause)
+    finally:
+        tenancy.reset_current_tenant(scope)
+
+
 if __name__ == "__main__":
     db = SessionLocal()
     try:
         seed_all(db)
-        tick = 0
         print("Live simulation running. Press Ctrl+C to stop.\n")
-        while True:
-            tick += 1
-            print(f"[Tick #{tick:04d}]")
-            run_simulation(db)
-            time.sleep(5)
+        run_cli(db)
     except KeyboardInterrupt:
         print("\nSimulator stopped.")
     finally:

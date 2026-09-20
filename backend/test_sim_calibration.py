@@ -19,6 +19,28 @@ from database import Base
 from factory_simulator import drift_utilization, tick_production, tick_shift_entry
 
 
+import tenancy
+
+# A simulator tick runs for ONE bound tenant and refuses otherwise
+# (factory_simulator._bound_tenant). Every row these single-tenant fixtures
+# write is DEFAULT's. Bound around EACH test, not once at import: under pytest,
+# conftest resets the binding before every test (so a leaked tenant cannot
+# scope a stranger's test), which silently undid a module-level binding -- the
+# coverage job caught it. The standalone runner below binds once for its process.
+try:
+    import pytest
+except ImportError:                      # the standalone runner needs no pytest
+    pytest = None
+if pytest is not None:
+    @pytest.fixture(autouse=True)
+    def _bind_default_tenant():
+        token = tenancy.set_current_tenant(tenancy.DEFAULT_TENANT)
+        try:
+            yield
+        finally:
+            tenancy.reset_current_tenant(token)
+
+
 def _fresh_session():
     engine = create_engine("sqlite://", connect_args={"check_same_thread": False})
     Base.metadata.create_all(bind=engine)
@@ -152,6 +174,7 @@ def test_null_utilization_running_machine_does_not_break_the_sim_write():
 
 
 if __name__ == "__main__":
+    tenancy.set_current_tenant(tenancy.DEFAULT_TENANT)   # one process, one tenant
     test_production_ticks_are_short_slices_at_gated_cadence()
     test_a_machine_cannot_exceed_a_physical_day_of_production()
     test_shift_entry_is_labelled_with_the_live_date_not_a_stale_import_date()

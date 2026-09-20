@@ -185,6 +185,45 @@ serves today — the worst service time is **24 ms** and the worst saturated p50
 is 196 ms. Recorded as a measured **P4**, so the decision can be made from
 numbers when it matters.
 
+### Re-run 2026-09-20 13:12 UTC: raw p50 lower everywhere, `xfloor` higher at 50 machines, and why both are true
+
+Run again for the sprint's acceptance record, same driver, PostgreSQL 18.3,
+against master `c355457` (17 days and 135 master commits after the run above), and
+committed to `backend/loadtest_results.json` as the new baseline. **Zero errors
+in all 32 endpoint/scale combinations.** Raw p50 at 1,000 machines, 2026-09-03
+→ 2026-09-20:
+
+| endpoint | p50 | p95 |
+|---|---:|---:|
+| `/analytics/executive-oee` | 574.5 → **435.9 ms** | 709 → 622 ms |
+| `/analytics/summary` | 466.2 → **305.5 ms** | 504 → 430 ms |
+| `/inventory/items` | 162.7 → **68.0 ms** | 227 → 251 ms |
+| `/machines` | 184.2 → 178.3 ms | 316 → 326 ms |
+| `/oee/summary` | 39.8 → 41.6 ms | 143 → 181 ms |
+| everything else | 22–59 → 24–51 ms | |
+
+The driver's own verdict was **NO REGRESSION at 10 and 250 machines**,
+**REGRESSED at 50 machines on every endpoint (1.25–1.48× `xfloor`)** and
+**REGRESSED on `/oee/summary` at 1,000 machines (1.34×)** — while the raw p50 at
+50 machines *fell* at every endpoint (0.78–0.93×). Both are true because the
+client floor fell further: 9.1 → 5.7 ms at 50 machines (0.63×), 7.3 → 5.7 at
+1,000. `xfloor` divides by the floor, so a floor that improves by more than the
+endpoint did reads as a regression. The section below shows the normalisation
+earning its keep when the *machine* is busier (floor up, endpoints up with
+it); a floor that comes *down* on its own — a quieter machine, a faster client
+— over-corrects the other way. So the reading is: **no endpoint's raw p50 rose
+by more than 5% (`/oee/summary`, 39.8 → 41.6 ms); p95 at 50 machines is 20–50%
+higher (`/machines` 90 → 127 ms) with p50 lower, which is tail noise under
+8-in-flight queueing on a laptop, not a service-time change; and the floor
+comparison is inconclusive when the floor itself moves this much.** Treat the
+2026-09-20 file as the baseline for the next run, and read `xfloor` only
+between runs whose floors are within ~10% of each other.
+
+Also measured in the same run, 1,000 machines: WebSocket fan-out 1,306
+frames/s to 1,000 connected sockets (0.08 ms per broadcast round); MQTT ingest
+44,527 messages/s (no HTTP). The k6 baseline tables at the end of this document
+remain UNMEASURED; nothing here is a k6 run.
+
 ### Why `xfloor` and not milliseconds: three runs of identical code
 
 `loadtest.py` was run twice more on 2026-09-03 — once while the laptop was busy,

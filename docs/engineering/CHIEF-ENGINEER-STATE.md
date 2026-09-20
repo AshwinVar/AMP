@@ -6,19 +6,20 @@
 **Updated:** 2026-09-20. The 10-day differentiation sprint is running. Merged so
 far: #645 (ADR-0022, typed authorized tools + evidence + grounding + the
 evaluation), #646 (ADR-0023, the self-hosted provider behind an earned switch),
-#647 (ADR-0024, the Command Centre), #648 (ADR-0025, the Root-Cause Explorer)
-and #649 (ADR-0026, the Risk Radar). In review: the explained health score and
-the failure-risk model's first screen (ADR-0027). See AMP-10-DAY-SPRINT.md.
-**Master SHA:** `04f9c02` (#649).
-**Production SHA:** `04f9c02`, verified live, not assumed:
-`{"status":"ok","database":"ok","schema":"ok","version":"04f9c02"}` from
-`https://flowmes-production.up.railway.app/health`, read at 00:54 UTC on
+#647 (ADR-0024, the Command Centre), #648 (ADR-0025, the Root-Cause Explorer),
+#649 (ADR-0026, the Risk Radar) and #650 (ADR-0027, the explained health score
+and the failure-risk model's first screen). In review: the Daily Factory Brief
+(ADR-0028). See AMP-10-DAY-SPRINT.md.
+**Master SHA:** `a1071d1` (#650).
+**Production SHA:** `a1071d1`, verified live, not assumed:
+`{"status":"ok","database":"ok","schema":"ok","version":"a1071d1"}` from
+`https://flowmes-production.up.railway.app/health`, read at 01:39 UTC on
 2026-09-20; `/readiness` 200; the frontend (`https://flow-mes.vercel.app`)
-answers 200; `GET /risk-radar` refuses an unauthenticated call with 401.
+answers 200; `GET /machine-health/1` and `GET /ai/native/failure-risk` both
+refuse an unauthenticated call with 401.
 Railway auto-deploys master, so prod tracks HEAD; re-check `/health` rather than
 trusting this line's age.
-**Awaiting review:** the explained health score and the failure-risk model's
-first screen (ADR-0027, `feat/machine-health`).
+**Awaiting review:** the Daily Factory Brief (ADR-0028, `feat/daily-brief`).
 
 **THE 10-DAY DIFFERENTIATION SPRINT started 2026-09-19.** Its own tracker is
 [`AMP-10-DAY-SPRINT.md`](AMP-10-DAY-SPRINT.md): day, SHAs, the 16

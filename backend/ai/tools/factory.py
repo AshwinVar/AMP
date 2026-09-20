@@ -22,6 +22,7 @@ import models
 import oee_contract
 from ai import assistant
 from ai import evidence as ev
+from ai.brief import say_brief
 from ai.briefing import build_briefing
 from ai.compliance import build_compliance_summary
 from ai.cost import build_cost_summary
@@ -752,3 +753,33 @@ def get_failure_risk(db, tenant):
                          facts=facts, view="machines",
                          notes=[caveat, "Not a maintenance instruction: no action here has been "
                                         "validated against real failures."])
+@tool("get_daily_brief",
+      "The written daily brief for the whole plant: where it stands, what changed against last "
+      "week, what is wrong ranked by what it cost, why, what is likely to become a problem, how "
+      "the shifts did, what is waiting for a decision — and what AMP could NOT see. Use for "
+      "'give me the brief', 'the daily update', 'brief me', 'what do I need to know today'.",
+      mirrors="/daily-brief", view="overview", domain="plant")
+def get_daily_brief(db, tenant):
+    from ai.brief import build_daily_brief   # lazy: pulls in every pillar module
+    b = build_daily_brief(db, tenant)
+    blind = [s for s in b["blind_spots"] if s["state"] != ev.OK]
+    facts = [
+        _fact("brief.sections", "Sections in the brief", len(b["sections"]), M, "sections",
+              "daily brief", b["window"]),
+        # The count of things AMP could not see is itself a fact, so the Copilot
+        # can state it and the grounding gate can check it. A brief that hid this
+        # number would read as more complete than it is.
+        _fact("brief.blind_spots", "Things AMP could not see", len(blind), M, "gaps",
+              "daily brief", b["window"]),
+    ]
+    # One fact per section carrying its own state, so a reader is told WHICH part
+    # of the brief is thin rather than only that some part is.
+    for s in b["sections"]:
+        facts.append(_fact(f"brief.section.{s['key']}", s["title"], s["state"], R,
+                           source="daily brief", window=b["window"],
+                           detail=(s["lines"][0] if s["lines"] else "")))
+    for i, spot in enumerate(blind[:3], 1):
+        facts.append(_fact(f"brief.blind_{i}", f"Not measured {i}", spot["text"], U,
+                           source="daily brief", window=b["window"]))
+    state = b["state"] if b["state"] in ev.DATA_STATES else ev.OK
+    return _result("get_daily_brief", state, say_brief(b), facts, notes=[b["note"]])

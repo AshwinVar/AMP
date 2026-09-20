@@ -56,6 +56,7 @@ import FlowSnapshot from "../../components/FlowSnapshot";
 import ShiftSnapshot from "../../components/ShiftSnapshot";
 import BriefingSnapshot from "../../components/BriefingSnapshot";
 import CommandCentreSection from "../../components/CommandCentreSection";
+import DailyBriefSection from "../../components/DailyBriefSection";
 import RootCauseSection from "../../components/RootCauseSection";
 import RiskRadarSection from "../../components/RiskRadarSection";
 import DeliverySnapshot from "../../components/DeliverySnapshot";
@@ -2065,6 +2066,12 @@ export default function DashboardPage() {
             window.scrollTo({ top: 0, behavior: "smooth" });
           }}
         />
+      </div>
+
+      {/* The Daily Factory Brief (ADR-0028): the cards below, read out in order
+          in one page — and the section none of them has, what AMP could not see. */}
+      <div className="mb-8">
+        <DailyBriefSection />
       </div>
 
       {/* The Command Centre (ADR-0024): where the plant is, what is wrong ranked

@@ -67,6 +67,8 @@ QUESTIONS = [
     ("worry", "What should I worry about this week?", {"get_production_risks"}, [], "unseen"),
     ("why_health", "Why is CNC-01's health score so low?", {"get_machine_history"}, [], "unseen"),
     ("health_points", "What is taking points off CNC-01?", {"get_machine_history"}, [], "unseen"),
+    ("brief", "Give me the daily brief", {"get_daily_brief"}, [], "core"),
+    ("catch_up", "Catch me up on the factory", {"get_daily_brief"}, [], "unseen"),
 ]
 
 # (id, question). Asked by every factory and every role.

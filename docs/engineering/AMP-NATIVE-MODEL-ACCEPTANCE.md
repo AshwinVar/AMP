@@ -72,19 +72,35 @@ Baseline is AMP's own rule engine, measured in the same run.
 
 | Measure | AMP rules | qwen3:8b | qwen3:4b | granite3.3:8b | mistral-nemo:12b |
 |---|---|---|---|---|---|
-| Core tool selection | 69/69 | **69/69** | **69/69** | pending | pending |
-| Unseen tool selection | 60/66 (91%) | **63/66 (95%)** | **63/66 (95%)** | pending | pending |
-| Wrong tool | 6/135 | **3/135** | **3/135** | pending | pending |
-| Factual accuracy | 93/93 | **93/93** | **93/93** | pending | pending |
-| Answers grounded | 279/279 | **279/279** | **279/279** | pending | pending |
-| Honest data states | 14/14 | **14/14** | **14/14** | pending | pending |
-| Money fabrications | 0 | **0** | **0** | pending | pending |
-| **Unauthorized disclosures** | 0 | **0** | **0** | pending | pending |
-| Worded by the model | — | 237 | 191 | pending | pending |
-| Rejected by the grounding gate | — | 36 | 76 | pending | pending |
-| Ungrounded texts shown | — | **0** | **0** | pending | pending |
-| Latency p50 / p95 | 4 / 38 ms | **8.2 s / 17.5 s** | 14.1 s / 21.0 s | pending | pending |
-| **Gate** | — | **PASSED** | **PASSED** | pending | pending |
+| Core tool selection | 69/69 | **69/69** | **69/69** | 63/69 (91%) | pending |
+| Unseen tool selection | 60/66 (91%) | **63/66 (95%)** | **63/66 (95%)** | 60/66 (91%) | pending |
+| Wrong tool | 6/135 | **3/135** | **3/135** | 12/135 | pending |
+| Factual accuracy | 93/93 | **93/93** | **93/93** | 86/93 (92%) | pending |
+| Answers grounded | 279/279 | **279/279** | **279/279** | **279/279** | pending |
+| Honest data states | 14/14 | **14/14** | **14/14** | 12/14 | pending |
+| Money fabrications | 0 | **0** | **0** | **0** | pending |
+| **Unauthorized disclosures** | 0 | **0** | **0** | **0** | pending |
+| Worded by the model | — | 237 | 191 | 255 | pending |
+| Rejected by the grounding gate | — | 36 | 76 | 6 | pending |
+| Ungrounded texts shown | — | **0** | **0** | **0** | pending |
+| Latency p50 / p95 | 4 / 38 ms | **8.2 s / 17.5 s** | 14.1 s / 21.0 s | **1.6 s / 3.1 s** | pending |
+| **Gate** | — | **PASSED** | **PASSED** | **NOT PASSED** | pending |
+
+**granite3.3:8b, read by case rather than by count.** It fails on exactly two
+questions, on all three factories: *losses* ("what are we losing?"), where it
+calls `get_top_downtime_causes` instead of the losses tool, and *fpy*
+("first-pass yield"), where it calls `get_top_downtime_causes` and
+`find_record` before finally reaching `get_quality_summary` — so the seven
+factual misses are all the quality oracle facts, and the two honest-state
+misses follow from the same two questions (*losses* at the unpriced factory
+worded as OK; *fpy* at the partial factory). Everything else it does well: it
+does not think, so it is **five times faster** than qwen3:8b, its wording is
+refused by the gate only 6 times in 279, and it discloses nothing. The gate is
+right to refuse it — a model that mis-routes two of the owner's questions is
+not an upgrade however fluent — and the failure is narrow enough that a tool
+description tuned for "yield" and "losses" might change the verdict. That is
+work on AMP's side, recorded here rather than done, because the candidate that
+already passes needs no such help.
 
 Two things the 4B run says that the gate does not: it is **slower** than the
 8B on this GPU (it thinks longer before naming a tool), and the gate refused
@@ -95,9 +111,9 @@ to its own sentence more. Routing and safety are identical; fluency is not.
 
 | | qwen3:8b | qwen3:4b | granite3.3:8b | mistral-nemo:12b |
 |---|---|---|---|---|
-| Cross-tenant disclosure | **0** | **0** | pending | pending |
-| Cross-OEM disclosure | **0** | **0** | pending | pending |
-| Consent / authorization bypass | **0** (AMP decides, never the model) | **0** | pending | pending |
+| Cross-tenant disclosure | **0** | **0** | **0** | pending |
+| Cross-OEM disclosure | **0** | **0** | **0** | pending |
+| Consent / authorization bypass | **0** (AMP decides, never the model) | **0** | **0** | pending |
 
 ## 5. What the first model taught AMP (ADR-0034)
 

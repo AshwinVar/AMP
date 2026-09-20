@@ -17,12 +17,12 @@ A feature that can't be built honestly is marked **BLOCKED** with the reason, an
 | Field | Value |
 |---|---|
 | Sprint start | 2026-09-19 |
-| Day | 2 (Copilot foundation merged; self-hosted provider in review) |
+| Day | 8 (fifteen of the sixteen differentiators built; Days 9–10 remain) |
 | Master SHA at start | `eaf66c8` |
 | Production SHA at start | `eaf66c8`. Checked 2026-09-19 00:00 UTC: `/health` ok, `/readiness` at migration `0010_outcome_contracts`, frontend returned 200. |
-| Merged | #645 (`d0d50aa`): typed Copilot tools, evidence, grounding gate, evaluation. Production verified at `d0d50aa` on 2026-09-19 01:50 UTC: `/health` ok (database, schema), `/readiness` 200, frontend 200, `/copilot/ask` refuses an unauthenticated call (401). |
-| Open PRs | the self-hosted provider, the adoption record, `/ai/ask` through the orchestrator (ADR-0023) |
-| Production status | healthy. Current SHA: see CHIEF-ENGINEER-STATE.md after each merge. |
+| Merged | #645 `d0d50aa` (typed tools, evidence, grounding gate, evaluation) · #646–#648 the provider, the adoption record and the orchestrator · #649 `04f9c02` Risk Radar · #650 `a1071d1` machine health explained · #651 `3e15d9c` Daily Brief · #652 `82ac27f` closed loop (migration `0011`) · #653 `e0671ca` shortage impact · #654 `ed0e226` proactive restraint · #655 `d7a93e3` anomaly sweep. |
+| Open PRs | ADR-0033, the OEM disclosure floor. |
+| Production status | healthy at `d7a93e3`, verified 2026-09-20 05:47 UTC: `/health` ok (database, schema, version), `/readiness` 200 at migration `0011_action_outcomes`, frontend 200, and `/ai/native/anomaly/sweep`, `/proactive` and `/action-outcomes` each refuse an unauthenticated call (401). |
 
 ## Day 1: baseline
 
@@ -77,7 +77,7 @@ Until then:
 | 12 | Smart inventory linked to production | BUILT | ADR-0030: `GET /shortage-impact`, the `get_shortage_risk` tool and a card on Inventory. Open work orders through the tenant's own BOM, stock allocated in due-date order, and the units that cannot be made. An item in no recipe gets NO figure and is listed with the reason. The Risk Radar adopts it, supplying the link ADR-0026 said was missing. Nothing is ordered: the demand figure sits beside the Reorder agent's draft |
 | 13 | Closed-loop actions, with the result measured | BUILT | ADR-0029: migration `0011` and `action_outcomes`; an approval freezes the metric it was meant to move, the window is left to elapse before anything is judged, the reading is frozen once, and every change is labelled CORRELATION with the caveat attached. `GET /action-outcomes`, the `get_action_outcomes` tool and a card on the agent view |
 | 14 | Proactive intelligence without alert spam | BUILT | ADR-0031: `GET /proactive` computes, `POST /proactive/send` is the only write. Three things interrupt — a machine stopped now, a LIKELY risk, an approved action whose metric got WORSE — and everything held back is reported with its reason (SAID RECENTLY / BELOW THE BAR / OVER THE CAP). Stable signatures, a 24h cooldown and a cap of 5, with no new table |
-| 15 | OEM intelligence from consented data | NOT STARTED | — |
+| 15 | OEM intelligence from consented data | BUILT | ADR-0033: `GET /oem/intelligence` and a card on the OEM portal. Counts come from the manufacturer's own shipment records; every cross-customer figure needs at least 2 CUSTOMERS (not machines) contributing, because an average over one customer is that customer's reading with a new label. A withheld figure is UNKNOWN with its reason, never a zero, and the per-model slice obeys the same floor |
 | 16 | Honest data states | DONE (Copilot) | `ai/evidence.DATA_STATES`; empty stock is no longer called "healthy" and an empty plant is no longer "All 0 machines running" |
 
 ## AI benchmark (copilot_eval, three factories, 37 questions + 15 adversarial prompts × 3 factories × 3 roles)
@@ -127,8 +127,14 @@ The scripted model behaviours test what AMP does with a model; they are not a mo
 
 1. ~~**Provider adapter.**~~ Done in ADR-0023. `/ai/ask` now goes through the orchestrator, which also fixed its tenant. The model is used only once it is adopted. The adapter is tested over HTTP against a stub.
    - **Still open:** per-company consent before factory data goes to an **external** provider (Anthropic or Gemini). That is the next change.
-2. **Command Centre and Daily Brief** (Day 5), built from the tools and evidence.
-3. **Root-Cause Explorer and Risk Radar** (Day 6), with CAUSE labels.
-4. **Machine Health, anomaly and failure-risk surfaced honestly** (Day 7).
-5. **Smart inventory, closed loop with a measured result, proactive alerts, OEM intelligence** (Day 8).
-6. **Adversarial campaign, the three-factory and OEM journeys, release candidate** (Days 9–10).
+2. ~~**Command Centre and Daily Brief**~~ (Day 5). ADR-0024 and ADR-0028.
+3. ~~**Root-Cause Explorer and Risk Radar**~~ (Day 6). ADR-0025 and ADR-0026.
+4. ~~**Machine Health, anomaly and failure-risk surfaced honestly**~~ (Day 7). ADR-0027 and ADR-0032.
+5. ~~**Smart inventory, closed loop with a measured result, proactive alerts, OEM intelligence**~~ (Day 8). ADR-0030, ADR-0029, ADR-0031 and ADR-0033.
+6. **Adversarial campaign, the three-factory and OEM journeys, release candidate** (Days 9–10). ← next.
+   - Fifteen of the sixteen differentiators are BUILT. The one that is not is
+     #2's *model*: the provider, the switch and the evaluation exist and are
+     tested against stubs, and no real model has been measured because the
+     download is still blocked on the founder.
+   - #7 stays PARTIAL on purpose: money appears only where a unit value is set,
+     and the sprint has added no way to invent one.

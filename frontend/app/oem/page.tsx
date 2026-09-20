@@ -22,6 +22,9 @@ import {
   type FleetMachine,
   type OemIdentity,
   type ServiceRecommendation,
+  fetchOemIntelligence,
+  saySharedFigure,
+  type OemIntelligence,
 } from "../../lib/oem";
 
 /**
@@ -76,6 +79,70 @@ function Tile({
   );
 }
 
+/**
+ * The installed base in aggregate (ADR-0033).
+ *
+ * Counts come from the manufacturer's own shipment records. Every operational
+ * figure needs at least `coverage.floor` customers sharing it, because an
+ * average over ONE customer is that customer's reading with a new label — so a
+ * withheld figure shows its reason here, never a blank and never a zero.
+ */
+function FleetIntelligence({ intel }: { intel: OemIntelligence }) {
+  // A partial payload must not break the fleet screen. Same rule as the loader
+  // above: a failure here is never allowed to empty the page.
+  if (!intel?.fleet) return null;
+  const hours = saySharedFigure(intel.operating_hours);
+  const util = saySharedFigure(intel.utilisation);
+  return (
+    <section className="rounded-2xl border border-slate-800 bg-slate-900/60 p-5">
+      <h2 className="text-lg font-semibold text-white">Your installed base</h2>
+      <p className="text-slate-300 text-sm mt-1">{intel.headline}</p>
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mt-4">
+        <Tile label="Machines" value={intel.fleet.machines} hint={intel.fleet.detail} />
+        <Tile label="Customers" value={intel.fleet.customers} hint={intel.fleet.detail} />
+        <Tile
+          label={intel.operating_hours.label}
+          value={hours.value}
+          hint={hours.note}
+        />
+        <Tile label={intel.utilisation.label} value={util.value} hint={util.note} />
+      </div>
+      {(intel.models ?? []).length > 0 && (
+        <table className="w-full text-xs mt-4" aria-label="Models in the installed base">
+          <thead>
+            <tr className="text-slate-500 text-left">
+              <th className="font-normal py-1 pr-3">Model</th>
+              <th className="font-normal py-1 pr-3">Machines</th>
+              <th className="font-normal py-1 pr-3">Customers</th>
+              <th className="font-normal py-1">Average operating hours</th>
+            </tr>
+          </thead>
+          <tbody>
+            {(intel.models ?? []).map((m) => {
+              const said = saySharedFigure(m.average_operating_hours);
+              return (
+                <tr key={m.model_id ?? m.model_code} className="border-t border-slate-800">
+                  <td className="py-1 pr-3 text-slate-300">{m.model_code ?? "\u2014"}</td>
+                  <td className="py-1 pr-3 text-slate-300 tabular-nums">{m.machines}</td>
+                  <td className="py-1 pr-3 text-slate-300 tabular-nums">{m.customers}</td>
+                  <td className={said.muted ? "py-1 text-slate-500" : "py-1 text-slate-200 tabular-nums"}>
+                    {said.value}
+                    {said.muted && <span className="block text-[11px]">{said.note}</span>}
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      )}
+      {intel.coverage?.phrase && (
+        <p className="text-[11px] text-slate-500 mt-3">{intel.coverage.phrase}.</p>
+      )}
+      <p className="text-[11px] text-slate-500 mt-1">{intel.note}</p>
+    </section>
+  );
+}
+
 export default function OemPortalPage() {
   const router = useRouter();
 
@@ -83,6 +150,7 @@ export default function OemPortalPage() {
   const [machines, setMachines] = useState<FleetMachine[]>([]);
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [queue, setQueue] = useState<ServiceRecommendation[]>([]);
+  const [intel, setIntel] = useState<OemIntelligence | null>(null);
   const [models, setModels] = useState<
     Array<{ id: number; model_code: string; name: string }>
   >([]);
@@ -106,14 +174,19 @@ export default function OemPortalPage() {
         fetchCustomers(),
         fetchServiceQueue(),
         fetchModels(),
+        // ADR-0033: the installed base in aggregate, and only what the
+        // customers granted. A failure here must not empty the fleet screen,
+        // so it resolves to null rather than rejecting the whole load.
+        fetchOemIntelligence().catch(() => null),
       ])
-        .then(([me, fleet, custs, service, catalogue]) => {
+        .then(([me, fleet, custs, service, catalogue, summary]) => {
           setError("");
           setIdentity(me);
           setMachines(fleet.machines);
           setCustomers(custs.customers);
           setQueue(service.recommendations);
           setModels(catalogue);
+          setIntel(summary);
         })
         .catch((e: unknown) => {
           // WHETHER THIS IS AN OEM SESSION IS THE SERVER'S ANSWER, NOT THE
@@ -236,6 +309,14 @@ export default function OemPortalPage() {
 
       {identity && (
         <>
+          {/* ADR-0033: the installed base in aggregate, above the per-machine
+              tiles, and only from what the customers granted. */}
+          {intel && (
+            <div className="mt-6">
+              <FleetIntelligence intel={intel} />
+            </div>
+          )}
+
           <section className="mt-6 grid gap-3 grid-cols-2 lg:grid-cols-5">
             <Tile label="Machines" value={summary.total} />
             <Tile label="Active" value={summary.active} />

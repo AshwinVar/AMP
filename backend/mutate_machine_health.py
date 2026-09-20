@@ -113,8 +113,15 @@ MUTATIONS = [
     ("the caveat falls off the result", TOOLS,
      '                         notes=[caveat, "Not a maintenance instruction: no action here has been "',
      '                         notes=["Not a maintenance instruction: no action here has been "'),
+    # Anchored on the tool's OWN mirrors line, not on `roles=` alone: this
+    # constant is shared with other model-backed tools (ADR-0032's sweep), and a
+    # bare `roles=FAILURE_RISK_ROLES)` stopped naming one line the moment a
+    # second tool reused it. An anchor that matches twice tests nothing.
     ("the model tool stops restricting roles", TOOLS,
-     "      roles=FAILURE_RISK_ROLES)", "      roles=())"),
+     '      mirrors="/ai/native/failure-risk", view="machines", domain="machines",\n'
+     "      roles=FAILURE_RISK_ROLES)",
+     '      mirrors="/ai/native/failure-risk", view="machines", domain="machines",\n'
+     "      roles=())"),
     ("an unavailable model produces an estimate anyway", TOOLS,
      '    if result.get("status") != "ok":', '    if False:'),
 ]

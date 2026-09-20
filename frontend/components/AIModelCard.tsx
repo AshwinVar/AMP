@@ -7,6 +7,7 @@ import {
   dataLabel,
   describeAnomaly,
   describeAnomalyError,
+  describeSweepRow,
   describeFailureRisk,
   formatDifference,
   formatInterval,
@@ -14,6 +15,7 @@ import {
   modelIdentity,
   verdictBadge,
   type AnomalyResult,
+  type AnomalySweep,
   type AnomalyView,
   type FailureRiskResponse,
   type HeadlineRow,
@@ -184,6 +186,9 @@ function AnomalyCheck() {
   const [machineId, setMachineId] = useState<string>("");
   const [view, setView] = useState<AnomalyView | null>(null);
   const [busy, setBusy] = useState(false);
+  const [fleet, setFleet] = useState<AnomalySweep | null>(null);
+  const [sweeping, setSweeping] = useState(false);
+  const [sweepError, setSweepError] = useState<string | null>(null);
   const { error, track } = useLoadError();
 
   useEffect(() => {
@@ -201,6 +206,21 @@ function AnomalyCheck() {
       setBusy(false);
     }
   }, [machineId]);
+
+  const sweep = useCallback(async () => {
+    setSweeping(true);
+    try {
+      setFleet(await apiGet<AnomalySweep>("/ai/native/anomaly/sweep"));
+      setSweepError(null);
+    } catch (e) {
+      // A refusal (no consent, or a preview) is an ANSWER, not a blank: the
+      // wording helper already knows how to say each one.
+      setFleet(null);
+      setSweepError(describeAnomalyError(e).text);
+    } finally {
+      setSweeping(false);
+    }
+  }, []);
 
   return (
     <div className="mt-3 border-t border-slate-800 pt-3">
@@ -227,7 +247,38 @@ function AnomalyCheck() {
         >
           {busy ? "Checking…" : "Check the last hour"}
         </button>
+        {/* ADR-0032: the same check over every machine, so a plant is not asked
+            to work through a dropdown to know it has looked at them all. */}
+        <button
+          type="button"
+          onClick={sweep}
+          disabled={sweeping}
+          className="rounded-lg border border-slate-600 text-slate-300 text-xs px-3 py-1 disabled:opacity-50"
+        >
+          {sweeping ? "Checking the fleet…" : "Check every machine"}
+        </button>
       </div>
+      {sweepError && <p className="text-xs text-slate-300 mt-2">{sweepError}</p>}
+      {fleet && (
+        <div className="mt-2 rounded-lg border border-slate-700 bg-slate-950/60 p-2">
+          <p className="text-xs text-slate-300">{fleet.headline}</p>
+          {fleet.machines.length > 0 && (
+            <ul className="mt-2 space-y-1">
+              {/* Every machine, scored or not. A row with no score shows its
+                  REASON: dropping it would read as a machine that was fine. */}
+              {fleet.machines.map(describeSweepRow).map((row) => (
+                <li key={row.id} className="text-xs flex flex-wrap items-baseline gap-x-2">
+                  <span className="text-slate-300">{row.name}</span>
+                  <span className={row.muted ? "text-slate-500" : "text-slate-200 tabular-nums"}>
+                    {row.value}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          )}
+          <p className="text-[11px] text-slate-500 mt-2">{fleet.note}</p>
+        </div>
+      )}
       {view && (
         <div className="mt-2 rounded-lg border border-slate-700 bg-slate-950/60 p-2">
           <p className="text-xs text-slate-300">{view.text}</p>

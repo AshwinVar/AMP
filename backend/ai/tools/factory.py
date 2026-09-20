@@ -898,3 +898,40 @@ def get_what_to_raise(db, tenant):
                            q["why"], R, source=q["kind"], window="now"))
     state = p["state"] if p["state"] in ev.DATA_STATES else ev.OK
     return _result("get_what_to_raise", state, say_proactive(p), facts, notes=[p["bar"]])
+
+
+@tool("get_anomaly_sweep",
+      "AMP's experimental telemetry check, run over every machine at once: a score where there "
+      "is enough history and consent, and the reason there is not one everywhere else. The check "
+      "did NOT beat the existing rules on held-out data, so its numbers are estimates and never "
+      "alarms. Use for 'is anything behaving oddly', 'check the telemetry', 'run the anomaly check'.",
+      mirrors="/ai/native/anomaly/sweep", view="machines", domain="machines",
+      roles=FAILURE_RISK_ROLES)
+def get_anomaly_sweep(db, tenant):
+    from amp_ai import consent                 # the same gate the route uses
+    from amp_ai.telemetry_anomaly import service
+    from ai.anomaly_sweep import NOT_ADOPTED, build_anomaly_sweep, say_anomaly_sweep
+
+    s = build_anomaly_sweep(db, tenant, scorer=service.score_machine,
+                            gate=consent.DbConsentGate())
+    facts = [
+        _fact("anomaly.scored", "Machines scored", s["scored"], M, "machines", "telemetry baseline",
+              "last hour"),
+        # The machines AMP could NOT score are a fact. Reporting only the scored
+        # ones would make a thin fleet look like a clean one.
+        _fact("anomaly.not_scored", "Machines it could not score", s["not_scored"], M, "machines",
+              "telemetry baseline", "last hour",
+              detail="each one says why: no history, no telemetry, or no model"),
+    ]
+    if not s["consent"]:
+        facts.append(_fact("anomaly.consent", "Learning consent", "not granted", M,
+                           source="ai_learning_consent", window="now",
+                           detail="AMP fitted no baselines and scored nothing"))
+    for row in [r for r in s["machines"] if r["score"] is not None][:3]:
+        # MODEL ESTIMATE, the same label the failure-risk model gets, for the
+        # same reason: it is neither measured nor derived from a measurement.
+        facts.append(_fact(f"anomaly.{row['machine_id']}", f"{row['name']}: anomaly score",
+                           row["score"], ev.MODEL, "", "telemetry baseline", "last hour",
+                           detail=NOT_ADOPTED))
+    state = s["state"] if s["state"] in ev.DATA_STATES else ev.MODEL_NOT_VALIDATED
+    return _result("get_anomaly_sweep", state, say_anomaly_sweep(s), facts, notes=[NOT_ADOPTED])

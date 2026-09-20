@@ -37,6 +37,7 @@ Guiding principles: incremental (strangler) evolution, never a rewrite; backward
 | [0029](0029-closed-loop-outcomes.md) | Did it help? Measured, and never claimed as a cause | Accepted |
 | [0030](0030-shortage-impact.md) | A shortage is sized from the tenant's own recipe, or not sized at all | Accepted |
 | [0031](0031-proactive-restraint.md) | AMP speaks first, and mostly decides not to | Accepted |
+| [0032](0032-anomaly-sweep.md) | The anomaly check runs over the whole fleet, and says why for every machine it could not score | Accepted |
 
 **Recommended order:** 0001 first (smaller, proves the pattern; events carry `tenant_code`), then 0002.
 

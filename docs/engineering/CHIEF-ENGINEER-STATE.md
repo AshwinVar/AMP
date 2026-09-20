@@ -11,22 +11,21 @@ evaluation), #646 (ADR-0023, the self-hosted provider behind an earned switch),
 the failure-risk model's first screen) and #651 (ADR-0028, the Daily Factory
 Brief) and #652 (ADR-0029, the closed loop — what changed after an approved
 action, the sprint's first schema change) and #653 (ADR-0030, the
-shortage-to-production link). In review: proactive restraint — what AMP would
-say unprompted, and everything it holds back (ADR-0031). See
-AMP-10-DAY-SPRINT.md.
-**Master SHA:** `e0671ca` (#653).
-**Production SHA:** `e0671ca`, verified live, not assumed:
-`{"status":"ok","database":"ok","schema":"ok","version":"e0671ca"}` from
-`https://flowmes-production.up.railway.app/health`, read at 03:56 UTC on
-2026-09-20; `/readiness` 200 and still at `0011_action_outcomes` (the migration
-that shipped with #652 ran in production and was verified there). The frontend
-(`https://flow-mes.vercel.app`) answers 200; `GET /shortage-impact` refuses an
-unauthenticated call with 401.
+shortage-to-production link) and #654 (ADR-0031, proactive restraint). In
+review: the anomaly check across the whole fleet, with a reason for every
+machine it could not score (ADR-0032). See AMP-10-DAY-SPRINT.md.
+**Master SHA:** `ed0e226` (#654).
+**Production SHA:** `ed0e226`, verified live, not assumed:
+`{"status":"ok","database":"ok","schema":"ok","version":"ed0e226"}` from
+`https://flowmes-production.up.railway.app/health`, read at 04:20 UTC on
+2026-09-20; `/readiness` 200, schema at `0011_action_outcomes`. The frontend
+(`https://flow-mes.vercel.app`) answers 200; `GET /proactive` and
+`POST /proactive/send` both refuse an unauthenticated call with 401.
 Railway auto-deploys master, so prod tracks HEAD; re-check `/health` rather than
 trusting this line's age.
-**Awaiting review:** proactive restraint (ADR-0031, `feat/proactive`) — AMP
-speaks first, and mostly decides not to, reporting everything it held back and
-why.
+**Awaiting review:** the fleet anomaly sweep (ADR-0032, `feat/anomaly-sweep`) —
+the same experimental check over every machine, with a reason for each one it
+could not score, and deliberately not wired into the proactive bar.
 
 **THE 10-DAY DIFFERENTIATION SPRINT started 2026-09-19.** Its own tracker is
 [`AMP-10-DAY-SPRINT.md`](AMP-10-DAY-SPRINT.md): day, SHAs, the 16

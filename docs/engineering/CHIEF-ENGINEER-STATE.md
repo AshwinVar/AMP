@@ -29,13 +29,13 @@ the simulator's tenant guard: a tick with no tenant bound now refuses instead
 of filing every tenant's activity under DEFAULT — ADR-0002 postmortem). See
 AMP-10-DAY-SPRINT.md, AMP-NATIVE-MODEL-ACCEPTANCE.md and, for the twelve
 acceptance items with their evidence, AMP-SPRINT-ACCEPTANCE.md.
-**Master SHA:** `ba06970` (#665).
-**Production SHA:** `ba06970`, verified live, not assumed:
-`{"status":"ok","database":"ok","schema":"ok","version":"ba06970"}` from
+**Master SHA:** `bbfdc4f` (#667).
+**Production SHA:** `bbfdc4f`, verified live, not assumed:
+`{"status":"ok","database":"ok","schema":"ok","version":"bbfdc4f"}` from
 `https://flowmes-production.up.railway.app/health`, read 48 s after the deploy
-on 2026-09-20; `/readiness` 200. The frontend (`https://flow-mes.vercel.app`)
-answers 200; `/ai/status` refuses an unauthenticated call with 401, and so does
-`POST /copilot/ask` sent a valid `{question, thread}` body. Production has no
+on 2026-09-21 (UTC); `/readiness` 200. The frontend (`https://flow-mes.vercel.app`)
+answers 200; `/ai/status` refuses an unauthenticated call with 401, and so did
+`POST /copilot/ask` sent a valid `{question, thread}` body at `ba06970`. Production has no
 GPU and no `AMP_LLM_BASE_URL`, and no self-hosted model is currently adopted
 anywhere (the committed record is the failing one, below), so the Copilot
 answers from AMP's own engine everywhere.
@@ -76,7 +76,10 @@ deliberately not done to change the verdict — widening the case after seeing
 the model's choice, and rewording tool descriptions to steer it —
 AMP-NATIVE-MODEL-ACCEPTANCE.md §10 records both runs and leaves the "is the
 plant-wide status list an acceptable answer?" judgement to the founder,
-before any next run.
+before any next run. Also merged: #667 `bbfdc4f`, test-only — the schema
+guard's throwaway databases use `NullPool`, so the coverage job's
+single-process pytest run passes on Windows too (it re-creates the same temp
+file twice; the default pool held it open).
 
 **Nothing else is awaiting review.** What a next session would do first, in order:
 (1) the OEM journey re-check against a real OEM's edge agent is still simulated

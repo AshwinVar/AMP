@@ -1002,7 +1002,7 @@ flowchart LR
 ### Common confusion
 - **"AMP uses machine learning to predict failures."** Not on any existing screen — Machine Health, the briefing and the agents use the **deterministic risk score** (hand-tuned thresholds). Say "rule-based predictive scoring" — and since ADR-0027 the Machine Health card shows that scoring's arithmetic: every rule it ran, the points each took off, the value it read and the threshold it read against, with the note that none of it is machine learning. AMP also ships an AMP-native failure-risk model (below), shown on its own card beside the rule and evaluated on **synthetic** machines only. Never quote its numbers as accuracy on a real plant.
 - **"Agents act on their own."** Only Reorder is auto-approved by default, and even then it produces a **Draft** PO, never a placed order. All others wait for a human.
-- **"The copilot needs an API key."** The *LLM* copilot does; the *rule-based* assistant (which powers most of the chat experience) does not.
+- **"The copilot needs an API key."** No. The *rule-based* assistant (which powers most of the chat experience) needs nothing; the *LLM* copilot needs either a hosted key **or** a self-hosted OpenAI-compatible endpoint (`AMP_LLM_BASE_URL` + `AMP_LLM_MODEL`, ADR-0023/0034). AMP is pinned to run with no hosted key at all (`test_copilot_local_provider.py` §4b), and `qwen3:8b` is the promoted self-hosted model.
 
 ### If you want to change/add an agent
 Add a handler in `ai/agents.py`, register it on the relevant event in `ai/agents.register()`, route its proposal through `_propose()` + `AgentAction`, and it inherits the whole approval/oversight machinery for free. Tune a threshold = edit the constant at the top of `ai/agents.py`.
@@ -1032,7 +1032,7 @@ Add a handler in `ai/agents.py`, register it on the relevant event in `ai/agents
 **Never say:** "our model beats our rules" as evidence the model is good. On the simulated data the failure-risk rule barely works and one raw input does as well as the model; the card says so.
 
 ### Quick recap
-AMP's "AI" = mostly **deterministic rules** + read-models, **one optional LLM** feature (off without a key, always with a rules fallback), and **three small AMP-native models** trained or evaluated on synthetic data only: one adopted (failure risk, beside the rule on its own view) and two not (ADR-0020). Five agents observe events and **propose** actions into a pending state, logged as `AgentAction` rows that are simultaneously audit trail and approval queue; the `approvals.py` gate (re-checking the DB, not the token) makes a human the authority. Only Reorder auto-approves, and only into a Draft.
+AMP's "AI" = mostly **deterministic rules** + read-models, **one optional LLM** feature (off until a hosted key or a self-hosted model is configured, always with a rules fallback; `qwen3:8b` is the promoted self-hosted model, and production — no GPU — still answers from the rules), and **three small AMP-native models** trained or evaluated on synthetic data only: one adopted (failure risk, beside the rule on its own view) and two not (ADR-0020). Five agents observe events and **propose** actions into a pending state, logged as `AgentAction` rows that are simultaneously audit trail and approval queue; the `approvals.py` gate (re-checking the DB, not the token) makes a human the authority. Only Reorder auto-approves, and only into a Draft.
 
 ---
 
@@ -1852,15 +1852,36 @@ An honest capability map — essential for technical diligence and OEM conversat
 | MQTT + HTTP telemetry ingest, live WebSocket | ✅ **BUILT + WORKING** | paho-mqtt + native WS |
 | Machine data source (the telemetry itself) | 🟡 **SIMULATED** | random-value publisher scripts; the *pipeline* is real |
 | Direct PLC protocols (OPC-UA, Modbus, S7, EtherNet/IP, ADS, FINS) | 🟡 **SIMULATED / REQUIRES OEM** | clean adapter framework; **no real driver installed**; needs per-OEM edge agent |
-| LLM copilot | 🟡 **BUILT, OFF BY DEFAULT** | works only with an API key; rule-based assistant is the default |
-| Predictive maintenance | 🟡 **RULE-BASED** (not ML) | deterministic risk score; **no trained ML models exist** |
+| LLM copilot | 🟡 **BUILT · self-hosted model promoted · off on production** | ADR-0023/0034: runs on a hosted key **or** a self-hosted model (`AMP_LLM_BASE_URL`), no hosted key required; `qwen3:8b` passed the 279-question evaluation with zero disclosures and is promoted; production has no GPU, so it answers from AMP's own engine; every model sentence passes the grounding gate and the rules answer without any model |
+| Predictive maintenance | 🟡 **RULE-BASED on every screen · one ML MODEL on its own card, synthetic-trained** | Machine Health, the brief and the agents use the deterministic risk score; the AMP-native failure-risk model (pure-Python logistic regression, ADR-0020/0027) is adopted against that rule on **synthetic** machines only and **has not been proven on real factory failure data** |
 | PROFINET / EtherCAT / CANopen | ❌ **NOT IMPLEMENTED** | test inputs only |
 
 ### The one-paragraph honest pitch
-*"AMP is a working, multi-tenant, event-driven manufacturing platform: real MES, real tenant isolation, real live telemetry ingest (MQTT/HTTP + WebSocket), real AI agents under human approval, and a real OEM fleet/consent platform — all CI-tested and deployed with migrations-gated releases. The intelligence is deterministic rules today (with an optional LLM copilot and no trained ML yet), and direct PLC-protocol connectivity is simulated behind a ready adapter interface, pending per-OEM edge agents. Everything a customer clicks is real; the machine-side drivers and ML are the honest next frontier."*
+*"AMP is a working, multi-tenant, event-driven manufacturing platform: real MES, real tenant isolation, real live telemetry ingest (MQTT/HTTP + WebSocket), real AI agents under human approval, and a real OEM fleet/consent platform — all CI-tested and deployed with migrations-gated releases. The intelligence is deterministic rules on every screen, plus a grounded copilot that can run on a self-hosted model (promoted after a 279-question evaluation, not yet on production hardware) and three small AMP-native models trained or evaluated on synthetic data only — one adopted beside the rule, none proven on real failures. Direct PLC-protocol connectivity is simulated behind a ready adapter interface, pending per-OEM edge agents. Everything a customer clicks is real; the machine-side drivers and ML validated on a real plant are the honest next frontier."*
 
 ### Quick recap
-The platform, MES, isolation, events, agents, OEM, SaaS, and CI/CD are **real and working**. The **data source** (simulator), **direct PLC protocols** (adapter framework, no drivers), **LLM** (optional), and **ML** (none yet) are the clearly-labelled edges. Never claim ML or live PLC connectivity you don't have.
+The platform, MES, isolation, events, agents, OEM, SaaS, and CI/CD are **real and working**. The **data source** (simulator), **direct PLC protocols** (adapter framework, no drivers), **LLM** (optional; a self-hosted model is promoted, production answers from rules), and **ML** (three small synthetic-trained models, one adopted, none validated on a real plant) are the clearly-labelled edges. Never claim ML validated on real data, or live PLC connectivity, that you don't have — and never market one kind of engine as another (the table below says which is which).
+
+### Every intelligence engine, classified (what kind of thing each one is)
+
+Four kinds of engine exist in AMP, and each is sold as what it is. The
+provenance label on every Copilot figure (`ai/evidence.py`: `MEASURED FACT`,
+`DERIVED METRIC`, `CORRELATION`, `RULE-BASED ASSESSMENT`, `MODEL ESTIMATE`)
+is the same distinction at the level of one number. `test_intelligence_classification.py`
+reads this table and the model cards and fails the build if they disagree —
+so if a model is adopted, retired or replaced, this table changes in the same
+PR or CI goes red.
+
+| Engine | Kind | What that means here | Evidence and limits |
+|---|---|---|---|
+| Rule-based engines: Command Centre, Daily Brief, Root-Cause Explorer, Risk Radar, Machine Health score, shortage impact, proactive restraint, OEM intelligence, the five agents | **RULE-BASED** | Deterministic thresholds and arithmetic on measured rows; every payload states the rule it applied, and a figure it cannot size says so | `ai/*.py`, ADR-0024 to ADR-0033; provenance `RULE-BASED ASSESSMENT` / `DERIVED METRIC` / `MEASURED FACT`; no learning, nothing persisted |
+| Telemetry anomaly check (`amp_ai/telemetry_anomaly`) | **STATISTICAL** | Robust per-state baselines fitted **per request** from that one machine's previous 14 days, scored and thrown away; needs the company's `telemetry_baseline` consent | **Not adopted**: on held-out synthetic data it did not reliably beat a mean/std baseline. Shown as `MODEL NOT VALIDATED`, never as an alarm (ADR-0032) |
+| Failure-risk model (`amp_ai/failure_risk`) | **ML MODEL** | Pure-Python logistic regression, hash-pinned artifact, trained on a documented synthetic fleet; scoring a tenant's rows learns nothing | **Adopted** against the rule scorer on **synthetic** machines only (PR-AUC 0.194 vs 0.094) and shown on its own card beside the rule. It **has not been proven on real factory failure data**; Machine Health, the brief and the agents do not use it |
+| Copilot intent model (`amp_ai/copilot_intent`) | **ML MODEL** | Multinomial logistic regression on an AMP-authored question corpus; can only name an allowlisted pillar | **Not adopted**: +3.1 points over the keyword router on held-out questions, under the 5-point gate. The keyword router routes |
+| Copilot planning and wording (`ai/orchestrator.py`, `ai/llm.py`) | **LLM-ASSISTED** | A language model names which authorized tools to run and words the evidence they return; AMP decides authorization, runs the tools and grounds every sentence (ADR-0022/0023) | `qwen3:8b` (self-hosted, Apache 2.0) is the promoted model in `ai/adopted_models.json` — 279/279 grounded, 0 disclosures across 144 adversarial prompts (ADR-0034). Production has no GPU, so production answers from the rules; the model never invents a figure because the gate refuses one |
+| Connectivity cadence, OEE, losses in good units | **MEASURED / DERIVED** | A median reporting gap, ratios of counted rows | `ai/connectivity.py`, `oee_contract.py`; provenance `MEASURED FACT` / `DERIVED METRIC` |
+
+**Do not market one as another.** "Predictive maintenance" on a screen means the rule; the model is a card with a synthetic-only caveat. "AI copilot" means AMP's tools with a model choosing and wording — never a model answering from its own knowledge. And the failure-risk model's accuracy on a real plant is **unknown until a real plant's failures are held out and scored**, which no customer has yet consented to.
 
 ---
 
@@ -1895,7 +1916,7 @@ The platform, MES, isolation, events, agents, OEM, SaaS, and CI/CD are **real an
 >
 > It's **multi-tenant SaaS** — many factories on one platform, each cryptographically walled off from the others. On top of the core MES (machines, work orders, inventory, quality, OEE) sits an **event bus** so new capabilities plug in without touching old code, a layer of **AI read-models and agents**, and — newest — an **OEM platform** that lets machine-makers watch their equipment across customer factories, but only with each factory's explicit consent.
 >
-> The intelligence today is mostly **smart rules plus an optional LLM copilot** — no trained ML yet, and direct PLC connectivity is simulated behind a ready adapter, so I'm honest about where the real edges are. Everything a user clicks is real, tenant-isolated, tested, and deployed through a migration-gated pipeline."
+> The intelligence today is mostly **smart rules plus a grounded copilot** that can run on a self-hosted model — the only trained models are small, synthetic-trained and labelled as such — and direct PLC connectivity is simulated behind a ready adapter, so I'm honest about where the real edges are. Everything a user clicks is real, tenant-isolated, tested, and deployed through a migration-gated pipeline."
 
 ---
 

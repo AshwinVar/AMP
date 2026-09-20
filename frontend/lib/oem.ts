@@ -340,3 +340,69 @@ export function fleetSummary(machines: FleetMachine[]) {
     ).length,
   };
 }
+
+// ── Fleet intelligence, only from consented data (ADR-0033) ──────────
+
+/** A cross-customer figure, or the reason it is withheld. */
+export type PooledFigure = {
+  label: string;
+  value: number | null;
+  customers: number;
+  machines: number;
+  state: string;
+  withheld: boolean;
+  reason: string | null;
+};
+
+export type OemIntelligence = {
+  state: string;
+  headline: string;
+  fleet: { machines: number; customers: number; models: number; active: number; detail: string };
+  models: Array<{
+    model_id: number | null;
+    model_code: string | null;
+    model_name: string | null;
+    machines: number;
+    customers: number;
+    average_operating_hours: PooledFigure;
+  }>;
+  operating_hours: PooledFigure;
+  utilisation: PooledFigure;
+  coverage: {
+    customers_sharing_anything: number;
+    customers_total: number;
+    machines_with_hours: number;
+    machines_total: number;
+    floor: number;
+    phrase: string;
+  };
+  note: string;
+};
+
+export const fetchOemIntelligence = () => get<OemIntelligence>("/oem/intelligence");
+
+/**
+ * How a pooled figure may be shown.
+ *
+ * A withheld figure shows its REASON, never a blank and never a zero — the
+ * whole point of ADR-0033 is that an average over one customer is that
+ * customer's reading with a new label, so the screen must not quietly render
+ * its absence as "0".
+ */
+export function saySharedFigure(f: PooledFigure | null | undefined): {
+  value: string;
+  muted: boolean;
+  note: string;
+} {
+  // A figure that is not in the payload at all is the same answer as one that
+  // was withheld: not shown. Never a blank, and never a zero.
+  if (!f) return { value: "not shown", muted: true, note: "" };
+  if (f.withheld) {
+    return { value: "not shown", muted: true, note: f.reason ?? "" };
+  }
+  return {
+    value: f.value === null ? "not shown" : f.value.toLocaleString(),
+    muted: false,
+    note: `pooled across ${f.customers} customers, ${f.machines} machines`,
+  };
+}

@@ -1,3 +1,4 @@
+import { saySharedFigure, type PooledFigure } from "../../lib/oem";
 import { render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -195,5 +196,35 @@ describe("a real failure is not an empty fleet", () => {
     expect(screen.getByRole("alert").textContent).toContain("database is down");
     expect(screen.queryByText(/No installations recorded/)).toBeNull();
     expect(screen.queryByText(/This is the manufacturer portal/)).toBeNull();
+  });
+});
+
+describe("fleet intelligence, only from consented data (ADR-0033)", () => {
+  const figure = (over: Partial<PooledFigure> = {}): PooledFigure => ({
+    label: "Average operating hours across the fleet",
+    value: 3333.3, customers: 2, machines: 3, state: "OK", withheld: false, reason: null,
+    ...over,
+  });
+
+  it("shows a pooled figure with the customers it pooled", () => {
+    const said = saySharedFigure(figure());
+    expect(said.value).toBe("3,333.3");
+    expect(said.muted).toBe(false);
+    expect(said.note).toBe("pooled across 2 customers, 3 machines");
+  });
+
+  it("shows the REASON for a withheld figure, never a blank and never a zero", () => {
+    const said = saySharedFigure(figure({
+      value: null, customers: 1, machines: 2, withheld: true,
+      reason: "Fewer than 2 customers share this, so a figure here would be one customer's reading with a new label. AMP does not publish it.",
+    }));
+    expect(said.value).toBe("not shown");
+    expect(said.value).not.toBe("0");
+    expect(said.muted).toBe(true);
+    expect(said.note).toContain("one customer's reading with a new label");
+  });
+
+  it("says 'not shown' rather than inventing a number when the value is missing", () => {
+    expect(saySharedFigure(figure({ value: null })).value).toBe("not shown");
   });
 });

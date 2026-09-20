@@ -132,6 +132,21 @@ def fleet(customer: str = Query(None, description="Filter to one customer"),
     return {"total": total, "limit": limit, "offset": offset, "machines": out}
 
 
+@router.get("/intelligence")
+def intelligence(db: Session = Depends(_get_db),
+                 principal: dict = Depends(oem_auth.require_oem("read_fleet"))):
+    """The installed base in aggregate, and only what the customers granted (ADR-0033).
+
+    Counts come from the manufacturer's own shipment records and need no grant.
+    Every operational figure is pooled across customers and published only when
+    at least ai.oem_intelligence.MIN_CUSTOMERS of them contributed -- an average
+    over one customer is that customer's reading with a new label, which is
+    exactly the disclosure the per-machine gate refuses.
+    """
+    from ai.oem_intelligence import build_oem_intelligence
+    return build_oem_intelligence(db, principal["oem"])
+
+
 @router.get("/customers")
 def customers(db: Session = Depends(_get_db),
               principal: dict = Depends(oem_auth.require_oem("read_fleet"))):

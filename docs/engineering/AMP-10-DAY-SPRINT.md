@@ -17,12 +17,12 @@ A feature that can't be built honestly is marked **BLOCKED** with the reason, an
 | Field | Value |
 |---|---|
 | Sprint start | 2026-09-19 |
-| Day | 9 (fifteen of the sixteen differentiators built; the acceptance journey is in CI) |
+| Day | 10 (fifteen of the sixteen differentiators built, row 7 partial; the twelve acceptance items and their evidence are in `AMP-SPRINT-ACCEPTANCE.md`) |
 | Master SHA at start | `eaf66c8` |
 | Production SHA at start | `eaf66c8`. Checked 2026-09-19 00:00 UTC: `/health` ok, `/readiness` at migration `0010_outcome_contracts`, frontend returned 200. |
-| Merged | #645 `d0d50aa` (typed tools, evidence, grounding gate, evaluation) · #646–#648 the provider, the adoption record and the orchestrator · #649 `04f9c02` Risk Radar · #650 `a1071d1` machine health explained · #651 `3e15d9c` Daily Brief · #652 `82ac27f` closed loop (migration `0011`) · #653 `e0671ca` shortage impact · #654 `ed0e226` proactive restraint · #655 `d7a93e3` anomaly sweep · #656 `564afac` OEM disclosure floor · #657 `baa35a5` the owner's eight questions across four factory shapes. |
-| Open PRs | none. |
-| Production status | healthy at `baa35a5`, verified 2026-09-20 06:39 UTC: `/health` ok (database, schema, version), `/readiness` 200 at migration `0011_action_outcomes`, frontend 200, and `/ai/native/anomaly/sweep`, `/oem/intelligence`, `/shortage-impact`, `/proactive` and `/action-outcomes` each refuse an unauthenticated call (401). |
+| Merged | #645 `d0d50aa` (typed tools, evidence, grounding gate, evaluation) · #646–#648 the provider, the adoption record and the orchestrator · #649 `04f9c02` Risk Radar · #650 `a1071d1` machine health explained · #651 `3e15d9c` Daily Brief · #652 `82ac27f` closed loop (migration `0011`) · #653 `e0671ca` shortage impact · #654 `ed0e226` proactive restraint · #655 `d7a93e3` anomaly sweep · #656 `564afac` OEM disclosure floor · #657 `baa35a5` the owner's eight questions across four factory shapes · #658 `feb7615` handover docs · #659 `f0da7e6` the complementary-suppression floor (ADR-0033 §7) · #660 `c7f4ca5` the grounding gate stops reading identifiers and dates as figures · #661 `b8cffca` the first real self-hosted model, `qwen3:8b` promoted (ADR-0034) · #663 `c355457` every intelligence engine classified, with a drift guard. |
+| Open PRs | #662 — the three-factory simulation audit and the simulator's tenant guard (CI green on the backend job; the coverage job's pytest run found the module-level tenant binding conftest resets, fixed in `7e921a6`). |
+| Production status | healthy at `c355457`, verified 2026-09-20 within a minute of the #663 deploy: `/health` ok (database, schema, version), `/readiness` 200, frontend 200, `/ai/status` and `/ai/models/*` refuse an unauthenticated call (401). Earlier the same day at `baa35a5` (06:39 UTC) and `b8cffca`: the same, plus `/ai/native/anomaly/sweep`, `/oem/intelligence`, `/shortage-impact`, `/proactive` and `/action-outcomes` each refuse an unauthenticated call (401). |
 
 ## Day 1: baseline
 

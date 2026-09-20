@@ -3,29 +3,51 @@
 > Handover file. A new session should be able to read only this and continue.
 > Keep it short. Update it at the end of every completed task.
 
-**Updated:** 2026-09-20. The 10-day differentiation sprint is running. Merged so
-far: #645 (ADR-0022, typed authorized tools + evidence + grounding + the
-evaluation), #646 (ADR-0023, the self-hosted provider behind an earned switch),
-#647 (ADR-0024, the Command Centre), #648 (ADR-0025, the Root-Cause Explorer),
-#649 (ADR-0026, the Risk Radar), #650 (ADR-0027, the explained health score and
-the failure-risk model's first screen) and #651 (ADR-0028, the Daily Factory
-Brief) and #652 (ADR-0029, the closed loop — what changed after an approved
-action, the sprint's first schema change) and #653 (ADR-0030, the
-shortage-to-production link) and #654 (ADR-0031, proactive restraint). In
-review: the anomaly check across the whole fleet, with a reason for every
-machine it could not score (ADR-0032). See AMP-10-DAY-SPRINT.md.
-**Master SHA:** `ed0e226` (#654).
-**Production SHA:** `ed0e226`, verified live, not assumed:
-`{"status":"ok","database":"ok","schema":"ok","version":"ed0e226"}` from
-`https://flowmes-production.up.railway.app/health`, read at 04:20 UTC on
+**Updated:** 2026-09-20. The 10-day differentiation sprint is running, and
+**fifteen of its sixteen differentiators are built**. Merged: #645 (ADR-0022,
+typed authorized tools + evidence + grounding + the evaluation), #646
+(ADR-0023, the self-hosted provider behind an earned switch), #647 (ADR-0024,
+the Command Centre), #648 (ADR-0025, the Root-Cause Explorer), #649 (ADR-0026,
+the Risk Radar), #650 (ADR-0027, the explained health score and the
+failure-risk model's first screen), #651 (ADR-0028, the Daily Factory Brief),
+#652 (ADR-0029, the closed loop — the sprint's first schema change, migration
+`0011`), #653 (ADR-0030, the shortage-to-production link), #654 (ADR-0031,
+proactive restraint), #655 (ADR-0032, the fleet anomaly sweep), #656 (ADR-0033,
+the OEM disclosure floor) and #657 (the owner's eight questions across four
+factory shapes). See AMP-10-DAY-SPRINT.md.
+**Master SHA:** `baa35a5` (#657).
+**Production SHA:** `baa35a5`, verified live, not assumed:
+`{"status":"ok","database":"ok","schema":"ok","version":"baa35a5"}` from
+`https://flowmes-production.up.railway.app/health`, read at 06:39 UTC on
 2026-09-20; `/readiness` 200, schema at `0011_action_outcomes`. The frontend
-(`https://flow-mes.vercel.app`) answers 200; `GET /proactive` and
-`POST /proactive/send` both refuse an unauthenticated call with 401.
+(`https://flow-mes.vercel.app`) answers 200, and `/ai/native/anomaly/sweep`,
+`/oem/intelligence`, `/shortage-impact`, `/proactive` and `/action-outcomes`
+each refuse an unauthenticated call with 401.
 Railway auto-deploys master, so prod tracks HEAD; re-check `/health` rather than
 trusting this line's age.
-**Awaiting review:** the fleet anomaly sweep (ADR-0032, `feat/anomaly-sweep`) —
-the same experimental check over every machine, with a reason for each one it
-could not score, and deliberately not wired into the proactive bar.
+**Nothing is awaiting review.** Days 9–10 remain: the adversarial campaign, the
+OEM journey, and the release-candidate documents.
+
+**The one differentiator that is NOT built is #2's model.** The provider, the
+earned switch and the evaluation all exist and are tested end to end over HTTP
+against stubs. **No real model has ever been measured**, because downloading
+the runtime and the weights needs the founder's permission and that has been
+open since 2026-09-19. Local inference does not become the default until a real
+model passes the gate: zero unauthorized disclosures, zero ungrounded answers
+shown, and tool selection at least equal to AMP's own engine.
+
+**The current benchmark is AMP's own engine** (`python -m copilot_eval`, read
+2026-09-20): 135 questions plus 144 adversarial prompts across three factories
+and three roles — tool selection 69/69 core and 60/66 unseen, factual accuracy
+93/93, answers grounded 279/279, honest data states 14/14, **0 money
+fabrications and 0 unauthorized disclosures**, p50 4 ms.
+
+**#657 is worth reading before adding a tenth surface.** It asks the owner's
+eight questions across four factory shapes in one process, and it exists for
+the rules that only hold BETWEEN surfaces — money appearing nowhere across nine
+screens for an unpriced factory, and no factory's words on another's screen
+when four tenants share one database. It found two defects on its first run,
+both of which every per-surface suite had passed.
 
 **THE 10-DAY DIFFERENTIATION SPRINT started 2026-09-19.** Its own tracker is
 [`AMP-10-DAY-SPRINT.md`](AMP-10-DAY-SPRINT.md): day, SHAs, the 16

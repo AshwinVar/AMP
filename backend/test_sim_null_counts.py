@@ -42,8 +42,22 @@ import tenancy
 
 # A simulator tick runs for ONE bound tenant and refuses otherwise
 # (factory_simulator._bound_tenant). Every row these single-tenant fixtures
-# write is DEFAULT's, so DEFAULT is bound once for the module.
-tenancy.set_current_tenant(tenancy.DEFAULT_TENANT)
+# write is DEFAULT's. Bound around EACH test, not once at import: under pytest,
+# conftest resets the binding before every test (so a leaked tenant cannot
+# scope a stranger's test), which silently undid a module-level binding -- the
+# coverage job caught it. The standalone runner below binds once for its process.
+try:
+    import pytest
+except ImportError:                      # the standalone runner needs no pytest
+    pytest = None
+if pytest is not None:
+    @pytest.fixture(autouse=True)
+    def _bind_default_tenant():
+        token = tenancy.set_current_tenant(tenancy.DEFAULT_TENANT)
+        try:
+            yield
+        finally:
+            tenancy.reset_current_tenant(token)
 
 
 def _fresh_session():
@@ -228,6 +242,7 @@ def test_customer_order_tick_survives_null_dispatched_quantity():
 
 
 if __name__ == "__main__":
+    tenancy.set_current_tenant(tenancy.DEFAULT_TENANT)   # one process, one tenant
     test_work_order_progress_survives_null_actual_quantity()
     test_work_order_progress_completes_from_null_when_target_is_tiny()
     test_work_order_progress_survives_null_target_quantity()

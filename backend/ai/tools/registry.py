@@ -206,8 +206,16 @@ def run_tool(db, principal: Principal, name, args=None) -> ev.ToolResult:
         return ev.refusal(t.name, ev.NOT_PERMITTED,
                           "The Copilot answers for a factory workspace only.")
     if not permitted(t, principal):
+        # The refusal does NOT name the roles that would be allowed. A tool result
+        # can travel to the language model as the draft it is asked to word
+        # (orchestrator._compose -> llm.phrase), and AMP tells a model nothing
+        # about who is asking -- not the tenant, not the username, not the role.
+        # test_copilot_local_provider.py section 5 asserts exactly that on every
+        # request body. Naming the permitted roles would also tell any user the
+        # shape of the role model, which is not theirs to learn from a refusal.
         return ev.refusal(t.name, ev.NOT_PERMITTED,
-                          f"Your role can't see this. It needs: {', '.join(t.roles)}.")
+                          "Your role can't see this in AMP. Someone with wider access in your "
+                          "workspace can open it.")
     pack = pack_of(t)
     if not module_manifest.pack_licensed(pack, frozenset()):
         packs = _licensed_packs(principal.tenant)

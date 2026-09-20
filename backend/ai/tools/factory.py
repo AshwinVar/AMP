@@ -193,9 +193,13 @@ def get_machine_history(db, tenant, machine):
         _fact("machine.open_maintenance", "Open maintenance tasks", d["open_maintenance_tasks"], M, "tasks",
               "maintenance_tasks", "now"),
     ]
-    for i, reason in enumerate(d.get("risk_factors", [])[:4], 1):
-        facts.append(_fact(f"machine.risk_factor_{i}", f"Health factor {i}", str(reason), R,
-                           source="predictive_engine", window="now"))
+    # The score's own arithmetic: each rule that fired, with the points it cost,
+    # what it read and the threshold it read against (ADR-0027). These are
+    # numbers a reader can add up to the score, not adjectives.
+    for cost in (d.get("health_explanation") or {}).get("deductions", [])[:4]:
+        facts.append(_fact(f"machine.health_cost.{cost['key']}", f"{cost['label']} cost",
+                           cost["points"], R, "points", "predictive_engine", "now",
+                           detail=f"read {cost['reading']}, rule: {cost['threshold']}"))
     oee = d.get("oee") or {}
     if oee.get("has_data"):
         facts.append(_fact("machine.oee", f"{name} OEE", oee["oee"], D, "%", "production_records"))
@@ -666,3 +670,85 @@ def get_inventory_status(db, tenant):
                            i.get("unit") or "", "inventory_items", "now",
                            detail=f"reorder level {i['reorder_level']}"))
     return _result("get_inventory_status", ev.OK, said, facts)
+
+
+# ── The trained model, said as a model ──────────────────────────────
+
+# AMP has exactly ONE adopted model, and the most honest thing a Copilot can do
+# with it is refuse to make it sound like more than it is. This tool is the only
+# one that returns MODEL ESTIMATE provenance, it always returns the data state
+# MODEL NOT VALIDATED, and it carries the artifact's own caveat as a note. Its
+# roles are copied from /ai/native/failure-risk (Admin, Supervisor) — the first
+# tool narrower than a plain authenticated read, so the role check in run_tool
+# has a real case, not only a test double. See ADR-0027.
+FAILURE_RISK_ROLES = ("Admin", "Supervisor")
+_MODEL_LEAD = ("This is a model estimate, not a measurement, and the model has only been "
+               "evaluated on synthetic machines.")
+
+
+@tool("get_failure_risk",
+      # No role is named in a description: the catalogue is sent to the model on
+      # every planning call, and AMP tells a model nothing about who is asking.
+      # Whether this tool may run is decided by run_tool, from the Principal the
+      # route built -- never by the model, and never from anything it can read.
+      "AMP's trained failure-risk model: the estimated chance each machine starts a new "
+      "breakdown in the next 7 days, beside the rule score for the same machine. The model "
+      "has only been evaluated on synthetic data, so its numbers are estimates, not measurements.",
+      mirrors="/ai/native/failure-risk", view="machines", domain="machines",
+      roles=FAILURE_RISK_ROLES)
+def get_failure_risk(db, tenant):
+    from datetime import datetime
+
+    from amp_ai.failure_risk import db_history, predict    # lazy: pulls the artifact loader
+    as_of = datetime.utcnow()                              # naive UTC, as every AMP column stores it
+    result = predict.predict(db_history.load_histories(db, tenant, as_of), as_of)
+    caveat = predict.CAVEAT
+    if result.get("status") != "ok":
+        # The artifact is missing, edited or unreadable. Say that, in those words:
+        # a model that cannot be verified produces no number here, ever.
+        return ev.ToolResult(
+            tool="get_failure_risk", state=ev.NOT_MEASURED,
+            summary=("AMP's failure-risk model is not available right now, so there is no model "
+                     "estimate to give. The rule-based health score is unaffected."),
+            facts=[_fact("model.available", "Model available", "no", M, source="amp_ai", window="now",
+                         detail="the pinned artifact did not verify")],
+            view="machines", notes=[caveat])
+
+    scored = [m for m in result["machines"] if m.get("probability") is not None]
+    scored.sort(key=lambda m: -m["probability"])
+    excluded = [m for m in result["machines"] if m.get("excluded_reason") == "already_in_breakdown"]
+    facts = [
+        _fact("model.name", "Model", result["model_version"], M, source="amp_ai", window="now",
+              detail=f"trained on {result['training_data_source']}"),
+        _fact("model.machines_scored", "Machines scored", len(scored), M, "machines", "amp_ai", "now",
+              detail=f"over the last {result['lookback_days']} days"),
+    ]
+    horizon = f"next {result['horizon_days']} days"
+    for m in scored[:3]:
+        # A probability is the one number in AMP that is neither measured nor
+        # derived from a measurement. It is shown to one decimal place, with the
+        # machine's rule score beside it so the two can disagree in the open.
+        facts.append(_fact(f"model.risk.{m['machine_id']}", f"{m['name']} estimated breakdown chance",
+                           round(m["probability"] * 100, 1), ev.MODEL, "%", "amp_ai", horizon,
+                           detail=f"band {m['band']}; {caveat}"))
+        facts.append(_fact(f"model.rule.{m['machine_id']}", f"{m['name']} rule score",
+                           round(m["rule_score"]), R, "/100", "predictive_engine", "now",
+                           detail="the hand-weighted rule, for comparison"))
+    if excluded:
+        facts.append(_fact("model.excluded", "Not scored: already in breakdown", len(excluded), M,
+                           "machines", "amp_ai", "now",
+                           detail="the model estimates a NEW breakdown starting, so a machine already "
+                                  "down is left out"))
+    if not scored:
+        summary = ("No machine could be scored by the failure-risk model right now. " + _MODEL_LEAD)
+    else:
+        top = scored[0]
+        summary = (f"{top['name']} carries the highest model estimate, {round(top['probability'] * 100, 1)}% "
+                   f"for a new breakdown in the {horizon} (band {top['band']}), against a rule score of "
+                   f"{round(top['rule_score'])}/100. " + _MODEL_LEAD)
+    # MODEL NOT VALIDATED is not a warning the UI may drop: it is the state of
+    # every result this tool can return while the evaluation is synthetic-only.
+    return ev.ToolResult(tool="get_failure_risk", state=ev.MODEL_NOT_VALIDATED, summary=summary,
+                         facts=facts, view="machines",
+                         notes=[caveat, "Not a maintenance instruction: no action here has been "
+                                        "validated against real failures."])

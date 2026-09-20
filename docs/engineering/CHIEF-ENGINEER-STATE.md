@@ -3,21 +3,22 @@
 > Handover file. A new session should be able to read only this and continue.
 > Keep it short. Update it at the end of every completed task.
 
-**Updated:** 2026-09-19. The 10-day differentiation sprint began. #645
-(ADR-0022): the Copilot answers through typed, authorized AMP tools, with
-evidence, behind a grounding gate and an evaluation gate. The self-hosted model
-provider (ADR-0023) is in review. See AMP-10-DAY-SPRINT.md.
-**Master SHA:** `6bbaa7e` (#647).
-**Production SHA:** `6bbaa7e`, verified live, not assumed:
-`{"status":"ok","database":"ok","schema":"ok","version":"6bbaa7e"}` from
-`https://flowmes-production.up.railway.app/health`, read at 00:07 UTC on
+**Updated:** 2026-09-20. The 10-day differentiation sprint is running. Merged so
+far: #645 (ADR-0022, typed authorized tools + evidence + grounding + the
+evaluation), #646 (ADR-0023, the self-hosted provider behind an earned switch),
+#647 (ADR-0024, the Command Centre), #648 (ADR-0025, the Root-Cause Explorer)
+and #649 (ADR-0026, the Risk Radar). In review: the explained health score and
+the failure-risk model's first screen (ADR-0027). See AMP-10-DAY-SPRINT.md.
+**Master SHA:** `04f9c02` (#649).
+**Production SHA:** `04f9c02`, verified live, not assumed:
+`{"status":"ok","database":"ok","schema":"ok","version":"04f9c02"}` from
+`https://flowmes-production.up.railway.app/health`, read at 00:54 UTC on
 2026-09-20; `/readiness` 200; the frontend (`https://flow-mes.vercel.app`)
-answers 200; `POST /copilot/ask` and `GET /command-centre` both refuse an
-unauthenticated call with 401.
+answers 200; `GET /risk-radar` refuses an unauthenticated call with 401.
 Railway auto-deploys master, so prod tracks HEAD; re-check `/health` rather than
 trusting this line's age.
-**Awaiting review:** the Root-Cause Explorer (ADR-0025, `feat/root-cause`) and
-the Risk Radar (ADR-0026, `feat/risk-radar`).
+**Awaiting review:** the explained health score and the failure-risk model's
+first screen (ADR-0027, `feat/machine-health`).
 
 **THE 10-DAY DIFFERENTIATION SPRINT started 2026-09-19.** Its own tracker is
 [`AMP-10-DAY-SPRINT.md`](AMP-10-DAY-SPRINT.md): day, SHAs, the 16

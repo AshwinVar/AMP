@@ -32,6 +32,7 @@ Guiding principles: incremental (strangler) evolution, never a rewrite; backward
 | [0024](0024-factory-command-centre.md) | The Factory Command Centre ranks problems by what they cost, and never totals them | Accepted |
 | [0025](0025-root-cause-explorer.md) | The Root-Cause Explorer separates what AMP measured from what has a reason | Accepted |
 | [0026](0026-production-risk-radar.md) | The Risk Radar states a rule and a measurement, never a probability | Accepted |
+| [0027](0027-machine-health-explained.md) | Every health score shows its arithmetic, and the trained model is shown as a model | Accepted |
 
 **Recommended order:** 0001 first (smaller, proves the pattern; events carry `tenant_code`), then 0002.
 

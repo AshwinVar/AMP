@@ -71,9 +71,9 @@ Until then:
 | 6 | Root-Cause Explorer | BUILT | ADR-0025: `GET /root-cause`, the `explain_production_gap` tool and a card on Executive; measured mechanisms labelled CAUSE CONFIRMED / LIKELY CONTRIBUTOR / CORRELATED EVENT / INSUFFICIENT EVIDENCE, with the unexplained remainder stated |
 | 7 | Financial loss intelligence (never fabricated) | PARTIAL | `get_financial_losses`, the Command Centre and the Root-Cause Explorer: every loss sized in good units, money only with a unit value, UNKNOWN otherwise, and figures never totalled across overlapping problems |
 | 8 | Production Risk Radar | BUILT | ADR-0026: `GET /risk-radar`, the `get_production_risks` tool and a card on the Overview; every risk states its rule and threshold, likelihood is LIKELY/POSSIBLE/WATCH, and the tests fail on the word "probability" or an unqualified "machine learning" |
-| 9 | Machine Health, every score explained | PARTIAL | `get_machine_history`: health is RULE-BASED ASSESSMENT with its factors |
+| 9 | Machine Health, every score explained | BUILT | ADR-0027: the scorer records every rule it runs; `/machine-health/{id}` carries `health_explanation` and `HealthExplanation.tsx` shows the arithmetic — points, reading and threshold per rule, the rules that passed, and the cap when it bites |
 | 10 | Anomaly engine end-to-end | NOT STARTED (experimental engine exists, ADR-0020) | — |
-| 11 | Failure-risk hardening; synthetic separate from real validation | NOT STARTED | — |
+| 11 | Failure-risk hardening; synthetic separate from real validation | BUILT | ADR-0027: the adopted model finally has a screen — per-machine estimates under its own card and the role-restricted `get_failure_risk` tool, always MODEL NOT VALIDATED, MODEL ESTIMATE provenance, the synthetic-only caveat on every row, the rule score beside it, and no number at all when the artifact does not verify |
 | 12 | Smart inventory linked to production | NOT STARTED | — |
 | 13 | Closed-loop actions, with the result measured | NOT STARTED | — |
 | 14 | Proactive intelligence without alert spam | NOT STARTED | — |

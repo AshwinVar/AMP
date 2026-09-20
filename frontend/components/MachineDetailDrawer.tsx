@@ -5,6 +5,7 @@ import { apiGet, apiPost } from "../lib/api";
 import { useModalFocus } from "../lib/useModalFocus";
 import { parseApiDate } from "../lib/apiDate";
 import { EXPIRED_PROPOSAL_NOTE } from "../lib/agent-actions";
+import HealthExplanation, { type HealthExplanation as HealthExplanationData } from "./HealthExplanation";
 
 // Mirrors the backend detail read-model (ai/twin.py build_machine_detail).
 type OpenAction = {
@@ -38,7 +39,10 @@ type Detail = {
   risk_score: number;
   risk_level: string;
   oee: { oee: number; availability: number; performance: number; quality: number; has_data: boolean };
+  /** The wordy form, kept for anything still reading it. */
   risk_factors: string[];
+  /** The same rules with their points, readings and thresholds (ADR-0027). */
+  health_explanation?: HealthExplanationData | null;
   // Every series on this card spans the calendar dates the shared rolling
   // window touches — eight when it opens mid-day — with the oldest flagged
   // `partial`. Before #590 three panels each narrowed the window their own
@@ -280,22 +284,10 @@ export default function MachineDetailDrawer({
               </div>
             )}
 
-            {/* Risk factors */}
-            <div>
-              <h3 className="text-sm font-semibold text-slate-300 uppercase tracking-wide">Risk factors</h3>
-              {detail.risk_factors.length === 0 ? (
-                <p className="text-slate-500 text-sm mt-2">No major risk indicators.</p>
-              ) : (
-                <ul className="mt-2 space-y-1.5">
-                  {detail.risk_factors.map((r, i) => (
-                    <li key={i} className="flex gap-2 text-sm text-slate-300">
-                      <span className="text-orange-400">▹</span>
-                      <span>{r}</span>
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </div>
+            {/* The health score, with its arithmetic (ADR-0027). This replaced a
+                bare list of reasons: the same rules, now with the points each
+                one cost, what it read and the threshold it read against. */}
+            <HealthExplanation x={detail.health_explanation} />
 
             {/* 7-day downtime sparkline */}
             <DowntimeSparkline series={detail.downtime_7d} />

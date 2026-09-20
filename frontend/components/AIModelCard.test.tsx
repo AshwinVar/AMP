@@ -1,3 +1,4 @@
+import { describeSweepRow } from "../lib/aiModels";
 import { render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
@@ -157,5 +158,33 @@ describe("AIModelCard", () => {
     render(<AIModelCard card={card({ adopted: true, status: "adopted", reasons: ["stale reason"] })} />);
     expect(screen.getByText("Adopted")).toBeTruthy();
     expect(screen.queryByText("stale reason")).toBeNull();
+  });
+});
+
+describe("the fleet anomaly sweep (ADR-0032)", () => {
+  it("shows every machine, and the reason for the ones with no score", () => {
+    const rows = [
+      { machine_id: 1, name: "CNC-01", line: "L1", score: 4.51, state: "MODEL NOT VALIDATED", reason: null },
+      { machine_id: 2, name: "AOI-02", line: "L1", score: null, state: "INSUFFICIENT HISTORY",
+        reason: "not enough history yet (have 2 of 7 distinct_days)" },
+      { machine_id: 3, name: "OVEN-03", line: "L2", score: null, state: "NOT CONFIGURED",
+        reason: "the artifact did not verify" },
+    ];
+    const said = rows.map(describeSweepRow);
+    expect(said.map((r) => r.name)).toEqual(["CNC-01", "AOI-02", "OVEN-03"]);
+    expect(said[0]).toMatchObject({ value: "4.51", muted: false });
+    // A machine with no score is never a blank and never a zero.
+    expect(said[1].value).toContain("not scored — not enough history");
+    expect(said[1].muted).toBe(true);
+    expect(said[2].value).toContain("the artifact did not verify");
+    for (const r of said.slice(1)) {
+      expect(r.value).not.toBe("0");
+      expect(r.value).not.toBe("0.00");
+    }
+  });
+
+  it("renders a score to two places, without inventing precision", () => {
+    expect(describeSweepRow({ machine_id: 9, name: "X", line: "", score: 2, state: "MODEL NOT VALIDATED", reason: null }).value)
+      .toBe("2.00");
   });
 });

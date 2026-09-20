@@ -155,6 +155,24 @@ def native_anomaly(machine_id: int, db: Session = Depends(_get_db),
         })
 
 
+@router.get("/ai/native/anomaly/sweep")
+def native_anomaly_sweep(db: Session = Depends(_get_db),
+                         current_user: dict = Depends(require_roles(ANALYST_ROLES))):
+    """The same check as above, over every machine, with a reason for each one (ADR-0032).
+
+    Consent is checked once for the fleet, not once per machine, and a refusal
+    is the whole sweep's answer rather than an empty list: an empty list reads
+    as "nothing unusual", which is a claim AMP has not made.
+
+    The model is EXPERIMENTAL and was not adopted, so every scored row carries
+    MODEL NOT VALIDATED and nothing here is worded as an alarm.
+    """
+    from ai.anomaly_sweep import build_anomaly_sweep
+    return build_anomaly_sweep(
+        db, request_tenant(current_user), scorer=service.score_machine,
+        gate=consent.DbConsentGate(), previewing=tenancy.is_preview(current_user))
+
+
 # --- model cards ---------------------------------------------------------------------------
 @router.get("/ai/models")
 def native_model_cards(current_user: dict = Depends(get_current_user)):

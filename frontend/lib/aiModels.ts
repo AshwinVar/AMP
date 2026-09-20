@@ -443,3 +443,46 @@ export function describeFailureRisk(res: FailureRiskResponse | null): FailureRis
       : null,
   };
 }
+
+// ── The anomaly check across the whole fleet (ADR-0032) ──────────────────────
+
+export type AnomalyRow = {
+  machine_id: number;
+  name: string;
+  line: string;
+  score: number | null;
+  state: string;
+  reason: string | null;
+};
+
+export type AnomalySweep = {
+  state: string;
+  headline: string;
+  machines: AnomalyRow[];
+  scored: number;
+  not_scored: number;
+  consent: boolean;
+  note: string;
+};
+
+/** One row of the fleet sweep, as this screen may say it. */
+export type AnomalySweepRow = { id: number; name: string; value: string; muted: boolean };
+
+/**
+ * How a fleet sweep may be read out.
+ *
+ * The rule that matters: a machine AMP could not score shows its REASON, never
+ * a blank and never a zero. A missing number and a number of zero are different
+ * claims, and on this screen the difference is "we have not looked at that one"
+ * against "we looked and it is quiet".
+ *
+ * `muted` is true for a row with no score, so the component can render it
+ * quietly WITHOUT dropping it — the caller may not filter these out.
+ */
+export function describeSweepRow(row: AnomalyRow): AnomalySweepRow {
+  if (row.score === null) {
+    return { id: row.machine_id, name: row.name, muted: true,
+             value: row.reason ? `not scored — ${row.reason}` : "not scored" };
+  }
+  return { id: row.machine_id, name: row.name, muted: false, value: row.score.toFixed(2) };
+}

@@ -739,7 +739,7 @@ The dashboard (`app/dashboard/page.tsx`) is one big menu that swaps in a differe
 | `AICopilot` | The chat panel for the copilot — rule‑based by default, LLM answers when connected, each answer badged with its source. |
 | `IoTCommandSection` | The IoT telemetry command center. |
 | `IndustrialConnectivity` | The industrial‑protocol connectivity screen (devices, protocols). |
-| `IndustrialGatewaySection` | The industrial gateway (device/signal mappings). |
+| *(removed in #389)* | The industrial gateway section is gone; `/industrial/mappings` remains as an API-only mapping *record* — stored, not applied (`applied: false` on every row). |
 | `EscalationSection` | The escalation tracker (assign, resolve). |
 | `AlertsSection` | The live alerts feed. |
 | `NotificationsSection` | The notifications inbox. |

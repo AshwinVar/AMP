@@ -69,7 +69,7 @@ Auto-approval is a **per-tenant policy** (an Admin sets it in the UI), falling b
 
 ## Industrial IoT
 
-* MQTT integration & PLC signal mapping
+* MQTT ingest (tenant and site in the topic, ADR-0011) and a PLC signal-mapping *record* — stored for a plant's own integration work, not applied by AMP, and the API says so on every row (`applied: false`)
 * Device telemetry & industrial gateway layer
 * OPC-UA-ready architecture
 * Real-time telemetry simulation (no physical hardware required)

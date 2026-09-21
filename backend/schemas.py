@@ -43,6 +43,25 @@ def _coalesce_null_int(default: int):
     return _coalesce
 
 
+STORAGE_LINK_NOT_A_URL = ("A document's storage link is shown as a link, so it must be an http(s) URL "
+                          "(or empty). Other schemes are refused: a `javascript:` or `file:` link on a "
+                          "shared screen is not a document location.")
+
+
+def _http_link_or_none(value):
+    """A storage link is an http(s) URL or nothing. Blank -> None; anything else is refused."""
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise ValueError(STORAGE_LINK_NOT_A_URL)
+    text = value.strip()
+    if not text:
+        return None
+    if not text.lower().startswith(("http://", "https://")):
+        raise ValueError(STORAGE_LINK_NOT_A_URL)
+    return text
+
+
 def _coalesce_null_text(default: str):
     """Factory: heal a NULL text column to its declared default on the way OUT.
 
@@ -771,8 +790,12 @@ class ComplianceDocumentCreate(BaseModel):
     owner: str
     approval_status: str = "Draft"
     review_due_date: date
+    # Where the document itself lives (a SharePoint, Drive or DMS URL). Shown as
+    # a link on the Documents screen, so it must be one: http(s) or nothing. It
+    # was stored and never shown, and the dashboard's form never offered it.
     storage_link: Optional[str] = None
     notes: Optional[str] = None
+    _link_is_a_url = field_validator("storage_link", mode="before")(_http_link_or_none)
 
 
 class ComplianceDocumentUpdate(BaseModel):
@@ -785,6 +808,7 @@ class ComplianceDocumentUpdate(BaseModel):
     review_due_date: Optional[date] = None
     storage_link: Optional[str] = None
     notes: Optional[str] = None
+    _link_is_a_url = field_validator("storage_link", mode="before")(_http_link_or_none)
 
 
 class ComplianceDocumentResponse(BaseModel):
@@ -1109,6 +1133,11 @@ class CompanyTenantResponse(BaseModel):
 
 
 class CostRecordCreate(BaseModel):
+    """A cost booked by hand. `reference_type` / `reference_id` name what the cost
+    was about (a work order, a machine, a PO) and are shown on the row AS DATA;
+    no figure groups by them -- /analytics/costing groups by cost_type and by
+    department. A per-reference costing would be a read-model with its own test,
+    not a silent reading of these two columns."""
     cost_no: str
     cost_type: str
     reference_type: Optional[str] = None
@@ -1404,6 +1433,9 @@ class IndustrialSignalResponse(BaseModel):
 
 
 class PlcSignalMappingCreate(BaseModel):
+    """A PLC signal mapping RECORD: which PLC tag a plant means to land in which
+    MES field, and how. AMP stores it and applies none of it (see
+    PlcSignalMappingResponse.applied); the response says so on every row."""
     mapping_code: str
     device_id: int
     source_signal: str
@@ -1420,6 +1452,14 @@ class PlcSignalMappingResponse(BaseModel):
     mes_field: str
     transform_rule: Optional[str] = None
     enabled: str
+    # STORED, NOT APPLIED. Nothing in AMP routes a device's `source_signal` into
+    # `mes_field` or runs `transform_rule`: signals are stored as published
+    # (industrial_iot_routes.create_industrial_signal) and `enabled` gates
+    # nothing. The row is a mapping *record* a plant keeps for its own
+    # integration work, and the API says so on every row rather than letting a
+    # client read "enabled: Yes" as "in effect". README and the handbook say the
+    # same. A mapping engine would make this True, and would be an ADR.
+    applied: bool = False
     created_at: Optional[datetime] = None
 
     class Config:

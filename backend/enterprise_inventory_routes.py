@@ -174,6 +174,27 @@ def update_remnant_status(rid: int, payload: dict, db: Session = Depends(get_db)
 # ── Material Issue Slips ──────────────────────────────────────
 
 
+def _work_order_for(db, ref):
+    """The work order in THIS tenant that an issue slip's free-text job reference
+    names, or None.
+
+    A slip's `work_order_ref` was typed, stored, echoed and read by nothing: the
+    issue wrote its stock transaction with `reference=slip_no`, while the
+    work-order trace (ai/trace.build_work_order_trace) links material to a job
+    through `InventoryTransaction.reference == work_order_no`. So material issued
+    "for WO-100" never appeared in WO-100's genealogy, and an operator typing the
+    job number reasonably believed it would.
+
+    EXACT match on the work-order number, after trimming: "WO-10" is not
+    "WO-100", and a free-text reference to a job outside AMP resolves to nothing
+    (the slip keeps it as text and the transaction says so). WorkOrder is in
+    SCOPED_MODELS, so the lookup is the request tenant's (ADR-0002)."""
+    text = (ref or "").strip()
+    if not text:
+        return None
+    return db.query(models.WorkOrder).filter(models.WorkOrder.work_order_no == text).first()
+
+
 @router.get("/issue-slips")
 def get_issue_slips(response: Response = None, limit: int = _PAGE_DEFAULT, offset: int = 0,
                     db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
@@ -187,12 +208,21 @@ def get_issue_slips(response: Response = None, limit: int = _PAGE_DEFAULT, offse
                        db.query(models.MaterialIssueSlip).order_by(models.MaterialIssueSlip.id.desc()),
                        _PAGE_DEFAULT, limit, offset, max_page=_PAGE_MAX)
     items = _item_labels(db, {s.item_id for s in rows})
+    # Which job references name a work order in this tenant -- ONE query for the
+    # page, so the screen can say "counts against WO-100" or "not a work order
+    # in AMP" beside the text the operator typed.
+    refs = {(s.work_order_ref or "").strip() for s in rows if (s.work_order_ref or "").strip()}
+    known = ({w.work_order_no for w in
+              db.query(models.WorkOrder.work_order_no).filter(models.WorkOrder.work_order_no.in_(refs)).all()}
+             if refs else set())
     return [
         {
             "id": s.id, "slip_no": s.slip_no, "item_id": s.item_id,
             "item_code": items.get(s.item_id, ("", ""))[0],
             "item_name": items.get(s.item_id, ("", ""))[1],
             "remnant_id": s.remnant_id, "work_order_ref": s.work_order_ref,
+            "work_order_no": (s.work_order_ref or "").strip() if (s.work_order_ref or "").strip() in known else None,
+            "work_order_resolved": (s.work_order_ref or "").strip() in known,
             "requested_qty": s.requested_qty, "issued_qty": s.issued_qty,
             "requested_by": s.requested_by, "approved_by": s.approved_by,
             "status": s.status, "notes": s.notes,
@@ -272,10 +302,22 @@ def issue_slip(sid: int, db: Session = Depends(get_db), current_user: dict = Dep
     s.issued_qty = s.requested_qty
     s.status = "Issued"
     s.issued_at = datetime.utcnow()
+    # The transaction's `reference` is the genealogy link the work-order trace
+    # reads (ai/trace: reference == work_order_no). When the slip names a work
+    # order in this tenant, the material counts against that job; otherwise the
+    # slip number stays the reference and the note says the job is not one AMP
+    # knows, so nobody reads "for JOB-7" as "in JOB-7's trace".
+    wo = _work_order_for(db, s.work_order_ref)
+    if wo is not None:
+        reference, note = wo.work_order_no, f"Issued via {s.slip_no} for {wo.work_order_no}"
+    elif (s.work_order_ref or "").strip():
+        reference, note = s.slip_no, (f"Issued via {s.slip_no} for {s.work_order_ref.strip()} "
+                                      "(not a work order in AMP; not in any job's trace)")
+    else:
+        reference, note = s.slip_no, f"Issued via {s.slip_no} for unspecified job"
     db.add(models.InventoryTransaction(
         item_id=item.id, transaction_type="Issue",
-        quantity=s.requested_qty, reference=s.slip_no,
-        notes=f"Issued via {s.slip_no} for {s.work_order_ref or 'unspecified job'}",
+        quantity=s.requested_qty, reference=reference, notes=note,
     ))
     if s.remnant_id:
         rem = db.query(models.Remnant).filter(models.Remnant.id == s.remnant_id).first()

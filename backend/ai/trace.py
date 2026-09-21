@@ -137,7 +137,10 @@ def build_work_order_trace(db, tenant: str, work_order_no: str) -> dict:
 
     # --- Material genealogy: what went in, what came back out -------------
     # Both the BOM subscriber and the manual routes stamp the work-order number
-    # into the transaction reference — that string *is* the genealogy link.
+    # into the transaction reference — that string *is* the genealogy link. The
+    # enterprise issue slip stamps it too, when its job reference names a work
+    # order in this tenant (enterprise_inventory_routes._work_order_for); a
+    # reference to a job AMP does not know keeps the slip number and says so.
     txns = (db.query(models.InventoryTransaction)
             .filter(models.InventoryTransaction.reference == wo.work_order_no).all())
     # Resolve only the parts this job actually touched, not the whole item master

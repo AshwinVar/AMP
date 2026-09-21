@@ -1,5 +1,14 @@
 import type { ComplianceDocument, DocumentAnalytics } from "../lib/mega-pack1-types";
 
+/** The stored link, if it is one a screen may open: http(s) only. The API refuses
+ *  other schemes on write (schemas.STORAGE_LINK_NOT_A_URL); rows written before it
+ *  did are checked here too, because an `<a href>` is the one place a stored
+ *  string becomes something a click runs. */
+export function documentLink(link: string | null | undefined): string | null {
+  const text = (link ?? "").trim();
+  return /^https?:\/\//i.test(text) ? text : null;
+}
+
 function statusStyle(status: string) {
   switch (status) {
     case "Approved": return "border-green-500/40 bg-green-500/10 text-green-300";
@@ -53,10 +62,12 @@ export default function DocumentsSection({
           <option>Draft</option><option>Under Review</option><option>Approved</option><option>Obsolete</option>
         </select>
         <input className="bg-slate-950 border border-slate-700 rounded-xl px-4 py-3" type="date" value={form.review_due_date} onChange={(e) => setForm({ ...form, review_due_date: e.target.value })} required />
+        {/* Where the document itself lives. The API stored this and nothing showed it, and the form never asked. */}
+        <input className="bg-slate-950 border border-slate-700 rounded-xl px-4 py-3" type="url" placeholder="Link to the document (https://…)" value={form.storage_link ?? ""} onChange={(e) => setForm({ ...form, storage_link: e.target.value })} />
         <button type="submit" className="rounded-xl bg-white text-slate-950 font-semibold px-4 py-3">Add Doc</button>
       </form>
 
-      <DataTable headers={["Doc", "Title", "Type", "Dept", "Version", "Owner", "Review Due", "Status", "Actions"]}>
+      <DataTable headers={["Doc", "Title", "Type", "Dept", "Version", "Owner", "Review Due", "Status", "Link", "Actions"]}>
         {documents.map((row) => (
           <tr key={row.id} className="border-b border-slate-800">
             <td className="py-3 px-4 font-semibold">{row.document_no}</td>
@@ -67,6 +78,13 @@ export default function DocumentsSection({
             <td className="py-3 px-4">{row.owner}</td>
             <td className="py-3 px-4">{row.review_due_date}</td>
             <td className="py-3 px-4"><select className={`rounded-full px-3 py-1 text-xs border bg-slate-950 ${statusStyle(row.approval_status)}`} value={row.approval_status} onChange={(e) => updateDocument(row.id, e.target.value, row.version)}><option>Draft</option><option>Under Review</option><option>Approved</option><option>Obsolete</option></select></td>
+            <td className="py-3 px-4">
+              {documentLink(row.storage_link) ? (
+                <a href={documentLink(row.storage_link)!} target="_blank" rel="noopener noreferrer"
+                  className="text-indigo-300 border border-indigo-500/40 rounded-lg px-3 py-1 hover:bg-indigo-500/10"
+                  data-testid={`document-link-${row.id}`}>Open</a>
+              ) : <span className="text-slate-600">—</span>}
+            </td>
             <td className="py-3 px-4"><button onClick={() => deleteDocument?.(row.id)} className="text-red-400 border border-red-500/40 rounded-lg px-3 py-1">Delete</button></td>
           </tr>
         ))}

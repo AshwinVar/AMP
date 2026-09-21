@@ -54,8 +54,9 @@ export default function EnterprisePolishSection({ auditLogs, reports, health, su
         </select>
         <button className="rounded-xl bg-white text-slate-950 font-semibold px-4 py-3">Log Report</button>
         <p className="md:col-span-5 text-xs text-slate-500">
-          Logging a request records it in the list below. AMP does not generate report files from it;
-          CSV exports of the underlying data are on the Overview page.
+          Logging a request records it in the list below, with the type and format you chose, for whoever
+          produces it. AMP does not generate report files from it; CSV exports of the underlying data are on
+          the Overview page.
         </p>
       </form>
 

@@ -29,17 +29,18 @@ the simulator's tenant guard: a tick with no tenant bound now refuses instead
 of filing every tenant's activity under DEFAULT — ADR-0002 postmortem). See
 AMP-10-DAY-SPRINT.md, AMP-NATIVE-MODEL-ACCEPTANCE.md and, for the twelve
 acceptance items with their evidence, AMP-SPRINT-ACCEPTANCE.md.
-**Master SHA:** `59fabf0` (#679).
-**Production SHA:** `59fabf0`, verified live, not assumed:
-`{"status":"ok","database":"ok","schema":"ok","version":"59fabf0"}` from
-`https://flowmes-production.up.railway.app/health`, read on 2026-09-21 05:52 UTC,
-under a minute after the merge; `/readiness` 200. The frontend (`https://flow-mes.vercel.app`)
-answers 200; `/ai/status`, `/oem/fleet?limit=1`, `/oem/claims?status=Expired`,
-`/work-orders?limit=400` and `/notifications?unread=true&limit=1` refuse an
-unauthenticated call with 401, and at `a9bbd84` a cross-origin request from the
-frontend's origin got `access-control-expose-headers: X-Total-Count`, so the
-browser may read the count; `POST /copilot/ask` sent a valid `{question, thread}`
-body was refused with 401 at `ba06970`. Production has no
+**Master SHA:** `3b4e5ee` (#682).
+**Production SHA:** `3b4e5ee`, verified live, not assumed:
+`{"status":"ok","database":"ok","schema":"ok","version":"3b4e5ee"}` from
+`https://flowmes-production.up.railway.app/health`, read on 2026-09-21 06:27 UTC,
+under two minutes after the merge; `/readiness` 200. The frontend (`https://flow-mes.vercel.app`)
+answers 200 and so does its `/oem` portal page; `/oem/fleet?limit=100&offset=100`,
+`/ai/status`, `/oem/claims?status=Expired`, `/work-orders?limit=400` and
+`/notifications?unread=true&limit=1` refuse an unauthenticated call with 401, and
+at `a9bbd84` a cross-origin request from the frontend's origin got
+`access-control-expose-headers: X-Total-Count`, so the browser may read the
+count; `POST /copilot/ask` sent a valid `{question, thread}` body was refused
+with 401 at `ba06970`. Production has no
 GPU and no `AMP_LLM_BASE_URL`, and no self-hosted model is currently adopted
 anywhere (the committed record is the failing one, below), so the Copilot
 answers from AMP's own engine everywhere.
@@ -142,7 +143,14 @@ response but hydrated the whole fleet — 48.7 ms for a 100-row page at 10,000
 machines on this laptop — and now takes OFFSET/LIMIT with the cached count:
 4.4 ms, flat with fleet size; the claims list filters its derived state
 (Pending past its deadline reads Expired) in SQL; `test_oem_fleet_pages_in_sql.py`,
-`mutate_oem_sharing.py` 32/32, `oem_perf.py` re-run in the two OEM documents.
+`mutate_oem_sharing.py` 32/32, `oem_perf.py` re-run in the two OEM documents. And the
+portal's fleet table says it is a page and offers the next 100 (#682 `3b4e5ee`;
+`lib/oem.loadFleet` walks the fleet a page at a time up to its own total, the
+depth survives the next refresh and the customer filter, `PageNotice` learned an
+`order` so the fleet reads "the first 100 of 250" where the dashboard reads
+"the newest"). **Nothing is in flight.** Every capped list AMP serves now says
+it is a page, offers the next batch, and pays for its count only when a page is
+full — at most once per poll interval, never past a commit to its table.
 
 **Nothing else is awaiting review.** What a next session would do first, in order:
 (1) the OEM journey re-check against a real OEM's edge agent is still simulated

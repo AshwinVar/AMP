@@ -60,9 +60,20 @@ TOTAL_HEADER = "X-Total-Count"
 #
 # An offset past the end returns no rows and says nothing about the count, so
 # it counts. Only a total that would otherwise be wrong is ever computed.
+#
+# AND THE CACHE FORGETS ON WRITE. Three seconds is invisible to the other tabs
+# and very visible to the tab that just wrote: "Mark all read (734)" would come
+# straight back for one round after the click, because the dashboard refreshes
+# at once. So every commit forgets the cached totals of the tables it touched --
+# ORM inserts, updates and deletes (after_flush) and bulk UPDATE / DELETE
+# statements (do_orm_execute, the path read-all takes). A total is therefore
+# at most COUNT_TTL_S old AND never older than this process's last write to
+# that table. Raw SQL text is not seen; nothing on the request path writes
+# that way.
 COUNT_TTL_S = 3.0
 _COUNT_CACHE_MAX = 4096
-_count_cache: dict = {}
+_count_cache: dict = {}          # key -> (expires_at, total, tables)
+_TOUCHED = "paging_touched_tables"
 
 
 def _int(value, fallback):
@@ -83,15 +94,30 @@ def clamp(limit: Optional[int], default: int, offset: int = 0, max_page: int = M
 
 def _count_key(query):
     """The cache key: the caller's tenant (the ORM hook adds that filter at
-    execution, so it is not in the statement) and the statement itself with its
-    literal values, so two filters of one table never share a total."""
+    execution, so it is not in the statement), the statement with its
+    placeholders, and the values bound to them, so two filters of one table
+    never share a total. The values are kept as a tuple rather than rendered
+    into the SQL: rendering a datetime literal is dialect work that SQLite does
+    and PostgreSQL's driver refuses (the OEM claims filter binds `now`)."""
     import tenancy
-    compiled = query.statement.compile(compile_kwargs={"literal_binds": True})
-    return (tenancy.current_tenant(), str(compiled))
+    compiled = query.statement.compile()
+    params = tuple(sorted((k, repr(v)) for k, v in compiled.params.items()))
+    return (tenancy.current_tenant(), str(compiled), params)
+
+
+def _tables_of(query):
+    """The table names a query reads, so a write to one of them can forget it."""
+    names = set()
+    for d in query.column_descriptions:
+        table = getattr(d.get("entity"), "__table__", None)
+        if table is not None:
+            names.add(table.name)
+    return frozenset(names)
 
 
 def cached_count(query, now=None):
-    """The whole count of `query`, at most COUNT_TTL_S old for this tenant."""
+    """The whole count of `query`, at most COUNT_TTL_S old for this tenant, and
+    never older than this process's last commit to a table it reads."""
     now = time.monotonic() if now is None else now
     key = _count_key(query)
     hit = _count_cache.get(key)
@@ -100,13 +126,67 @@ def cached_count(query, now=None):
     total = query.order_by(None).count()
     if len(_count_cache) >= _COUNT_CACHE_MAX:
         _count_cache.clear()
-    _count_cache[key] = (now + COUNT_TTL_S, total)
+    _count_cache[key] = (now + COUNT_TTL_S, total, _tables_of(query))
     return total
 
 
 def forget_counts():
     """Drop every cached total (tests, and anything that must not wait)."""
     _count_cache.clear()
+
+
+def forget_tables(tables):
+    """Drop every cached total that reads one of `tables`."""
+    if not tables:
+        return
+    for key, entry in list(_count_cache.items()):
+        if entry[2] & tables:
+            _count_cache.pop(key, None)
+
+
+def _after_flush(session, flush_context):
+    touched = session.info.setdefault(_TOUCHED, set())
+    for obj in list(session.new) + list(session.dirty) + list(session.deleted):
+        table = getattr(type(obj), "__table__", None)
+        if table is not None:
+            touched.add(table.name)
+
+
+def _do_orm_execute(state):
+    # Bulk UPDATE / DELETE never pass through the unit of work, so after_flush
+    # never sees them; this is where read-all's UPDATE shows up.
+    if state.is_update or state.is_delete:
+        touched = state.session.info.setdefault(_TOUCHED, set())
+        for mapper in state.all_mappers:
+            touched.add(mapper.local_table.name)
+
+
+def _after_commit(session):
+    forget_tables(frozenset(session.info.pop(_TOUCHED, set())))
+
+
+def _after_rollback(session):
+    session.info.pop(_TOUCHED, None)
+
+
+_installed = False
+
+
+def install_invalidation():
+    """Listen on every Session, once: a commit forgets the totals it made stale."""
+    global _installed
+    if _installed:
+        return
+    from sqlalchemy import event
+    from sqlalchemy.orm import Session
+    event.listen(Session, "after_flush", _after_flush)
+    event.listen(Session, "do_orm_execute", _do_orm_execute)
+    event.listen(Session, "after_commit", _after_commit)
+    event.listen(Session, "after_rollback", _after_rollback)
+    _installed = True
+
+
+install_invalidation()
 
 
 def page(response: Optional[Response], query, default: int, limit: Optional[int] = None,

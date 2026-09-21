@@ -175,7 +175,13 @@ export default function DigitalTwinSection({
         <Kpi title="Work Orders" value={commandCenter?.active_work_orders ?? 0} />
         <Kpi title="Behind Plans" value={commandCenter?.behind_plans ?? 0} />
         <Kpi title="Escalations" value={commandCenter?.open_escalations ?? 0} />
-        <Kpi title="Quality Fail" value={`${commandCenter?.quality_fail_rate ?? 0}%`} />
+        {/* The only windowed figure in this row — the rest are current state —
+            so it carries its window. It pooled every inspection ever recorded
+            and disagreed with the Quality view for exactly that reason. */}
+        <Kpi
+          title={"Quality Fail · " + (commandCenter?.quality_window ?? "last 7 days")}
+          value={commandCenter?.quality_fail_rate == null ? "—" : commandCenter.quality_fail_rate + "%"}
+        />
       </div>
 
       <form

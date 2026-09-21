@@ -13,6 +13,9 @@ type QualitySummary = {
   scrap: number;
   first_pass_yield: number | null;
   fail_rate: number | null;
+  measured?: boolean;
+  /** "last 7 days" — the window every quality figure is pooled over. */
+  window?: string;
   top_defects: { category: string; count: number }[];
   by_machine: { machine_id: number; name: string; inspected: number; failed: number; fail_rate: number | null }[];
   by_line: { line: string; inspected: number; failed: number; fail_rate: number | null }[];
@@ -68,7 +71,7 @@ export default function QualityIntelCard() {
   return (
     <section className="rounded-2xl border border-slate-800 bg-slate-900 p-5 space-y-4">
       <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-2">
-        <h3 className="text-lg font-semibold">Quality — last 7 days</h3>
+        <h3 className="text-lg font-semibold">{"Quality — " + (s.window ?? "last 7 days")}</h3>
         {t?.verdict && (
           <div className={`rounded-xl border px-4 py-2 text-sm ${toneClasses(t.tone)}`}>{t.verdict}</div>
         )}

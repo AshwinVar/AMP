@@ -4,8 +4,11 @@ import { useCallback, useEffect, useState } from "react";
 import { apiGet } from "../lib/api";
 
 // Mirrors the backend read-model (ai/quality.py build_quality_trend).
-type Half = { inspections: number; inspected: number; failed: number; fail_rate: number };
-type Point = { date: string; inspected: number; failed: number; fail_rate: number };
+// `fail_rate` is null when the half — or the day — inspected no units: a
+// fail rate of 0% is the best value on the scale, so a quiet day used to draw
+// as a perfect one (backend quality_contract).
+type Half = { inspections: number; inspected: number; failed: number; fail_rate: number | null; measured?: boolean };
+type Point = { date: string; inspected: number; failed: number; fail_rate: number | null; partial?: boolean };
 type Mover = {
   machine_id: number; name: string;
   fail_rate: number; prior_fail_rate: number; delta_pts: number;
@@ -17,6 +20,11 @@ type DefectMover = {
 type QualityTrend = {
   days: number;
   half_days: number;
+  /** "last 7 days" — the half the current level is measured over. */
+  window?: string;
+  /** Index in `series` where the current half starts (the halves are rolling
+   *  windows, so the split is not always half the bars). */
+  current_from?: number;
   current: Half;
   prior: Half;
   delta_pts: number | null;
@@ -75,7 +83,12 @@ export default function QualityTrendSnapshot() {
 
   // The real worst-day fail rate, shown as the label (never floored — a floor is a
   // rendering guard, not a measurement, so it must not leak into the number).
-  const truePeak = Math.max(...d.series.map((s) => s.fail_rate), 0);
+  // A day that inspected nothing has no rate and contributes no peak.
+  const truePeak = Math.max(...d.series.map((s) => s.fail_rate ?? 0), 0);
+  // Where the current half begins. Falls back to half the window only if the
+  // backend did not say — the halves are rolling, so a window that opens
+  // mid-day touches one more date than it has days.
+  const currentFrom = d.current_from ?? d.half_days;
   // Bars are scaled against the worst day; floor only the DIVISOR so a sub-1% week
   // still reads without inventing a peak.
   const scale = Math.max(truePeak, 0.1);
@@ -107,12 +120,16 @@ export default function QualityTrendSnapshot() {
       {/* headline KPIs */}
       <div className="mt-4 grid grid-cols-2 md:grid-cols-4 gap-2">
         <div className="rounded-lg border border-slate-800 bg-slate-900/40 px-3 py-2 text-center">
-          <p className="text-xl font-bold text-slate-100">{d.current.fail_rate}%</p>
-          <p className="text-[11px] text-slate-500">fail rate now</p>
+          <p className="text-xl font-bold text-slate-100">
+            {d.current.fail_rate == null ? "—" : d.current.fail_rate + "%"}
+          </p>
+          <p className="text-[11px] text-slate-500">
+            {d.current.fail_rate == null ? "no units inspected" : "fail rate now"}
+          </p>
         </div>
         <div className="rounded-lg border border-slate-800 bg-slate-900/40 px-3 py-2 text-center">
           <p className="text-xl font-bold text-slate-400">
-            {d.prior.inspected > 0 ? `${d.prior.fail_rate}%` : "—"}
+            {d.prior.fail_rate == null ? "—" : d.prior.fail_rate + "%"}
           </p>
           <p className="text-[11px] text-slate-500">prior {d.half_days} days</p>
         </div>
@@ -142,12 +159,19 @@ export default function QualityTrendSnapshot() {
               key={s.date}
               className="flex-1 rounded-t-sm bg-slate-800"
               style={{ height: "100%" }}
-              title={`${s.date}: ${s.inspected} inspected, ${s.failed} failed (${s.fail_rate}%)`}
+              title={
+                s.date +
+                ": " +
+                (s.inspected === 0
+                  ? "nothing inspected"
+                  : s.inspected + " inspected, " + s.failed + " failed (" + s.fail_rate + "%)") +
+                (s.partial ? " — partial day (the window opens mid-day)" : "")
+              }
             >
               <div className="flex h-full flex-col justify-end">
                 <div
-                  className={idx < d.half_days ? "bg-slate-600" : "bg-sky-500/80"}
-                  style={{ height: `${Math.round((s.fail_rate / scale) * 100)}%`, minHeight: s.inspected > 0 ? 2 : 0 }}
+                  className={idx < currentFrom ? "bg-slate-600" : "bg-sky-500/80"}
+                  style={{ height: `${Math.round(((s.fail_rate ?? 0) / scale) * 100)}%`, minHeight: s.inspected > 0 ? 2 : 0 }}
                 />
               </div>
             </div>

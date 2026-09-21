@@ -15,6 +15,7 @@ from sqlalchemy import func
 import approvals
 import models
 import oee_contract
+import quality_contract
 from ai.maintenance import OPEN_STATUSES
 import tenancy
 # Pooled OEE (ratio of sums) is the single source of truth in analytics_engine,
@@ -300,22 +301,11 @@ def _open_actions(db, machine_id, tenant):
              "expired": approvals.is_expired(a, now)} for a in rows]
 
 
-def _window_span(window):
-    """The calendar dates `window` touches, oldest first, with the oldest flagged
-    partial when the window opens mid-day.
-
-    ONE definition for every series on the cockpit. A rolling 7x24h window that
-    opens part-way through a day touches EIGHT calendar dates; a series drawn
-    over seven of them cannot account for the panel above it, and three panels
-    each narrowing the window their own way is how one card came to measure the
-    same machine over three different weeks (#590). Same shape as the OEE and
-    cost trends (#586, #587)."""
-    start_date = window.start.date()
-    end_date = (window.end - timedelta(microseconds=1)).date()
-    days = [start_date + timedelta(days=i)
-            for i in range((end_date - start_date).days + 1)]
-    opens_mid_day = window.start.time() != datetime.min.time()
-    return days, opens_mid_day
+# The calendar dates a window touches, oldest first, and whether it opens
+# mid-day. Defined ONCE, in the module that owns window semantics — the quality
+# trend needs the same span, and a third copy of the rule is how the panels on
+# this card drifted apart in the first place (#590).
+_window_span = oee_contract.window_span
 
 
 def _downtime_trend(db, machine_id, days: int = 7, now=None):
@@ -381,10 +371,7 @@ def _machine_quality(db, machine_id, days: int = 7, now=None):
     for the whole card. And it bounds the query: quality_inspections grows, and
     created_at is indexed."""
     window = oee_contract.OeeWindow(days, now=now)
-    insp = (db.query(models.QualityInspection)
-            .filter(models.QualityInspection.machine_id == machine_id,
-                    models.QualityInspection.created_at >= window.start,
-                    models.QualityInspection.created_at < window.end).all())
+    insp = quality_contract.rows_in(db, window, machine_id=machine_id)
     inspected = sum(i.inspected_quantity or 0 for i in insp)
     failed = sum(i.failed_quantity or 0 for i in insp)
     defects: Counter = Counter()
@@ -396,7 +383,10 @@ def _machine_quality(db, machine_id, days: int = 7, now=None):
         "inspected": inspected,
         "passed": sum(i.passed_quantity or 0 for i in insp),
         "failed": failed,
-        "fail_rate": round(failed / inspected * 100) if inspected else 0,
+        # None, not 0: a machine whose inspections covered no units has no
+        # fail rate, and 0% is the best value on the scale (quality_contract).
+        "fail_rate": quality_contract.rate(failed, inspected),
+        "measured": inspected > 0,
         "top_defects": [{"category": c, "count": n} for c, n in defects.most_common(3)],
     }
 

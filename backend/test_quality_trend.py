@@ -166,32 +166,66 @@ def test_defect_movers_rank_growth_and_flag_new_categories():
     print("PASS defect movers rank growth and flag new categories")
 
 
-def test_series_is_zero_filled_and_window_bounded():
+# A pinned instant, so the span the fortnight touches is the same on every run.
+# A rolling window that opens mid-day touches FIFTEEN calendar dates, not
+# fourteen; pinning 14:30 makes that the case under test rather than something
+# the wall clock decides (oee_contract.window_span).
+AT = datetime(2026, 9, 21, 14, 30)
+
+
+def _insp_at(machine_id, days_ago, inspected, failed, defect="Dimensional", now=AT):
+    _seq[0] += 1
+    return models.QualityInspection(
+        inspection_no=f"QI-S{_seq[0]}", machine_id=machine_id, inspector="Ada",
+        inspected_quantity=inspected, passed_quantity=inspected - failed,
+        failed_quantity=failed, defect_category=defect if failed else "",
+        rework_quantity=0, scrap_quantity=0, status="Passed" if not failed else "Failed",
+        created_at=now - timedelta(days=days_ago))
+
+
+def test_series_covers_the_dates_the_fortnight_touches():
     db = _fresh_session()
     _machines(db)
     db.add_all([
-        _insp(1, 2, 100, 5),
-        _insp(1, 30, 100, 90),   # well outside the window — must not leak in
+        _insp_at(1, 2, 100, 5),
+        _insp_at(1, 30, 100, 90),   # well outside the window — must not leak in
     ])
     db.commit()
-    d = quality.build_quality_trend(db, "DEFAULT")
-    assert len(d["series"]) == quality.TREND_WINDOW_DAYS == 14, len(d["series"])
+    d = quality.build_quality_trend(db, "DEFAULT", now=AT)
+    # 2026-09-07 14:30 .. 2026-09-21 14:30 touches 09-07 through 09-21 = 15 dates.
+    # The old series was exactly TREND_WINDOW_DAYS buckets built from calendar-day
+    # ages, so the partial opening date was in the halves and in no bar.
+    assert len(d["series"]) == 15, len(d["series"])
     assert [s["date"] for s in d["series"]] == sorted(s["date"] for s in d["series"])
+    assert d["series"][0]["date"] == "2026-09-07" and d["series"][0]["partial"] is True
+    assert d["series"][-1]["date"] == "2026-09-21"
+    assert "partial" not in d["series"][1]
     assert sum(s["inspected"] for s in d["series"]) == 100, d["series"]
-    # A day with no inspections reads as zero volume, not as perfect quality.
+    # ...and that total is the two halves, so the bars account for the headline.
+    assert (d["current"]["inspected"] + d["prior"]["inspected"]
+            == sum(s["inspected"] for s in d["series"]))
+    # A day with no inspections has NO fail rate. It used to read 0.0 — the best
+    # value on the scale — for a day nobody inspected anything (quality_contract).
     quiet = [s for s in d["series"] if s["inspected"] == 0]
-    assert len(quiet) == 13 and all(s["fail_rate"] == 0.0 for s in quiet)
-    print("PASS series is zero-filled and window-bounded")
+    assert len(quiet) == 14 and all(s["fail_rate"] is None for s in quiet)
+    # The card shades the halves apart from this index, not from a day count.
+    assert d["series"][d["current_from"]]["date"] == "2026-09-14", d["current_from"]
+    assert d["window"] == "last 7 days" and d["half_days"] == 7
+    print("PASS the series covers the dates the fortnight touches, quiet days unmeasured")
 
 
 def test_empty_plant_is_shaped_not_crashed():
     db = _fresh_session()
-    d = quality.build_quality_trend(db, "DEFAULT")
+    d = quality.build_quality_trend(db, "DEFAULT", now=AT)
     assert d["current"]["inspected"] == 0 and d["prior"]["inspected"] == 0
     assert d["delta_pts"] is None and d["direction"] == "unknown"
     assert d["drifting"] == [] and d["improving"] == [] and d["defect_movers"] == []
-    assert len(d["series"]) == 14 and d["tone"] == "warn"
-    print("PASS empty plant is shaped, not crashed")
+    assert len(d["series"]) == 15 and d["tone"] == "warn"
+    # No units inspected: the verdict states that, and never prints a rate.
+    assert d["current"]["fail_rate"] is None and d["current"]["measured"] is False
+    assert "not measured" in d["verdict"], d["verdict"]
+    assert "0%" not in d["verdict"], d["verdict"]
+    print("PASS empty plant is shaped, not crashed, and says it measured nothing")
 
 
 if __name__ == "__main__":
@@ -201,6 +235,6 @@ if __name__ == "__main__":
     test_thin_sample_is_reported_not_condemned()
     test_one_week_of_history_has_nothing_to_compare()
     test_defect_movers_rank_growth_and_flag_new_categories()
-    test_series_is_zero_filled_and_window_bounded()
+    test_series_covers_the_dates_the_fortnight_touches()
     test_empty_plant_is_shaped_not_crashed()
     print("\nAll quality-trend read-model tests passed.")

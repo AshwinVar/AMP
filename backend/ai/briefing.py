@@ -205,7 +205,9 @@ def build_briefing(db, tenant: str) -> dict:
         })
 
     # 4. Quality — fail rate above threshold.
-    if quality["inspections"] > 0 and quality["fail_rate"] >= FAIL_RATE_ALERT:
+    # `measured` first: the fail rate is None when the window inspected no
+    # units at all, and `None >= 5` is a TypeError, not a quiet False.
+    if quality.get("measured") and quality["fail_rate"] >= FAIL_RATE_ALERT:
         worst = quality["by_machine"][0] if quality["by_machine"] else None
         alerts.append({
             "key": "quality", "severity": "medium",
@@ -244,7 +246,7 @@ def build_briefing(db, tenant: str) -> dict:
         b = oee["best"]
         wins.append({"title": f"{b['name']} leading at {b['oee']}% OEE",
                      "detail": (f"{b['line']} line" if b.get("line") else "top machine")})
-    if quality["inspections"] > 0 and quality["first_pass_yield"] >= 98:
+    if quality.get("measured") and quality["first_pass_yield"] >= 98:
         wins.append({"title": f"First-pass yield {quality['first_pass_yield']}%",
                      "detail": "quality running clean"})
     if flow["finished"] > 0:

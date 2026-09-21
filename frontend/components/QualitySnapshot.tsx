@@ -13,19 +13,29 @@ type QualitySummary = {
   failed: number;
   rework: number;
   scrap: number;
-  first_pass_yield: number;
-  fail_rate: number;
+  // Null when the window inspected no units (backend quality_contract): a
+  // fail rate of 0% is the best value on the scale, so a plant that stopped
+  // inspecting used to read as a plant making nothing wrong.
+  first_pass_yield: number | null;
+  fail_rate: number | null;
+  measured?: boolean;
+  /** "last 7 days" — the window every quality figure is pooled over. */
+  window?: string;
   top_defects: { category: string; count: number }[];
-  by_machine: { machine_id: number; name: string; inspected: number; failed: number; fail_rate: number }[];
-  by_line: { line: string; inspected: number; failed: number; fail_rate: number }[];
+  by_machine: { machine_id: number; name: string; inspected: number; failed: number; fail_rate: number | null }[];
+  by_line: { line: string; inspected: number; failed: number; fail_rate: number | null }[];
 };
 
-function yieldColor(fpy: number) {
+function yieldColor(fpy: number | null) {
+  if (fpy == null) return "text-slate-500";
   if (fpy >= 98) return "text-emerald-400";
   if (fpy >= 95) return "text-yellow-400";
   if (fpy >= 90) return "text-orange-400";
   return "text-red-400";
 }
+
+// A rate the backend could not measure is a dash, never 0%.
+const pct = (value: number | null | undefined) => (value == null ? "—" : value + "%");
 
 // SMT and IC each get a consistent accent across the dashboard (sky / violet).
 const lineChip = (line: string) =>
@@ -63,14 +73,19 @@ export default function QualitySnapshot() {
     <div className="rounded-2xl border border-slate-800 bg-slate-900/60 p-6">
       <div className="flex items-start justify-between flex-wrap gap-2">
         <div>
-          <h3 className="text-xs font-semibold uppercase tracking-wide text-slate-300">Quality · last 7 days</h3>
+          <h3 className="text-xs font-semibold uppercase tracking-wide text-slate-300">
+            {"Quality · " + (q.window ?? "last 7 days")}
+          </h3>
           <p className="text-slate-400 text-sm mt-1">
-            {q.inspections} inspection{q.inspections !== 1 ? "s" : ""} · {q.inspected} units · {q.fail_rate}% fail rate
+            {q.inspections} inspection{q.inspections !== 1 ? "s" : ""} · {q.inspected} units ·{" "}
+            {q.fail_rate == null ? "fail rate not measured" : q.fail_rate + "% fail rate"}
           </p>
         </div>
         <div className="text-right">
-          <p className={`text-3xl font-bold ${yieldColor(q.first_pass_yield)}`}>{q.first_pass_yield}%</p>
-          <p className="text-[11px] text-slate-500">first-pass yield</p>
+          <p className={`text-3xl font-bold ${yieldColor(q.first_pass_yield)}`}>{pct(q.first_pass_yield)}</p>
+          <p className="text-[11px] text-slate-500">
+            {q.first_pass_yield == null ? "no units inspected" : "first-pass yield"}
+          </p>
         </div>
       </div>
       <div className="mt-5 grid grid-cols-1 md:grid-cols-2 gap-6">
@@ -116,7 +131,7 @@ export default function QualitySnapshot() {
                   className="rounded-lg border border-slate-700 px-3 py-1.5 text-sm text-slate-300 hover:border-slate-500 hover:bg-slate-800 transition focus:outline-none focus:ring-2 focus:ring-slate-600"
                   title={`${m.name} — open machine cockpit`}
                 >
-                  {m.name} <span className="text-slate-500">· {m.fail_rate}%</span>
+                  {m.name} <span className="text-slate-500">· {pct(m.fail_rate)}</span>
                 </button>
               ))}
             </div>
@@ -133,7 +148,7 @@ export default function QualitySnapshot() {
                 className={`rounded-md border px-2.5 py-1 text-xs font-medium ${lineChip(l.line)}`}
                 title={`${l.failed} failed of ${l.inspected} inspected`}
               >
-                {l.line} <span className="opacity-70">· {l.fail_rate}%</span>
+                {l.line} <span className="opacity-70">· {pct(l.fail_rate)}</span>
               </span>
             ))}
           </div>

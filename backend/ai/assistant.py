@@ -141,6 +141,11 @@ def _quality(db, tenant):
 def say_quality(q):
     if q["inspections"] == 0:
         return "No quality inspections recorded yet.", "quality"
+    if not q.get("measured"):
+        # Inspections exist but they covered no units, so both rates are None
+        # (quality_contract). Saying "0%" here would report a perfect week.
+        return (f"{q['inspections']} inspection(s) in the {q['window']}, but no units "
+                f"were inspected — the fail rate is not measured."), "quality"
     ans = f"First-pass yield is {q['first_pass_yield']}% and the fail rate is {q['fail_rate']}%."
     if q["by_machine"]:
         w = q["by_machine"][0]

@@ -1066,14 +1066,59 @@ def test_quality_analytics_null_count_columns_are_zero_not_a_crash():
           "(pass 50% / fail 9%)")
 
 
-def test_quality_analytics_empty_table_is_zero_not_a_crash():
+def test_quality_analytics_empty_table_is_unmeasured_not_zero():
     db = _fresh_session()
     out = analytics_routes.get_quality_analytics(db=db, current_user={})
     assert out["total_inspections"] == 0, out
     assert out["inspected_quantity"] == 0 and out["failed_quantity"] == 0, out
-    assert out["pass_rate"] == 0 and out["fail_rate"] == 0, out   # 0/0 guarded -> 0
+    # Counts of nothing are 0; RATES over nothing are not. 0% fail is the best
+    # value on the scale, so an empty register used to publish a perfect plant.
+    assert out["pass_rate"] is None and out["fail_rate"] is None, out
+    assert out["measured"] is False, out
+    assert out["window"] == "last 7 days" and out["days"] == 7, out
     assert out["defect_counts"] == {} and out["machine_failures"] == {}, out
-    print("PASS quality analytics: empty table -> zeros, no divide-by-zero")
+    print("PASS quality analytics: empty table -> not measured, no divide-by-zero")
+
+
+def test_quality_analytics_reads_the_canonical_window_not_the_whole_register():
+    # THE DEFECT: this endpoint pooled EVERY inspection ever recorded and labelled
+    # the result "Fail Rate", on a screen beside an intel card whose fail rate was
+    # the last seven days. A plant that ran badly last quarter and cleanly this
+    # week published two different true numbers under one label, and neither
+    # screen said which week it meant.
+    db = _fresh_session()
+    now = datetime.utcnow()
+    # This week: 1,000 units, 10 failed -> 1%.
+    db.add(models.QualityInspection(inspection_no="Q-NOW", inspector="I", machine_id=1,
+                                    inspected_quantity=1000, passed_quantity=990,
+                                    failed_quantity=10, defect_category="Scratch",
+                                    created_at=now - timedelta(days=2)))
+    # Last quarter: 1,000 units, 400 failed. Out of the window entirely.
+    db.add(models.QualityInspection(inspection_no="Q-OLD", inspector="I", machine_id=2,
+                                    inspected_quantity=1000, passed_quantity=600,
+                                    failed_quantity=400, defect_category="Dent",
+                                    created_at=now - timedelta(days=60)))
+    db.commit()
+
+    out = analytics_routes.get_quality_analytics(db=db, current_user={})
+    assert out["total_inspections"] == 1, out            # was 2 (the lifetime register)
+    assert out["inspected_quantity"] == 1000, out        # was 2000
+    assert out["failed_quantity"] == 10, out             # was 410
+    assert out["fail_rate"] == 1, out                    # was round(410/2000*100) = 21
+    assert out["pass_rate"] == 99, out
+    assert out["measured"] is True and out["window"] == "last 7 days", out
+    # The drill-downs are on the SAME bounds, or they cannot reconcile with the
+    # headline above them (rule 3): no "Dent", no machine 2.
+    assert out["defect_counts"] == {"Scratch": 10}, out
+    assert out["machine_failures"] == {1: 10}, out
+    assert sum(out["defect_counts"].values()) == out["failed_quantity"], out
+
+    # ...and the twin's tile reads the same contract over the same window, so the
+    # two screens cannot disagree.
+    cc = analytics_routes.get_factory_command_center(db=db, current_user={})
+    assert cc["quality_fail_rate"] == out["fail_rate"] == 1, (cc, out)
+    assert cc["quality_measured"] is True and cc["quality_window"] == "last 7 days", cc
+    print("PASS quality analytics + command centre: one window (1%, not the lifetime 21%)")
 
 
 def test_quality_analytics_is_tenant_scoped():
@@ -1403,9 +1448,10 @@ def test_factory_command_center_empty_tables_are_zero_not_a_crash():
     assert out["machines"] == 0 and out["total_downtime_minutes"] == 0, out
     assert out["active_work_orders"] == 0 and out["behind_plans"] == 0, out
     assert out["open_escalations"] == 0 and out["low_stock_items"] == 0, out
-    assert out["quality_fail_rate"] == 0, out
+    # Counts of nothing are 0; a fail rate over nothing is not measured.
+    assert out["quality_fail_rate"] is None and out["quality_measured"] is False, out
     assert out["zone_summary"] == [], out
-    print("PASS factory-command-center: empty tables -> all zeros, no crash")
+    print("PASS factory-command-center: empty tables -> zero counts, unmeasured rate")
 
 
 def _count_selects(engine):
@@ -1858,7 +1904,8 @@ if __name__ == "__main__":
     test_escalation_analytics_empty_table_is_zero_not_a_crash()
     test_escalation_analytics_is_tenant_scoped()
     test_quality_analytics_null_count_columns_are_zero_not_a_crash()
-    test_quality_analytics_empty_table_is_zero_not_a_crash()
+    test_quality_analytics_empty_table_is_unmeasured_not_zero()
+    test_quality_analytics_reads_the_canonical_window_not_the_whole_register()
     test_quality_analytics_is_tenant_scoped()
     test_executive_oee_null_quality_columns_in_per_machine_fallback()
     test_executive_oee_per_machine_components_capped_at_100()

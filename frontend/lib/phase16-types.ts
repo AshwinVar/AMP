@@ -36,6 +36,10 @@ export type FactoryCommandCenter = {
   behind_plans: number;
   open_escalations: number;
   low_stock_items: number;
-  quality_fail_rate: number;
+  /** Null when the window inspected no units — never 0%. */
+  quality_fail_rate: number | null;
+  quality_measured?: boolean;
+  /** "last 7 days" — the same window the Quality view's tiles are on. */
+  quality_window?: string;
   zone_summary: FactoryZoneSummary[];
 };

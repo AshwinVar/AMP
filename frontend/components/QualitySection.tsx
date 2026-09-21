@@ -12,6 +12,11 @@ type Machine = {
   downtime: string;
 };
 
+// A rate the backend could not measure is a dash, never 0%.
+function pct(value: number | null | undefined) {
+  return value == null ? "—" : value + "%";
+}
+
 function statusStyle(status: string) {
   switch (status) {
     case "Passed":
@@ -98,13 +103,26 @@ export default function QualitySection({
         </button>
       </div>
 
+      {/* These eight tiles are ONE window — the backend pools them over the
+          canonical reporting week and names it — not the lifetime register they
+          used to sum. A rate is a dash when the window inspected no units,
+          because 0% fail is the best value on the scale and this row used to
+          print it for a plant that had inspected nothing. */}
+      <div className="flex items-baseline gap-2">
+        <h3 className="text-xs font-semibold uppercase tracking-wide text-slate-400">
+          {"Inspection totals · " + (analytics?.window ?? "last 7 days")}
+        </h3>
+        {analytics && analytics.measured === false && (
+          <span className="text-xs text-slate-500">no units inspected in this window</span>
+        )}
+      </div>
       <div className="grid grid-cols-1 md:grid-cols-4 xl:grid-cols-8 gap-4">
         <Kpi title="Inspections" value={analytics?.total_inspections ?? 0} />
         <Kpi title="Inspected" value={analytics?.inspected_quantity ?? 0} />
         <Kpi title="Passed" value={analytics?.passed_quantity ?? 0} />
         <Kpi title="Failed" value={analytics?.failed_quantity ?? 0} />
-        <Kpi title="Pass Rate" value={`${analytics?.pass_rate ?? 0}%`} />
-        <Kpi title="Fail Rate" value={`${analytics?.fail_rate ?? 0}%`} />
+        <Kpi title="Pass Rate" value={pct(analytics?.pass_rate)} />
+        <Kpi title="Fail Rate" value={pct(analytics?.fail_rate)} />
         <Kpi title="Rework" value={analytics?.rework_quantity ?? 0} />
         <Kpi title="Scrap" value={analytics?.scrap_quantity ?? 0} />
       </div>

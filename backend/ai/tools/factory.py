@@ -591,6 +591,16 @@ def get_quality_summary(db, tenant):
     if q["inspections"] == 0:
         return _result("get_quality_summary", ev.NO_DATA, said,
                        [_fact("quality.inspections", "Inspections", 0, M, "inspections", "quality_inspections")])
+    if not q.get("measured"):
+        # Rows, but no units: there is no yield and no fail rate to state, and a
+        # fact carrying None would be refused by the evidence vocabulary. Say
+        # what WAS recorded and mark the reading partial.
+        return _result("get_quality_summary", ev.PARTIAL_DATA, said, [
+            _fact("quality.inspections", "Inspections", q["inspections"], M, "inspections",
+                  "quality_inspections"),
+            _fact("quality.inspected", "Units inspected", 0, M, "units", "quality_inspections"),
+            _fact("quality.fail_rate", "Fail rate", None, ev.UNKNOWN, "%", "quality_inspections"),
+        ])
     facts = [
         _fact("quality.inspections", "Inspections", q["inspections"], M, "inspections", "quality_inspections"),
         _fact("quality.inspected", "Units inspected", q["inspected"], M, "units", "quality_inspections"),

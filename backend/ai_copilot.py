@@ -498,8 +498,15 @@ def _build_factory_context(db: Session, tenant: str) -> str:
         qual = build_quality_summary(db, tenant)
         if qual["inspections"]:
             defect = qual["top_defects"][0]["category"] if qual["top_defects"] else "-"
-            lines.append(f"QUALITY (7d): first-pass yield {qual['first_pass_yield']}%, "
-                         f"fail rate {qual['fail_rate']}%, top defect {defect}.")
+            if qual.get("measured"):
+                lines.append(f"QUALITY ({qual['window']}): first-pass yield "
+                             f"{qual['first_pass_yield']}%, fail rate {qual['fail_rate']}%, "
+                             f"top defect {defect}.")
+            else:
+                # No units inspected: the rates are None (quality_contract), and
+                # a context line reading "fail rate None%" is worse than silence.
+                lines.append(f"QUALITY ({qual['window']}): {qual['inspections']} inspection(s) "
+                             f"covering no units — fail rate not measured.")
         maint = build_maintenance_summary(db, tenant)
         if maint["open"]:
             lines.append(f"MAINTENANCE: {maint['open']} open task(s), {maint['overdue']} overdue, "

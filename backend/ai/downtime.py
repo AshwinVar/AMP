@@ -184,8 +184,10 @@ def build_downtime_reason(db, tenant: str, reason: str) -> dict:
 def _half_of(day, today):
     """Which half a day falls in: 'current' = the last WINDOW_DAYS including
     today, 'prior' = the WINDOW_DAYS before that, None = outside the window.
-    Mirrors ai.quality._half_of so the two trend cards split their windows the
-    same way."""
+    Splits by calendar-day age. ai.quality._half_of used to do the same, and the
+    quality trend now tiles two canonical windows instead (quality_contract), so
+    these two cards no longer divide their fortnight on the same boundary. This
+    one is the next to move, not a second definition anybody chose."""
     age = (today - day).days
     if 0 <= age < WINDOW_DAYS:
         return "current"

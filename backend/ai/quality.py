@@ -12,16 +12,29 @@ the tenant by the query layer (ADR-0002); it adds no storage.
 last 7 days against the 7 before, on the same numerator and denominator, and
 attributes the swing to specific machines and specific defect categories —
 so a plant sees a drift while it is still small rather than after the scrap.
+
+THE WINDOW IS NOT THIS MODULE'S TO CHOOSE. Every figure below is measured over
+`oee_contract.OeeWindow` and pooled by `quality_contract` — the same half-open
+week the plant OEE, the cost trend, the shift attainment and the machine
+cockpit are on. This module used to cut its own: `created_at >= midnight(today
+- 6)` with no upper bound, which is a different set of rows from `[now - 7d,
+now)` at BOTH ends, while two of the three surfaces publishing "fail rate" were
+on no window at all. The trend's halves come from `prior_window`, so they tile
+exactly and the current half IS the summary's figure rather than a second
+computation of it.
 """
 from collections import Counter, defaultdict
-from datetime import datetime, timedelta
+from datetime import datetime
 
 import models
+import oee_contract
+import quality_contract
 
 name = "quality"
 
 TOP_N = 5
-WINDOW_DAYS = 7
+# The canonical reporting week, not a private copy of the number (#586).
+WINDOW_DAYS = oee_contract.DEFAULT_WINDOW_DAYS
 
 # Trend window — two WINDOW_DAYS halves, so "this week vs last week" on the
 # same window the summary already reports.
@@ -38,41 +51,27 @@ MIN_MACHINE_UNITS = 25
 MIN_SAMPLE_UNITS = 50
 
 
-def _inspections_since(db, days: int, now=None):
-    """The last `days` days of inspections, bounded in SQL (the table grows
-    continuously). Day-aligned in UTC, like every other window read-model."""
-    cutoff = datetime.combine((now or datetime.utcnow()).date() - timedelta(days=days - 1),
-                              datetime.min.time())
-    return (db.query(models.QualityInspection)
-            .filter(models.QualityInspection.created_at >= cutoff).all())
-
-
-def _recent_inspections(db):
-    """The window's inspections, bounded in SQL (the table grows continuously)."""
-    return _inspections_since(db, WINDOW_DAYS)
-
-
-def _pct(part, whole):
-    return round(part / whole * 100) if whole else 0
-
-
-def _rate1(part, whole):
-    """Fail rate to one decimal — a trend has to resolve movement an integer
-    percentage would round away."""
-    return round(part / whole * 100, 1) if whole else 0.0
+def _window(now=None):
+    """The window every figure in this module is measured over."""
+    return oee_contract.OeeWindow(WINDOW_DAYS, now=now)
 
 
 def _norm_defect(i) -> str:
     return (i.defect_category or "Unspecified").strip() or "Unspecified"
 
 
-def build_quality_summary(db, tenant: str) -> dict:
+def build_quality_summary(db, tenant: str, now=None) -> dict:
     """First-pass yield, fail rate, a defect Pareto, and the worst machines by
-    fail rate — over the last 7 days' inspections (auto-scoped, ADR-0002)."""
-    inspections = _recent_inspections(db)
-    inspected = sum(i.inspected_quantity or 0 for i in inspections)
-    passed = sum(i.passed_quantity or 0 for i in inspections)
-    failed = sum(i.failed_quantity or 0 for i in inspections)
+    fail rate — over the canonical window's inspections.
+
+    The plant totals and both rates come from `quality_contract.plant_quality`,
+    which is what `/analytics/quality` and the digital twin's tile read too, so
+    the three surfaces cannot publish three different fail rates again. The
+    breakdowns are rolled up from the same window's rows (auto-scoped,
+    ADR-0002). `now`: the instant the window ends at, for a composing caller."""
+    window = _window(now)
+    plant = quality_contract.plant_quality(db, tenant, window)
+    inspections = quality_contract.rows_in(db, window)
 
     # Defect Pareto: total failed units by defect category, biggest first.
     defects: Counter = Counter()
@@ -92,7 +91,8 @@ def build_quality_summary(db, tenant: str) -> dict:
     line_of = {m.id: (m.line or "") for m in all_machines}
     by_machine = [
         {"machine_id": mid, "name": names.get(mid, f"#{mid}"),
-         "inspected": a["inspected"], "failed": a["failed"], "fail_rate": _pct(a["failed"], a["inspected"])}
+         "inspected": a["inspected"], "failed": a["failed"],
+         "fail_rate": quality_contract.rate(a["failed"], a["inspected"])}
         for mid, a in agg.items() if a["inspected"] > 0
     ]
     by_machine.sort(key=lambda m: (m["fail_rate"], m["failed"]), reverse=True)
@@ -106,33 +106,39 @@ def build_quality_summary(db, tenant: str) -> dict:
             line_agg[ln]["failed"] += a["failed"]
     by_line = [
         {"line": ln, "inspected": a["inspected"], "failed": a["failed"],
-         "fail_rate": _pct(a["failed"], a["inspected"])}
+         "fail_rate": quality_contract.rate(a["failed"], a["inspected"])}
         for ln, a in sorted(line_agg.items()) if a["inspected"] > 0
     ]
 
     return {
-        "inspections": len(inspections),
-        "inspected": inspected,
-        "passed": passed,
-        "failed": failed,
-        "rework": sum(i.rework_quantity or 0 for i in inspections),
-        "scrap": sum(i.scrap_quantity or 0 for i in inspections),
-        "first_pass_yield": _pct(passed, inspected),
-        "fail_rate": _pct(failed, inspected),
+        "inspections": plant["inspections"],
+        "inspected": plant["inspected"],
+        "passed": plant["passed"],
+        "failed": plant["failed"],
+        "rework": plant["rework"],
+        "scrap": plant["scrap"],
+        # None when the window inspected no units at all. 0% is the BEST value
+        # on a fail-rate scale, so a plant that stopped inspecting used to read
+        # as a plant making nothing wrong (quality_contract.rate).
+        "first_pass_yield": plant["first_pass_yield"],
+        "fail_rate": plant["fail_rate"],
+        "measured": plant["measured"],
+        "window": plant["window"],
+        "days": plant["days"],
         "top_defects": top_defects,
         "by_machine": by_machine[:TOP_N],
         "by_line": by_line,
     }
 
 
-def build_defect_detail(db, tenant: str, category: str) -> dict:
+def build_defect_detail(db, tenant: str, category: str, now=None) -> dict:
     """Drill-down for a single defect category: the units it has failed (with the
     rework/scrap split), the machines producing it, and the inspections that
     caught it. Composes quality_inspections (auto-scoped, ADR-0002); adds no
     storage. Windowed to the same 7 days as the summary. Returns a zeroed shape
     when the category has no failures."""
     insp = [
-        i for i in _recent_inspections(db)
+        i for i in quality_contract.rows_in(db, _window(now))
         if i.failed_quantity and _norm_defect(i) == category
     ]
     names = {m.id: m.name for m in db.query(models.Machine).all()}
@@ -171,75 +177,85 @@ def build_defect_detail(db, tenant: str, category: str) -> dict:
     }
 
 
-def _half_of(day, today):
-    """Which half a day falls in: 'current' = the last WINDOW_DAYS including
-    today, 'prior' = the WINDOW_DAYS before that, None = outside the window."""
-    age = (today - day).days
-    if 0 <= age < WINDOW_DAYS:
-        return "current"
-    if WINDOW_DAYS <= age < TREND_WINDOW_DAYS:
-        return "prior"
-    return None
-
-
 def build_quality_trend(db, tenant: str, now=None) -> dict:
-    """Which way is quality going, and who moved it? Compares the last 7 days of
-    inspections against the 7 before on the same numerator and denominator, then
-    attributes the swing to machines and defect categories. Composes
-    quality_inspections (auto-scoped, ADR-0002); it adds no storage. `now`: the
-    instant the window ends at (a composing read-model's clock)."""
-    today = (now or datetime.utcnow()).date()
-    inspections = _inspections_since(db, TREND_WINDOW_DAYS, now=now)
+    """Which way is quality going, and who moved it? Compares the canonical
+    window against the one immediately before it, on the same numerator and
+    denominator, then attributes the swing to machines and defect categories.
 
-    # Daily series across the whole window, zero-filled so a silent day reads as
-    # a gap in inspection rather than as perfect quality.
-    days = [today - timedelta(days=n) for n in range(TREND_WINDOW_DAYS - 1, -1, -1)]
-    daily = {d: {"inspected": 0, "failed": 0} for d in days}
-    halves = {"current": {"inspected": 0, "failed": 0, "inspections": 0},
-              "prior": {"inspected": 0, "failed": 0, "inspections": 0}}
+    THE HALVES TILE. They are `window` and `oee_contract.prior_window(window)`,
+    which share a boundary instant and no row, and the current half is
+    `plant_quality` over that window — the SAME call the summary card beside
+    this one makes, so the two cards cannot disagree by construction. They used
+    to be classified by calendar-day age, which is a different split from the
+    rolling window every other figure on the page was measured over.
+
+    `now`: the instant the window ends at (a composing read-model's clock)."""
+    window = _window(now)
+    prior_w = oee_contract.prior_window(window)
+    # Each half is queried on its own bounds rather than classified in Python:
+    # the boundary rule lives in ONE place, the SQL filter (OeeWindow's
+    # docstring is explicit that a second implementation is how definitions
+    # drift apart).
+    cur_plant = quality_contract.plant_quality(db, tenant, window)
+    pri_plant = quality_contract.plant_quality(db, tenant, prior_w)
+    cur_rows = quality_contract.rows_in(db, window)
+    pri_rows = quality_contract.rows_in(db, prior_w)
+
+    # The calendar dates the fortnight touches, oldest first — fifteen when the
+    # window opens mid-day, and the oldest is flagged `partial` exactly as the
+    # cost and cockpit series are (#587, #590). A day bucket is a rendering of
+    # the rows, not a second definition of the halves.
+    span, opens_mid_day = oee_contract.window_span(
+        oee_contract.OeeWindow(TREND_WINDOW_DAYS, now=window.end))
+    daily = {d: {"inspected": 0, "failed": 0} for d in span}
     per_machine: dict = defaultdict(lambda: {
         "current": {"inspected": 0, "failed": 0}, "prior": {"inspected": 0, "failed": 0}})
     per_defect: dict = defaultdict(lambda: {"current": 0, "prior": 0})
 
-    for i in inspections:
-        if not i.created_at:
-            continue
-        day = i.created_at.date()
-        half = _half_of(day, today)
-        if half is None:
-            continue
-        inspected, failed = i.inspected_quantity or 0, i.failed_quantity or 0
-        if day in daily:
-            daily[day]["inspected"] += inspected
-            daily[day]["failed"] += failed
-        halves[half]["inspected"] += inspected
-        halves[half]["failed"] += failed
-        halves[half]["inspections"] += 1
-        if i.machine_id is not None:
-            per_machine[i.machine_id][half]["inspected"] += inspected
-            per_machine[i.machine_id][half]["failed"] += failed
-        if failed:
-            per_defect[_norm_defect(i)][half] += failed
+    for half, rows in (("prior", pri_rows), ("current", cur_rows)):
+        for i in rows:
+            if not i.created_at:
+                continue
+            inspected, failed = i.inspected_quantity or 0, i.failed_quantity or 0
+            day = i.created_at.date()
+            if day in daily:
+                daily[day]["inspected"] += inspected
+                daily[day]["failed"] += failed
+            if i.machine_id is not None:
+                per_machine[i.machine_id][half]["inspected"] += inspected
+                per_machine[i.machine_id][half]["failed"] += failed
+            if failed:
+                per_defect[_norm_defect(i)][half] += failed
 
-    series = [{"date": d.isoformat(), "inspected": a["inspected"], "failed": a["failed"],
-               "fail_rate": _rate1(a["failed"], a["inspected"])}
-              for d, a in ((d, daily[d]) for d in days)]
+    # A day that inspected nothing has NO fail rate — it is a gap in inspection,
+    # and drawing it as 0.0 draws it as a perfect day (quality_contract.rate1).
+    series = [{"date": d.isoformat(), "inspected": daily[d]["inspected"],
+               "failed": daily[d]["failed"],
+               "fail_rate": quality_contract.rate1(daily[d]["failed"], daily[d]["inspected"]),
+               **({"partial": True} if (i == 0 and opens_mid_day) else {})}
+              for i, d in enumerate(span)]
+    # Where the current half starts in that series, so the card can shade the two
+    # halves apart without re-deriving the split from a day count. The bucket the
+    # boundary falls inside belongs partly to each; it is drawn as current.
+    current_from = next((i for i, d in enumerate(span) if d >= window.start.date()), len(span))
 
-    def _half(key):
-        a = halves[key]
-        return {"inspections": a["inspections"], "inspected": a["inspected"], "failed": a["failed"],
-                # Displayed level uses the SAME integer rounding as build_quality_summary's
-                # fail_rate — it's the identical 7-day plant number, and this card sits
-                # right beside that one, so they must not show 4% vs 3.5%.
-                "fail_rate": _pct(a["failed"], a["inspected"])}
+    def _half(plant):
+        return {"inspections": plant["inspections"], "inspected": plant["inspected"],
+                "failed": plant["failed"],
+                # The identical integer rounding build_quality_summary publishes —
+                # this card sits right beside that one, so they must not show
+                # 4% vs 3.5% — and None when the half inspected nothing.
+                "fail_rate": plant["fail_rate"], "measured": plant["measured"]}
 
-    current, prior = _half("current"), _half("prior")
-    comparable = current["inspected"] > 0 and prior["inspected"] > 0
+    current, prior = _half(cur_plant), _half(pri_plant)
+    comparable = cur_plant["measured"] and pri_plant["measured"]
     # Movement is measured on the UNROUNDED rates so a sub-one-point drift isn't lost
     # to the integer rounding of the displayed levels above.
-    cur_exact = _rate1(halves["current"]["failed"], halves["current"]["inspected"])
-    pri_exact = _rate1(halves["prior"]["failed"], halves["prior"]["inspected"])
-    delta_pts = round(cur_exact - pri_exact, 1) if comparable else None
+    delta_pts = None
+    if comparable:
+        cur_exact = quality_contract.rate1(cur_plant["failed"], cur_plant["inspected"])
+        pri_exact = quality_contract.rate1(pri_plant["failed"], pri_plant["inspected"])
+        delta_pts = round(cur_exact - pri_exact, 1)
 
     if delta_pts is None:
         direction = "unknown"
@@ -260,8 +276,8 @@ def build_quality_trend(db, tenant: str, now=None) -> dict:
         # Both halves need real volume, or the "movement" is just a small sample.
         if a["current"]["inspected"] < MIN_MACHINE_UNITS or a["prior"]["inspected"] < MIN_MACHINE_UNITS:
             continue
-        cur = _rate1(a["current"]["failed"], a["current"]["inspected"])
-        pri = _rate1(a["prior"]["failed"], a["prior"]["inspected"])
+        cur = quality_contract.rate1(a["current"]["failed"], a["current"]["inspected"])
+        pri = quality_contract.rate1(a["prior"]["failed"], a["prior"]["inspected"])
         movers.append({
             "machine_id": mid, "name": names.get(mid, f"#{mid}"),
             "fail_rate": cur, "prior_fail_rate": pri, "delta_pts": round(cur - pri, 1),
@@ -288,7 +304,12 @@ def build_quality_trend(db, tenant: str, now=None) -> dict:
     worst = drifting[0] if drifting else None
     now_rate = current["fail_rate"]
 
-    if not comparable:
+    if not current["measured"]:
+        # No units inspected this week: there is no rate to report, and the
+        # sentence must not print one. This read "nothing to compare 0% against".
+        verdict, tone = ("No units were inspected in the last "
+                         f"{WINDOW_DAYS} days — quality is not measured.", "warn")
+    elif not comparable:
         verdict, tone = (f"Only one week of inspection history — nothing to compare "
                          f"{now_rate}% against yet.", "warn")
     elif direction == "worsening":
@@ -310,6 +331,8 @@ def build_quality_trend(db, tenant: str, now=None) -> dict:
     return {
         "days": TREND_WINDOW_DAYS,
         "half_days": WINDOW_DAYS,
+        "window": window.label(),
+        "current_from": current_from,
         "current": current,
         "prior": prior,
         "delta_pts": delta_pts,

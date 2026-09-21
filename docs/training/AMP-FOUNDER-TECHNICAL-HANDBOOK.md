@@ -199,12 +199,12 @@ AMP is an **AI operating system for manufacturing** that started as an MES. It c
 # Chapter 2 — How AMP Was Built (the real evolution)
 
 ### What you will understand
-*Why* AMP is shaped the way it is — reconstructed from the actual git history (585 commits) and the 19 ADRs. Understanding the evolution tells you which parts are load-bearing and which are scars from real incidents.
+*Why* AMP is shaped the way it is — reconstructed from the actual git history (585 commits at the time of writing) and the ADRs (38 by 2026-09-21). Understanding the evolution tells you which parts are load-bearing and which are scars from real incidents.
 
 ### Simple explanation
 AMP was **not** designed on a whiteboard and then built. It grew, painfully, in eras — and inflected sharply on **2026-07-13** when the first Architecture Decision Records were accepted. Before that date it was a well-built app that was improvised; after it, it was an *architecture with a written rationale*, and delivery roughly quintupled.
 
-> **What is an ADR?** *Architecture Decision Record* — a short markdown file that captures one significant decision: the context, the choice, the consequences, the alternatives. AMP has 19 of them in `docs/adr/`. They are the single best map of *why* the system looks like it does. They are never edited once "Accepted" — you supersede with a new one.
+> **What is an ADR?** *Architecture Decision Record* — a short markdown file that captures one significant decision: the context, the choice, the consequences, the alternatives. AMP has 38 of them in `docs/adr/` (2026-09-21; the README there is the index). They are the single best map of *why* the system looks like it does. They are never edited once "Accepted" — you supersede with a new one.
 
 ### The eras (BEFORE → PROBLEM → CHANGE → AFTER → WHY)
 
@@ -285,7 +285,7 @@ Then open `docs/adr/README.md` for the decision spine, and `docs/ENGINEERING-HIS
 When you make a significant architectural decision, **add the next ADR** (`docs/adr/00XX-title.md`) following the existing Context → Decision → Consequences → Alternatives → Rollout format, and add a row to `docs/adr/README.md`. Never edit an Accepted ADR; supersede it.
 
 ### Quick recap
-AMP grew in ~14 eras from a June demo (FlowMES) to today's platform, inflecting on 2026-07-13 when ADR-0001/0002 turned improvisation into architecture. The load-bearing pillars arrived as ADRs: event bus, tenant scoping, AI/agents/oversight, read-models, SaaS lifecycle, modularization, migrations-before-serve, and the OEM platform. The one revert in history gave us the "smoke-test on a running server" rule. The 19 ADRs in `docs/adr/` are your map of *why*.
+AMP grew in ~14 eras from a June demo (FlowMES) to today's platform, inflecting on 2026-07-13 when ADR-0001/0002 turned improvisation into architecture. The load-bearing pillars arrived as ADRs: event bus, tenant scoping, AI/agents/oversight, read-models, SaaS lifecycle, modularization, migrations-before-serve, and the OEM platform. The one revert in history gave us the "smoke-test on a running server" rule. The ADRs in `docs/adr/` (38 on 2026-09-21) are your map of *why*.
 
 ---
 
@@ -309,7 +309,7 @@ C:\Users\ashwi\AMP
 Think of the backend as a building. Foundation at the bottom, apps in the middle, safety net around everything.
 
 ```
- LAYER 5 · Tests (~193 test_*.py + 12 mutate_*.py + 8 audit_*.py) — the net
+ LAYER 5 · Tests (352 test_*.py + 40 mutate_*.py + 11 audit_*.py on 2026-09-21) — the net
  LAYER 4 · Backbone / shared services
            events · subscribers · tenancy · module_manifest · ai/ · approvals
            analytics_engine · oee_contract · live_ws · mqtt_service · schema_guard
@@ -320,7 +320,7 @@ Think of the backend as a building. Foundation at the bottom, apps in the middle
 
 | Layer | Key files | What it is / when you touch it |
 |---|---|---|
-| **1 · Foundation** | `database.py` (engine/Session/Base), `models.py` (57 tables), `schemas.py` (Pydantic wire-shapes), `auth.py` + `security.py` (identity) | The plumbing everything imports. Touch `models.py`+a migration to add a table; `schemas.py` to change an API's shape. |
+| **1 · Foundation** | `database.py` (engine/Session/Base), `models.py` (67 tables), `schemas.py` (Pydantic wire-shapes), `auth.py` + `security.py` (identity) | The plumbing everything imports. Touch `models.py`+a migration to add a table; `schemas.py` to change an API's shape. |
 | **2 · Assembler** | `main.py` | Imports everything and wires it (27 `include_router`, subscriber registration, middleware, the sim loop, `/ws/live`). You edit it to **mount a new router** or **add middleware** — rarely for features. |
 | **3 · Domain apps** | `machines_routes.py`, `work_orders_routes.py`, `inventory_routes.py`, `quality_routes.py`, `production_planning_routes.py`, `factory_ops_routes.py`, `operator_routes.py`, `reports_routes.py`, `analytics_routes.py`, `costing_routes.py`, `industrial_iot_routes.py`, `users_routes.py`, `platform_routes.py`, `saas_routes.py`, `bom_routes.py`, `enterprise_inventory_routes.py`, `gmats_inventory_routes.py`, plus `oem_routes.py`, `oem_admin_routes.py`, `connected_equipment_routes.py` | One file per business domain. **This is where features live.** Add an endpoint here (Chapter 8). |
 | **4 · Backbone** | `events.py`+`subscribers.py` (bus), `tenancy.py` (isolation), `module_manifest.py`+`modules.json` (licensing catalogue), `ai/` (~45 modules), `approvals.py` (the agent gate), `analytics_engine.py`+`oee_contract.py` (OEE), `live_ws.py`+`ws_auth.py` (WebSocket), `mqtt_service.py`+`mqtt_identity.py` (ingest), `schema_guard.py`+`migrate.py`+`alembic/` (migrations) | Shared services that make it a *platform*, not 17 separate apps. Touch with care — everything depends on these. |
@@ -380,8 +380,8 @@ AMP boots in **two phases**: module-import (runs once when uvicorn loads `main:a
 | Create tables (dev only) | `main.py:135-136` `if not _MANAGED: Base.metadata.create_all()` | On laptops/tests, create missing tables. **Skipped on Alembic-managed production.** `create_all` never *alters* existing tables — that gap caused the `is_active` outage (Chapter 6). | Boot aborts |
 | Boot-time patches (dev only) | `main.py:235-345` ~30× `_ensure_column`/`_ensure_index` + `tenancy.ensure_tenant_columns` + `install_scoping()` | Idempotent "add column/index if missing" + turn on tenant scoping. **Every patch is a no-op on managed DBs.** | Each patch is try/except → logs `[MIGRATE] skipped`, continues; `install_scoping` failure aborts |
 | Create the app | `main.py:357` `app = FastAPI(title="AMP API")` | The FastAPI object | — |
-| Mount everything | `main.py:361-445` **27× `app.include_router(...)`** + `ai.copilot.register(app)` | Snap all domain apps onto the platform (the copilot's routes always mount; a language model words answers only when a provider is configured — hosted key **or** self-hosted `AMP_LLM_BASE_URL` — and, for the self-hosted kind, only once adopted) | Boot aborts |
-| Build middleware | `main.py:674-717` 6× `app.add_middleware(...)` | PlanGate, SchemaGuard, RateLimit, CORS, SecurityHeaders, RequestContext, **TenantScope** | — |
+| Mount everything | `main.py` **30× `app.include_router(...)`** (2026-09-21) + `ai.copilot.register(app)` | Snap all domain apps onto the platform (the copilot's routes always mount; a language model words answers only when a provider is configured — hosted key **or** self-hosted `AMP_LLM_BASE_URL` — and, for the self-hosted kind, only once adopted) | Boot aborts |
+| Build middleware | `main.py` 8× `app.add_middleware(...)` (2026-09-21) | PlanGate, SchemaGuard, RateLimit, CORS, SecurityHeaders, RequestContext, ReservedPreviewGuard, **TenantScope** | — |
 | Register the socket | `main.py:728` `@app.websocket("/ws/live")` | The authenticated live feed | — |
 
 **Phase B — `startup_event` (`main.py:534-657`)**
@@ -507,11 +507,11 @@ Where AMP's permanent memory lives, how it's shaped, how one column (`tenant_cod
 
 ### How AMP implements it
 - **`backend/database.py`** — the connection: `engine` (the pooled phone-line to PostgreSQL), `SessionLocal` (hands out a `Session` = one transaction/conversation), `Base` (the parent class every table inherits).
-- **`backend/models.py`** — **57 model classes**, one per table, grouped by domain. Each `Column` has a type and rules; `relationship()` expresses "a machine has many downtime logs."
+- **`backend/models.py`** — **67 model classes** (2026-09-21), one per table, grouped by domain. Each `Column` has a type and rules; `relationship()` expresses "a machine has many downtime logs."
 - **`backend/schemas.py`** — Pydantic classes that validate/shape data on the wire (Chapter 7).
-- **`backend/alembic/`** — 8 migration files (`0001_baseline` → `0008_machine_claim`), the versioned history of the schema.
+- **`backend/alembic/`** — 12 migration files (`0001_baseline` → `0012_consent_scope`, 2026-09-21), the versioned history of the schema.
 
-### The 57 tables, grouped (verified `models.py`)
+### The 67 tables, grouped (verified against `models.py` on 2026-09-21)
 | Domain | Tables (model classes) |
 |---|---|
 | **Identity** | `User` |
@@ -519,12 +519,13 @@ Where AMP's permanent memory lives, how it's shaped, how one column (`tenant_cod
 | **Production / orders** | `ProductionRecord`, `ShiftData`, `WorkOrder`, `ProductionPlan`, `ProductionSchedule`, `OperatorJobExecution`, `CustomerOrder`, `BillOfMaterials`, `BomComponent` |
 | **Inventory / procurement / costing** | `InventoryItem`, `InventoryTransaction`, `Supplier`, `PurchaseOrder`, `CostRecord`, `DocumentSequence` + enterprise: `Remnant`, `MaterialIssueSlip`, `GoodsReceiptNote`, `GRNItem`, `CycleCount`, `CycleCountItem` |
 | **Quality / maintenance / compliance** | `QualityInspection`, `MaintenanceTask`, `ComplianceDocument`, `ReportRequest`, `Notification`, `Alert`, `Escalation` |
-| **AI / agents** | `AIRecommendation`, `AgentAction`, `AgentPolicy` |
+| **AI / agents** | `AIRecommendation`, `AgentAction`, `AgentPolicy`, `AiLearningConsent` (ADR-0020/0037/0038), `ActionOutcome` (ADR-0029) |
 | **IoT / industrial** | `IoTTelemetry`, `IndustrialDevice`, `IndustrialSignal`, `PlcSignalMapping` |
 | **Audit / events** | `AuditLog`, `EventLog` |
 | **Platform / SaaS** | `TenantConfig`, `CompanyTenant` |
 | **GMATS enterprise inv.** | `GmatsItem`, `GmatsAlias`, `GmatsProforma`, `GmatsProformaLine`, `GmatsInvoice`, `GmatsMIN`, `GmatsMINLine` |
 | **OEM platform** | `OemOrganization`, `OemUser`, `MachineModel`, `MachineInstallation`, `OemDataSharingPolicy`, `MachineClaim` |
+| **Service contracts (ADR-0021)** | `ServiceContract`, `ServiceContractTermVersion`, `ServiceContractMachine`, `ContractStatement`, `ContractAttributionRecord`, `ContractStatementAcceptance`, `ContractDispute`, `MachineTelemetrySpan` |
 
 ### Diagram — a core slice
 ```mermaid
@@ -553,7 +554,7 @@ erDiagram
 
 ### `tenant_code` — the most important column in AMP
 Almost every table carries `tenant_code = Column(String, index=True, nullable=False, default="DEFAULT")`. It stamps **which company owns this row.** GMATS's machines have `tenant_code="GMATS"`; your demo factory's have `"DEFAULT"`. Chapter 17 shows how a single hook uses this column to make Factory A *physically unable* to see Factory B's rows. Two nuances (verified):
-- **37 models are auto-scoped** (`tenancy.SCOPED_MODELS`) — the ORM filters them for you.
+- **39 models are auto-scoped** (`tenancy.SCOPED_MODELS`, 2026-09-21) — the ORM filters them for you.
 - A few tenant-owned tables (`AgentAction`, `EventLog`, `User`, the GMATS tables, OEM tables) carry a tenant/oem column but are **filtered explicitly in their routes**, not by the auto-hook. (Flagged in the Observations appendix.)
 
 ### Migrations — the two-mechanism reality (ADR-0018)
@@ -582,7 +583,7 @@ Deploy order is enforced: **`migrate.py` runs before uvicorn starts** (`railway.
 Add/alter a table = edit `models.py` **and** write an Alembic migration (`cd backend && alembic revision -m "..."`, edit it, it becomes `00XX_*`). Never rely on `create_all` to alter production. Add an index for any column you filter/sort on at scale.
 
 ### Quick recap
-PostgreSQL holds 57 tables (`models.py`), reached via the **SQLAlchemy ORM**. `tenant_code` stamps ownership on nearly every row. Alembic owns the production schema; migrations run **before** the app serves. The `is_active` outage taught the platform that *liveness ≠ correctness* — now enforced by `schema_guard` + `/readiness`.
+PostgreSQL holds 67 tables (`models.py`, 2026-09-21), reached via the **SQLAlchemy ORM**. `tenant_code` stamps ownership on nearly every row. Alembic owns the production schema; migrations run **before** the app serves. The `is_active` outage taught the platform that *liveness ≠ correctness* — now enforced by `schema_guard` + `/readiness`.
 
 ---
 
@@ -1234,7 +1235,7 @@ flowchart TD
 ```
 
 1. **Bind the badge.** The `TenantScopeMiddleware` (a *pure-ASGI* middleware — deliberately not `BaseHTTPMiddleware`, which once deadlocked every POST) decodes the JWT **once**, computes the effective tenant, and stores it in a `contextvars` variable for the life of the request.
-2. **Auto-filter reads.** A SQLAlchemy `do_orm_execute` hook adds `WHERE tenant_code = 'A'` to **every** SELECT of a scoped model (37 of them). So `db.query(Machine)` silently becomes "A's machines." Get/update/delete-by-id go through SELECT too, so a foreign row simply *isn't found* (404) — no leak.
+2. **Auto-filter reads.** A SQLAlchemy `do_orm_execute` hook adds `WHERE tenant_code = 'A'` to **every** SELECT of a scoped model (39 of them on 2026-09-21). So `db.query(Machine)` silently becomes "A's machines." Get/update/delete-by-id go through SELECT too, so a foreign row simply *isn't found* (404) — no leak.
 3. **Auto-stamp writes.** A `before_flush` hook stamps `tenant_code='A'` on every new scoped row, so you can't forget to set it.
 4. **When no tenant is bound, both hooks are no-ops** — which is how the startup seeder, the MQTT thread, and the sim loop write across tenants deliberately (they set the tenant explicitly).
 
@@ -1623,7 +1624,7 @@ How AMP stays correct while one person changes it fast — and the clever techni
 | **Performance / load** | it holds up under scale | `loadtest.py`, `load/` harness |
 | **Frontend** | UI logic + user journeys | Vitest over `lib/` (92.6% branch) + Playwright `e2e/` |
 
-**The contract:** every `backend/test_*.py` is a **standalone script** (`python test_X.py`, exit 0 = pass); pytest was layered on top for coverage. Counts on 2026-09-18: **about 320 `test_*.py`, 9 `audit_*.py`, 25 `mutate_*.py`.** Coverage floors are **ratchets that never drop** (backend 78%, frontend 89%), and they use **branch** coverage deliberately — the NULL/zero arcs are the ones that crash in front of a customer.
+**The contract:** every `backend/test_*.py` is a **standalone script** (`python test_X.py`, exit 0 = pass); pytest was layered on top for coverage. Counts on 2026-09-21: **352 `test_*.py`, 11 `audit_*.py`, 40 `mutate_*.py`** (`ls backend/test_*.py | wc -l` is the truth; every number in prose is a snapshot with its date). Coverage floors are **ratchets that never drop** (backend 78%, frontend 89%), and they use **branch** coverage deliberately — the NULL/zero arcs are the ones that crash in front of a customer.
 
 ### Mutation testing, explained simply (the clever bit)
 A passing test suite can be **worthless** if it doesn't actually check the thing that matters. Mutation testing proves it does: **deliberately break the source, and confirm a test goes red.** If the suite stays green after you broke the rule, the suite has a hole.
@@ -1927,7 +1928,7 @@ PR or CI goes red.
 
 # AMP in 30 Minutes (for another engineer)
 
-Cover, in order: **(1)** the three-layer sandwich (ERP/MES/PLC) and where AMP sits; **(2)** the request lifecycle — Next.js → JWT → FastAPI → middleware stack (tenant bind, schema guard, rate-limit, CORS, security headers, plan gate) → route → ORM (auto tenant-filter) → Pydantic → JSON; **(3)** the data model — 57 tables, `tenant_code`, `SCOPED_MODELS` + the two SQLAlchemy hooks; **(4)** the event bus — synchronous, in-process, shared session, append to `EventLog`, broker-ready; walk `ProductionCompleted → BOM subscriber`; **(5)** read-models — pure `build_*` projections, `pulse` over `twin`+`impact`; **(6)** AI honesty — rules vs one LLM vs no ML — and the 5 agents + `approvals.py` gate; **(7)** real-time — MQTT identity `(tenant,site,name)` and the auth-before-accept WebSocket; **(8)** the OEM platform — sentinel tenant, factory-controlled claim (atomic conditional UPDATE), allowlist consent; **(9)** ops — Alembic + `schema_guard` + `/readiness`, the `is_active` postmortem, CI's 5 jobs, backup-with-restore-drill; **(10)** the change model — additive: router + subscriber + read-model + component + 3 registrations. Anchor each on its ADR (there are 19).
+Cover, in order: **(1)** the three-layer sandwich (ERP/MES/PLC) and where AMP sits; **(2)** the request lifecycle — Next.js → JWT → FastAPI → middleware stack (tenant bind, schema guard, rate-limit, CORS, security headers, plan gate) → route → ORM (auto tenant-filter) → Pydantic → JSON; **(3)** the data model — 67 tables, `tenant_code`, `SCOPED_MODELS` (39) + the two SQLAlchemy hooks; **(4)** the event bus — synchronous, in-process, shared session, append to `EventLog`, broker-ready; walk `ProductionCompleted → BOM subscriber`; **(5)** read-models — pure `build_*` projections, `pulse` over `twin`+`impact`; **(6)** AI honesty — rules vs one LLM vs no ML — and the 5 agents + `approvals.py` gate; **(7)** real-time — MQTT identity `(tenant,site,name)` and the auth-before-accept WebSocket; **(8)** the OEM platform — sentinel tenant, factory-controlled claim (atomic conditional UPDATE), allowlist consent; **(9)** ops — Alembic + `schema_guard` + `/readiness`, the `is_active` postmortem, CI's 5 jobs, backup-with-restore-drill; **(10)** the change model — additive: router + subscriber + read-model + component + 3 registrations. Anchor each on its ADR (there are 38 as of 2026-09-21).
 
 ---
 

@@ -46,7 +46,7 @@ Auto-approval is a **per-tenant policy** (an Admin sets it in the UI), falling b
 
 ### Read-model layer
 
-~27 pure projections that each *answer one question* by composing signals from existing tables (and from other read-models) — no new storage, tenant-scoped, unit-tested in isolation (33 test scripts, all green), surfaced through self-contained UI components. Highlights:
+Sixty-odd pure projections under `backend/ai/` (66 `build_*` functions on 2026-09-21) that each *answer one question* by composing signals from existing tables (and from other read-models) — no new storage, tenant-scoped, each unit-tested in isolation by its own `test_*.py`, surfaced through self-contained UI components. Highlights:
 
 `scorecard` (toned KPIs + weekly deltas) · `briefing` (the proactive morning digest) · `oee` / `losses` (the OEE gap attributed, with costs) · `cost` (losses in ₹/$ by line & machine) · `delivery` (order states + chase list) · `maintenance` · `compliance` · `flow` (RAW → SMT → SEMI → IC → FIN) · `handover` · `report` (the weekly plant report) · `twin` (+ a floor-map overlay that heats by status / OEE / cost) · `assistant` (the copilot) · plus `insights`, `impact`, `pulse`, `roster`, `trends`, `downtime`, `quality`, `production`, `shift`, `inventory`. `GET /platform/status` reports the whole surface.
 
@@ -101,11 +101,11 @@ Significant decisions are recorded in [`docs/adr/`](docs/adr/) so the *why* surv
 ```text
 AMP/
 ├── backend/
-│   ├── main.py            # FastAPI app (~237 routes, incl. public /health)
+│   ├── main.py            # FastAPI app (378 routes registered at boot on 2026-09-21, incl. public /health)
 │   ├── models.py          # SQLAlchemy models
 │   ├── events.py          # domain event bus (ADR-0001)
 │   ├── ai/                # AI platform: prediction, recommendations, the agents,
-│   │                      #   the rule-first copilot (assistant), and ~27
+│   │                      #   the rule-first copilot (assistant), and 60-odd
 │   │                      #   read-models (scorecard, briefing, oee, cost, …)
 │   ├── predictive_engine.py
 │   └── test_*.py          # per-read-model / per-agent tests
@@ -171,7 +171,7 @@ Point the broker at `127.0.0.1:1883` for local runs.
 * Event-driven core & multi-tenant isolation (ADR-0001/0002)
 * AI platform: prediction, recommendations, rule-first copilot (ADR-0003)
 * Autonomous agent fleet + per-tenant oversight policy (ADR-0004/0005)
-* Read-model layer (~27 projections) + tabbed exec cockpit (ADR-0006/0007)
+* Read-model layer (60-odd projections by 2026-09-21) + tabbed exec cockpit (ADR-0006/0007)
 * Proactive morning briefing → Escalation agent loop, with deep-linked drill-ins
 * Cost-of-losses, delivery, maintenance & compliance pillars; weekly plant report
 * Two-line SMT → IC demo factory; digital-twin floor map with OEE/cost heat

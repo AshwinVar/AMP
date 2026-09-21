@@ -752,8 +752,25 @@ function VarianceReportTab() {
 
 // ── CSV Import ────────────────────────────────────────────────────
 
+type ImportResult = {
+  created: number; updated: number; skipped: number; errors: string[];
+  /** The server refused the upload (4xx/5xx): nothing was imported, whatever the counts say. */
+  refused?: boolean;
+};
+
+/** FastAPI's `detail` as one line: a sentence, or a validation error's messages. */
+function refusalDetail(body: unknown): string | null {
+  const detail = (body as { detail?: unknown } | null)?.detail;
+  if (typeof detail === "string" && detail.trim()) return detail.trim();
+  if (Array.isArray(detail)) {
+    const msgs = detail.map((d) => (d as { msg?: unknown })?.msg).filter((m): m is string => typeof m === "string");
+    if (msgs.length) return msgs.join("; ");
+  }
+  return null;
+}
+
 function ImportCSVTab() {
-  const [result, setResult] = useState<{ created: number; updated: number; skipped: number; errors: string[] } | null>(null);
+  const [result, setResult] = useState<ImportResult | null>(null);
   const [loading, setLoading] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
 
@@ -774,10 +791,20 @@ function ImportCSVTab() {
         headers: getDownloadHeaders(),
         body: fd,
       });
-      const data = await res.json();
-      setResult(data);
+      // A refusal has a {detail} body, not the counts. This used to hand
+      // whatever came back to the success panel, so a 403 rendered as a green
+      // "Import complete" with "Created: undefined" — or threw mid-render.
+      const data: unknown = await res.json().catch(() => null);
+      if (!res.ok) {
+        setResult({ created: 0, updated: 0, skipped: 0, refused: true,
+                    errors: [refusalDetail(data) ?? `The server refused the upload (${res.status}).`] });
+      } else {
+        const counts = (data ?? {}) as Partial<ImportResult>;
+        setResult({ created: counts.created ?? 0, updated: counts.updated ?? 0,
+                    skipped: counts.skipped ?? 0, errors: counts.errors ?? [] });
+      }
     } catch {
-      setResult({ created: 0, updated: 0, skipped: 0, errors: ["Upload failed — check connection"] });
+      setResult({ created: 0, updated: 0, skipped: 0, refused: true, errors: ["Upload failed — check connection"] });
     }
     setLoading(false);
   }
@@ -821,16 +848,23 @@ function ImportCSVTab() {
       </form>
 
       {result && (
-        <div className={`rounded-2xl border p-5 ${result.errors.length > 0 ? "border-yellow-500/30 bg-yellow-500/5" : "border-green-500/30 bg-green-500/5"}`}>
-          <p className="font-semibold text-sm mb-2">{result.errors.length === 0 ? "Import complete" : "Import completed with warnings"}</p>
-          <div className="flex gap-6 text-sm">
-            <span className="text-green-400">Created: {result.created}</span>
-            <span className="text-blue-400">Updated: {result.updated}</span>
-            <span className="text-slate-400">Skipped: {result.skipped}</span>
-          </div>
+        <div role={result.refused ? "alert" : undefined}
+             className={`rounded-2xl border p-5 ${result.refused ? "border-red-500/30 bg-red-500/5"
+               : result.errors.length > 0 ? "border-yellow-500/30 bg-yellow-500/5" : "border-green-500/30 bg-green-500/5"}`}>
+          <p className="font-semibold text-sm mb-2">
+            {result.refused ? "Import refused — nothing was imported"
+              : result.errors.length === 0 ? "Import complete" : "Import completed with warnings"}
+          </p>
+          {!result.refused && (
+            <div className="flex gap-6 text-sm">
+              <span className="text-green-400">Created: {result.created}</span>
+              <span className="text-blue-400">Updated: {result.updated}</span>
+              <span className="text-slate-400">Skipped: {result.skipped}</span>
+            </div>
+          )}
           {result.errors.length > 0 && (
             <div className="mt-3 space-y-1">
-              {result.errors.map((err, i) => <p key={i} className="text-yellow-400 text-xs font-mono">{err}</p>)}
+              {result.errors.map((err, i) => <p key={i} className={`text-xs font-mono ${result.refused ? "text-red-400" : "text-yellow-400"}`}>{err}</p>)}
             </div>
           )}
         </div>

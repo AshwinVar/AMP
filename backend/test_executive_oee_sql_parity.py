@@ -44,7 +44,13 @@ def reference_executive_oee(db):
     machines = db.query(models.Machine).all()
     downtime_logs = db.query(models.DowntimeLog).all()
     production_records = db.query(models.ProductionRecord).all()
-    shifts = db.query(models.ShiftData).all()
+    # The canonical window, as the endpoint reads it (shift_contract.rows_in):
+    # the reference used to take every shift ever recorded, which matched the
+    # endpoint only while the endpoint pooled all time.
+    _w = oee_contract.OeeWindow(oee_contract.DEFAULT_WINDOW_DAYS)
+    shifts = (db.query(models.ShiftData)
+                .filter(models.ShiftData.created_at >= _w.start, models.ShiftData.created_at < _w.end)
+                .order_by(models.ShiftData.id).all())
     quality_rows = db.query(models.QualityInspection).all()
 
     machine_map = {machine.id: machine.name for machine in machines}
@@ -212,6 +218,11 @@ def reference_executive_oee(db):
         "production_target": total_target,
         "production_actual": total_actual,
         "production_achievement": plan_achievement,
+        # The endpoint says whether the window had a target, and which window
+        # (shift_contract). This reference is compared key-for-key, so it grows.
+        "production_achievement_measured": total_target > 0,
+        "shift_window": _w.label(),
+        "shift_days": _w.days,
         "running_machines": len([machine for machine in machines if machine.status == "Running"]),
         "breakdown_machines": len([machine for machine in machines if machine.status == "Breakdown"]),
         # Added when Offline stopped being a status that no rollup counted

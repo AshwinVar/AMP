@@ -451,6 +451,9 @@ def build_management_summary(machines, downtime_logs, shifts, production_records
         "target_output": target_output,
         "actual_output": actual_output,
         "target_achievement": target_achievement,
+        # 0 with no target is "not measured", not "achieved nothing": the same
+        # flag /analytics/summary carries as shift_efficiency_measured.
+        "target_achievement_measured": target_output > 0,
         "estimated_loss_units": estimated_loss_units,
         "unit_value_gbp": unit_value_gbp,
         "estimated_loss_value": estimated_loss_value,

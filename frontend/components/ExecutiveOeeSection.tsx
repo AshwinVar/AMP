@@ -34,9 +34,11 @@ function measured(data: ExecutiveOee | null): boolean {
  * What it must not do is print that same 0% for a shutdown week, a bank holiday,
  * or a tenant's first morning, which is what `?? 0` did.
  *
- * Only the four pooled ratios go through here. Target, Actual, Breakdowns and
- * Achievement answer different questions with their own data presence —
- * Achievement especially, being actual-over-target, has a 0% that can be true.
+ * Only the four pooled ratios go through here. Target, Actual and Breakdowns
+ * answer different questions with their own data presence. Achievement is
+ * actual-over-target, so its 0% can be true — but only when a target existed:
+ * with no target in the window it is "not measured", and the backend says so
+ * (`production_achievement_measured`, the same flag /analytics/summary carries).
  */
 function pooled(data: ExecutiveOee | null, value: number | undefined): string {
   if (data == null) return "—";
@@ -86,7 +88,16 @@ export default function ExecutiveOeeSection({ data }: { data: ExecutiveOee | nul
         <Kpi title="Quality" value={pooled(data, data?.plant_quality)} />
         <Kpi title="Target" value={data?.production_target ?? 0} />
         <Kpi title="Actual" value={data?.production_actual ?? 0} />
-        <Kpi title="Achievement" value={`${data?.production_achievement ?? 0}%`} />
+        {/* The same window as every other figure on this page (shift_contract):
+            it used to pool "the most recent 50 shifts", a count, not a span. A
+            0 with no target in the window is an absence, said as a dash. */}
+        <Kpi
+          title={`Achievement · ${data?.shift_window ?? "last 7 days"}`}
+          value={data == null ? "—"
+            : data.production_achievement_measured === false ? "—"
+            : `${data.production_achievement ?? 0}%`}
+          note={data?.production_achievement_measured === false ? "no target in this window" : ""}
+        />
         <Kpi title="Breakdowns" value={data?.breakdown_machines ?? 0} />
         {/* A machine whose gateway dropped is not producing either, and this is
             the management view of whether the plant is producing. It was shown

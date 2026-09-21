@@ -71,6 +71,10 @@ def test_management_dashboard_matches_list_summary_and_pools_in_sql():
     expected["coverage"] = oee_contract.coverage(
         db, "DEFAULT", oee_contract.OeeWindow(oee_contract.DEFAULT_WINDOW_DAYS))
     assert expected["coverage"]["complete"] is True, expected["coverage"]
+    # ...and the span its shift figure covers (shift_contract): the same window
+    # as the production sums, said beside the figure.
+    expected["shift_window"] = "last 7 days"
+    expected["shift_days"] = 7
     assert out == expected, (out, expected)
 
     # 2) Independently-derived numbers (not just "equal to the other code path").
@@ -116,8 +120,16 @@ def test_management_dashboard_matches_list_summary_and_pools_in_sql():
         "management dashboard must pool production_records in SQL, not hydrate the whole table"
     assert "db.query(models.ShiftData).all()" not in src, \
         "management dashboard must sum shift_data in SQL, not hydrate the whole table"
-    assert "func.sum(models.ProductionRecord" in src and "func.sum(models.ShiftData" in src, \
-        "management dashboard should sum both tables with func.sum"
+    # The shift sum moved into shift_contract._sums — THE pooled attainment every
+    # plant surface reads, over the same window as the production sums
+    # (test_shift_rollups_one_window.py) — so the guard follows it there.
+    import shift_contract
+    assert "func.sum(models.ProductionRecord" in src, \
+        "management dashboard should sum production_records with func.sum"
+    assert "shift_contract.pooled_attainment(" in src, \
+        "management dashboard should read THE pooled attainment (shift_contract)"
+    assert "func.sum(models.ShiftData" in inspect.getsource(shift_contract._sums), \
+        "shift_contract should sum shift_data with func.sum"
     print("PASS management dashboard: pooled in SQL (a50/p51/q80/oee21, attain90, dt165), parity with list path")
 
 

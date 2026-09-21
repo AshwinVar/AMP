@@ -162,7 +162,9 @@ describe("ExecutiveOeeSection — an unrun week", () => {
     // and `?? 0` printed 0% for that window too.
     render(<ExecutiveOeeSection data={null} />);
     // Not "Not run" either — nothing has been asked yet, let alone answered.
-    expect(screen.getAllByText("—").length).toBe(4);
+    // Five dashes: the four pooled ratios and Achievement, which used to print
+    // "0%" for the unasked window too.
+    expect(screen.getAllByText("—").length).toBe(5);
     expect(screen.queryAllByText("Not run").length).toBe(0);
   });
 });

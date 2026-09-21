@@ -13,7 +13,7 @@ its own copy of the relocated helpers.
 Run:  python backend/test_analytics_routes.py     (exit 0 = pass)
 """
 import inspect
-from datetime import date
+from datetime import date, datetime, timedelta
 
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker
@@ -521,12 +521,17 @@ def test_analytics_summary_shift_efficiency_is_pooled_in_sql_not_a_whole_table_s
         "shift efficiency must pool by target volume, not average per-shift ratios"
 
     # Regression guard: the compute must aggregate in SQL, not fall back to a whole-
-    # table `.all()` scan of the growing shift_data table (rule-4).
+    # table `.all()` scan of the growing shift_data table (rule-4). The SQL lives
+    # in shift_contract._sums now — the one function every plant attainment
+    # reads (test_shift_rollups_one_window.py) — so the guard follows it there.
+    import shift_contract
     src = inspect.getsource(analytics_routes.analytics_summary)
     assert "db.query(models.ShiftData).all()" not in src, \
         "analytics-summary must pool shift_data in SQL, not hydrate the whole table"
-    assert "func.sum(models.ShiftData" in src, \
-        "analytics-summary should sum shift_data with func.sum"
+    assert "shift_contract.pooled_attainment(" in src, \
+        "analytics-summary should read THE pooled attainment (shift_contract)"
+    assert "func.sum(models.ShiftData" in inspect.getsource(shift_contract._sums), \
+        "shift_contract should sum shift_data with func.sum"
     print("PASS analytics-summary shift efficiency is pooled in SQL (75%), no whole-table scan")
 
 
@@ -1177,61 +1182,71 @@ def test_executive_oee_per_machine_components_capped_at_100():
     print("PASS executive-oee: per-machine availability/quality capped at 100 (no >100% metric)")
 
 
-def test_executive_oee_shift_scan_is_bounded_to_recent_50_and_reconciles():
+def test_executive_oee_shift_scan_is_bounded_to_the_window_and_reconciles():
     # shift_data GROWS without bound (factory_simulator.tick_shift_entry appends a new
     # dated row every tick), so /analytics/executive-oee must not hydrate the whole
     # table and return one shift_oee row per entry — an ever-growing response on an
-    # Admin-polled endpoint (rule-4). It bounds to the most-recent 50 shifts, the exact
-    # window the sibling /analytics/shift-kpis already uses, and the headline
-    # production_target/actual sum that SAME 50-shift set so the per-shift breakdown
+    # Admin-polled endpoint (rule-4). It used to bound to "the most recent 50" — a
+    # COUNT, not a span, so at three shifts a day it was seventeen days on one plant
+    # and fifty on another, and never the week the plant OEE beside it pooled. It now
+    # bounds to the canonical window (shift_contract.rows_in), and the headline
+    # production_target/actual pool that SAME window so the per-shift breakdown
     # still sums to the headline (rule-3).
     #
-    # 55 shifts, id 1..55: target=id*10, actual=id*8. The most-recent 50 are ids 6..55.
+    # 55 shifts: ids 1..5 are dated ten days ago (outside the week), ids 6..55 today.
     #   sum(6..55) = (6+55)*50/2 = 1525
     #   production_target = 1525*10 = 15250 ; production_actual = 1525*8 = 12200
     #   production_achievement = round(12200/15250*100) = round(80.0) = 80
     db = _fresh_session()
     db.add(models.Machine(id=1, name="M1", status="Running", utilization=70))
+    old = datetime.utcnow() - timedelta(days=10)
     for i in range(1, 56):
-        db.add(models.ShiftData(id=i, shift_name=f"S{i}", target_output=i * 10, actual_output=i * 8))
+        db.add(models.ShiftData(id=i, shift_name=f"S{i}", target_output=i * 10, actual_output=i * 8,
+                                created_at=old if i <= 5 else datetime.utcnow()))
     db.commit()
 
     out = analytics_routes.get_executive_oee(db=db, current_user={})
 
-    # Response bounded to 50 rows, not 55 (and never the whole growing table).
+    # Response bounded to the window's 50 rows, not 55 (and never the whole table).
     assert len(out["shift_oee"]) == 50, len(out["shift_oee"])
     names = [r["shift_name"] for r in out["shift_oee"]]
-    # The 5 oldest shifts (S1..S5) are dropped; the window is the most-recent 50.
+    # The 5 shifts outside the week (S1..S5) are dropped.
     assert "S5" not in names and "S1" not in names, names
-    # Presented oldest-first within that window (chronological chart order).
+    # Presented oldest-first within the window (chronological chart order).
     assert names[0] == "S6" and names[-1] == "S55", (names[0], names[-1])
 
-    # Headline sums the SAME bounded set — independently derived, not a tautology.
+    # Headline pools the SAME window — independently derived, not a tautology.
     assert out["production_target"] == 15250, out["production_target"]
     assert out["production_actual"] == 12200, out["production_actual"]
     assert out["production_achievement"] == 80, out["production_achievement"]
+    assert out["production_achievement_measured"] is True
+    assert out["shift_window"] == "last 7 days" and out["shift_days"] == 7, out["shift_window"]
 
     # rule-3: the per-shift breakdown sums exactly to the headline totals.
     assert sum(r["target_output"] for r in out["shift_oee"]) == out["production_target"]
     assert sum(r["actual_output"] for r in out["shift_oee"]) == out["production_actual"]
-    print("PASS executive-oee: shift scan bounded to recent 50, breakdown reconciles with headline")
+    print("PASS executive-oee: shift scan bounded to the canonical window, breakdown reconciles with headline")
 
 
 def test_executive_oee_shift_scan_does_not_hydrate_whole_shift_table():
     # Regression guard: the compute must bound the growing shift_data table in SQL, not
-    # fall back to a whole-table `.all()` scan (rule-4) — the same guard the sibling
-    # /analytics/summary carries for its shift pooling (#419).
+    # fall back to a whole-table `.all()` scan (rule-4) — and the bound is the canonical
+    # WINDOW (shift_contract), not a row count.
+    import shift_contract
     src = inspect.getsource(analytics_routes.get_executive_oee)
     assert "db.query(models.ShiftData).all()" not in src, \
         "executive-oee must bound the shift_data scan, not hydrate the whole growing table"
-    assert "order_by(models.ShiftData.id.desc()).limit(50)" in src, \
-        "executive-oee should bound shift_data to the most-recent 50 (parity with /analytics/shift-kpis)"
-    print("PASS executive-oee: shift_data scan is SQL-bounded (no whole-table hydration)")
+    assert ".limit(50)" not in src, "a row count is not a window (test_shift_rollups_one_window.py)"
+    assert "shift_contract.rows_in(db, _oee_window)" in src and \
+        "shift_contract.pooled_attainment(" in src, \
+        "executive-oee should read the shift rows and the headline from shift_contract, one window"
+    assert "created_at < window.end" in inspect.getsource(shift_contract.rows_in)
+    print("PASS executive-oee: shift_data scan is bounded by the canonical window (no whole-table hydration)")
 
 
 def test_executive_oee_shift_empty_table_is_zero_not_a_crash():
     # No shifts at all: the bounded query returns nothing, so the headline attainment
-    # is a guarded 0 (never a divide-by-zero) and shift_oee is empty.
+    # is a guarded 0 — flagged unmeasured — (never a divide-by-zero) and shift_oee is empty.
     db = _fresh_session()
     db.add(models.Machine(id=1, name="M1", status="Idle", utilization=0))
     db.commit()
@@ -1239,7 +1254,8 @@ def test_executive_oee_shift_empty_table_is_zero_not_a_crash():
     assert out["shift_oee"] == [], out["shift_oee"]
     assert out["production_target"] == 0 and out["production_actual"] == 0, out
     assert out["production_achievement"] == 0, out["production_achievement"]
-    print("PASS executive-oee: empty shift table -> 0 attainment, empty breakdown, no crash")
+    assert out["production_achievement_measured"] is False
+    print("PASS executive-oee: empty shift table -> 0 attainment (unmeasured), empty breakdown, no crash")
 
 
 def test_factory_command_center_null_stock_and_failed_are_zero_not_a_crash():
@@ -1846,7 +1862,7 @@ if __name__ == "__main__":
     test_quality_analytics_is_tenant_scoped()
     test_executive_oee_null_quality_columns_in_per_machine_fallback()
     test_executive_oee_per_machine_components_capped_at_100()
-    test_executive_oee_shift_scan_is_bounded_to_recent_50_and_reconciles()
+    test_executive_oee_shift_scan_is_bounded_to_the_window_and_reconciles()
     test_executive_oee_shift_scan_does_not_hydrate_whole_shift_table()
     test_executive_oee_shift_empty_table_is_zero_not_a_crash()
     test_factory_command_center_null_stock_and_failed_are_zero_not_a_crash()

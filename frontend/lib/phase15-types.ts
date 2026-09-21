@@ -56,6 +56,12 @@ export type ExecutiveOee = {
   production_target: number;
   production_actual: number;
   production_achievement: number;
+  // false when no shift in the window had a target: production_achievement is
+  // then 0 by convention and means "not measured" (shift_contract). The window
+  // the three production figures cover is said beside them.
+  production_achievement_measured?: boolean;
+  shift_window?: string;
+  shift_days?: number;
   running_machines: number;
   breakdown_machines: number;
   offline_machines: number;

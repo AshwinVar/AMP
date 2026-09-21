@@ -29,13 +29,14 @@ def _endpoint(path):
     return next(r for r in main.app.routes if getattr(r, "path", "") == path).endpoint
 
 
-def _consented(db):
+def _consented(db, provider="anthropic"):
     """ADR-0037: a hosted provider is used for a company only with its consent, so a
     company that never said yes never reaches the provider at all. These tests are
-    about what happens once the provider IS reached, so DEFAULT consents first."""
+    about what happens once the provider IS reached, so DEFAULT consents first --
+    for the provider each test configures (ADR-0038: a consent names its provider)."""
     from amp_ai import consent
     from amp_ai.core.contracts import CAPABILITY_EXTERNAL_MODEL
-    consent.set_consent(db, "DEFAULT", CAPABILITY_EXTERNAL_MODEL, True, "admin_new")
+    consent.set_consent(db, "DEFAULT", CAPABILITY_EXTERNAL_MODEL, True, "admin_new", scope=provider)
 
 
 def _boom(system, user):
@@ -128,7 +129,7 @@ def test_provider_selection():
 
 def test_gemini_route_is_used_and_labelled():
     db = _fresh_session()
-    _consented(db)
+    _consented(db, "gemini")
     founder = {"tenant": "DEFAULT", "role": "Admin", "sub": "admin_new"}
     _clean_env()
     os.environ["AI_PROVIDER"] = "gemini"
@@ -150,7 +151,7 @@ def test_gemini_failure_falls_back_to_rules():
     db = _fresh_session()
     db.add(models.Machine(name="CNC-01", status="Running", utilization=80, tenant_code="DEFAULT"))
     db.commit()
-    _consented(db)
+    _consented(db, "gemini")
     founder = {"tenant": "DEFAULT", "role": "Admin", "sub": "admin_new"}
     _clean_env()
     os.environ["AI_PROVIDER"] = "gemini"

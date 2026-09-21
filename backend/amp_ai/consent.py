@@ -22,6 +22,17 @@ The self-hosted model (ADR-0023) sends nothing anywhere and needs no consent.
 The rule: no capability listed here runs for a tenant unless an ADMIN OF THAT
 TENANT has granted it, and it stops on the next request after they revoke it.
 
+WHAT A CONSENT IS FOR (ADR-0038)
+--------------------------------
+``external_model`` is SCOPED: the row records the hosted provider configured
+when the Admin said yes (``scope``: "anthropic", "gemini"), and the gate honours
+it only while that is still the provider configured. Two providers with
+different data terms can be configured, one variable switches them, and
+auto-detection falls through to whichever key is left -- so a consent given
+under one provider's terms must not carry over to the other's. A grant with no
+provider configured is refused: there is nothing to consent to. The learning
+capabilities name no third party and have no scope.
+
 HOW THAT IS ENFORCED
 --------------------
 * ``DbConsentGate.check`` reads the tenant's row on EVERY call, filtered by
@@ -52,7 +63,7 @@ import models
 import platform_routes
 
 from .core.contracts import (CAPABILITY_EXTERNAL_MODEL, CAPABILITY_TELEMETRY_BASELINE, CONSENT_CAPABILITIES,
-                             ConsentDecision)
+                             SCOPED_CAPABILITIES, ConsentDecision)
 
 __all__ = ["AUDIT_ACTION_PREFIX", "AUDIT_ENTITY", "AUDIT_GRANTED", "AUDIT_REMOVED_WITH_COMPANY", "AUDIT_REVOKED",
            "CAPABILITY_INFO", "DbConsentGate", "set_consent", "remove_for_company", "is_consent_audit_record",
@@ -114,7 +125,11 @@ def _refused(capability, reason):
 class DbConsentGate:
     """The ConsentGate backed by ``ai_learning_consents``. Stateless; reads the row on every check."""
 
-    def check(self, db, tenant, capability) -> ConsentDecision:
+    def check(self, db, tenant, capability, scope=None) -> ConsentDecision:
+        """`scope`: for a SCOPED capability, what the caller is about to use it for
+        (the hosted provider configured now). The row is honoured only if it was
+        given for exactly that; a scoped check with no scope is a refusal, because
+        nothing is configured to consent to. Ignored for unscoped capabilities."""
         named = capability if isinstance(capability, str) and capability else "unknown"
         if not isinstance(tenant, str) or not tenant.strip():
             return _refused(named, "No company was given, so there is no consent to find.")
@@ -135,17 +150,34 @@ class DbConsentGate:
                 return _refused(capability, f"'{title}' was revoked by {row.revoked_by or 'an Admin'} on "
                                             f"{_iso(row.revoked_at)}.")
             return _refused(capability, f"'{title}' is turned off for this company.")
+        if capability in SCOPED_CAPABILITIES:
+            wanted = scope.strip() if isinstance(scope, str) else ""
+            if not wanted:
+                return _refused(capability, f"No hosted AI provider is configured, so '{title}' has nothing to "
+                                            "apply to.")
+            if row.scope != wanted:
+                given = f"for {row.scope}" if row.scope else "before AMP recorded which provider a consent is for"
+                return _refused(capability, f"'{title}' was given {given} by {row.granted_by or 'an Admin'} on "
+                                            f"{_iso(row.granted_at)}; {wanted} is configured now, so it does "
+                                            "not apply until an Admin decides again under Agent Activity, "
+                                            "AI consent.")
         return ConsentDecision(granted=True, capability=capability,
                                reason=f"Granted by {row.granted_by or 'an Admin'} on {_iso(row.granted_at)}.",
-                               granted_by=row.granted_by, granted_at=row.granted_at)
+                               granted_by=row.granted_by, granted_at=row.granted_at,
+                               scope=row.scope if capability in SCOPED_CAPABILITIES else None)
 
 
-def set_consent(db, tenant, capability, granted, actor, *, now=None):
+def set_consent(db, tenant, capability, granted, actor, *, scope=None, now=None):
     """Grant or revoke one capability for one tenant, with its audit record, in ONE commit.
 
-    Raises ValueError for a blank tenant or an unknown capability and TypeError
-    for a non-boolean decision, before anything is written. Any failure while
-    writing (including the audit row) rolls the whole change back and re-raises.
+    `scope`: for a SCOPED capability, what the grant is for (the hosted provider
+    configured now); a grant without one is refused, because there is nothing to
+    consent to. Ignored for unscoped capabilities and for a revocation.
+
+    Raises ValueError for a blank tenant, an unknown capability or a scoped grant
+    with no scope, and TypeError for a non-boolean decision, before anything is
+    written. Any failure while writing (including the audit row) rolls the whole
+    change back and re-raises.
     """
     if not isinstance(tenant, str) or not tenant.strip():
         raise ValueError("a consent belongs to exactly one company; tenant is required")
@@ -153,6 +185,11 @@ def set_consent(db, tenant, capability, granted, actor, *, now=None):
         raise ValueError(f"unknown consent capability {capability!r}")
     if type(granted) is not bool:
         raise TypeError("granted must be True or False")
+    scoped = capability in SCOPED_CAPABILITIES
+    scope = scope.strip() if isinstance(scope, str) else None
+    if granted and scoped and not scope:
+        raise ValueError(f"a consent to {capability!r} names the hosted provider it is for, and none is "
+                         "configured, so there is nothing to consent to")
     actor = actor or "unknown"
     now = now or datetime.utcnow()
     try:
@@ -170,12 +207,18 @@ def set_consent(db, tenant, capability, granted, actor, *, now=None):
             row.granted_at = now
             row.revoked_by = None
             row.revoked_at = None
+            # What this grant is for. A revocation leaves it: the row then says
+            # what was withdrawn, and the next grant writes its own.
+            row.scope = scope if scoped else None
         else:
             row.granted = False
             row.revoked_by = actor
             row.revoked_at = now
         row.updated_at = now
-        details = json.dumps({"capability": capability, "previous": previous, "new": granted}, sort_keys=True)
+        details = {"capability": capability, "previous": previous, "new": granted}
+        if scoped:
+            details["scope"] = row.scope     # what the decision was for; absent for a learning capability
+        details = json.dumps(details, sort_keys=True)
         db.add(platform_routes.build_audit_row(actor, AUDIT_GRANTED if granted else AUDIT_REVOKED,
                                                AUDIT_ENTITY, row.id, details=details, tenant_code=tenant))
         db.commit()
@@ -220,8 +263,16 @@ def is_consent_audit_record(action, entity_type) -> bool:
     return norm(action).startswith(AUDIT_ACTION_PREFIX) or norm(entity_type) == AUDIT_ENTITY
 
 
-def consent_view(db, tenant) -> list:
-    """Every consent capability for ``tenant``: what it reads, what it stores, and its current state."""
+def consent_view(db, tenant, configured=None) -> list:
+    """Every consent capability for ``tenant``: what it reads, what it stores, and its current state.
+
+    ``configured``: {capability: what it would be used for now} for the scoped
+    capabilities (the hosted provider configured, or None). Each scoped entry
+    then says what the decision was given for (``scope``), what is configured
+    (``configured``) and whether the grant is ``active`` -- granted AND given
+    for what is configured. An unscoped entry is active whenever it is granted.
+    """
+    configured = configured or {}
     rows = {r.capability: r for r in db.query(models.AiLearningConsent)
             .filter(models.AiLearningConsent.tenant_code == tenant).all()}
     out = []
@@ -229,8 +280,17 @@ def consent_view(db, tenant) -> list:
         r = rows.get(capability)
         entry = {"capability": capability}
         entry.update(CAPABILITY_INFO[capability])
+        granted = bool(r is not None and r.granted is True)
+        scoped = capability in SCOPED_CAPABILITIES
+        now_for = configured.get(capability) if scoped else None
         entry.update({
-            "granted": bool(r is not None and r.granted is True),
+            "scoped": scoped,
+            "scope": (r.scope if r is not None else None) if scoped else None,
+            "configured": now_for,
+            "active": granted and (not scoped or (now_for is not None and r.scope == now_for)),
+        })
+        entry.update({
+            "granted": granted,
             "granted_by": r.granted_by if r is not None else None,
             "granted_at": _iso(r.granted_at) if r is not None else None,
             "revoked_by": r.revoked_by if r is not None else None,

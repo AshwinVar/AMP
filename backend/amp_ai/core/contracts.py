@@ -21,7 +21,7 @@ from typing import Protocol, runtime_checkable
 __all__ = [
     "ConsentDecision", "ConsentGate", "ConsentRequired", "RouteDecision",
     "CAPABILITY_TELEMETRY_BASELINE", "CAPABILITY_EXTERNAL_MODEL", "LEARNING_CAPABILITIES",
-    "CONSENT_CAPABILITIES",
+    "CONSENT_CAPABILITIES", "SCOPED_CAPABILITIES",
 ]
 
 # Learning a per-machine telemetry baseline from the tenant's OWN readings.
@@ -38,6 +38,11 @@ CAPABILITY_EXTERNAL_MODEL = "external_model"
 # its data, or letting its data leave AMP. Anything not listed here has no
 # consent that could be granted, so a gate must refuse it.
 CONSENT_CAPABILITIES = LEARNING_CAPABILITIES + (CAPABILITY_EXTERNAL_MODEL,)
+# The capabilities whose consent names WHAT it was given for (ADR-0038): the
+# hosted provider configured when the Admin said yes. Such a consent holds only
+# while that is still the provider configured; a learning capability names no
+# third party and has no scope.
+SCOPED_CAPABILITIES = (CAPABILITY_EXTERNAL_MODEL,)
 
 
 @dataclass(frozen=True)
@@ -47,6 +52,9 @@ class ConsentDecision:
     reason: str
     granted_by: str | None
     granted_at: datetime | None
+    # What a granted, scoped consent was given for (the provider name); None
+    # for a refusal or an unscoped capability.
+    scope: str | None = None
 
     def __post_init__(self):
         if type(self.granted) is not bool:
@@ -59,6 +67,8 @@ class ConsentDecision:
             raise TypeError("granted_by must be a string or None")
         if self.granted_at is not None and not isinstance(self.granted_at, datetime):
             raise TypeError("granted_at must be a datetime or None")
+        if self.scope is not None and (not isinstance(self.scope, str) or not self.scope):
+            raise TypeError("scope must be a non-empty string or None")
 
 
 @runtime_checkable

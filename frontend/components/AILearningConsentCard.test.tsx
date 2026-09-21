@@ -126,6 +126,43 @@ describe("AILearningConsentCard", () => {
     expect(screen.getByRole("switch").getAttribute("aria-checked")).toBe("false");
   });
 
+  // ADR-0038: a scoped consent names the provider it was given for.
+  it("shows a grant given for another provider as not active, and turning it on names the configured one", async () => {
+    const scoped = {
+      ...page().capabilities[0],
+      capability: "external_model",
+      title: "Send Copilot questions and evidence to a hosted AI model",
+      scoped: true, scope: "anthropic", configured: "gemini", active: false,
+      granted: true, granted_by: "acme-admin", granted_at: "2026-09-17T10:00:00",
+    };
+    apiGet.mockResolvedValue(page({ capabilities: [scoped] }));
+    render(<AILearningConsentCard />);
+    const toggle = await screen.findByRole("switch", { name: scoped.title });
+    expect(screen.getByText(/Not active · given for Anthropic/).textContent).toContain("Google Gemini is configured now");
+    // The switch reads ON (the grant exists) but a click reviews and re-grants for the configured provider
+    // rather than withdrawing: nothing is sent to Gemini until the Admin says so.
+    fireEvent.click(toggle);
+    const dialog = await screen.findByRole("dialog");
+    expect(dialog.textContent).toContain("for Google Gemini");
+    expect(dialog.textContent).toContain("given for Google Gemini only");
+    expect(apiPut).not.toHaveBeenCalled();
+  });
+
+  it("cannot be turned on when no hosted provider is configured, and says why", async () => {
+    const scoped = {
+      ...page().capabilities[0],
+      capability: "external_model",
+      title: "Send Copilot questions and evidence to a hosted AI model",
+      scoped: true, scope: null, configured: null, active: false, granted: false,
+    };
+    apiGet.mockResolvedValue(page({ capabilities: [scoped] }));
+    render(<AILearningConsentCard />);
+    const toggle = await screen.findByRole("switch", { name: scoped.title });
+    expect((toggle as HTMLButtonElement).disabled).toBe(true);
+    expect(toggle.getAttribute("title")).toMatch(/nothing to consent to/);
+    expect(screen.getByText(/no hosted AI provider is configured, so there is nothing to consent to/)).toBeTruthy();
+  });
+
   it("says the consent could not be loaded rather than showing nothing", async () => {
     apiGet.mockRejectedValue(new Error("Failed request: /ai-consent | 500 | boom"));
     render(<AILearningConsentCard />);

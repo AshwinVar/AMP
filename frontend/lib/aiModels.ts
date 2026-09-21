@@ -72,6 +72,15 @@ export type ConsentCapability = {
   stored: string;
   used_by: string;
   without: string;
+  // ADR-0038: a SCOPED consent names what it was given for (the hosted provider
+  // configured when the Admin said yes) and holds only while that is still what
+  // is configured. `scope` is what the grant named, `configured` what AMP would
+  // use now (null when nothing hosted is configured), `active` whether the grant
+  // applies. A learning consent is unscoped: active whenever granted.
+  scoped?: boolean;
+  scope?: string | null;
+  configured?: string | null;
+  active?: boolean;
   granted: boolean;
   granted_by: string | null;
   granted_at: string | null;
@@ -257,17 +266,41 @@ function day(iso: string | null): string | null {
   return d ? d.toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" }) : null;
 }
 
-/** "On · turned on by ta-admin on 17 Sept 2026" / "Off · turned off by …" / "Off · never turned on". */
+/** A provider's name as the card says it. */
+export function providerLabel(name: string | null | undefined): string {
+  if (!name) return "";
+  const known: Record<string, string> = { anthropic: "Anthropic", gemini: "Google Gemini", local: "the self-hosted model" };
+  return known[name] ?? name;
+}
+
+/**
+ * "On · turned on by ta-admin on 17 Sept 2026" / "Off · turned off by …" / "Off · never turned on".
+ * A scoped grant says what it was given for; one given for a provider that is
+ * no longer the configured one says so and is NOT active (ADR-0038).
+ */
 export function consentStateText(cap: ConsentCapability): string {
   if (cap.granted) {
     const when = day(cap.granted_at);
-    return `On · turned on by ${cap.granted_by || "an Admin"}${when ? ` on ${when}` : ""}`;
+    const by = `turned on by ${cap.granted_by || "an Admin"}${when ? ` on ${when}` : ""}`;
+    if (cap.scoped) {
+      const given = cap.scope ? `for ${providerLabel(cap.scope)}` : "before AMP recorded which provider a consent is for";
+      if (cap.active) return `On ${given} · ${by}`;
+      if (!cap.configured) return `Not active · given ${given}, ${by} · no hosted AI provider is configured now`;
+      return `Not active · given ${given}, ${by} · ${providerLabel(cap.configured)} is configured now — turn it on again to allow ${providerLabel(cap.configured)}`;
+    }
+    return `On · ${by}`;
   }
   if (cap.revoked_at || cap.revoked_by) {
     const when = day(cap.revoked_at);
     return `Off · turned off by ${cap.revoked_by || "an Admin"}${when ? ` on ${when}` : ""}`;
   }
+  if (cap.scoped && !cap.configured) return "Off · no hosted AI provider is configured, so there is nothing to consent to";
   return "Off · never turned on";
+}
+
+/** Whether the switch can be turned ON: a scoped consent needs something configured to be given for. */
+export function consentCanTurnOn(cap: ConsentCapability): boolean {
+  return !cap.scoped || !!cap.configured;
 }
 
 // ── The anomaly check ─────────────────────────────────────────────────────────────

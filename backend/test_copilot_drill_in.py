@@ -175,7 +175,8 @@ def main():
         # what /ai/ask does once the model IS used.
         from amp_ai import consent as consent_mod
         from amp_ai.core.contracts import CAPABILITY_EXTERNAL_MODEL
-        consent_mod.set_consent(db, T, CAPABILITY_EXTERNAL_MODEL, True, "drillin-admin")
+        consent_mod.set_consent(db, T, CAPABILITY_EXTERNAL_MODEL, True, "drillin-admin",
+                                scope=StubProvider.name)   # ADR-0038: a consent names its provider
 
         tok = tenancy.set_current_tenant(T)
         out = ai_copilot.ai_ask({"question": "which machines are down?"}, db, {"tenant": T})

@@ -1276,9 +1276,18 @@ class AiLearningConsent(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     tenant_code = Column(String, index=True, nullable=False)
-    # One of amp_ai.core.contracts.LEARNING_CAPABILITIES, e.g. "telemetry_baseline".
+    # One of amp_ai.core.contracts.CONSENT_CAPABILITIES, e.g. "telemetry_baseline"
+    # or "external_model".
     capability = Column(String, nullable=False)
     granted = Column(Boolean, nullable=False, default=False, server_default=sa_false())
+    # WHAT the consent was given for, when that matters (ADR-0038): for
+    # "external_model" the hosted provider configured at the moment the Admin
+    # said yes ("anthropic", "gemini"). The gate honours the row only while
+    # that is still the provider configured, so an operator switching
+    # providers — or auto-detection falling through to the other key — cannot
+    # carry a decision made about one company's data terms over to another's.
+    # NULL for the learning capabilities, which name no third party.
+    scope = Column(String, nullable=True)
     granted_by = Column(String, nullable=True)
     granted_at = Column(DateTime, nullable=True)
     revoked_by = Column(String, nullable=True)

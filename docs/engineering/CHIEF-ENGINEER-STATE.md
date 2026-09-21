@@ -29,16 +29,17 @@ the simulator's tenant guard: a tick with no tenant bound now refuses instead
 of filing every tenant's activity under DEFAULT — ADR-0002 postmortem). See
 AMP-10-DAY-SPRINT.md, AMP-NATIVE-MODEL-ACCEPTANCE.md and, for the twelve
 acceptance items with their evidence, AMP-SPRINT-ACCEPTANCE.md.
-**Master SHA:** `a9bbd84` (#674, ADR-0036).
-**Production SHA:** `a9bbd84`, verified live, not assumed:
-`{"status":"ok","database":"ok","schema":"ok","version":"a9bbd84"}` from
-`https://flowmes-production.up.railway.app/health`, read on 2026-09-21 01:54 UTC,
+**Master SHA:** `3481712` (#676).
+**Production SHA:** `3481712`, verified live, not assumed:
+`{"status":"ok","database":"ok","schema":"ok","version":"3481712"}` from
+`https://flowmes-production.up.railway.app/health`, read on 2026-09-21 04:04 UTC,
 under two minutes after the merge; `/readiness` 200. The frontend (`https://flow-mes.vercel.app`)
-answers 200; `/ai/status`, `/work-orders?limit=1` and `/notifications?unread=true&limit=1`
-refuse an unauthenticated call with 401, and a cross-origin request from the
-frontend's origin gets `access-control-expose-headers: X-Total-Count`, so the
-browser may read the count; `POST /copilot/ask` sent a valid `{question, thread}`
-body was refused with 401 at `ba06970`. Production has no
+answers 200; `/ai/status`, `/work-orders?limit=400`, `/iot/telemetry?limit=1` and
+`/notifications?unread=true&limit=1` refuse an unauthenticated call with 401, and at
+`a9bbd84` a cross-origin request from the frontend's origin got
+`access-control-expose-headers: X-Total-Count`, so the browser may read the
+count; `POST /copilot/ask` sent a valid `{question, thread}` body was refused
+with 401 at `ba06970`. Production has no
 GPU and no `AMP_LLM_BASE_URL`, and no self-hosted model is currently adopted
 anywhere (the committed record is the failing one, below), so the Copilot
 answers from AMP's own engine everywhere.
@@ -120,7 +121,7 @@ queries per dashboard refresh, flat at 10/50/200 machines (`docs/PERFORMANCE.md`
 rendered — **#675** drops the fetch: 46 requests, 159 queries, flat. Then the
 page can grow: every notice offers "Show the next 200" (`lib/paged-list.ts`:
 the depth a user asks for is carried by every later poll round, capped at the
-backend's 2,000 and at the tenant's total) — this PR.
+backend's 2,000 and at the tenant's total) — #676 `3481712`. #675 is `8f71358`.
 
 **Nothing else is awaiting review.** What a next session would do first, in order:
 (1) the OEM journey re-check against a real OEM's edge agent is still simulated

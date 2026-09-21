@@ -18,7 +18,16 @@ import models
 from database import Base
 from ai import flow
 
-NOW = datetime.utcnow()
+def _now():
+    """The clock at CALL time, never at import. build_wip_aging reads
+    datetime.utcnow() when it runs; a NOW captured when this module was
+    imported drifts a whole day past it whenever a long single-process run
+    crosses midnight UTC -- which the sixteen-minute coverage job did on
+    2026-09-20 at 23:46 UTC: rows seeded "20 days ago" at collection were 21
+    days old by the time the test ran, and three tests went red on a change
+    that touched none of them. One process per file (the backend job) never
+    sees it: seed and assert are milliseconds apart."""
+    return datetime.utcnow()
 
 
 def _fresh_session():
@@ -32,7 +41,7 @@ def _wo(no, age_days, status="Planned", state="RAW", planned_end=None,
     w = models.WorkOrder(work_order_no=no, part_number=f"P-{no}", batch_number=f"B-{no}",
                          target_quantity=target, actual_quantity=actual,
                          status=status, material_state=state, planned_end=planned_end)
-    w.created_at = NOW - timedelta(days=age_days)
+    w.created_at = _now() - timedelta(days=age_days)
     return w
 
 
@@ -40,7 +49,7 @@ def test_aging_lateness_and_reconciliation():
     db = _fresh_session()
     db.add_all([
         _wo("W1", 1),                                                        # fresh RAW
-        _wo("W2", 5, state="SEMI", planned_end=NOW - timedelta(days=1),
+        _wo("W2", 5, state="SEMI", planned_end=_now() - timedelta(days=1),
             target=100, actual=60),                                          # late SEMI, 60%
         _wo("W3", 20, state="RAW"),                                          # stale, undated
         _wo("W4", 10, status="Completed", state="FIN"),                      # closed -> out
@@ -83,7 +92,7 @@ def test_stale_without_late_reads_warn():
 
 def test_fresh_backlog_reads_good_and_empty_is_safe():
     db = _fresh_session()
-    db.add(_wo("F1", 2, planned_end=NOW + timedelta(days=3)))
+    db.add(_wo("F1", 2, planned_end=_now() + timedelta(days=3)))
     db.commit()
     r = flow.build_wip_aging(db, "DEFAULT")
     assert r["open"] == 1 and r["late"] == 0 and r["undated"] == 0

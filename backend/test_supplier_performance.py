@@ -18,8 +18,20 @@ import models
 from database import Base
 from ai import supplier_performance
 
-NOW = datetime.utcnow()
-TODAY = NOW.date()
+def _now():
+    """The clock at CALL time, never at import. build_supplier_performance reads
+    datetime.utcnow() when it runs; a NOW captured when this module was
+    imported drifts a whole day past it whenever a long single-process run
+    crosses midnight UTC -- which the sixteen-minute coverage job did on
+    2026-09-20 at 23:46 UTC: a purchase order seeded "4 days overdue" at
+    collection was 5 days overdue by the time the test ran. One process per
+    file (the backend job) never sees it: seed and assert are milliseconds
+    apart."""
+    return datetime.utcnow()
+
+
+def _today():
+    return _now().date()
 
 
 def _fresh_session():
@@ -37,15 +49,15 @@ def _po(no, supplier_id, ordered, received, due_offset, status="Open", created=N
     return models.PurchaseOrder(
         po_no=no, supplier_id=supplier_id, item_name="Widget", unit="pcs",
         order_quantity=ordered, received_quantity=received,
-        expected_delivery_date=TODAY + timedelta(days=due_offset), status=status,
-        created_at=created or NOW,
+        expected_delivery_date=_today() + timedelta(days=due_offset), status=status,
+        created_at=created or _now(),
     )
 
 
 def _grn(no, po_ref, day_offset):
     g = models.GoodsReceiptNote(grn_no=no, purchase_order_ref=po_ref,
                                 supplier_name="x", received_by="buyer", status="Accepted")
-    g.created_at = datetime.combine(TODAY + timedelta(days=day_offset), datetime.min.time())
+    g.created_at = datetime.combine(_today() + timedelta(days=day_offset), datetime.min.time())
     return g
 
 

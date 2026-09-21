@@ -162,6 +162,15 @@ def main():
         current = c.execute(text("SELECT version_num FROM alembic_version")).scalar()
         check("stamped at 0009_native_ai_consent", current == "0009_native_ai_consent", str(current))
 
+    # 0009's own work is pinned above, at 0009. Everything below compares the
+    # table with models.py or drives it through the ORM, and models.py describes
+    # the table at HEAD -- 0012 (ADR-0038) adds `scope` -- so the rest runs at head.
+    # (The same shape as the 0010 lesson: a verification of ONE migration names
+    # its revision for that migration's checks, and nothing else.)
+    r = alembic(env, "upgrade", "head")
+    check("alembic upgrade to head (later revisions add columns the model declares)", r.returncode == 0,
+          r.stderr[-400:])
+
     # --- 3. shape and constraints, enforced by the database ----------------------------------
     print("\n3. THE DATABASE ENFORCES ONE ANSWER PER TENANT PER CAPABILITY")
     r = subprocess.run([sys.executable, "-c", DRIFT], cwd=HERE, env=env, capture_output=True, text=True,

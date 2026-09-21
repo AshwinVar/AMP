@@ -1277,13 +1277,41 @@ class ReportRequestResponse(BaseModel):
     _heal_format = field_validator("format", mode="before")(_coalesce_null_text('PDF'))
     _heal_status = field_validator("status", mode="before")(_coalesce_null_text('Generated'))
 
+# A per-device MQTT topic is not something AMP routes by, and never was: the
+# broker subscription is per tenant and site (`{prefix}/{tenant}/{site}/machines`,
+# ADR-0011), because the topic is the one part of a message a broker can
+# enforce, and a free-text topic on a device row could only route by breaking
+# that. Nothing read `IndustrialDevice.topic` — not the MQTT service, not the
+# adapters — while the API accepted it and the connection drawer printed it
+# beside the device as if it configured something. An accepted-but-inert input
+# is the #593 shape (a comment promising behaviour the code does not have), so
+# it is refused, loudly, rather than stored and ignored.
+DEVICE_TOPIC_NOT_ROUTING = (
+    "A per-device MQTT topic is not used for routing, so AMP does not store one: AMP subscribes per tenant "
+    "and site ({prefix}/{tenant}/{site}/machines, ADR-0011), and a topic on a device row would be read by "
+    "nothing. Leave `topic` empty and publish to the tenant's topic."
+)
+
+
+def _refuse_device_topic(value):
+    """None or blank is fine (the column stays NULL); anything else is refused with the reason."""
+    if value is None:
+        return None
+    if isinstance(value, str) and not value.strip():
+        return None
+    raise ValueError(DEVICE_TOPIC_NOT_ROUTING)
+
+
 class IndustrialDeviceCreate(BaseModel):
     device_code: str
     device_name: str
     device_type: str = "PLC"
     protocol: str = "MQTT"
     ip_address: Optional[str] = None
+    # Kept in the schema so a caller that sends one is TOLD, not silently ignored
+    # (an unknown field would be dropped by pydantic without a word).
     topic: Optional[str] = None
+    _no_topic = field_validator("topic", mode="before")(_refuse_device_topic)
     linked_machine_id: Optional[int] = None
     # NOT "Online". Registering a device tells AMP the PLC exists; it does not
     # establish that AMP has ever reached it — AMP ships no protocol driver and
@@ -1305,6 +1333,8 @@ class IndustrialDeviceResponse(BaseModel):
     device_type: str
     protocol: str
     ip_address: Optional[str] = None
+    # Reported as stored, for rows written before the API refused it; nothing
+    # routes by it (see DEVICE_TOPIC_NOT_ROUTING). New rows carry null.
     topic: Optional[str] = None
     linked_machine_id: Optional[int] = None
     status: str

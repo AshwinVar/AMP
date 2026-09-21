@@ -14,7 +14,7 @@ type Tag = {
 };
 type Device = {
   device_code: string; device_name: string; device_type: string;
-  protocol: string; ip_address: string | null; topic: string | null;
+  protocol: string; ip_address: string | null;
   status: string; online: boolean;
   signals: number; bad_signals: number; last_signal_at: string | null;
 };
@@ -277,7 +277,6 @@ export default function ConnectionDrawer({
                           <p className="text-[11px] text-slate-500 truncate">
                             {dv.device_type} · {dv.protocol}
                             {dv.ip_address ? ` · ${dv.ip_address}` : ""}
-                            {dv.topic ? ` · ${dv.topic}` : ""}
                           </p>
                           <p className="text-[11px] text-slate-500">
                             {dv.signals} read{dv.signals !== 1 ? "s" : ""}

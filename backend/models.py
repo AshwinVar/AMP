@@ -944,6 +944,9 @@ class IndustrialDevice(Base):
     device_type = Column(String, default="PLC")
     protocol = Column(String, default="MQTT")
     ip_address = Column(String, nullable=True)
+    # Read by nothing: MQTT routes per tenant and site (ADR-0011), never per
+    # device. The API refuses a value (schemas.DEVICE_TOPIC_NOT_ROUTING); the
+    # column stays for rows written before it did, and for the frozen baseline.
     topic = Column(String, nullable=True)
     linked_machine_id = Column(Integer, ForeignKey("machines.id"), nullable=True)
     status = Column(String, default="Registered")

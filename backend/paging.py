@@ -33,12 +33,36 @@ handler as a function -- may leave it out, and then there is no header to set.
 The browser may read the header only because main.py's CORS middleware lists
 it in expose_headers; test_inventory_list_paging.py pins that line.
 """
+import time
 from typing import Optional
 
 from fastapi import Response
 
 MAX_PAGE = 2000
 TOTAL_HEADER = "X-Total-Count"
+
+# WHAT THE COUNT COSTS, MEASURED (docs/PERFORMANCE.md, "Re-measured 2026-09-21")
+# ---------------------------------------------------------------------------
+# The first cut counted on every request. loadtest.py, floor-normalised: the
+# four paged lists in its set cost 1.3x-1.9x their previous p50 at every scale
+# (/inventory/items 68 -> 252 ms raw at 1,000 machines), the unpaged endpoints
+# 1.0x-1.3x -- one SELECT count(*) per request on a three-second poll, per open
+# tab. Two things end that without changing what the header says:
+#
+#   * a page SHORTER than its limit already tells the whole count: the rows end
+#     here, so total = offset + len(rows), exactly, with no second statement.
+#     Every tenant whose list is smaller than the default page pays nothing;
+#   * a FULL page needs the count, and the count is cached per (tenant, query)
+#     for COUNT_TTL_S -- the dashboard's poll interval -- so a tab pays one
+#     count per list per three seconds, not one per request. The total a
+#     notice shows can therefore be up to three seconds old; the rows never
+#     are, and the next round corrects it.
+#
+# An offset past the end returns no rows and says nothing about the count, so
+# it counts. Only a total that would otherwise be wrong is ever computed.
+COUNT_TTL_S = 3.0
+_COUNT_CACHE_MAX = 4096
+_count_cache: dict = {}
 
 
 def _int(value, fallback):
@@ -57,11 +81,44 @@ def clamp(limit: Optional[int], default: int, offset: int = 0, max_page: int = M
     return max(1, min(limit, max_page)), max(0, _int(offset, 0))
 
 
+def _count_key(query):
+    """The cache key: the caller's tenant (the ORM hook adds that filter at
+    execution, so it is not in the statement) and the statement itself with its
+    literal values, so two filters of one table never share a total."""
+    import tenancy
+    compiled = query.statement.compile(compile_kwargs={"literal_binds": True})
+    return (tenancy.current_tenant(), str(compiled))
+
+
+def cached_count(query, now=None):
+    """The whole count of `query`, at most COUNT_TTL_S old for this tenant."""
+    now = time.monotonic() if now is None else now
+    key = _count_key(query)
+    hit = _count_cache.get(key)
+    if hit is not None and hit[0] > now:
+        return hit[1]
+    total = query.order_by(None).count()
+    if len(_count_cache) >= _COUNT_CACHE_MAX:
+        _count_cache.clear()
+    _count_cache[key] = (now + COUNT_TTL_S, total)
+    return total
+
+
+def forget_counts():
+    """Drop every cached total (tests, and anything that must not wait)."""
+    _count_cache.clear()
+
+
 def page(response: Optional[Response], query, default: int, limit: Optional[int] = None,
          offset: int = 0, max_page: int = MAX_PAGE):
     """One page of `query` (in the caller's own ORDER BY), and the whole count of
     `query` in X-Total-Count. Returns the rows."""
     limit, offset = clamp(limit, default, offset, max_page)
+    rows = query.offset(offset).limit(limit).all()
     if response is not None:
-        response.headers[TOTAL_HEADER] = str(query.order_by(None).count())
-    return query.offset(offset).limit(limit).all()
+        if len(rows) < limit and (rows or offset == 0):
+            total = offset + len(rows)          # the rows ended here: exact, free
+        else:
+            total = cached_count(query)
+        response.headers[TOTAL_HEADER] = str(total)
+    return rows

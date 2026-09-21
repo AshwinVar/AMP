@@ -26,12 +26,14 @@ download. As in test_growing_table_reads.py, the walk is over the AST, so a
 docstring quoting the pattern is not a finding, and an allowlist entry that
 no longer names a real capped read fails the build (section 2).
 
-WHAT THE HELPER PROMISES (sections 4-6)
+WHAT THE HELPER PROMISES (sections 4-8)
 ---------------------------------------
 Measured on real handlers, not on the helper alone: the default page is the
 old cap; the total is the whole scoped count, not the page's; a handler that
 annotates or serialises its rows still does; an endpoint with its own smaller
-ceiling keeps it; the notification unread count is over EVERY notification.
+ceiling keeps it; the notification unread count is over EVERY notification;
+and the count is paid only when a page is full, at most once per poll interval
+per tenant and query (section 8 -- measured first, docs/PERFORMANCE.md).
 
 Run: DATABASE_URL="sqlite:///./ci.db" python backend/test_lists_are_pages.py
 """
@@ -374,6 +376,95 @@ def not_a_route(db):
     check("the module's clamp alias agrees with paging.clamp",
           EIR._page("abc", -5) == (50, 0) and EIR._page(10_000, 3) == (200, 3), str(EIR._page("abc", -5)))
     check("paging.MAX_PAGE bounds everyone else", paging.clamp(10_000, 500) == (2000, 0))
+
+    print()
+    print("=" * 74)
+    print("8. THE COUNT IS PAID ONLY WHEN IT WOULD OTHERWISE BE WRONG, AND AT MOST ONCE PER TTL")
+    print("=" * 74)
+    # Measured before this section existed (docs/PERFORMANCE.md): a count(*) on
+    # every request cost the paged lists 1.3x-1.9x their p50 under load. A page
+    # shorter than its limit already tells the whole count; a full page's count
+    # is cached per (tenant, query) for the poll interval.
+    from sqlalchemy import event
+    engine = db.get_bind()
+    statements = []
+
+    @event.listens_for(engine, "before_cursor_execute")
+    def _log(conn, cursor, statement, params, context, executemany):
+        statements.append(statement.lower())
+
+    def counted(tenant, fn, **kw):
+        statements.clear()
+        rows, total = _as(tenant, fn, **kw)
+        return rows, total, sum(1 for st in statements if "count(" in st)
+
+    paging.forget_counts()
+    rows, total, counts = counted("PG_A", WO.get_work_orders, limit=2000, db=db, current_user=user_a)
+    check("a page shorter than its limit (230 of 2000) sets the exact total with NO count query",
+          len(rows) == 230 and total == "230" and counts == 0, f"{len(rows)} / {total} / {counts} counts")
+    rows_b, total_b, counts_b = counted("PG_B", WO.get_work_orders, db=db, current_user=user_b)
+    check("...and so does a tiny tenant's default page (3 of 200)",
+          len(rows_b) == 3 and total_b == "3" and counts_b == 0, f"{total_b} / {counts_b} counts")
+    paging.forget_counts()
+    rows, total, counts = counted("PG_A", WO.get_work_orders, limit=50, offset=300, db=db, current_user=user_a)
+    check("an offset past the end says nothing about the count, so it counts: empty page, total 230 (never 300)",
+          rows == [] and total == "230" and counts == 1, f"{len(rows)} / {total} / {counts} counts")
+
+    paging.forget_counts()
+    rows, total, counts = counted("PG_A", WO.get_work_orders, db=db, current_user=user_a)
+    check("a FULL page (200 of 230) counts once", len(rows) == 200 and total == "230" and counts == 1,
+          f"{total} / {counts} counts")
+    rows, total, counts = counted("PG_A", WO.get_work_orders, db=db, current_user=user_a)
+    check("...and the next request within the TTL reads the cached total: no count query",
+          total == "230" and counts == 0, f"{total} / {counts} counts")
+    rows, total, counts = counted("PG_A", WO.get_work_orders, limit=200, offset=0, db=db, current_user=user_a)
+    check("the same query with the same page size shares the entry", total == "230" and counts == 0,
+          f"{total} / {counts} counts")
+
+    # The tenant is part of the key: PG_B's full page (make it one) must never
+    # read PG_A's 230. Give PG_B 200 rows so its default page is full too.
+    tok = tenancy.set_current_tenant(None)
+    try:
+        db.add_all([models.WorkOrder(tenant_code="PG_B", work_order_no=f"WOB2-{i:04d}", part_number="P",
+                                     batch_number="B", target_quantity=1, actual_quantity=0, status="Planned")
+                    for i in range(200)])
+        db.commit()
+    finally:
+        tenancy.reset_current_tenant(tok)
+    statements.clear()
+    b_rows, b_total = _as("PG_B", WO.get_work_orders, db=db, current_user=user_b)
+    b_counts = sum(1 for st in statements if "count(" in st)
+    check("the other tenant's full page counts for ITSELF (203), never reads the neighbour's cached 230",
+          len(b_rows) == 200 and b_total == "203" and b_counts == 1, f"{b_total} / {b_counts} counts")
+
+    # A different filter of the same table is a different total: the unread
+    # count must not read the plain list's entry.
+    paging.forget_counts()
+    _as("PG_A", FO.get_notifications, db=db, current_user=user_a)                  # full page: 520
+    statements.clear()
+    one, unread_total = _as("PG_A", FO.get_notifications, unread=True, limit=1, db=db, current_user=user_a)
+    u_counts = sum(1 for st in statements if "count(" in st)
+    check("a different filter of the same table has its own total: unread 260, counted, not the list's 520",
+          unread_total == str(truly_unread) and u_counts == 1, f"{unread_total} / {u_counts} counts")
+
+    # The cache expires: a total is at most COUNT_TTL_S old.
+    paging.forget_counts()
+    q = db.query(models.WorkOrder)
+    tok = tenancy.set_current_tenant("PG_A")
+    try:
+        t0 = 1000.0
+        first = paging.cached_count(q, now=t0)
+        again = paging.cached_count(q, now=t0 + paging.COUNT_TTL_S - 0.01)
+        statements.clear()
+        later = paging.cached_count(q, now=t0 + paging.COUNT_TTL_S + 0.01)
+        recounted = sum(1 for st in statements if "count(" in st)
+    finally:
+        tenancy.reset_current_tenant(tok)
+    check(f"a cached total is reused inside COUNT_TTL_S ({paging.COUNT_TTL_S}s) and counted again after it",
+          first == again == later == 230 and recounted == 1, f"{first}/{again}/{later}, recounted {recounted}")
+    check("the TTL is the dashboard's poll interval, not longer", paging.COUNT_TTL_S <= 3.0, str(paging.COUNT_TTL_S))
+    event.remove(engine, "before_cursor_execute", _log)
+    paging.forget_counts()
     db.close()
 
     print()

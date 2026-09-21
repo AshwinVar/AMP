@@ -66,19 +66,23 @@ on the same laptop, SQLite, before and after:
 | | master `f3351dc` | ADR-0036 |
 |---|---:|---:|
 | endpoints measured | 49 (two `ERR`, see below) | 50 |
-| whole refresh, 10 machines | 135 queries | **161 queries** |
-| whole refresh, 50 machines | 135 | **161** |
-| whole refresh, 200 machines | 135 | **161** |
-| a paged list (`/work-orders`, `/suppliers`, …) | 1 query, ~1.0 ms | 2 queries, ~1.9 ms |
-| the tenant-wide unread count (new request) | — | 2 queries, ~1.9 ms |
+| whole refresh, 10 machines | 135 queries | **161 queries** first cut, **137** with the count paid only for a full page |
+| whole refresh, 50 machines | 135 | **161** → **137** |
+| whole refresh, 200 machines | 135 | **161** → **137** |
+| a paged list (`/work-orders`, `/suppliers`, …) | 1 query, ~1.0 ms | 2 queries, ~1.9 ms → 1 query, ~0.8 ms (a short page) |
+| the tenant-wide unread count (new request) | — | 2 queries, ~1.9 ms → 1 query (no notifications in this seed) |
 
-The 26 extra statements are exactly 22 lists × 1 `count(*)`, the two inventory
+The 26 extra statements were exactly 22 lists × 1 `count(*)`, the two inventory
 lists that master's harness could not call at all (`ERR`: after #673 their
 handlers *required* a `Response`; the harness passed none — 2 statements once
 counted), and the new unread-count request (a count and a one-row page). **No
 endpoint grows with the size of the factory**: 161 at 10 machines, 161 at 200.
-The rate per open tab is now ~54 queries/second instead of ~45; the product
-question above is unchanged, only its number.
+That was the first cut. With the count paid only for a full page (below), the
+same harness reads **137 at every scale**: the two inventory lists and the
+unread-count request are the whole difference from master's 135, because every
+list this seed produces is shorter than its page and so tells its total for
+free. The rate per open tab is ~46 queries/second; the product question above is
+unchanged, only its number.
 
 Two things about the method changed with it. The harness now passes a real
 `Response()` to any handler that declares one, because that is what a request
@@ -88,6 +92,42 @@ the 47th request (`/notifications?unread=true&limit=1`) as an entry with its
 own query parameters, so the measured round is the round the browser issues.
 `node load/check-drift.mjs` still pins `load/endpoints.js` to `fetchAll`;
 `dashboard_perf.py`'s own list is hand-kept beside it.
+
+**Then at HTTP level: the count on every request cost 1.3–1.9× on the paged
+lists, and was fixed before it shipped.** `loadtest.py` (PostgreSQL 18.3, 8 in
+flight, six seconds per endpoint) three times against the same seed: the
+2026-09-20 baseline (no header), the first cut (a `count(*)` on every request)
+and the fix (`paging.py`: a page shorter than its limit sets the exact total
+with no second statement; a full page's count is cached per tenant and query
+for `COUNT_TTL_S` = 3 s, the poll interval). `xfloor` is p50 as a multiple of
+that run's own client floor, which is what makes runs on a machine that is
+busier one hour than the next comparable at all:
+
+| 1,000 machines | baseline 09-20 | count every request | fixed | fixed vs baseline |
+|---|---:|---:|---:|---:|
+| client floor | 5.7 ms | 11.4 ms | 8.0 ms | |
+| `/inventory/items` | 68.0 ms | 251.6 ms (**1.85× xfloor**) | 102.7 ms | **1.08× xfloor** |
+| `/work-orders` | 35.3 | 102.5 (1.45×) | 52.0 | 1.05× |
+| `/downtime-logs` | 24.4 | 70.8 (1.45×) | 36.6 | 1.07× |
+| `/agent-actions` | 50.6 | 135.7 (1.34×) | 71.2 | 1.00× |
+| `/machines` (not paged) | 178.3 | 283.6 (0.80×) | 209.5 | 0.84× |
+| `/analytics/executive-oee` (not paged) | 435.9 | 867.4 (0.99×) | 559.0 | 0.91× |
+
+At 10 machines the same four lists read 1.44–1.66× with the count on every
+request and 1.03–1.11× fixed; at 50 machines 1.47–1.91× → 0.94–1.01×; at 250,
+1.24–1.50× → 0.88–1.07×. The driver's own verdict on the fixed run: **NO
+REGRESSION at every scale, floor-normalised, every endpoint within ±25%; zero
+errors in all 32 endpoint/scale combinations.** Why the fix is that complete:
+at 10–250 machines the seeded lists are shorter than their pages, so no count
+runs at all; at 1,000 they are full pages, and under the driver's six-second
+hammer the count runs twice per endpoint instead of six hundred times. A real
+tab pays one count per list per three seconds, shared by every tab a process
+serves. The total a notice shows can be up to three seconds old; the rows never
+are. `backend/loadtest_results.json` now holds the fixed run as the baseline;
+the first cut was never merged. `test_lists_are_pages.py` §8 pins the three
+properties (a short page's free total, an empty page past the end still
+counts, the cache's TTL and its tenant and query keys) and
+`mutate_lists_are_pages.py` bends each of them.
 
 **Later the same day: one request fewer, and 500 rows fewer, every three
 seconds.** `IoTCommandSection` took a `telemetry` prop it never rendered (its

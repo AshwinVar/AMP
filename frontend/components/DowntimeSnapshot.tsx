@@ -9,6 +9,10 @@ import MachineDetailDrawer from "./MachineDetailDrawer";
 // Reasons and machines are ranked by minutes lost, not event count.
 type DowntimeSummary = {
   days: number;
+  /** "last 7 days" — the window the backend pooled, named rather than
+   *  assumed: it is the canonical rolling week, not seven calendar dates. */
+  window?: string;
+
   total_events: number;
   total_minutes: number;
   top_reasons: { reason: string; count: number; minutes: number }[];
@@ -60,7 +64,7 @@ export default function DowntimeSnapshot() {
   return (
     <div className="rounded-2xl border border-slate-800 bg-slate-900/60 p-6">
       <div className="flex items-center justify-between">
-        <h3 className="text-xs font-semibold uppercase tracking-wide text-slate-300">Downtime · last 7 days</h3>
+        <h3 className="text-xs font-semibold uppercase tracking-wide text-slate-300">{"Downtime · " + (dt.window ?? `last ${dt.days} days`)}</h3>
         <span className="text-xs text-slate-500">
           {fmtMins(dt.total_minutes)} lost · {dt.total_events} event{dt.total_events !== 1 ? "s" : ""}
         </span>

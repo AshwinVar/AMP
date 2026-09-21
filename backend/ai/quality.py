@@ -234,10 +234,13 @@ def build_quality_trend(db, tenant: str, now=None) -> dict:
                "fail_rate": quality_contract.rate1(daily[d]["failed"], daily[d]["inspected"]),
                **({"partial": True} if (i == 0 and opens_mid_day) else {})}
               for i, d in enumerate(span)]
-    # Where the current half starts in that series, so the card can shade the two
-    # halves apart without re-deriving the split from a day count. The bucket the
-    # boundary falls inside belongs partly to each; it is drawn as current.
-    current_from = next((i for i, d in enumerate(span) if d >= window.start.date()), len(span))
+    # The card shades its halves apart from `half_days`. This used to publish a
+    # `current_from` index computed from the span, which mutation testing then
+    # proved could never differ from it: the span starts on the date
+    # `prior_window.start` falls on and `window.start` is exactly WINDOW_DAYS
+    # later, so the index is always WINDOW_DAYS — at every instant tried,
+    # including midnight and one microsecond past it. A second expression of a
+    # number already in the payload is what OeeWindow's docstring warns about.
 
     def _half(plant):
         return {"inspections": plant["inspections"], "inspected": plant["inspected"],
@@ -332,7 +335,6 @@ def build_quality_trend(db, tenant: str, now=None) -> dict:
         "days": TREND_WINDOW_DAYS,
         "half_days": WINDOW_DAYS,
         "window": window.label(),
-        "current_from": current_from,
         "current": current,
         "prior": prior,
         "delta_pts": delta_pts,

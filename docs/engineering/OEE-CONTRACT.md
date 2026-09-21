@@ -210,6 +210,7 @@ what it measured but cannot say what the missing machine did.
 | First-pass yield on `/analytics/final-executive-summary` | **all history** — a fourth copy of `passed / inspected` | last 7 days, from `quality_contract.plant_quality`, window named on the tile |
 | The command header's Autonomy tile | the **lifetime** auto-approval rate, under a caption reading "N actions / 7d" | last 7 days, from `ai/impact`'s own `OeeWindow` slice, beside the count it is actually over |
 | `ai/impact`'s recent slice | `utcnow() - 7d`, **no upper bound** (a future-dated action inflated the count) | the canonical window, bounded at both ends |
+| Downtime (the card, its reason drill-down and its trend) | the last seven CALENDAR dates, filtered in Python, **no upper bound** — while `/analytics/summary` passed the canonical window to the same `downtime_aggregates` for the same plant | the canonical window, from the same rows the tile groups |
 
 Measured before, on one factory at one moment:
 

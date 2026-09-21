@@ -19,6 +19,10 @@ type Instance = {
 type ReasonDetail = {
   reason: string;
   days: number;
+  /** "last 7 days" — the window the backend pooled, named rather than
+   *  assumed: it is the canonical rolling week, not seven calendar dates. */
+  window?: string;
+
   total_events: number;
   total_minutes: number;
   by_machine: { machine_id: number; name: string; count: number; minutes: number }[];
@@ -93,7 +97,7 @@ export default function DowntimeReasonDrawer({ reason, onClose }: { reason: stri
         <div className="flex items-start justify-between gap-3">
           <div>
             <h2 className="text-2xl font-bold">Downtime — {reason}</h2>
-            <p className="text-slate-500 text-sm mt-1">Where this reason is costing time · last 7 days</p>
+            <p className="text-slate-500 text-sm mt-1">{"Where this reason is costing time · " + (detail?.window ?? "last 7 days")}</p>
           </div>
           <button onClick={onClose} className="text-slate-400 hover:text-white text-xl px-2" aria-label="Close">
             ✕
@@ -121,12 +125,12 @@ export default function DowntimeReasonDrawer({ reason, onClose }: { reason: stri
             </div>
 
             {detail.total_events === 0 ? (
-              <p className="text-slate-500 text-sm">No “{reason}” downtime in the last 7 days.</p>
+              <p className="text-slate-500 text-sm">No “{reason}” downtime in the {detail?.window ?? "last 7 days"}.</p>
             ) : (
               <>
                 {/* 7-day trend */}
                 <div>
-                  <h3 className="text-sm font-semibold text-slate-300 uppercase tracking-wide">Trend · last 7 days</h3>
+                  <h3 className="text-sm font-semibold text-slate-300 uppercase tracking-wide">{"Trend · " + (detail?.window ?? "last 7 days")}</h3>
                   <div className="mt-3 flex items-end gap-2 h-20">
                     {detail.daily.map((d) => {
                       const h = d.count === 0 ? 0 : Math.max(4, Math.round((d.count / peak) * 72));

@@ -6,6 +6,10 @@ import { apiGet } from "../lib/api";
 // Mirrors ai.downtime.build_downtime_summary (GET /downtime-summary).
 type DowntimeSummary = {
   days: number;
+  /** "last 7 days" — the window the backend pooled, named rather than
+   *  assumed: it is the canonical rolling week, not seven calendar dates. */
+  window?: string;
+
   total_events: number;
   total_minutes: number;
   top_reasons: { reason: string; count: number; minutes: number }[];
@@ -63,7 +67,7 @@ export default function DowntimeIntelCard() {
   return (
     <section className="rounded-2xl border border-slate-800 bg-slate-900 p-5 space-y-4">
       <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-2">
-        <h3 className="text-lg font-semibold">Downtime — last {s.days} days</h3>
+        <h3 className="text-lg font-semibold">{"Downtime — " + (s.window ?? `last ${s.days} days`)}</h3>
         {t?.verdict && (
           <div className={`rounded-xl border px-4 py-2 text-sm ${toneClasses(t.tone)}`}>{t.verdict}</div>
         )}

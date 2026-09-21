@@ -85,7 +85,10 @@ def test_worsening_trend_attributes_swing_to_machine_and_reason():
     # rule 3: the daily series sums back to the half totals, exactly
     assert sum(d["minutes"] for d in t["series"]) == 210 + 90
     assert sum(d["events"] for d in t["series"]) == 5
-    assert len(t["series"]) == downtime.TREND_WINDOW_DAYS   # 14 entries, oldest -> newest
+    # Every calendar date the fortnight touches, oldest -> newest: fifteen when
+    # the rolling window opens mid-day, with the oldest flagged `partial`.
+    assert len(t["series"]) in (downtime.TREND_WINDOW_DAYS,
+                                downtime.TREND_WINDOW_DAYS + 1), len(t["series"])
     # every log here carries a machine_id, so per-machine minutes reconcile to the whole
     assert sum(m["minutes"] for m in
                [{"minutes": 180}, {"minutes": 30}]) == t["current"]["minutes"]

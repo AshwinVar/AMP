@@ -60,8 +60,13 @@ def test_downtime_summary_rolls_up_reasons_machines_and_days():
     assert s["by_machine"][0]["count"] == 3 and s["by_machine"][0]["minutes"] == 90
     assert s["by_machine"][1]["name"] == "CNC-02"
     assert s["by_machine"][1]["count"] == 2 and s["by_machine"][1]["minutes"] == 60
-    # daily series: 7 entries oldest->newest, today has 2 events / 60 min (one per machine)
-    assert len(s["daily"]) == 7 and s["daily"][-1]["count"] == 2 and s["daily"][-1]["minutes"] == 60
+    # The series covers every calendar date the ROLLING window touches — eight
+    # when it opens mid-day, with the oldest flagged `partial` — not a flat
+    # seven-day count (oee_contract.window_span). A seven-bar series under a
+    # rolling window put the boundary date's stoppages in the headline and in
+    # no bar (test_downtime_one_window.py).
+    assert len(s["daily"]) in (7, 8), len(s["daily"])
+    assert s["daily"][-1]["count"] == 2 and s["daily"][-1]["minutes"] == 60
     assert sum(e["count"] for e in s["daily"]) == 5
     # denominator reconciliation: the daily minutes sum to the headline total
     assert sum(e["minutes"] for e in s["daily"]) == s["total_minutes"]
@@ -69,7 +74,7 @@ def test_downtime_summary_rolls_up_reasons_machines_and_days():
     # empty factory -> zeros, no crash
     empty = downtime.build_downtime_summary(_fresh_session(), "DEFAULT")
     assert empty["total_events"] == 0 and empty["total_minutes"] == 0
-    assert empty["top_reasons"] == [] and len(empty["daily"]) == 7
+    assert empty["top_reasons"] == [] and len(empty["daily"]) in (7, 8)
     assert all(e["count"] == 0 and e["minutes"] == 0 for e in empty["daily"])
 
 
@@ -137,7 +142,8 @@ def test_downtime_reason_drilldown_totals_minutes_machines_and_instances():
     assert r["by_machine"][0]["name"] == "PRESS-01" and r["by_machine"][0]["count"] == 2
     assert r["by_machine"][0]["minutes"] == 150
     assert r["by_machine"][1]["name"] == "CNC-02" and r["by_machine"][1]["minutes"] == 45
-    assert len(r["daily"]) == 7 and r["daily"][-1]["count"] == 1     # today: one Breakdown
+    assert len(r["daily"]) in (7, 8), len(r["daily"])
+    assert r["daily"][-1]["count"] == 1                             # today: one Breakdown
     assert len(r["instances"]) == 3                                  # most-recent first (by time)
     assert r["instances"][0]["minutes"] == 120 and r["instances"][0]["machine"] == "PRESS-01"  # today's
     assert r["instances"][-1]["minutes"] == 45                       # oldest in window (2 days ago)

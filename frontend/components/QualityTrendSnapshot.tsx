@@ -22,9 +22,6 @@ type QualityTrend = {
   half_days: number;
   /** "last 7 days" — the half the current level is measured over. */
   window?: string;
-  /** Index in `series` where the current half starts (the halves are rolling
-   *  windows, so the split is not always half the bars). */
-  current_from?: number;
   current: Half;
   prior: Half;
   delta_pts: number | null;
@@ -85,10 +82,11 @@ export default function QualityTrendSnapshot() {
   // rendering guard, not a measurement, so it must not leak into the number).
   // A day that inspected nothing has no rate and contributes no peak.
   const truePeak = Math.max(...d.series.map((s) => s.fail_rate ?? 0), 0);
-  // Where the current half begins. Falls back to half the window only if the
-  // backend did not say — the halves are rolling, so a window that opens
-  // mid-day touches one more date than it has days.
-  const currentFrom = d.current_from ?? d.half_days;
+  // Where the current half begins. The span opens on the prior window's date
+  // and the two halves are the same width, so it is always `half_days` buckets
+  // in — the backend used to send an index for this and mutation testing showed
+  // it could never differ.
+  const currentFrom = d.half_days;
   // Bars are scaled against the worst day; floor only the DIVISOR so a sub-1% week
   // still reads without inventing a peak.
   const scale = Math.max(truePeak, 0.1);

@@ -208,8 +208,10 @@ def test_series_covers_the_dates_the_fortnight_touches():
     # value on the scale — for a day nobody inspected anything (quality_contract).
     quiet = [s for s in d["series"] if s["inspected"] == 0]
     assert len(quiet) == 14 and all(s["fail_rate"] is None for s in quiet)
-    # The card shades the halves apart from this index, not from a day count.
-    assert d["series"][d["current_from"]]["date"] == "2026-09-14", d["current_from"]
+    # The card shades the halves apart from `half_days`: the current half starts
+    # exactly that many buckets in, because the span opens on the prior window's
+    # date and the two halves are the same width.
+    assert d["series"][d["half_days"]]["date"] == "2026-09-14", d["series"]
     assert d["window"] == "last 7 days" and d["half_days"] == 7
     print("PASS the series covers the dates the fortnight touches, quiet days unmeasured")
 

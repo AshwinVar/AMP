@@ -18,18 +18,42 @@ shared duration parser — and attributes the swing to specific machines and
 reasons, so a plant sees downtime creeping up while it is still a few extra
 stoppages rather than after a bad month. The quality read-model has the same
 this-week-vs-last-week trend for scrap; this is its downtime twin.
+
+THE WINDOW IS NOT THIS MODULE'S TO CHOOSE. Every figure below is measured over
+`oee_contract.OeeWindow`, the same half-open week the plant OEE, the cost
+trend, the shift attainment and the quality rates are on — and, crucially, the
+same window `/analytics/summary` and `/analytics/executive-oee` already pass to
+`analytics_engine.downtime_aggregates` for the very same plant. This module used
+to cut the last seven CALENDAR dates and filter the rest in Python, which is a
+different set of rows at BOTH ends. Measured on one plant at one moment:
+
+    a six-hour breakdown late on the day the window opens
+        this card   0 events, 0 min          the dashboard tile   1 event, 360 min
+    a stoppage dated later today (a skewed gateway clock)
+        this card   1 event, 360 min         the dashboard tile   0 events, 0 min
+
+So the Downtime card could report a clean week beside a tile showing six hours
+lost, and could count a stoppage that has not happened yet. The trend's halves
+come from `prior_window`, so they tile exactly and the current half is the same
+set of rows as the summary's.
 """
 from collections import Counter, defaultdict
-from datetime import datetime, timedelta
+from datetime import datetime
 
 import models
+import oee_contract
 # The one correct free-text duration parser ("2 hrs 15 min" -> 135), aliased so the
 # call sites read unchanged — a local leading-digit regex read hour formats as minutes.
 from duration import parse_duration_to_minutes as _duration_minutes
+# ONE convention for an unlabelled stop, shared with the engine path that the
+# dashboard's own downtime tallies go through (its docstring already required
+# these two to agree; now they are the same function).
+from analytics_engine import normalize_downtime_reason as _norm_reason_label
 
 name = "downtime"
 
-WINDOW_DAYS = 7
+# The canonical reporting week, not a private copy of the number (#586).
+WINDOW_DAYS = oee_contract.DEFAULT_WINDOW_DAYS
 TOP_N = 5
 
 # Trend window — two WINDOW_DAYS halves, so "this week vs last week" over the same
@@ -46,24 +70,43 @@ MIN_TREND_EVENTS = 4
 
 
 def _norm_reason(d) -> str:
-    return (d.reason or "Unknown").strip() or "Unknown"
+    return _norm_reason_label(d.reason)
 
 
-def build_downtime_summary(db, tenant: str) -> dict:
-    """Fleet downtime over the last 7 days: total events and total minutes lost,
-    the top reasons and worst machines (both ranked by minutes down, events as the
-    tiebreak), a per-line rollup, and a daily series carrying both counts and
-    minutes. downtime_logs and machines are auto-scoped (ADR-0002)."""
-    today = datetime.utcnow().date()
-    window = [today - timedelta(days=i) for i in range(WINDOW_DAYS - 1, -1, -1)]
-    window_set = set(window)
-    # Windowed in SQL (the log grows continuously); the set check keeps the exact
-    # per-day semantics for any future-dated rows.
-    start = datetime.combine(window[0], datetime.min.time())
-    logs = [
-        d for d in db.query(models.DowntimeLog).filter(models.DowntimeLog.created_at >= start).all()
-        if d.created_at and d.created_at.date() in window_set
-    ]
+def _window(now=None):
+    """The window every figure in this module is measured over."""
+    return oee_contract.OeeWindow(WINDOW_DAYS, now=now)
+
+
+def _logs_in(db, window):
+    """The window's stoppages, bounded in SQL at BOTH ends.
+
+    downtime_logs grows continuously, so this is never an unbounded read; the
+    half-open upper bound is what keeps a row dated in the future out of a week
+    it has not happened in. That used to be a Python `date() in window_set`
+    check over a calendar-day set, which is a different set of rows from the
+    window every figure beside this one is measured over."""
+    q = db.query(models.DowntimeLog)
+    if window.start is not None:
+        q = q.filter(models.DowntimeLog.created_at >= window.start)
+    return [d for d in q.filter(models.DowntimeLog.created_at < window.end).all()
+            if d.created_at]
+
+
+def build_downtime_summary(db, tenant: str, now=None) -> dict:
+    """Fleet downtime over the canonical window: total events and total minutes
+    lost, the top reasons and worst machines (both ranked by minutes down, events
+    as the tiebreak), a per-line rollup, and a daily series carrying both counts
+    and minutes. downtime_logs and machines are auto-scoped (ADR-0002).
+
+    The totals here are the SAME rows `analytics_engine.downtime_aggregates`
+    groups for `/analytics/summary` over the same window, parsed by the same
+    shared duration parser — so the Downtime card and the dashboard tile beside
+    it cannot report different weeks (test_downtime_one_window.py pins it).
+    `now`: the instant the window ends at, for a composing caller."""
+    window = _window(now)
+    span, opens_mid_day = oee_contract.window_span(window)
+    logs = _logs_in(db, window)
 
     all_machines = db.query(models.Machine).all()
     names = {m.id: m.name for m in all_machines}
@@ -114,11 +157,19 @@ def build_downtime_summary(db, tenant: str) -> dict:
     by_line = [{"line": ln, "count": line_events[ln], "minutes": line_minutes[ln]}
                for ln in sorted(line_events)]
 
+    # Every date the window touches, oldest first — EIGHT when it opens mid-day,
+    # and that oldest bucket is flagged `partial` rather than drawn as a whole
+    # day (oee_contract.window_span; the same shape as the cost, cockpit and
+    # quality series). A seven-bar series under a rolling window put the
+    # boundary date's stoppages in the headline and in no bar.
     daily = [{"date": dd.isoformat(), "count": day_events.get(dd, 0),
-              "minutes": day_minutes.get(dd, 0)} for dd in window]
+              "minutes": day_minutes.get(dd, 0),
+              **({"partial": True} if (i == 0 and opens_mid_day) else {})}
+             for i, dd in enumerate(span)]
 
     return {
         "days": WINDOW_DAYS,
+        "window": window.label(),
         "total_events": len(logs),
         "total_minutes": total_minutes,
         "top_reasons": top_reasons,
@@ -128,21 +179,16 @@ def build_downtime_summary(db, tenant: str) -> dict:
     }
 
 
-def build_downtime_reason(db, tenant: str, reason: str) -> dict:
-    """Drill-down for a single downtime reason over the last 7 days: the totals
-    (events and minutes lost), the machines it hits, a daily trend, and the most
-    recent instances. Composes downtime_logs (auto-scoped, ADR-0002); adds no
-    storage. Returns a zeroed shape when the reason has no events in the window."""
-    today = datetime.utcnow().date()
-    window = [today - timedelta(days=i) for i in range(WINDOW_DAYS - 1, -1, -1)]
-    window_set = set(window)
-    # Windowed in SQL (the log grows continuously); the set check keeps the exact
-    # per-day semantics for any future-dated rows. Mirrors build_downtime_summary.
-    start = datetime.combine(window[0], datetime.min.time())
-    logs = [
-        d for d in db.query(models.DowntimeLog).filter(models.DowntimeLog.created_at >= start).all()
-        if d.created_at and d.created_at.date() in window_set and _norm_reason(d) == reason
-    ]
+def build_downtime_reason(db, tenant: str, reason: str, now=None) -> dict:
+    """Drill-down for a single downtime reason over the canonical window: the
+    totals (events and minutes lost), the machines it hits, a daily trend, and
+    the most recent instances. Composes downtime_logs (auto-scoped, ADR-0002);
+    adds no storage. Returns a zeroed shape when the reason has no events in the
+    window. THE SAME window as the summary whose Pareto row opened it — a
+    drill-down on a different span cannot reconcile with the number clicked."""
+    window = _window(now)
+    span, opens_mid_day = oee_contract.window_span(window)
+    logs = [d for d in _logs_in(db, window) if _norm_reason(d) == reason]
 
     names = {m.id: m.name for m in db.query(models.Machine).all()}
     events = Counter(d.machine_id for d in logs if d.machine_id is not None)
@@ -157,7 +203,9 @@ def build_downtime_reason(db, tenant: str, reason: str) -> dict:
     ]
 
     per_day = Counter(d.created_at.date() for d in logs)
-    daily = [{"date": dd.isoformat(), "count": per_day.get(dd, 0)} for dd in window]
+    daily = [{"date": dd.isoformat(), "count": per_day.get(dd, 0),
+              **({"partial": True} if (i == 0 and opens_mid_day) else {})}
+             for i, dd in enumerate(span)]
 
     recent = sorted(logs, key=lambda d: (d.created_at or datetime.min, d.id), reverse=True)[:10]
     instances = [{
@@ -173,6 +221,7 @@ def build_downtime_reason(db, tenant: str, reason: str) -> dict:
     return {
         "reason": reason,
         "days": WINDOW_DAYS,
+        "window": window.label(),
         "total_events": len(logs),
         "total_minutes": sum(_duration_minutes(d.duration) for d in logs),
         "by_machine": by_machine,
@@ -181,22 +230,7 @@ def build_downtime_reason(db, tenant: str, reason: str) -> dict:
     }
 
 
-def _half_of(day, today):
-    """Which half a day falls in: 'current' = the last WINDOW_DAYS including
-    today, 'prior' = the WINDOW_DAYS before that, None = outside the window.
-    Splits by calendar-day age. ai.quality._half_of used to do the same, and the
-    quality trend now tiles two canonical windows instead (quality_contract), so
-    these two cards no longer divide their fortnight on the same boundary. This
-    one is the next to move, not a second definition anybody chose."""
-    age = (today - day).days
-    if 0 <= age < WINDOW_DAYS:
-        return "current"
-    if WINDOW_DAYS <= age < TREND_WINDOW_DAYS:
-        return "prior"
-    return None
-
-
-def build_downtime_trend(db, tenant: str) -> dict:
+def build_downtime_trend(db, tenant: str, now=None) -> dict:
     """Which way is downtime going, and who moved it? Compares the last 7 days of
     lost minutes against the 7 before — same shared duration parser as the
     summary — and attributes the swing to machines and reasons. A read-model over
@@ -207,46 +241,62 @@ def build_downtime_trend(db, tenant: str) -> dict:
     summary already established that a six-hour breakdown outweighs a handful of
     micro-stops, so the trend is measured the same way. Every in-window log lands
     in exactly one day and one half, so the daily series sums back to the half
-    totals (rule 3). Thin weeks (one big stoppage) are reported but not judged."""
-    today = datetime.utcnow().date()
-    window = [today - timedelta(days=n) for n in range(TREND_WINDOW_DAYS - 1, -1, -1)]
-    window_set = set(window)
-    # Windowed in SQL (the log grows continuously); the set/half check keeps exact
-    # per-day semantics and drops any future-dated rows. Mirrors the summary.
-    start = datetime.combine(window[0], datetime.min.time())
-    logs = [
-        d for d in db.query(models.DowntimeLog).filter(models.DowntimeLog.created_at >= start).all()
-        if d.created_at and d.created_at.date() in window_set
-    ]
+    totals (rule 3). Thin weeks (one big stoppage) are reported but not judged.
+
+    THE HALVES TILE. They are `window` and `oee_contract.prior_window(window)`,
+    which share a boundary instant and no row, and each is QUERIED on its own
+    bounds rather than classified in Python — the boundary rule lives in one
+    place. They used to be calendar-day ages, which put a stoppage at 03:00 on
+    the seam date in `prior` here and in `current` on every contract-window card
+    beside it."""
+    window = _window(now)
+    prior_w = oee_contract.prior_window(window)
+    cur_logs = _logs_in(db, window)
+    pri_logs = _logs_in(db, prior_w)
+
+    # The calendar dates the fortnight touches, oldest first — fifteen when the
+    # window opens mid-day, with that bucket flagged `partial`. A day bucket is a
+    # rendering of the rows, not a second definition of the halves.
+    span, opens_mid_day = oee_contract.window_span(
+        oee_contract.OeeWindow(TREND_WINDOW_DAYS, now=window.end))
 
     names = {m.id: m.name for m in db.query(models.Machine).all()}
 
-    # One pass: parse each stoppage once, roll minutes + events up by day, half,
-    # machine and reason.
-    daily = {d: {"events": 0, "minutes": 0} for d in window}
+    # One pass per half: parse each stoppage once, roll minutes + events up by
+    # day, half, machine and reason.
+    daily = {d: {"events": 0, "minutes": 0} for d in span}
     halves = {"current": {"events": 0, "minutes": 0},
               "prior": {"events": 0, "minutes": 0}}
     per_machine: dict = defaultdict(lambda: {
         "current": {"events": 0, "minutes": 0}, "prior": {"events": 0, "minutes": 0}})
     per_reason: dict = defaultdict(lambda: {"current": 0, "prior": 0})
 
-    for d in logs:
-        day = d.created_at.date()
-        half = _half_of(day, today)
-        if half is None:
-            continue
-        mins = _duration_minutes(d.duration)
-        daily[day]["events"] += 1
-        daily[day]["minutes"] += mins
-        halves[half]["events"] += 1
-        halves[half]["minutes"] += mins
-        if d.machine_id is not None:
-            per_machine[d.machine_id][half]["events"] += 1
-            per_machine[d.machine_id][half]["minutes"] += mins
-        per_reason[_norm_reason(d)][half] += mins
+    for half, logs in (("prior", pri_logs), ("current", cur_logs)):
+        for d in logs:
+            mins = _duration_minutes(d.duration)
+            day = d.created_at.date()
+            if day in daily:
+                daily[day]["events"] += 1
+                daily[day]["minutes"] += mins
+            halves[half]["events"] += 1
+            halves[half]["minutes"] += mins
+            if d.machine_id is not None:
+                per_machine[d.machine_id][half]["events"] += 1
+                per_machine[d.machine_id][half]["minutes"] += mins
+            per_reason[_norm_reason(d)][half] += mins
 
-    series = [{"date": d.isoformat(), "events": daily[d]["events"], "minutes": daily[d]["minutes"]}
-              for d in window]
+    series = [{"date": d.isoformat(), "events": daily[d]["events"], "minutes": daily[d]["minutes"],
+               **({"partial": True} if (i == 0 and opens_mid_day) else {})}
+              for i, d in enumerate(span)]
+    # NO `current_from` HERE, deliberately. #699 shipped one on the quality
+    # trend — the index in `series` where the current half begins — and mutation
+    # testing proved it carries no information: replacing the whole computation
+    # with the constant `WINDOW_DAYS` failed nothing, at every instant tried
+    # (mid-day, midnight, one microsecond past midnight). It cannot differ: the
+    # span starts on the date `prior_window.start` falls on, and `window.start`
+    # is exactly WINDOW_DAYS later, so the index is always WINDOW_DAYS. A second
+    # expression of a number we already publish as `half_days` is exactly what
+    # OeeWindow's docstring warns about, so the card shades from `half_days`.
     current, prior = halves["current"], halves["prior"]
 
     delta_minutes = current["minutes"] - prior["minutes"]
@@ -313,6 +363,7 @@ def build_downtime_trend(db, tenant: str) -> dict:
     return {
         "days": TREND_WINDOW_DAYS,
         "half_days": WINDOW_DAYS,
+        "window": window.label(),
         "current": current,
         "prior": prior,
         "delta_minutes": delta_minutes,

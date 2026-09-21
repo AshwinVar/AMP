@@ -1975,6 +1975,7 @@ Cover, in order: **(1)** the three-layer sandwich (ERP/MES/PLC) and where AMP si
 | Add a telemetry signal | `backend/mqtt_service.py` (`on_message`) + `machine_status.py` if it maps to status/util |
 | Change OEE math | `backend/oee_contract.py` (canonical) / `backend/analytics_engine.py` (pooled + per-record) |
 | Change the reporting window, or what a series' dates span | `backend/oee_contract.py` (`OeeWindow`, `prior_window`, `window_span`) — never a private cutoff in a read-model |
+| Change a plant downtime figure (events, minutes lost, the Pareto) | `backend/ai/downtime.py` on the canonical window; the plant totals must equal `analytics_engine.downtime_aggregates` over the same window, which is what the dashboard tile reads |
 | Change a plant quality rate (fail rate, first-pass yield) | `backend/quality_contract.py` (canonical) — every surface reads `plant_quality`; `backend/ai/quality.py` rolls up the breakdowns |
 | Decide what a figure does when it measured nothing | It returns `None` with a `*_measured` flag and the screen prints a dash — never `0`, which is a real reading. A SUM or COUNT over an empty set stays `0`. See `docs/engineering/OEE-CONTRACT.md` §2 |
 | Change plant shift attainment | `backend/shift_contract.py` (canonical) — every surface reads `pooled_attainment` |

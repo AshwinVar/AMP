@@ -6,8 +6,10 @@ refactor could drop without any passing case noticing on its own -- the cap,
 the offset, the clamp, a limit of 0, an endpoint's own smaller ceiling, the
 total header, the total being the whole count and not the page's, the two
 inventory defaults, the CORS line that lets a browser read the header at all,
-a handler that quietly goes back to a raw .limit().all(), and the unread
-filter that makes the header an honest unread count.
+a handler that quietly goes back to a raw .limit().all(), the unread
+filter that makes the header an honest unread count, and the measured count
+optimisation (a short page's free total, the empty-page-past-the-end case,
+the cache's TTL, tenant and query keys).
 
 Run: DATABASE_URL="sqlite:///./ci.db" python backend/mutate_lists_are_pages.py
 """
@@ -29,11 +31,11 @@ E = "enterprise_inventory_routes.py"
 
 MUTATIONS = [
     ("the cap is dropped: every row comes back", P,
-     "    return query.offset(offset).limit(limit).all()",
-     "    return query.offset(offset).all()"),
+     "    rows = query.offset(offset).limit(limit).all()",
+     "    rows = query.offset(offset).all()"),
     ("the offset is ignored: every page is the first", P,
-     "    return query.offset(offset).limit(limit).all()",
-     "    return query.limit(limit).all()"),
+     "    rows = query.offset(offset).limit(limit).all()",
+     "    rows = query.limit(limit).all()"),
     ("the clamp is dropped: a direct caller may ask for everything", P,
      "    return max(1, min(limit, max_page)), max(0, _int(offset, 0))",
      "    return max(1, limit), max(0, _int(offset, 0))"),
@@ -44,11 +46,11 @@ MUTATIONS = [
      "    return max(1, min(limit, max_page)), max(0, _int(offset, 0))",
      "    return max(1, min(limit, MAX_PAGE)), max(0, _int(offset, 0))"),
     ("the total header is not sent", P,
-     "        response.headers[TOTAL_HEADER] = str(query.order_by(None).count())",
+     "        response.headers[TOTAL_HEADER] = str(total)",
      "        pass"),
     ("the total is the page's count, not the tenant's", P,
-     "        response.headers[TOTAL_HEADER] = str(query.order_by(None).count())",
-     "        response.headers[TOTAL_HEADER] = str(query.limit(limit).count())"),
+     "    total = query.order_by(None).count()",
+     "    total = query.order_by(None).limit(1).count()"),
     ("the items default widens to everything", I,
      "ITEMS_PAGE = 500",
      "ITEMS_PAGE = 100000"),
@@ -70,6 +72,24 @@ MUTATIONS = [
     ("a NULL status stops counting as unread", F,
      '        q = q.filter(or_(models.Notification.status.is_(None), models.Notification.status != "Read"))',
      '        q = q.filter(models.Notification.status != "Read")'),
+    # The measured count optimisation (paging.py header): each of these would
+    # make a header wrong or the count cost return, and section 8 of
+    # test_lists_are_pages.py is what sees it.
+    ("an empty page past the end claims total = offset", P,
+     "        if len(rows) < limit and (rows or offset == 0):",
+     "        if len(rows) < limit:"),
+    ("a short page still pays the count", P,
+     "        if len(rows) < limit and (rows or offset == 0):",
+     "        if False:"),
+    ("the cached total never expires", P,
+     "    if hit is not None and hit[0] > now:",
+     "    if hit is not None:"),
+    ("the cache ignores the tenant: a neighbour's total is served", P,
+     "    return (tenancy.current_tenant(), str(compiled))",
+     "    return (\"\", str(compiled))"),
+    ("the cache ignores the query: a filtered total is the list's", P,
+     "    return (tenancy.current_tenant(), str(compiled))",
+     "    return (tenancy.current_tenant(), \"\")"),
     ("the enterprise lists lose their own ceiling of 200", E,
      "    rows = paging.page(response, db.query(models.Remnant).order_by(models.Remnant.id.desc()),\n"
      "                       _PAGE_DEFAULT, limit, offset, max_page=_PAGE_MAX)",

@@ -14,7 +14,7 @@ Run: DATABASE_URL="sqlite:///./ci.db" python backend/test_oem_sharing.py
 """
 import os
 import sys
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
@@ -141,6 +141,27 @@ def test_a_relationship_is_not_consent():
           str(row["machine_status"]))
     check("...no utilization", row["utilization"] is None, str(row["utilization"]))
     check("...and no last-seen", row["last_seen_at"] is None, str(row["last_seen_at"]))
+    # The reporting STATE is derived from last-seen, so it is withheld with it:
+    # "silent" would tell the OEM the machine once reported, which is the fact
+    # the grant covers. (The machine HAS reported — world() stamps it.)
+    check("...and no reporting state either (derived from a withheld fact)",
+          row["reporting"] is None, str(row["reporting"]))
+    # The warranty state is the OEM's OWN record judged by the OEM's own rule,
+    # so it needs no grant — and it is the SERVER's answer, at the instant the
+    # caller names: 2026-01-01..2028-01-01 is active on 2027-01-01.
+    dated = oem_sharing.fleet_row(db, inst, g, mods["OEM_ALPHA"],
+                                  now=datetime(2027, 1, 1, 12, 0, 0))
+    check("the warranty state is visible with no grant at all",
+          dated["warranty"] == "active", str(dated["warranty"]))
+    check("...and is judged at the caller's instant (expired the day after the end date)",
+          oem_sharing.fleet_row(db, inst, g, mods["OEM_ALPHA"],
+                                now=datetime(2028, 1, 2, 12, 0, 0))["warranty"] == "expired")
+    tok = tenancy.set_current_tenant(None)
+    inst.warranty_end = None
+    db.commit()
+    tenancy.reset_current_tenant(tok)
+    check("...and with no end date recorded it is 'unknown', never assumed active",
+          oem_sharing.fleet_row(db, inst, g, mods["OEM_ALPHA"])["warranty"] == "unknown")
 
     # An EMPTY policy row is a considered "no", and must behave like no row.
     grant(db, "OEM_ALPHA", "FACTORY_A", [])
@@ -172,6 +193,26 @@ def test_each_grant_opens_exactly_one_door():
           str(row["machine_status"]))
     check("...and hours went back to hidden", row["operating_hours"] is None,
           str(row["operating_hours"]))
+    # With the grant, the reporting state comes with the last reading — and it
+    # is the SERVER's verdict at ONE instant, the same rule the service drawer
+    # and the recommendations use, not a second copy in the portal's JavaScript.
+    seen = inst.last_seen_at
+    check("...and the reporting state: seen just now -> 'reporting'",
+          oem_sharing.fleet_row(db, inst, g, mods["OEM_ALPHA"],
+                                now=seen + timedelta(hours=1))["reporting"] == "reporting")
+    check("...seen 48 h before the instant named -> 'silent'",
+          oem_sharing.fleet_row(db, inst, g, mods["OEM_ALPHA"],
+                                now=seen + timedelta(hours=48))["reporting"] == "silent")
+    tok = tenancy.set_current_tenant(None)
+    inst.last_seen_at = None
+    db.commit()
+    tenancy.reset_current_tenant(tok)
+    check("...never reported -> 'never', not 'silent'",
+          oem_sharing.fleet_row(db, inst, g, mods["OEM_ALPHA"])["reporting"] == "never")
+    tok = tenancy.set_current_tenant(None)
+    inst.last_seen_at = seen
+    db.commit()
+    tenancy.reset_current_tenant(tok)
 
     # An unknown grant token must never widen anything.
     grant(db, "OEM_ALPHA", "FACTORY_A", ["SHARE_EVERYTHING", "SHARE_ORDERS"])

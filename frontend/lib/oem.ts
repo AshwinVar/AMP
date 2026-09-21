@@ -27,14 +27,33 @@ export type FleetMachine = {
   commissioned_at: string | null;
   warranty_start: string | null;
   warranty_end: string | null;
+  /**
+   * The SERVER's verdict on the warranty dates (oem_service.warranty_state):
+   * the last day of a warranty is still covered, and a machine with no end
+   * date recorded is "unknown", never assumed either way. Not derived here.
+   */
+  warranty?: WarrantyState | null;
   /** null means NOT SHARED — see `shared`. It never means zero. */
   operating_hours: number | null;
   last_seen_at: string | null;
+  /**
+   * The SERVER's verdict on connectivity (oem_service.reporting_state), and
+   * null means NOT SHARED exactly as `last_seen_at` does. It is never worked
+   * out from the timestamp on this side: the wire carries naive UTC, and a
+   * browser that parsed it read it in the viewer's own zone, so the same
+   * machine was "reporting" in London and "silent" in New York.
+   */
+  reporting?: ReportingState | null;
   machine_status: string | null;
   utilization: number | null;
   shared: string[];
   not_shared?: string[];
 };
+
+/** oem_service.reporting_state: seen within SILENT_AFTER_DAYS, not, or never. */
+export type ReportingState = "reporting" | "silent" | "never";
+/** oem_service.warranty_state. */
+export type WarrantyState = "active" | "expired" | "not_started" | "unknown";
 
 export type OemIdentity = {
   oem_code: string;
@@ -346,33 +365,46 @@ export function shareable(
   return `${value}${suffix}`;
 }
 
-/** Fleet headline counts. Derived from what the OEM can actually see. */
+/**
+ * Fleet headline counts. Derived from what the OEM can actually see, and from
+ * the server's verdicts only — no clock and no date arithmetic on this side.
+ *
+ * This used to re-derive both states from the raw fields with the bare Date
+ * constructor, and got both wrong: the naive-UTC `last_seen_at` was read as
+ * LOCAL time, so the 48-hour line moved by the viewer's whole offset (a machine
+ * silent 44 h was "silent" in New York; one silent 49 h was still "reporting"
+ * in London), and the date-only `warranty_end` was read as UTC MIDNIGHT — the
+ * start of the last covered day — so every warranty read as over a day early,
+ * while the machine's own service drawer, asking the server, said "active".
+ * One rule, stated once, on the server: the drawer and this headline cannot
+ * now disagree.
+ */
 export function fleetSummary(machines: FleetMachine[]) {
-  const now = Date.now();
-  const isStale = (seen: string | null) =>
-    seen ? now - new Date(seen).getTime() > 48 * 3600 * 1000 : null;
-
   let connected = 0;
   let offline = 0;
+  let never = 0;
   let unknown = 0;
   for (const m of machines) {
-    const stale = isStale(m.last_seen_at);
+    const state = m.reporting ?? null;
     // A machine whose owner has not shared health is NOT "offline" — it is
     // unknown, and counting it as offline would invent a fleet problem out of a
-    // privacy setting.
-    if (stale === null) unknown += 1;
-    else if (stale) offline += 1;
-    else connected += 1;
+    // privacy setting. A machine that has never reported is neither: that is
+    // normal for one not yet commissioned.
+    if (state === "reporting") connected += 1;
+    else if (state === "silent") offline += 1;
+    else if (state === "never") never += 1;
+    else unknown += 1;
   }
   return {
     total: machines.length,
     connected,
     offline,
+    never,
     unknown,
     active: machines.filter((m) => m.lifecycle_status === "Active").length,
-    warrantyActive: machines.filter(
-      (m) => m.warranty_end && new Date(m.warranty_end).getTime() > now,
-    ).length,
+    // The server's verdict, or nothing: an end date on its own is not counted,
+    // because deciding "covered" from it here is the bug this replaced.
+    warrantyActive: machines.filter((m) => m.warranty === "active").length,
   };
 }
 

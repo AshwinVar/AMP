@@ -20,7 +20,8 @@ import os
 import subprocess
 import sys
 
-SUITES = ["test_oem_service.py", "test_oem_routes.py", "test_connected_equipment.py"]
+SUITES = ["test_oem_service.py", "test_oem_routes.py", "test_connected_equipment.py",
+          "test_oem_sharing.py"]
 
 MUTATIONS = [
     # --- the bug this module was rewritten to fix ---------------------------
@@ -78,10 +79,10 @@ MUTATIONS = [
     # --- claiming to know what it cannot know --------------------------------
     ("a silent machine is declared faulty rather than unexplained",
      "oem_service.py",
-     '                "reason": "This machine has not reported recently. It is either "\n'
-     '                          "switched off, disconnected, or faulty — this cannot "\n'
-     '                          "be told apart from here.",',
-     '                "reason": "This machine has failed and needs attention.",'),
+     '            "reason": "This machine has not reported recently. It is either "\n'
+     '                      "switched off, disconnected, or faulty — this cannot "\n'
+     '                      "be told apart from here.",',
+     '            "reason": "This machine has failed and needs attention.",'),
 
     # --- the lifecycle stops being a gate ------------------------------------
     ("commissioning can be skipped entirely", "oem_service.py",
@@ -128,6 +129,42 @@ MUTATIONS = [
      '    return [s["name"] for s in profile if s["state_signal"]]',
      '    return [s["name"] for s in profile\n'
      '            if s["state_signal"] or s["datatype"] == "bool"]'),
+
+    # --- reporting or silent is ONE rule, judged at ONE instant ---------------
+    # The portal once kept its own copy of the 48-hour line in JavaScript and
+    # applied it to a timestamp parsed in the viewer's zone. Now the server
+    # says, once, and the fleet row carries the verdict. Each of these makes the
+    # verdict wrong at the boundary, invents one, or lets a row judge itself
+    # against a clock other than the page's.
+    ("a machine seen exactly 48 h ago is still 'reporting' (the threshold turns exclusive)",
+     "oem_service.py",
+     "    if silent_days >= SILENT_AFTER_DAYS:",
+     "    if silent_days > SILENT_AFTER_DAYS:"),
+    ("a machine that has never reported is declared silent", "oem_service.py",
+     '        return {"state": "never", "silent_days": None, "reason": "never reported"}',
+     '        return {"state": "silent", "silent_days": None, "reason": "never reported"}'),
+    ("the recommendation keeps its own copy of the threshold", "oem_service.py",
+     '    if reporting["state"] == "silent":',
+     '    if reporting["state"] == "silent" and (reporting["silent_days"] or 0) >= 3:'),
+    ("the connectivity rule reads the wall clock, not the instant named",
+     "oem_service.py",
+     "    reporting = reporting_state(installation, now)\n",
+     "    reporting = reporting_state(installation)\n"),
+    ("the warranty rule reads the wall clock, not the instant named",
+     "oem_service.py",
+     "    today = today or now.date()\n",
+     "    today = today or datetime.utcnow().date()\n"),
+    ("the fleet row discloses the reporting state without the health grant",
+     "oem_sharing.py",
+     '        "reporting": None,\n',
+     '        "reporting": oem_service.reporting_state(installation, now)["state"],\n'),
+    ("the fleet row assumes every warranty is active", "oem_sharing.py",
+     '        "warranty": oem_service.warranty_state(installation, now.date())["state"],',
+     '        "warranty": "active",'),
+    ("the fleet row judges reporting at its own clock, not the page's",
+     "oem_sharing.py",
+     '        row["reporting"] = oem_service.reporting_state(installation, now)["state"]',
+     '        row["reporting"] = oem_service.reporting_state(installation)["state"]'),
 ]
 
 

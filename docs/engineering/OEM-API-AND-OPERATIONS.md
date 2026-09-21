@@ -272,12 +272,25 @@ really has.)
     "serial_number": "ALPHA-0001",     // the OEM's own record — always visible
     "model_code": "X200", "customer": "FACTORY_A", "site": "Plant 1",
     "lifecycle_status": "Active",
+    "warranty": "active",               // the SERVER's verdict on the OEM's own dates:
+                                        // active / expired / not_started / unknown
     "operating_hours": 1850.0,          // present ONLY with SHARE_OPERATING_HOURS
+    "reporting": null,                  // reporting / silent / never — ONLY with
+                                        // SHARE_MACHINE_HEALTH; null = NOT SHARED
     "machine_status": null,             // null here = NOT SHARED, not zero
     "shared": ["SHARE_OPERATING_HOURS"]
   }]
 }
 ```
+
+`warranty` and `reporting` are states the server decides, from the same two
+rules the service drawer and the recommendations read
+(`oem_service.warranty_state`, `oem_service.reporting_state`; a machine is
+*silent* after `SILENT_AFTER_DAYS` = 2 days without a reading, *never* if none
+has ever arrived). The portal used to work both out again in the browser from
+the raw dates and got both wrong — the last covered day of a warranty read as
+expired, and the 48-hour line moved with the viewer's time zone — so the fleet
+headline now counts the server's verdicts and parses no date at all.
 
 **A null is ambiguous on the wire and must not be ambiguous on the screen.**
 `shared` is what makes it readable, and the frontend's `shareable()` renders

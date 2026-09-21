@@ -61,9 +61,22 @@ def test_quality_summary_rolls_up_yield_defects_and_machines():
         {"line": "SMT", "inspected": 200, "failed": 25, "fail_rate": 12},
     ]
 
-    # no inspections -> zeros, no divide-by-zero
+    # A plant that inspected nothing has NO yield and NO fail rate. Both used to
+    # be 0, and 0% fail is the BEST value on the scale — a factory that stopped
+    # inspecting read as a factory making nothing wrong (quality_contract).
     empty = quality.build_quality_summary(_fresh_session(), "DEFAULT")
-    assert empty["inspections"] == 0 and empty["first_pass_yield"] == 0 and empty["top_defects"] == []
+    assert empty["inspections"] == 0 and empty["top_defects"] == []
+    assert empty["first_pass_yield"] is None and empty["fail_rate"] is None
+    assert empty["measured"] is False
+    assert empty["window"] == "last 7 days" and empty["days"] == 7
+
+    # Rows, but no UNITS: `inspections` is not the denominator, `inspected` is.
+    blank = _fresh_session()
+    blank.add(_insp("QC-EMPTY", 1, inspected=0, passed=0, failed=0))
+    blank.commit()
+    nothing = quality.build_quality_summary(blank, "DEFAULT")
+    assert nothing["inspections"] == 1 and nothing["inspected"] == 0
+    assert nothing["fail_rate"] is None and nothing["measured"] is False
 
 
 def test_defect_detail_drills_into_one_category():
@@ -99,7 +112,8 @@ def test_summary_exposes_the_card_contract():
     db = _fresh_session()
     s = quality.build_quality_summary(db, "DEFAULT")
     for k in ("inspections", "inspected", "passed", "failed", "rework", "scrap",
-              "first_pass_yield", "fail_rate", "top_defects", "by_machine", "by_line"):
+              "first_pass_yield", "fail_rate", "measured", "window", "days",
+              "top_defects", "by_machine", "by_line"):
         assert k in s, f"quality-summary missing card key {k!r}"
     print("PASS quality-summary exposes the keys the intel card renders")
 

@@ -56,7 +56,7 @@ type Detail = {
     good_rate: number;
     daily: { date: string; count: number; partial?: boolean }[];
   };
-  quality: { inspections: number; inspected: number; passed: number; failed: number; fail_rate: number; top_defects: { category: string; count: number }[] };
+  quality: { inspections: number; inspected: number; passed: number; failed: number; fail_rate: number | null; measured?: boolean; top_defects: { category: string; count: number }[] };
   open_actions: OpenAction[];
   timeline: TimelineEvent[];
 };
@@ -342,8 +342,11 @@ export default function MachineDetailDrawer({
               ) : (
                 <div className="mt-2">
                   <div className="flex items-end gap-3">
-                    <p className={`text-2xl font-bold ${detail.quality.fail_rate <= 2 ? "text-emerald-400" : detail.quality.fail_rate <= 5 ? "text-yellow-400" : "text-orange-400"}`}>
-                      {detail.quality.fail_rate}%
+                    {/* Null when the inspections covered no units: 0% is the
+                        best value on this scale and must not stand in for a
+                        reading nobody took. */}
+                    <p className={`text-2xl font-bold ${detail.quality.fail_rate == null ? "text-slate-500" : detail.quality.fail_rate <= 2 ? "text-emerald-400" : detail.quality.fail_rate <= 5 ? "text-yellow-400" : "text-orange-400"}`}>
+                      {detail.quality.fail_rate == null ? "—" : detail.quality.fail_rate + "%"}
                     </p>
                     <p className="text-xs text-slate-500 pb-1">
                       fail rate · {detail.quality.inspections} inspection{detail.quality.inspections !== 1 ? "s" : ""} · {detail.quality.inspected} units

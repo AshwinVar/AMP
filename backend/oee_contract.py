@@ -237,6 +237,29 @@ def prior_window(current):
     return OeeWindow(current.days, now=current.start)
 
 
+def window_span(window):
+    """The calendar dates `window` touches, oldest first, and whether it opens
+    mid-day — `(dates, opens_mid_day)`.
+
+    ONE definition for every daily series drawn under a windowed figure. A
+    rolling 7x24h window that opens part-way through a day touches EIGHT
+    calendar dates; a series drawn over seven of them cannot account for the
+    panel above it, which is how one machine card came to measure the same
+    machine over three different weeks (#590). The caller flags the oldest
+    bucket `partial`, because drawing it as a whole day would move the gap
+    rather than close it (#587).
+
+    Lived in ai/twin.py, and a second copy in ai/cost.py; window semantics
+    belong to the window.
+    """
+    start_date = window.start.date()
+    end_date = (window.end - _TICK).date()
+    days = [start_date + timedelta(days=i)
+            for i in range((end_date - start_date).days + 1)]
+    opens_mid_day = window.start.time() != datetime.min.time()
+    return days, opens_mid_day
+
+
 def is_measurable(planned, total) -> bool:
     """Whether a window contains anything OEE can be computed from.
 

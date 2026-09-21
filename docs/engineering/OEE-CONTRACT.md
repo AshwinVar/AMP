@@ -82,6 +82,21 @@ weeks' share, so the series still sums to the two weeks.
 `days=None` means all time. It is correct only for an explicit "since
 commissioning" view and is **never** the default.
 
+**A rate over an empty window is not zero.** `round(part / whole * 100) if
+whole else 0` publishes the BEST value on a fail-rate scale for a plant that
+inspected nothing, and the worst on an attainment scale for a plant that
+planned nothing. The contracts return `None` and a `measured` flag instead, and
+the screens print a dash with the reason beside it — the shift attainment
+(`shift_contract`), the quality rates (`quality_contract`) and the machine
+health score all follow this rule.
+
+**The dates a window touches are not its day count.** A rolling 7×24h window
+that opens part-way through a day touches EIGHT calendar dates.
+`oee_contract.window_span(window)` is the one definition of that span — used by
+the cockpit's series, the cost trend and the quality trend — and it flags the
+oldest bucket `partial`. Its upper end is exclusive: a window ending at exactly
+midnight touches the day before, and not the day its `end` falls on.
+
 ---
 
 ## 3. Definitions
@@ -165,6 +180,8 @@ what it measured but cannot say what the missing machine did.
 | `/oee-trend` (this week vs last) | dates `today-6 … today` vs the 7 dates before | last 7 days vs `prior_window` of it, **+ coverage of each** |
 | `/analytics/summary`, `/analytics/management` | all history | last 7 days, + coverage |
 | `/reports/intelligence-summary.txt` | **all history**, under the dashboard's labels | last 7 days: `/analytics/management`'s own summary, window named on every line, + coverage |
+| Shift attainment (the card, `/analytics/summary`, `/analytics/management`, `/analytics/executive-oee`) | the card's own rolling cutoff / all history / all history / **the most recent 50 rows** | last 7 days, from `shift_contract.pooled_attainment`, window named on each |
+| Quality fail rate and first-pass yield (the intel card and snapshot, `/analytics/quality`, `/analytics/factory-command-center`, the machine cockpit) | seven calendar dates with no upper bound / **all history** / **all history** / last 7 days | last 7 days, from `quality_contract.plant_quality`, window named on each |
 
 Measured before, on one factory at one moment:
 

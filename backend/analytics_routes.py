@@ -28,6 +28,7 @@ import ai.twin
 import machine_status
 import models
 import oee_contract
+import quality_contract
 import shift_contract
 import work_order_status
 from analytics_engine import (
@@ -676,52 +677,38 @@ def get_quality_analytics(
 ):
     QI = models.QualityInspection
 
+    # ONE WINDOW. This endpoint pooled EVERY inspection ever recorded and called
+    # the result "Fail Rate", on a screen sitting next to an intel card whose
+    # fail rate was the last seven days and a machine cockpit whose fail rate was
+    # the canonical week. A plant that ran badly last quarter and cleanly this
+    # one published three different true numbers under one label. The tiles now
+    # read `quality_contract.plant_quality` over the canonical window, the same
+    # figure ai/quality and the twin's tile read, and the payload carries the
+    # window so the screen can name it (#586's rule, applied to quality).
+    #
     # quality_inspections grows with every inspection, so never load the whole
     # table into Python to aggregate it (the rule-4 antipattern the sibling
     # command centres — /analytics/inventory #286, /escalations #288,
-    # /operator-terminal #285 — were already bounded away from). Sum the totals
-    # in ONE aggregate SELECT and the drill-downs with GROUP BY, so we scan the
-    # window in SQL and materialise only the distinct categories/machines, not
-    # every row. All of these are auto-scoped to the tenant by the do_orm_execute
-    # hook exactly like the .all() scan they replace (ADR-0002).
-    #
-    # passed / failed / rework / scrap_quantity are Column(Integer, default=0)
-    # WITHOUT nullable=False — the ORM default only fills a value the *inserter*
-    # omitted, so a row written by raw SQL, a migration, or an update that clears
-    # the field can legitimately be NULL. SUM ignores NULLs and returns NULL for
-    # an all-NULL/empty group, so coalesce each to the column's own default of 0
-    # (inspected_quantity IS nullable=False, so its SUM stays exact). This is the
-    # same NULL guard the ai/* quality read-models and the sibling
-    # /analytics/final-executive-summary (#281) already apply to these columns.
-    total_inspections, inspected, passed, failed, rework, scrap = db.query(
-        func.count(QI.id),
-        func.coalesce(func.sum(QI.inspected_quantity), 0),
-        func.coalesce(func.sum(QI.passed_quantity), 0),
-        func.coalesce(func.sum(QI.failed_quantity), 0),
-        func.coalesce(func.sum(QI.rework_quantity), 0),
-        func.coalesce(func.sum(QI.scrap_quantity), 0),
-    ).one()
+    # /operator-terminal #285 — were already bounded away from). The totals come
+    # from ONE aggregate SELECT in the contract and the drill-downs from GROUP BY,
+    # so we scan the window in SQL and materialise only the distinct
+    # categories/machines, not every row. The NULL guard on the nullable
+    # passed / failed / rework / scrap columns lives in the contract with the sums.
+    window = oee_contract.OeeWindow(oee_contract.DEFAULT_WINDOW_DAYS)
+    plant = quality_contract.plant_quality(db, request_tenant(current_user), window)
 
-    # int() so a DB that returns Decimal for SUM (Postgres) matches the plain-int
-    # payload the frontend type expects, and so pass/fail rates divide cleanly.
-    total_inspections = int(total_inspections or 0)
-    inspected = int(inspected or 0)
-    passed = int(passed or 0)
-    failed = int(failed or 0)
-    rework = int(rework or 0)
-    scrap = int(scrap or 0)
-
-    # pass_rate / fail_rate share `inspected` as their denominator with the
-    # headline totals above — same basis, reconciled (rule 3). 0/0 guarded -> 0.
-    pass_rate = round((passed / inspected) * 100) if inspected else 0
-    fail_rate = round((failed / inspected) * 100) if inspected else 0
+    def _in_window(q):
+        """The same bounds the totals were summed over — a breakdown on a
+        different span cannot reconcile with the headline above it (rule 3)."""
+        return q.filter(QI.created_at >= window.start, QI.created_at < window.end)
 
     # Defect breakdown: SUM(failed) per category. `category or "No Defect"` still
     # folds both a NULL and an empty-string category into one bucket (and merges
     # them if both exist), matching the old per-row accumulation exactly.
+    # Auto-scoped to the tenant by the do_orm_execute hook (ADR-0002).
     defect_counts = {}
     for category, cat_failed in (
-        db.query(QI.defect_category, func.coalesce(func.sum(QI.failed_quantity), 0))
+        _in_window(db.query(QI.defect_category, func.coalesce(func.sum(QI.failed_quantity), 0)))
         .group_by(QI.defect_category)
         .all()
     ):
@@ -732,7 +719,7 @@ def get_quality_analytics(
     # the old `if row.machine_id` guard dropped (unattributed inspections).
     machine_failures = {}
     for machine_id, m_failed in (
-        db.query(QI.machine_id, func.coalesce(func.sum(QI.failed_quantity), 0))
+        _in_window(db.query(QI.machine_id, func.coalesce(func.sum(QI.failed_quantity), 0)))
         .filter(QI.machine_id.isnot(None))
         .group_by(QI.machine_id)
         .all()
@@ -741,14 +728,20 @@ def get_quality_analytics(
             machine_failures[machine_id] = int(m_failed or 0)
 
     return {
-        "total_inspections": total_inspections,
-        "inspected_quantity": inspected,
-        "passed_quantity": passed,
-        "failed_quantity": failed,
-        "rework_quantity": rework,
-        "scrap_quantity": scrap,
-        "pass_rate": pass_rate,
-        "fail_rate": fail_rate,
+        "total_inspections": plant["inspections"],
+        "inspected_quantity": plant["inspected"],
+        "passed_quantity": plant["passed"],
+        "failed_quantity": plant["failed"],
+        "rework_quantity": plant["rework"],
+        "scrap_quantity": plant["scrap"],
+        # None, not 0, when the window inspected nothing: 0% fail is the best
+        # value on the scale, and a plant that stopped inspecting must not read
+        # as a plant making nothing wrong. The tiles print a dash.
+        "pass_rate": plant["first_pass_yield"],
+        "fail_rate": plant["fail_rate"],
+        "measured": plant["measured"],
+        "window": plant["window"],
+        "days": plant["days"],
         "defect_counts": defect_counts,
         "machine_failures": machine_failures,
     }
@@ -1158,18 +1151,16 @@ def get_factory_command_center(
         <= func.coalesce(models.InventoryItem.reorder_level, 0)
     ).scalar() or 0
 
-    # Quality fail rate over the whole inspection register. inspected_quantity is
-    # nullable=False; failed_quantity is Column(Integer, default=0) WITHOUT
-    # nullable=False, so COALESCE(SUM(failed), 0) guards a real NULL (and the
-    # empty-table NULL) exactly as the old `failed_quantity or 0` did. Numerator and
-    # denominator read the same rows, so the rate reconciles (rule 3); 0/0 -> 0.
-    inspected, failed = db.query(
-        func.coalesce(func.sum(models.QualityInspection.inspected_quantity), 0),
-        func.coalesce(func.sum(models.QualityInspection.failed_quantity), 0),
-    ).one()
-    inspected = int(inspected)
-    failed = int(failed)
-    quality_fail_rate = round((failed / inspected) * 100) if inspected else 0
+    # Quality fail rate over THE canonical window, from the one contract every
+    # other quality figure reads. This tile pooled the whole inspection register
+    # — every inspection ever recorded — under the label "Quality Fail", beside
+    # machine counts that are all current state, and it disagreed with the
+    # Quality view and the intel card for exactly that reason. None when the
+    # window inspected nothing: the tile prints a dash rather than 0%.
+    quality = quality_contract.plant_quality(
+        db, request_tenant(current_user),
+        oee_contract.OeeWindow(oee_contract.DEFAULT_WINDOW_DAYS))
+    quality_fail_rate = quality["fail_rate"]
 
     machine_map = {machine.id: machine for machine in machines}
     zone_summary = {}
@@ -1220,6 +1211,8 @@ def get_factory_command_center(
         "open_escalations": open_escalations,
         "low_stock_items": low_stock,
         "quality_fail_rate": quality_fail_rate,
+        "quality_measured": quality["measured"],
+        "quality_window": quality["window"],
         "zone_summary": list(zone_summary.values()),
     }
 

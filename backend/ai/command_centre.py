@@ -201,7 +201,10 @@ def _plan_problems(plan, downtime, unit_value):
 
 
 def _quality_problem(quality, unit_value):
-    if not quality["inspections"] or not quality["failed"]:
+    # `measured` as well as `failed`: a fail rate of None cannot be shipped as a
+    # fact (ev.Fact refuses a missing value that is not labelled UNKNOWN), and a
+    # problem card with no rate on it has nothing to say.
+    if not quality.get("measured") or not quality["failed"]:
         return None
     worst = quality["by_machine"][0] if quality["by_machine"] else None
     defect = quality["top_defects"][0]["category"] if quality["top_defects"] else None

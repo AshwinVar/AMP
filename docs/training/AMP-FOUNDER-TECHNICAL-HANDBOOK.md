@@ -1974,6 +1974,9 @@ Cover, in order: **(1)** the three-layer sandwich (ERP/MES/PLC) and where AMP si
 | Add a machine field | `backend/models.py` (Machine) + Alembic migration → `schemas.py` → `components/MachineHealthSection.tsx` |
 | Add a telemetry signal | `backend/mqtt_service.py` (`on_message`) + `machine_status.py` if it maps to status/util |
 | Change OEE math | `backend/oee_contract.py` (canonical) / `backend/analytics_engine.py` (pooled + per-record) |
+| Change the reporting window, or what a series' dates span | `backend/oee_contract.py` (`OeeWindow`, `prior_window`, `window_span`) — never a private cutoff in a read-model |
+| Change a plant quality rate (fail rate, first-pass yield) | `backend/quality_contract.py` (canonical) — every surface reads `plant_quality`; `backend/ai/quality.py` rolls up the breakdowns |
+| Change plant shift attainment | `backend/shift_contract.py` (canonical) — every surface reads `pooled_attainment` |
 | Change inventory reorder logic | `backend/inventory_routes.py` (trigger) + `backend/ai/agents.py` (draft qty) |
 | Change the BOM / recipe | data: `PATCH /bom/{id}` (Admin); resolver: `backend/bom.py` |
 | Add a domain event | `backend/events.py` (dataclass) + publish in the producing `*_routes.py` |

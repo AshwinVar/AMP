@@ -39,8 +39,12 @@ export default function InventorySection({
   deleteItem,
   createTransaction,
   generateLowStockEscalations,
+  total = null,
 }: {
   items: InventoryItem[];
+  // How many items the tenant has in all, when the list is a page of them
+  // (X-Total-Count from /inventory/items); null when not known.
+  total?: number | null;
   transactions: InventoryTransaction[];
   analytics: InventoryAnalytics | null;
   itemForm: {
@@ -248,6 +252,15 @@ export default function InventorySection({
 
       <div className="rounded-2xl bg-slate-900 border border-slate-800 p-5">
         <h3 className="text-2xl font-semibold mb-4">Inventory Master</h3>
+        {total !== null && total > items.length && (
+          // The list is the newest page, not the whole book. Saying so beats
+          // a table that looks complete and is not; the complete list is the
+          // CSV export, which is never paged.
+          <p className="text-amber-300/90 text-sm -mt-2 mb-4" data-testid="inventory-page-notice">
+            Showing the newest {items.length.toLocaleString()} of {total.toLocaleString()} items — the complete list is
+            in the Inventory CSV export (Reports).
+          </p>
+        )}
 
         <div className="overflow-x-auto rounded-xl border border-slate-800">
           <table className="w-full min-w-[1050px] text-left text-sm">

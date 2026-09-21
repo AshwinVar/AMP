@@ -185,6 +185,29 @@ export async function apiGet<T>(path: string): Promise<T> {
   return res.json();
 }
 
+// A GET that also reports how many rows the tenant has in total, from the
+// X-Total-Count header the paged list endpoints send (/inventory/items,
+// /inventory/transactions), so a full page can be told from a complete list.
+// `total` is null when the endpoint sent no count (an older backend, or a
+// list that is not paged), never a guess.
+export async function apiGetWithTotal<T>(path: string): Promise<{ data: T; total: number | null }> {
+  maybeRefreshToken();
+  const sep = path.includes("?") ? "&" : "?";
+  const res = await fetch(`${API_URL}${path}${sep}t=${Date.now()}`, {
+    method: "GET",
+    headers: getAuthHeaders(),
+    cache: "no-store",
+  });
+  if (!res.ok) {
+    if (res.status === 401) handleUnauthorized();
+    const text = await res.text();
+    throw new Error(`Failed request: ${path} | ${res.status} | ${text}`);
+  }
+  const raw = res.headers.get("X-Total-Count");
+  const total = raw !== null && /^\d+$/.test(raw) ? Number(raw) : null;
+  return { data: (await res.json()) as T, total };
+}
+
 export async function apiPost<T>(path: string, body: unknown): Promise<T> {
   maybeRefreshToken();
   const res = await fetch(`${API_URL}${path}`, {

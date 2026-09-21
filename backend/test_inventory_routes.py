@@ -10,6 +10,7 @@ asserted here — this guards only the base /inventory CRUD paths.
 
 Run:  python backend/test_inventory_routes.py     (exit 0 = pass)
 """
+from fastapi import Response
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker
 
@@ -190,7 +191,7 @@ def test_list_serialises_legacy_null_row_without_500():
         good = _make_item(db, "P-GOOD", current_stock=25, reorder_level=5)
         bad = _make_item(db, "P-LEGACY-NULL", current_stock=0, reorder_level=0)
         _null_out(db, bad.id, ["current_stock", "reorder_level"])
-        rows = inventory_routes.get_inventory_items(db=db, current_user={"tenant": TENANT})
+        rows = inventory_routes.get_inventory_items(Response(), db=db, current_user={"tenant": TENANT})
         serialised = [schemas.InventoryItemResponse.model_validate(r) for r in rows]
     finally:
         T.reset_current_tenant(tok)

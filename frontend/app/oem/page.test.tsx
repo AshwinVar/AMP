@@ -1,5 +1,5 @@
 import { saySharedFigure, type PooledFigure } from "../../lib/oem";
-import { render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 /**
@@ -226,5 +226,53 @@ describe("fleet intelligence, only from consented data (ADR-0033)", () => {
 
   it("says 'not shown' rather than inventing a number when the value is missing", () => {
     expect(saySharedFigure(figure({ value: null })).value).toBe("not shown");
+  });
+});
+
+describe("the fleet is a page, and says so (ADR-0036)", () => {
+  function fleetOf(n: number) {
+    return Array.from({ length: n }, (_, i) => ({
+      installation_id: i + 1, serial_number: `SN-${String(i + 1).padStart(4, "0")}`, model_code: "X200",
+      model_name: "X200", customer: "FACTORY_A", site: "Plant 1", lifecycle_status: "Active",
+      installed_at: null, commissioned_at: null, warranty_start: null, warranty_end: null,
+      operating_hours: null, last_seen_at: null, machine_status: null, utilization: null, shared: [],
+    }));
+  }
+  const all = fleetOf(250);
+  function routed(url: string) {
+    if (url.includes("/oem/fleet")) {
+      const q = new URLSearchParams(url.split("?")[1] ?? "");
+      const offset = Number(q.get("offset") ?? 0);
+      const limit = Number(q.get("limit") ?? 100);
+      return jsonResponse(200, { total: 250, limit, offset, machines: all.slice(offset, offset + limit) });
+    }
+    if (url.includes("/oem/me")) {
+      return jsonResponse(200, {
+        oem_code: "OEM_ALPHA", username: "a", role: "OEM_ADMIN", capabilities: [],
+        branding: { name: "Alpha", color: null, logo_url: null, support_email: null, support_phone: null },
+      });
+    }
+    if (url.includes("/oem/customers")) return jsonResponse(200, { customers: [] });
+    if (url.includes("/oem/service")) return jsonResponse(200, { total: 0, by_severity: {}, recommendations: [] });
+    if (url.includes("/oem/claims")) return jsonResponse(200, { total: 0, limit: 100, offset: 0, claims: [] });
+    return jsonResponse(200, []);
+  }
+
+  it("shows the first 100 of 250, says so, and loads the next 100 on request", async () => {
+    localStorage.setItem("token", tokenWith({ principal: "oem", oem: "OEM_ALPHA" }));
+    fetchMock.mockImplementation((url: string) => Promise.resolve(routed(String(url))));
+
+    render(<OemPortalPage />);
+    await waitFor(() => expect(screen.getByText("SN-0100")).toBeTruthy());
+    expect(screen.queryByText("SN-0101")).toBeNull();
+    const notice = screen.getByTestId("page-notice");
+    expect(notice.textContent).toContain("Showing the first 100 of 250 machines");
+
+    fireEvent.click(screen.getByRole("button", { name: "Show the next 100" }));
+    await waitFor(() => expect(screen.getByText("SN-0200")).toBeTruthy());
+    expect(screen.getByTestId("page-notice").textContent).toContain("Showing the first 200 of 250 machines");
+    expect(screen.getByRole("button", { name: "Show the next 50" })).toBeTruthy();
+    const fleetCalls = fetchMock.mock.calls.map((c) => String(c[0])).filter((u) => u.includes("/oem/fleet"));
+    expect(fleetCalls.some((u) => u.includes("offset=100"))).toBe(true);
   });
 });

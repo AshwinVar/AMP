@@ -249,6 +249,10 @@ reads, not 10,000. Since 2026-09-21 the fleet page is also taken in SQL
 before that the handler hydrated every installation and sliced the list in
 Python, 48.7 ms for the same page at 10,000 machines, growing with the fleet;
 now 4.4 ms, flat. The tenth query is the count, cached for the poll interval.
+The portal shows the first 100 machines, says so ("Showing the first 100 of
+250 machines") and offers the next 100 (`lib/oem.loadFleet`, a page at a
+time, up to the fleet's own total); the depth it asked for survives the next
+refresh and the customer filter.
 
 ---
 

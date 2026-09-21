@@ -7,6 +7,7 @@ import {
   fetchModels,
   fetchOemNotifications,
   fleetSummary,
+  loadFleet,
   get,
   isOemSession,
   post,
@@ -289,5 +290,39 @@ describe("a structured refusal (ADR-0021 contract routes)", () => {
     expect(withheld.message).toBe("withheld until it does");
     const coverage = await post("/oem/contracts/1/propose", {}).catch((e: OemRequestError) => e) as OemRequestError;
     expect(coverage.message).toBe("Coverage cannot be accepted: SN-1 is not linked");
+  });
+});
+
+describe("loadFleet walks the fleet a page at a time (ADR-0036)", () => {
+  function page(ids: number[], total: number) {
+    return { total, limit: 100, offset: 0, machines: ids.map((id) => machine({ installation_id: id, serial_number: `SN-${id}` })) };
+  }
+
+  it("holds one page when that is all the screen asked for, and reports the fleet's total", async () => {
+    const fetchPage = vi.fn(async () => page(Array.from({ length: 100 }, (_, i) => i + 1), 250));
+    const fleet = await loadFleet("FACTORY_A", 100, fetchPage);
+    expect(fleet.machines).toHaveLength(100);
+    expect(fleet.total).toBe(250);
+    expect(fetchPage).toHaveBeenCalledTimes(1);
+    expect(fetchPage).toHaveBeenCalledWith("FACTORY_A", 100, 0);
+  });
+
+  it("asks for the next page with the offset when the screen wants more, and stops at the total", async () => {
+    const all = Array.from({ length: 250 }, (_, i) => i + 1);
+    const fetchPage = vi.fn(async (_c?: string, limit = 100, offset = 0) =>
+      page(all.slice(offset, offset + limit), 250));
+    const fleet = await loadFleet(undefined, 200, fetchPage);
+    expect(fleet.machines).toHaveLength(200);
+    expect(fetchPage.mock.calls.map((c) => c[2])).toEqual([0, 100]);
+    const whole = await loadFleet(undefined, 1000, fetchPage);
+    expect(whole.machines).toHaveLength(250);
+    expect(whole.total).toBe(250);
+  });
+
+  it("keeps a row that shifted between pages once, and stops on a server that ignores the offset", async () => {
+    const fetchPage = vi.fn(async () => page(Array.from({ length: 100 }, (_, i) => i + 1), 500));
+    const fleet = await loadFleet(undefined, 300, fetchPage);
+    expect(fleet.machines).toHaveLength(100);
+    expect(fetchPage).toHaveBeenCalledTimes(2);     // the second page added nothing, so it stopped
   });
 });

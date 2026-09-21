@@ -8,9 +8,11 @@ import { useRouter } from "next/navigation";
 import { getToken } from "../../lib/api";
 import OemContracts from "../../components/OemContracts";
 import OemMachineRegistry from "../../components/OemMachineRegistry";
+import PageNotice from "../../components/PageNotice";
 import {
   fetchCustomers,
-  fetchFleet,
+  FLEET_PAGE,
+  loadFleet,
   fetchMachine,
   fetchMachineService,
   fetchOemIdentity,
@@ -148,6 +150,12 @@ export default function OemPortalPage() {
 
   const [identity, setIdentity] = useState<OemIdentity | null>(null);
   const [machines, setMachines] = useState<FleetMachine[]>([]);
+  // The fleet is a page, and says so (ADR-0036): how many machines the
+  // manufacturer has in all, and how many rows this screen asked to hold.
+  // The depth persists across reloads and customer filters, so "Show the
+  // next 100" is not undone by the next refresh.
+  const [fleetTotal, setFleetTotal] = useState<number | null>(null);
+  const [fleetDepth, setFleetDepth] = useState(FLEET_PAGE);
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [queue, setQueue] = useState<ServiceRecommendation[]>([]);
   const [intel, setIntel] = useState<OemIntelligence | null>(null);
@@ -167,10 +175,10 @@ export default function OemPortalPage() {
   // the effect executes — a synchronous setState in an effect body costs a
   // second render before the browser has painted the first.
   const load = useCallback(
-    (customer: string) =>
+    (customer: string, depth: number = FLEET_PAGE) =>
       Promise.all([
         fetchOemIdentity(),
-        fetchFleet(customer || undefined),
+        loadFleet(customer || undefined, depth),
         fetchCustomers(),
         fetchServiceQueue(),
         fetchModels(),
@@ -183,6 +191,7 @@ export default function OemPortalPage() {
           setError("");
           setIdentity(me);
           setMachines(fleet.machines);
+          setFleetTotal(fleet.total);
           setCustomers(custs.customers);
           setQueue(service.recommendations);
           setModels(catalogue);
@@ -214,8 +223,8 @@ export default function OemPortalPage() {
       router.push("/login");
       return;
     }
-    load(customerFilter);
-  }, [router, load, customerFilter]);
+    load(customerFilter, fleetDepth);
+  }, [router, load, customerFilter, fleetDepth]);
 
   async function openMachine(machine: FleetMachine) {
     setSelected(machine);
@@ -445,6 +454,16 @@ export default function OemPortalPage() {
                 </button>
               )}
             </div>
+            <PageNotice
+              shown={machines.length}
+              total={fleetTotal}
+              noun="machines"
+              order="first"
+              className="mt-3"
+              more={fleetTotal !== null && fleetTotal > machines.length
+                ? Math.min(FLEET_PAGE, fleetTotal - machines.length) : null}
+              onMore={() => setFleetDepth(machines.length + FLEET_PAGE)}
+            />
             <div className="mt-3 overflow-x-auto rounded-xl border border-slate-800 bg-slate-900/60">
               <table className="w-full text-sm">
                 <thead className="text-slate-500 text-xs uppercase tracking-wide">

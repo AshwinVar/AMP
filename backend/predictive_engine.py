@@ -120,10 +120,27 @@ def calculate_predictive_risk(machines, downtime_logs, production_records,
             # demand, so max(0 - actual, 0) = 0 pressure — honest, not fabricated.
             work_order_pressure[work_order.machine_id] += max(_int(work_order.target_quantity) - _int(work_order.actual_quantity), 0)
 
+    # WHICH MACHINES HAVE ANYTHING RECORDED. Taken BEFORE the per-machine reads
+    # below: those counters are defaultdicts, and reading `[machine.id]` writes
+    # a 0 that would then look like a recorded zero. A machine with no downtime
+    # row, no production record and no breakdown transition in the window is
+    # scored over nothing: every history rule reads 0, takes no points off, and
+    # 100 comes out — an absence, not a clean bill. The row says which it is
+    # (`has_recorded_input`), so the explanation, the twin and the fleet
+    # average can tell the two apart. Status and utilisation are the machine
+    # row itself and open-order load is now, not history, so none of those
+    # count as recorded history.
+    recorded_by_source = (
+        ("downtime", set(downtime_by_machine) | set(downtime_events_by_machine)),
+        ("production", set(total_by_machine) | set(reject_by_machine)),
+        ("breakdowns", set(breakdown_events_by_machine)),
+    )
+
     rows = []
     for machine in machines:
         score = 0
         reasons = []
+        recorded_inputs = [name for name, ids in recorded_by_source if machine.id in ids]
         # EVERY CHECK THIS SCORE MADE, fired or not (ADR-0027). A machine health
         # score a plant cannot take apart is a number to be believed or ignored;
         # this records, for each rule, its points, the measured value it read and
@@ -215,6 +232,11 @@ def calculate_predictive_risk(machines, downtime_logs, production_records,
             "reject_rate": reject_rate,
             "work_order_pressure": pressure,
             "reasons": reasons,
+            # What the history rules had to read: the sources with at least one
+            # row for this machine in the risk window. Empty means the six
+            # history rules read nothing, and a 100 here is an absence.
+            "recorded_inputs": recorded_inputs,
+            "has_recorded_input": bool(recorded_inputs),
             # The explanation travels WITH the score, so no surface can show one
             # without the other. `capped` says when the points were cut to 100.
             "components": components,

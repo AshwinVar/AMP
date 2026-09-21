@@ -29,11 +29,11 @@ the simulator's tenant guard: a tick with no tenant bound now refuses instead
 of filing every tenant's activity under DEFAULT — ADR-0002 postmortem). See
 AMP-10-DAY-SPRINT.md, AMP-NATIVE-MODEL-ACCEPTANCE.md and, for the twelve
 acceptance items with their evidence, AMP-SPRINT-ACCEPTANCE.md.
-**Master SHA:** `552ea46` (#694).
-**Production SHA:** `552ea46`, verified live, not assumed:
-`{"status":"ok","database":"ok","schema":"ok","version":"552ea46"}` from
-`https://flowmes-production.up.railway.app/health`, read on 2026-09-21 15:29 UTC,
-under three minutes after the merge; `/readiness` 200; `/machines` refuses an unauthenticated call with 401; the frontend answers 200 (#693 `61f6398` at 15:05 — `/oem/fleet?limit=1` 401 and the portal page `/oem` 200 — #692 `e4ef9f5` at 14:05, #691 `ec836a3` at 11:51 — `/issue-slips` refuses an unauthenticated call with 401 — #690 `8eabba9` at 11:42 — `/industrial/mappings` and `/oem/notifications` refuse an unauthenticated call with 401 and `POST /register` refuses a body carrying a `role` with 422 — #689 `8459ad3` at 11:02, #688 `c7c674d` at 10:35 — `schema: ok` there means migration `0012_consent_scope` ran on the production database — #687 `854a634` at 09:55, #686 `82d1c4d` at 09:45, #685 `db2f074` at 09:47, #684 `4149829` at 07:00 and #683 `ca4f257` at 06:49 were verified the same way); `/ai/status`, `/ai-consent` and `POST /industrial/devices` refuse an unauthenticated call with 401. The Monday mutation fleet, dispatched by hand after #685 (the standing rule for AI-consent code), ran green on master at `db2f074`: every harness caught every mutation (run #3, 26 min). The frontend (`https://flow-mes.vercel.app`)
+**Master SHA:** `6c51b13` (#695).
+**Production SHA:** `6c51b13`, verified live, not assumed:
+`{"status":"ok","database":"ok","schema":"ok","version":"6c51b13"}` from
+`https://flowmes-production.up.railway.app/health`, read on 2026-09-21 15:56 UTC,
+under three minutes after the merge; `/readiness` 200; `/recovery-summary` refuses an unauthenticated call with 401; the frontend answers 200 (#696 `21de3a7` at 15:51 — `/risk-radar` 401 — #694 `552ea46` at 15:29 — `/machines` 401 — #693 `61f6398` at 15:05 — `/oem/fleet?limit=1` 401 and the portal page `/oem` 200 — #692 `e4ef9f5` at 14:05, #691 `ec836a3` at 11:51 — `/issue-slips` refuses an unauthenticated call with 401 — #690 `8eabba9` at 11:42 — `/industrial/mappings` and `/oem/notifications` refuse an unauthenticated call with 401 and `POST /register` refuses a body carrying a `role` with 422 — #689 `8459ad3` at 11:02, #688 `c7c674d` at 10:35 — `schema: ok` there means migration `0012_consent_scope` ran on the production database — #687 `854a634` at 09:55, #686 `82d1c4d` at 09:45, #685 `db2f074` at 09:47, #684 `4149829` at 07:00 and #683 `ca4f257` at 06:49 were verified the same way); `/ai/status`, `/ai-consent` and `POST /industrial/devices` refuse an unauthenticated call with 401. The Monday mutation fleet, dispatched by hand after #685 (the standing rule for AI-consent code), ran green on master at `db2f074`: every harness caught every mutation (run #3, 26 min). The frontend (`https://flow-mes.vercel.app`)
 answers 200 and so does its `/oem` portal page; `/oem/fleet?limit=100&offset=100`,
 `/ai/status`, `/oem/claims?status=Expired`, `/work-orders?limit=400` and
 `/notifications?unread=true&limit=1` refuse an unauthenticated call with 401, and
@@ -238,7 +238,7 @@ the screen; figures published without their basis; the answer depending on the
 clock). Authorization: no write route is weaker than the screen that calls it —
 every Admin-only control maps to `require_roles(["Admin"])`, every OEM control
 to its capability — but six screens offered a write the backend refuses for the
-role looking at them, the reverse defect, fixed in **this PR**: the landing
+role looking at them, the reverse defect, fixed in **#694 `552ea46`**: the landing
 view's Add / Delete Machine and status select, the shift entry form, every
 approval, receipt and count on Enterprise Inventory, Approve / Reject on an
 agent's proposal in Mission Control and the machine cockpit, and the GMATS
@@ -274,12 +274,50 @@ called the same callback as a success and walked the owner to the Escalation
 Center; the Enterprise Inventory CSV upload fed a 403's `{detail}` body into
 the success panel as a green "Import complete"; the unit-rate editor's catch
 was empty, so a save that did nothing said nothing. All three are fixed in
-**this PR**: the card carries its own `ActionError` and stays put, a refused
+**#695 `6c51b13`**: the card carries its own `ActionError` and stays put, a refused
 upload renders as "Import refused — nothing was imported" with the server's
 sentence, and the editor says "Not saved: <reason>"; the GMATS CSV import's missing
 per-row savepoint is recorded, not changed — no unique index exists on
 `gmats_items` or `gmats_aliases`, so no row can fail at flush and the
 misreport is unreachable today.
+
+**The clock angle's backend half, #696 `21de3a7`.** `build_risk_radar(now=)`
+passed its instant to the order rule, the shortage link and `generated_at`
+while the five read-models it composes each read the wall clock, so a replay
+of a past day (the brief, proactive restraint, a fixed-NOW test) got that day's
+arithmetic over today's states — an order due on the replayed day came back
+LIKELY / "the due date has passed". `build_production_summary`,
+`build_delivery_summary`, `build_coverage_summary`, `build_maintenance_forecast`
+and `build_quality_trend` take `now=None` and the radar passes its own; the
+anomaly sweep hands `now=at` to the scorer (its own test had passed only
+because NOW was ignored, comparing a clockless tool run with a sweep built at
+NOW); `test_date_basis_guard.py` flags `.date.today()` on any receiver (two
+`__import__("datetime").date.today()` calls in `test_risk_radar.py` had sat
+under it) and scans the audits too (365 files). `mutate_shortage_impact.py`
++1 (20/20), `mutate_anomaly_sweep.py` +1 (15/15).
+
+**The figures angle's first item, this PR: a health score says when it read
+nothing.** Verified before it was touched: a machine with no downtime row, no
+production record and no breakdown transition in the 30-day risk window scored
+100 / Healthy on every surface — the engine's history counters are
+`defaultdict(int)`, so all six history rules read "0 min", "0 events", "0%",
+the drawer said "all 11 health rules passed", `NOT_SCORED`'s own warning was
+unreachable, and the Factory Pulse averaged the phantom 100s at full weight
+(an empty fleet read "Fleet health 0"). A machine whose gateway dropped a
+month ago was the healthiest in the fleet. The engine's row now carries
+`recorded_inputs` / `has_recorded_input` (presence taken BEFORE the per-machine
+reads, which write zeros; a NULL-count production row is a recorded row); the
+explanation is PARTIAL DATA with the six history rules "not measured", a
+`health.rules_unmeasured` fact and a note that the score is an absence, not a
+clean bill — including for a Breakdown with nothing recorded, which states its
+55 points and the six unread rules; the twin carries `health_measured`
+(recorded history, or a rule that fired); the pulse averages the measured
+twins only, null (never 0) when none, with "N of M measured" in the headline;
+the Factory Pulse tile, the Machine Health list and card, the cockpit drawer,
+the explanation drawer, the Copilot's machine fact and the assistant's
+sentence all say it. The score's arithmetic, weights and order are untouched.
+`mutate_machine_health.py` +6 (31/31 caught; `test_pulse.py` and
+`test_predictive_engine.py` added to its suites).
 
 **Nothing else is awaiting review.** What a next session would do first, in order:
 (1) the OEM journey re-check against a real OEM's edge agent is still simulated
@@ -337,7 +375,9 @@ CHIEF-ENGINEER-STATE.md and AMP-10-DAY-SPRINT.md."
 | **2026-09-21 (afternoon), the OEM fleet headline judged connectivity and warranty in the browser**: `lib/oem.ts` read the naive-UTC `last_seen_at` with the bare `Date` constructor (LOCAL time, so the 48 h "reporting / silent" line moved by the viewer's zone: a machine silent 44 h read "silent" in New York, one silent 49 h read "reporting" in London) and the date-only `warranty_end` as UTC midnight (the last covered day read as expired while `/oem/machines/{id}/service` said active); `lib/date-parsing.test.ts`, the guard for exactly these two shapes, scanned `app/` and `components/` and not `lib/` | P2 | fixed: the server's verdicts travel on the fleet row (`reporting`: reporting / silent / never, gated with `last_seen_at`; `warranty`, the OEM's own record, ungated) from `oem_service.reporting_state` (`SILENT_AFTER_DAYS = 2`, the one rule the not-reporting recommendation reads too) and `warranty_state`, one clock per page, and the headline counts verdicts and parses no date; the guard scans `lib/`; **#693 `61f6398`** |
 | **2026-09-21 (afternoon), six screens offered a write the backend refuses for the role looking at them** (the reverse of a missing gate — no write route is weaker than its screen): the dashboard's Add Machine form and Delete Machine button (`POST`/`DELETE /machines`, Admin) and the machine card's status select (`PATCH /machines/{id}/status`, Admin+Supervisor) on `overview`/`machines` for every role; the Shift Performance Entry form (`POST /shifts`, Admin+Supervisor) on `overview` for an Operator; every write on `EnterpriseInventory.tsx` (remnants, slip approve/issue/reject, GRN create/accept, cycle-count create, the Variance Report tab — Admin+Supervisor; cycle-count approve and the Import CSV tab — Admin) for an Operator; agent Approve/Reject in `MissionControlSection.tsx` and `MachineDetailDrawer.tsx` (Admin+Supervisor) for an Operator; GMATS stock-in / proforma / invoice / cancel / MIN (Admin+Supervisor) for an Operator | P3 | fixed: a control the server would refuse is not offered and a note says who can (`lib/roles.ts` mirrors each route's `require_roles`, `components/RoleNote.tsx`, `canDecideProposals`); raising a slip stays every role's; `EnterpriseInventory.roles`, `GmatsInventory.roles`, Operator cases in `MissionControlSection` and `DecisionDrawers`, and `lib/dashboard-role-gates.test.ts`; the handbook's roles matrix corrected; **this PR** |
 | **2026-09-21 (afternoon), three write paths that swallowed a failure**: `NextBestActionCard`'s catch called `onRaised(null)`, the same callback a success makes, so a failed "Raise an escalation" switched the dashboard to the Escalation Center to look for a row never created (the #402 banner lives in `page.tsx`; this path bypassed it); the Enterprise Inventory CSV upload had no `res.ok` check, so a 403's `{detail}` body rendered as a green "Import complete" with "Created: undefined"; `UnitRateEditor`'s catch was empty, so a save of the rate every loss figure is priced from did nothing and said nothing | P3 | fixed: the card carries its own `ActionError` and stays put (`onRaised(null)` is only ever the server's "nothing to raise"); a refused upload renders "Import refused — nothing was imported" with the server's sentence (a validation list joined; the status when the body is not JSON), red, no counts; the editor says "Not saved: <reason>", refuses a negative rate before sending, clears on retry / success / cancel; `NextBestActionCard.test`, `UnitRateEditor.test`, four cases in `EnterpriseInventory.import.test`; **this PR** |
-| Recorded, not yet fixed, from the afternoon sweep. **Figures without a basis**: the twin's `health_score` 100 / Healthy for a machine with nothing recorded in 30 days — verified: `calculate_predictive_risk` emits a row for every machine with `measured: 0` on every data rule, so the drawer says "all 11 health rules passed" (0 min, 0 events, 0%), `NOT_SCORED`'s own warning ("a score of 100 here means no assessment ran") is unreachable from the engine, the only `has_data` flag on the twin row is OEE's, and `pulse.avg_health` averages the phantom 100s (reading 0 for an empty fleet, beside an all-time `auto_rate` under a "/7d" label); the quality fail rate on three windows (7-day `ai/quality`, lifetime `/analytics/quality` and the command centre); shift attainment on three spans (7-day `ai/shift`, the last 50 rows in `executive-oee`, lifetime in `management`); `avg_utilization` with no coverage; `avg_repair_minutes`, the operator terminal's `quality_rate`, the executive summary's `quality_rate`/`dispatch_rate`/`total_cost` and the work-order/plan `achievement` all publishing `0` for "nothing measured". **Clock**: `build_risk_radar(now=)` calls `build_delivery_summary` (and coverage, forecast, quality) with no clock; `build_anomaly_sweep(now=)` never forwards `now` to the scorer; `test_date_basis_guard.py` cannot see `__import__("datetime").date.today()` (`test_risk_radar.py:156,188`) and does not scan `audit_*.py`. **Swallowed failures** (re-run): the GMATS CSV import (`gmats_inventory_routes.gmats_import_csv`) has no per-row savepoint and commits inside the loop, unlike its enterprise sibling — latent: no unique index exists on `gmats_items` or `gmats_aliases`, so no row can fail at flush; `lib/dashboard-write-errors.test.ts` guards only `app/dashboard/page.tsx`, and the three write paths that swallowed a failure were all in `components/` (fixed above); the clock items are in flight in `fix/one-clock-per-read-model` | P3 | recorded 2026-09-21 |
+| **2026-09-21 (afternoon), the clock, backend half**: `build_risk_radar(now=)` passed its instant to the order rule, the shortage link and `generated_at` while the five read-models it composes each read the wall clock (a replay of a past day got that day's arithmetic over today's states: an order due on the replayed day came back LIKELY / "the due date has passed"); `build_anomaly_sweep(now=)` stamped the caller's instant on the envelope and scored every machine at the wall clock (its own test passed because of it); `test_date_basis_guard.py` recognised only `date.today()` / `datetime.date.today()` (two `__import__("datetime").date.today()` calls in `test_risk_radar.py` sat under it) and never scanned `audit_*.py` (the demo audit posted a local-date warranty start) | P3 | fixed: the five builders take `now=None` and the radar passes its own; the sweep hands `now=at` to the scorer; the guard flags `.date.today()` on any receiver and scans the audits (365 files); `test_risk_radar.py` §7 (an order due 2030-01-10 is past its date on the 11th and not on the 9th), the sweep's scorer records the instant it was handed; `mutate_shortage_impact.py` +1, `mutate_anomaly_sweep.py` +1; **#696 `21de3a7`** |
+| **2026-09-21 (afternoon), a health score said "all 11 rules passed" for a machine with nothing recorded**: `calculate_predictive_risk` emits a row for every machine over `defaultdict(int)` counters, so a machine with no downtime row, no production record and no breakdown transition in the 30-day window read "0 min", "0 events", "0%" on the six history rules and scored 100 / Healthy on every surface; `NOT_SCORED`'s warning was unreachable, the twin's only `has_data` flag was OEE's, and `pulse.avg_health` averaged the phantom 100s (an empty fleet read "Fleet health 0") | P3 | fixed: the row carries `recorded_inputs` / `has_recorded_input` (presence taken before the reads); the explanation is PARTIAL DATA with those rules "not measured", a `health.rules_unmeasured` fact and a note that the score is an absence; the twin carries `health_measured`; the pulse averages the measured twins only, null when none, "N of M measured" in the headline; every screen and the Copilot's machine fact say it; `test_predictive_engine`, `test_machine_health_explained` §7b, `test_twin`, `test_pulse`, `FactoryPulse.test`, `MachineHealthSection.test`, `HealthExplanation.test`; `mutate_machine_health.py` +6 (31/31); **this PR** |
+| Recorded, not yet fixed, from the afternoon sweep. **Figures without a basis**: `pulse.auto_rate` is all-time under a "/7d" label on the Autonomy tile; the quality fail rate on three windows (7-day `ai/quality`, lifetime `/analytics/quality` and the command centre); shift attainment on three spans (7-day `ai/shift`, the last 50 rows in `executive-oee`, lifetime in `management`); `avg_utilization` with no coverage; `avg_repair_minutes`, the operator terminal's `quality_rate`, the executive summary's `quality_rate`/`dispatch_rate`/`total_cost` and the work-order/plan `achievement` all publishing `0` for "nothing measured". **Swallowed failures** (re-run): the GMATS CSV import (`gmats_inventory_routes.gmats_import_csv`) has no per-row savepoint and commits inside the loop, unlike its enterprise sibling — latent: no unique index exists on `gmats_items` or `gmats_aliases`, so no row can fail at flush; `lib/dashboard-write-errors.test.ts` guards only `app/dashboard/page.tsx`, and the three write paths that swallowed a failure were all in `components/` (fixed above, #695) | P3 | recorded 2026-09-21 |
 | MQTT→WebSocket bridge: `asyncio.run` on a sync callee raised `ValueError` every message; delivery ran on a throwaway event loop | P1 | fixed, tested |
 | MQTT ingest published no domain events — machine-reported breakdowns never reached the bus, so the Escalation agent was blind to them | P1 | fixed, tested |
 | AI Phase 1 — `AIProvider` registry replacing four if/elif chains | P6 | merged #526 |

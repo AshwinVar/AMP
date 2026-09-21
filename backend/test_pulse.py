@@ -38,21 +38,37 @@ def test_pulse_composes_fleet_health_and_agent_workload():
     db.commit()
 
     p = pulse.build_pulse(db, "DEFAULT")
-    # avg_health is the mean of the twins' health scores (composition contract)
+    # avg_health is the mean of the MEASURED twins' health scores (composition
+    # contract): CNC-02 has nothing recorded, so its 100 is an absence and is
+    # left out — averaging it in read "Fleet health 60" for a fleet whose one
+    # measured machine is at 20.
     ts = twin.build_twins(db, "DEFAULT")
-    assert p["fleet"]["machines"] == 2
-    assert p["fleet"]["avg_health"] == round(sum(t["health_score"] for t in ts) / len(ts))
+    measured = [t for t in ts if t["health_measured"]]
+    assert [t["machine_id"] for t in measured] == [1], ts
+    assert p["fleet"]["machines"] == 2 and p["fleet"]["measured"] == 1
+    assert p["fleet"]["avg_health"] == round(sum(t["health_score"] for t in measured) / len(measured)) == 20
     assert p["fleet"]["needs_attention"] == 1                  # only the critical one
     assert p["fleet"]["worst"]["machine_id"] == 1 and p["fleet"]["worst"]["health_band"] == "Critical"
     assert p["agents"]["awaiting_you"] == 1                    # GMATS action excluded (stamped-tenant filter)
     assert p["agents"]["agents_active"] == 1
-    assert p["headline"].startswith("Fleet health ") and "awaiting you" in p["headline"]
+    assert p["headline"].startswith("Fleet health 20 (1 of 2 measured)") and "awaiting you" in p["headline"], p["headline"]
 
-    # a brand-new (empty) factory -> zeroed, no divide-by-zero, "all clear"
+    # a brand-new (empty) factory -> no health figure (None, never 0: 0 is the
+    # worst score there is), no divide-by-zero, "all clear"
     empty = pulse.build_pulse(_fresh_session(), "DEFAULT")
-    assert empty["fleet"]["machines"] == 0 and empty["fleet"]["avg_health"] == 0
+    assert empty["fleet"]["machines"] == 0 and empty["fleet"]["measured"] == 0
+    assert empty["fleet"]["avg_health"] is None
     assert empty["fleet"]["worst"] is None
-    assert "all clear" in empty["headline"]
+    assert empty["headline"].startswith("Fleet health not measured") and "all clear" in empty["headline"]
+
+    # machines but nothing recorded for any of them -> not measured, said so
+    silent_db = _fresh_session()
+    silent_db.add(models.Machine(id=5, name="NEW-01", status="Running", utilization=70))
+    silent_db.commit()
+    silent = pulse.build_pulse(silent_db, "DEFAULT")
+    assert silent["fleet"]["machines"] == 1 and silent["fleet"]["measured"] == 0
+    assert silent["fleet"]["avg_health"] is None
+    assert "nothing recorded yet" in silent["headline"], silent["headline"]
 
 
 if __name__ == "__main__":

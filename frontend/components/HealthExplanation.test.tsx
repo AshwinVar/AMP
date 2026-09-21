@@ -97,6 +97,26 @@ describe("HealthExplanation", () => {
     expect(screen.getByText(/All 11 health rules passed/)).toBeTruthy();
   });
 
+  it("does not say every rule passed when nothing was recorded to read", () => {
+    // PARTIAL DATA (ai/machine_health.py): the scorer had a row but no
+    // downtime, production or breakdown in the risk window, so the six
+    // history rules read nothing. The 100 is shown as arithmetic; "All 11
+    // health rules passed" is not, and the backend's note says why.
+    const note = "Nothing was recorded for this machine in the risk window — no downtime, no production, no breakdown — so 6 of the 11 rules read nothing and took no points off. The score is an absence, not a clean bill of health.";
+    const { container } = render(
+      <HealthExplanation
+        x={data({ health_score: 100, band: "Healthy", deductions: [], points_deducted: 0, checks_run: 11,
+                  state: "PARTIAL DATA", note, has_recorded_input: false, rules_unmeasured: 6,
+                  clear: [rule({ key: "downtime_high", points: 0, reading: "not measured", measured: null })] })}
+      />,
+    );
+    expect(screen.getByRole("status").textContent).toContain("PARTIAL DATA");
+    expect(container.textContent).toContain("an absence, not a clean bill of health");
+    expect(container.textContent).not.toMatch(/All 11 health rules passed/);
+    // The arithmetic is still shown: it IS 100, for the rules that could read.
+    expect(screen.getByText("100")).toBeTruthy();
+  });
+
   it("carries the note denying that any of this is machine learning", () => {
     const { container } = render(<HealthExplanation x={data()} />);
     expect(container.textContent).toContain("not machine learning");

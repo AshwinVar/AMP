@@ -72,7 +72,34 @@ def test_calculate_predictive_risk_scores_and_sorts():
     calm = rows[1]
     assert calm["risk_score"] == 0 and calm["risk_level"] == "Low"
     assert calm["reasons"] == ["no major risk indicators detected"]
+    # The row says what the history rules had to read. CNC-2 has no downtime
+    # row, no production record and no breakdown transition: its 0 risk is an
+    # absence, and the row says so rather than letting a 100 pass as measured.
+    assert calm["recorded_inputs"] == [] and calm["has_recorded_input"] is False, calm
+    assert hot["recorded_inputs"] == ["downtime", "production", "breakdowns"], hot["recorded_inputs"]
+    assert hot["has_recorded_input"] is True
     print("PASS calculate_predictive_risk scores, sorts, and explains")
+
+
+def test_recorded_inputs_are_taken_before_the_counters_are_read():
+    # The counters are defaultdicts: reading `[machine.id]` writes a 0. If the
+    # presence snapshot were taken after the per-machine reads, every machine
+    # scored would look recorded. Two machines, one with a single downtime row
+    # of ZERO minutes (a recorded zero) and one with nothing.
+    machines = [SimpleNamespace(id=1, name="ZERO", status="Running", utilization=60),
+                SimpleNamespace(id=2, name="NONE", status="Running", utilization=60)]
+    downtime = [SimpleNamespace(machine_id=1, reason="Jam", duration="0 min")]
+    rows = {r["machine_id"]: r for r in pe.calculate_predictive_risk(machines, downtime, [], [], [])}
+    assert rows[1]["has_recorded_input"] is True and rows[1]["recorded_inputs"] == ["downtime"], rows[1]
+    assert rows[2]["has_recorded_input"] is False, rows[2]
+    # Both read 0 minutes; only one of them MEASURED it.
+    assert rows[1]["downtime_minutes"] == 0 == rows[2]["downtime_minutes"]
+    # A production row with NULL counts is still a recorded row (the engine
+    # coalesces the counts to 0 — see _int), so it counts as production recorded.
+    records = [SimpleNamespace(machine_id=2, rejected_count=None, total_count=None)]
+    again = {r["machine_id"]: r for r in pe.calculate_predictive_risk(machines, [], records, [], [])}
+    assert again[2]["recorded_inputs"] == ["production"], again[2]
+    print("PASS recorded inputs are presence, taken before the counters materialise zeros")
 
 
 def test_predictive_risk_reject_rate_guarded():
@@ -165,6 +192,7 @@ if __name__ == "__main__":
     test_classify_risk_boundaries()
     test_recommendation_tracks_bands()
     test_calculate_predictive_risk_scores_and_sorts()
+    test_recorded_inputs_are_taken_before_the_counters_are_read()
     test_predictive_risk_reject_rate_guarded()
     test_null_utilization_scored_as_column_default_zero()
     test_null_actual_quantity_counts_as_zero()

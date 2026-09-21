@@ -79,8 +79,9 @@ MACHINES = [
     (4, "MAINT-01", "Maintenance", 70),  # in maintenance
     (5, "EDGE-01", "Running", 40),       # every boundary, none tripped
     (6, "EDGE-02", "Running", 41),       # every boundary, all tripped
-    (7, "CLEAN-01", "Running", 65),      # nothing at all
+    (7, "CLEAN-01", "Running", 65),      # nothing wrong (one production row, NULL counts)
     (8, "ALL-01", "Breakdown", 5),       # trips everything: over 100 points
+    (9, "SILENT-01", "Running", 65),     # NOTHING RECORDED: no row of any kind in the window
 ]
 # machine_id -> [(duration string, reason)]
 DOWNTIME = {
@@ -324,6 +325,59 @@ def main_():
     check("say() refuses to explain it", "has not been scored" in mh.say("CNC-09", none))
     empty = mh.explain({"risk_score": 0, "components": []})
     check("a row with no components is also NOT MEASURED", empty["state"] == ev.NOT_MEASURED)
+
+    print("\n7b. Nothing recorded is not healthy either")
+    # SILENT-01 has no downtime row, no production record and no breakdown
+    # transition. The engine used to read a 0 for every history rule and this
+    # module printed "0 min", "0 events", "0%": the machine whose gateway had
+    # dropped a month ago read "all 11 health rules passed", the healthiest in
+    # the fleet, and the fleet average took its 100 at full weight.
+    silent_row = rows[9]
+    check("the engine says nothing was recorded for it",
+          silent_row["has_recorded_input"] is False and silent_row["recorded_inputs"] == [],
+          str(silent_row.get("recorded_inputs")))
+    check("CONTROL: a machine with one production row (NULL counts) IS recorded",
+          rows[7]["has_recorded_input"] is True and rows[7]["recorded_inputs"] == ["production"],
+          str(rows[7].get("recorded_inputs")))
+    silent = mh.explain(silent_row)
+    check("the arithmetic is unchanged: 100, nothing taken off",
+          silent["health_score"] == 100 and silent["deductions"] == [])
+    check("but the state is PARTIAL DATA, not OK", silent["state"] == ev.PARTIAL_DATA, silent["state"])
+    check("six of the eleven rules read nothing — the history rules",
+          silent["rules_unmeasured"] == 6
+          and {c["key"] for c in silent["clear"] if c["measured"] is None} == set(mh.HISTORY_RULES),
+          str([(c["key"], c["measured"]) for c in silent["clear"]]))
+    check("each of those reads 'not measured', never '0 min' or '0%'",
+          all(c["reading"] == "not measured" for c in silent["clear"] if c["key"] in mh.HISTORY_RULES)
+          and not any(c["reading"] in ("0 min", "0 events", "0%")
+                      for c in silent["clear"] if c["key"] in mh.HISTORY_RULES),
+          str([c["reading"] for c in silent["clear"]]))
+    check("the five rules that read the machine itself keep their readings",
+          all(c["measured"] is not None for c in silent["clear"] if c["key"] not in mh.HISTORY_RULES))
+    check("the note says the score is an absence, not a clean bill",
+          "absence, not a clean bill" in silent["note"] and "6 of the 11" in silent["note"], silent["note"])
+    check("the count of unmeasured rules is a fact the gate can read",
+          any(f["key"] == "health.rules_unmeasured" and f["value"] == 6 for f in silent["facts"]))
+    check("say() does not read the 100 out as a clean bill",
+          "absence, not a clean bill" in mh.say("SILENT-01", silent)
+          and "all 11 health rules passed" not in mh.say("SILENT-01", silent), mh.say("SILENT-01", silent))
+    clean = mh.explain(rows[7])
+    check("CONTROL: the recorded clean machine is still OK with every reading a number",
+          clean["state"] == ev.OK and clean["rules_unmeasured"] == 0
+          and all(c["measured"] is not None for c in clean["clear"]), clean["state"])
+    check("CONTROL: and its sentence still says every rule passed",
+          "all 11 health rules passed" in mh.say("CLEAN-01", clean))
+    # A machine in Breakdown with nothing recorded: the status rule fired (a real
+    # reading of the machine row), the history rules read nothing — PARTIAL DATA
+    # with real deductions, and the sentence carries both.
+    broken = mh.explain(predictive_engine.calculate_predictive_risk(
+        [Row(id=99, name="DEAD-01", status="Breakdown", utilization=5)], [], [], [], [])[0])
+    check("a Breakdown with nothing recorded: real points off, PARTIAL DATA",
+          broken["state"] == ev.PARTIAL_DATA and broken["points_deducted"] == 55
+          and broken["rules_unmeasured"] == 6, f"{broken['state']} {broken['points_deducted']}")
+    check("...and its sentence states the deductions AND that the rest read nothing",
+          "55 points came off" in mh.say("DEAD-01", broken) and "6 of the 11 rules read nothing" in mh.say("DEAD-01", broken),
+          mh.say("DEAD-01", broken))
 
     print("\n8. Nothing here is called a model")
     for mid, name, status, util in MACHINES:

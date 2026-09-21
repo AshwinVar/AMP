@@ -24,12 +24,13 @@ import subprocess
 import sys
 
 SUITES = ["test_machine_health_explained.py", "test_copilot_tools_no_wider_than_routes.py",
-          "test_twin.py", "test_copilot_tools.py"]
+          "test_twin.py", "test_copilot_tools.py", "test_pulse.py", "test_predictive_engine.py"]
 
 ENGINE = "predictive_engine.py"
 EXPLAIN = os.path.join("ai", "machine_health.py")
 TOOLS = os.path.join("ai", "tools", "factory.py")
 TWIN = os.path.join("ai", "twin.py")
+PULSE = os.path.join("ai", "pulse.py")
 
 MUTATIONS = [
     # --- the record disagrees with the score it explains --------------------
@@ -84,8 +85,8 @@ MUTATIONS = [
      '        return {"health_score": None, "band": None, "band_rule": BAND_RULE, "start": START,',
      '        return {"health_score": START, "band": "Healthy", "band_rule": BAND_RULE, "start": START,'),
     ("the sentence states a number the evidence does not have", EXPLAIN,
-     '    return (f"{machine_name} is at {score} out of 100 ({explanation[\'band\']}). {lost} points came "',
-     '    return (f"{machine_name} is at {score + 1} out of 100 ({explanation[\'band\']}). {lost} points came "'),
+     '    said = (f"{machine_name} is at {score} out of 100 ({explanation[\'band\']}). {lost} points came "',
+     '    said = (f"{machine_name} is at {score + 1} out of 100 ({explanation[\'band\']}). {lost} points came "'),
     ("the note stops denying that this is machine learning", EXPLAIN,
      '        "threshold over recorded data, hand-weighted by AMP — not machine learning, and not a "',
      '        "threshold over recorded data, hand-weighted by AMP — machine learning, and a "'),
@@ -124,6 +125,26 @@ MUTATIONS = [
      "      roles=())"),
     ("an unavailable model produces an estimate anyway", TOOLS,
      '    if result.get("status") != "ok":', '    if False:'),
+
+    # --- nothing recorded reads as a clean bill ------------------------------
+    ("every machine is reported as having recorded history", ENGINE,
+     '            "has_recorded_input": bool(recorded_inputs),',
+     '            "has_recorded_input": True,'),
+    ("presence is taken from the counters after the reads materialised zeros", ENGINE,
+     '        ("downtime", set(downtime_by_machine) | set(downtime_events_by_machine)),',
+     '        ("downtime", set(downtime_by_machine) | set(downtime_events_by_machine) | {m.id for m in machines}),'),
+    ("a machine with nothing recorded is explained as OK", EXPLAIN,
+     '        "state": (ev.PARTIAL_DATA if unrecorded else ev.OK) if components else ev.NOT_MEASURED,',
+     '        "state": ev.OK if components else ev.NOT_MEASURED,'),
+    ("a history rule that read nothing prints its zero as a reading", EXPLAIN,
+     '    if unrecorded and component["key"] in HISTORY_RULES:',
+     '    if False:'),
+    ("the twin calls every scored machine measured", TWIN,
+     '    measured = bool(risk) and (bool(risk.get("has_recorded_input", True)) or score > 0)',
+     '    measured = bool(risk)'),
+    ("the fleet average takes the unmeasured 100s at full weight", PULSE,
+     '    measured = [t for t in twins if t.get("health_measured", True)]',
+     '    measured = list(twins)'),
 ]
 
 

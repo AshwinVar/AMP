@@ -190,7 +190,10 @@ def get_machine_history(db, tenant, machine):
         _fact("machine.status", "Status", d["status"] or "unknown", M, source="machines", window="now"),
         _fact("machine.health", "Health score", d["health_score"], R, "/100",
               "rule-based risk points (predictive_engine)", "now",
-              detail="100 minus the rule risk score; hand-weighted, not machine learning"),
+              detail="100 minus the rule risk score; hand-weighted, not machine learning"
+                     + ("; nothing was recorded for this machine in the risk window, so this is "
+                        "an absence, not a clean bill of health"
+                        if d.get("health_measured") is False else "")),
         _fact("machine.health_band", "Health band", d["health_band"], R, window="now"),
         _fact("machine.open_maintenance", "Open maintenance tasks", d["open_maintenance_tasks"], M, "tasks",
               "maintenance_tasks", "now"),

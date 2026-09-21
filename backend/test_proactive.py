@@ -276,8 +276,28 @@ def main_():
 
     print("\n9. The Copilot reports the restraint too")
     from ai.tools import registry as treg
-    r = within(Session, F.B, lambda db: treg.run_tool(
-        db, treg.Principal(tenant=F.B, role="Admin"), "get_what_to_raise"))
+
+    # The tool takes no clock: it builds the plan at AMP's own utcnow(), while
+    # the plan it is compared with below is built at the fixed NOW. The two
+    # agreed only while the real day was inside one cooldown of NOW -- the
+    # notifications this suite sent are stamped at NOW, so once utcnow() passed
+    # NOW + 24 h the tool saw them as old (no longer SAID RECENTLY) and reported
+    # fewer held-back things than the fixed-clock plan. It turned red on master
+    # at 09:00 UTC on 2026-09-21 with nothing in the product wrong (the #412
+    # shape: a test whose truth depends on the wall clock). So the tool's call
+    # runs with the module's clock frozen at NOW, and both plans share an instant.
+    class _FrozenClock(datetime):
+        @classmethod
+        def utcnow(cls):
+            return NOW
+
+    real_clock = pa.datetime
+    pa.datetime = _FrozenClock
+    try:
+        r = within(Session, F.B, lambda db: treg.run_tool(
+            db, treg.Principal(tenant=F.B, role="Admin"), "get_what_to_raise"))
+    finally:
+        pa.datetime = real_clock
     check("the tool answers", r.state in ("OK", "NO DATA"), f"{r.state}: {r.summary}")
     check("its sentence carries the bar", "interrupts for three things only" in r.summary,
           r.summary)

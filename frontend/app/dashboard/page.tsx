@@ -330,7 +330,6 @@ export default function DashboardPage() {
   const [operatorAnalytics, setOperatorAnalytics] = useState<OperatorAnalytics | null>(null);
   const [operatorForm, setOperatorForm] = useState({ execution_no: "", operator_name: "", machine_id: "", work_order_id: "", production_plan_id: "", job_status: "Started", good_count: 0, rejected_count: 0, notes: "" });
 
-  const [iotTelemetry, setIotTelemetry] = useState<IoTTelemetry[]>([]);
   const [iotCommand, setIotCommand] = useState<IoTCommandCenter | null>(null);
   const [iotForm, setIotForm] = useState({ machine_id: "", signal_name: "status", signal_value: "Running", numeric_value: 0, unit: "", source: "Manual" });
   const [aiRecommendations, setAiRecommendations] = useState<AIRecommendation[]>([]);
@@ -639,7 +638,6 @@ export default function DashboardPage() {
         apiGet<MaintenanceAnalytics>("/analytics/maintenance"),
         pagedList<ProductionSchedule>(listTotalsRef, "/production-schedules"),
         apiGet<ScheduleAnalytics>("/analytics/production-schedules"),
-        apiGet<IoTTelemetry[]>("/iot/telemetry"),
         apiGet<IoTCommandCenter>("/analytics/iot-command"),
         pagedList<AIRecommendation>(listTotalsRef, "/ai/recommendations"),
         apiGet<AIInsights>("/analytics/ai-insights"),
@@ -781,23 +779,22 @@ export default function DashboardPage() {
       if (optionalCalls[25].status === "fulfilled") setMaintenanceAnalytics(optionalCalls[25].value);
       if (optionalCalls[26].status === "fulfilled") setProductionSchedules(Array.isArray(optionalCalls[26].value) ? optionalCalls[26].value : []);
       if (optionalCalls[27].status === "fulfilled") setScheduleAnalytics(optionalCalls[27].value);
-      if (optionalCalls[28].status === "fulfilled") setIotTelemetry(Array.isArray(optionalCalls[28].value) ? optionalCalls[28].value : []);
-      if (optionalCalls[29].status === "fulfilled") setIotCommand(optionalCalls[29].value);
-      if (optionalCalls[30].status === "fulfilled") setAiRecommendations(Array.isArray(optionalCalls[30].value) ? optionalCalls[30].value : []);
-      if (optionalCalls[31].status === "fulfilled") setAiInsights(optionalCalls[31].value);
-      if (optionalCalls[32].status === "fulfilled") setTenants(Array.isArray(optionalCalls[32].value) ? optionalCalls[32].value : []);
-      if (optionalCalls[33].status === "fulfilled") setSaasAnalytics(optionalCalls[33].value);
-      if (optionalCalls[34].status === "fulfilled") setCostRecords(Array.isArray(optionalCalls[34].value) ? optionalCalls[34].value : []);
-      if (optionalCalls[35].status === "fulfilled") setCostingAnalytics(optionalCalls[35].value);
-      if (optionalCalls[36].status === "fulfilled") setOperatorExecutions(Array.isArray(optionalCalls[36].value) ? optionalCalls[36].value : []);
-      if (optionalCalls[37].status === "fulfilled") setOperatorAnalytics(optionalCalls[37].value);
-      if (optionalCalls[38].status === "fulfilled") setAuditLogs(Array.isArray(optionalCalls[38].value) ? optionalCalls[38].value : []);
-      if (optionalCalls[39].status === "fulfilled") setNotifications(Array.isArray(optionalCalls[39].value) ? optionalCalls[39].value : []);
-      if (optionalCalls[40].status === "fulfilled") setReports(Array.isArray(optionalCalls[40].value) ? optionalCalls[40].value : []);
-      if (optionalCalls[41].status === "fulfilled") setSystemHealth(optionalCalls[41].value);
-      if (optionalCalls[42].status === "fulfilled") setFinalSummary(optionalCalls[42].value);
-      if (optionalCalls[43].status === "fulfilled") {
-        const u = optionalCalls[43].value;
+      if (optionalCalls[28].status === "fulfilled") setIotCommand(optionalCalls[28].value);
+      if (optionalCalls[29].status === "fulfilled") setAiRecommendations(Array.isArray(optionalCalls[29].value) ? optionalCalls[29].value : []);
+      if (optionalCalls[30].status === "fulfilled") setAiInsights(optionalCalls[30].value);
+      if (optionalCalls[31].status === "fulfilled") setTenants(Array.isArray(optionalCalls[31].value) ? optionalCalls[31].value : []);
+      if (optionalCalls[32].status === "fulfilled") setSaasAnalytics(optionalCalls[32].value);
+      if (optionalCalls[33].status === "fulfilled") setCostRecords(Array.isArray(optionalCalls[33].value) ? optionalCalls[33].value : []);
+      if (optionalCalls[34].status === "fulfilled") setCostingAnalytics(optionalCalls[34].value);
+      if (optionalCalls[35].status === "fulfilled") setOperatorExecutions(Array.isArray(optionalCalls[35].value) ? optionalCalls[35].value : []);
+      if (optionalCalls[36].status === "fulfilled") setOperatorAnalytics(optionalCalls[36].value);
+      if (optionalCalls[37].status === "fulfilled") setAuditLogs(Array.isArray(optionalCalls[37].value) ? optionalCalls[37].value : []);
+      if (optionalCalls[38].status === "fulfilled") setNotifications(Array.isArray(optionalCalls[38].value) ? optionalCalls[38].value : []);
+      if (optionalCalls[39].status === "fulfilled") setReports(Array.isArray(optionalCalls[39].value) ? optionalCalls[39].value : []);
+      if (optionalCalls[40].status === "fulfilled") setSystemHealth(optionalCalls[40].value);
+      if (optionalCalls[41].status === "fulfilled") setFinalSummary(optionalCalls[41].value);
+      if (optionalCalls[42].status === "fulfilled") {
+        const u = optionalCalls[42].value;
         setUnreadTotal(typeof u?.total === "number" ? u.total : null);
       }
     } catch (error) {
@@ -2969,7 +2966,7 @@ export default function DashboardPage() {
       ))}
 
       {renderSection("iot", (
-        <IoTCommandSection machines={machines} telemetry={iotTelemetry} command={iotCommand} form={iotForm} setForm={setIotForm} createTelemetry={isAdminOrSupervisor ? createIotTelemetry : async () => {}} />
+        <IoTCommandSection machines={machines} command={iotCommand} form={iotForm} setForm={setIotForm} createTelemetry={isAdminOrSupervisor ? createIotTelemetry : async () => {}} />
       ))}
 
       {renderSection("ai", (

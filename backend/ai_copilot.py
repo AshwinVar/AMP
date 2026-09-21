@@ -677,7 +677,16 @@ def _ask_llm(system: str, user: str) -> str:
     return result
 
 
-def external_model_allowed(db, current_user):
+def hosted_provider():
+    """The HOSTED provider a request would use (configured and external), or None.
+
+    None when nothing is configured or the configured provider is the
+    self-hosted one: then there is nothing a company could consent to."""
+    p = _resolve_provider()
+    return p if p is not None and p.is_configured() and p.external else None
+
+
+def external_model_allowed(db, current_user, provider=None):
     """(may THIS request's company's data go to a hosted model, and if not, why).
 
     The company's own decision, read from ai_learning_consents on every call
@@ -686,15 +695,24 @@ def external_model_allowed(db, current_user):
     request's effective tenant, as on every read-model route. A founder
     PREVIEWING the company from the platform workspace is refused before the
     row is read: the consent an Admin gave covers the company's own users'
-    questions, not AMP staff's (ADR-0020's rule for the anomaly check)."""
+    questions, not AMP staff's (ADR-0020's rule for the anomaly check).
+
+    The consent is honoured only for the provider it was given for (ADR-0038):
+    the gate is asked with the name of the provider about to be used, and a
+    row given for another one -- or before AMP recorded which -- is a refusal
+    that says so, until an Admin decides again."""
     from amp_ai import consent
     from amp_ai.core.contracts import CAPABILITY_EXTERNAL_MODEL
+    provider = provider if provider is not None else hosted_provider()
+    if provider is None:
+        return False, ("Answered from live factory data by AMP's own engine; no hosted AI provider is "
+                       "configured.")
     tenant = tenancy.request_tenant(current_user)
     if tenancy.is_preview(current_user):
         return False, (f"Answered from live factory data by AMP's own engine; the hosted AI model was not "
                        f"asked: you are previewing {tenant} from the platform workspace, and {tenant}'s "
                        "consent to send its data to a hosted model covers only its own users.")
-    decision = consent.DbConsentGate().check(db, tenant, CAPABILITY_EXTERNAL_MODEL)
+    decision = consent.DbConsentGate().check(db, tenant, CAPABILITY_EXTERNAL_MODEL, scope=provider.name)
     if not decision.granted:
         return False, ("Answered from live factory data by AMP's own engine; the hosted AI model was not "
                        f"asked: {decision.reason}")
@@ -718,7 +736,7 @@ def _copilot_llm(db, current_user):
     if provider is None or not provider.is_configured():
         return None, None
     if provider.external:
-        allowed, why = external_model_allowed(db, current_user)
+        allowed, why = external_model_allowed(db, current_user, provider)
         if not allowed:
             return None, why
     else:
@@ -741,7 +759,7 @@ def _external_status(db, current_user):
         # decision through the module's own factory rather than skip it.
         own = db = SessionLocal()
     try:
-        allowed, why = external_model_allowed(db, current_user)
+        allowed, why = external_model_allowed(db, current_user, provider)
     finally:
         if own is not None:
             own.close()

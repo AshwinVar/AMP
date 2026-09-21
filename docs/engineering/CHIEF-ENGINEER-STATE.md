@@ -29,11 +29,11 @@ the simulator's tenant guard: a tick with no tenant bound now refuses instead
 of filing every tenant's activity under DEFAULT — ADR-0002 postmortem). See
 AMP-10-DAY-SPRINT.md, AMP-NATIVE-MODEL-ACCEPTANCE.md and, for the twelve
 acceptance items with their evidence, AMP-SPRINT-ACCEPTANCE.md.
-**Master SHA:** `4149829` (#684).
-**Production SHA:** `4149829`, verified live, not assumed:
-`{"status":"ok","database":"ok","schema":"ok","version":"4149829"}` from
-`https://flowmes-production.up.railway.app/health`, read on 2026-09-21 07:00 UTC,
-under three minutes after the merge (#683 `ca4f257` was verified the same way at 06:49). The frontend (`https://flow-mes.vercel.app`)
+**Master SHA:** `db2f074` (#685).
+**Production SHA:** `db2f074`, verified live, not assumed:
+`{"status":"ok","database":"ok","schema":"ok","version":"db2f074"}` from
+`https://flowmes-production.up.railway.app/health`, read on 2026-09-21 09:47 UTC,
+under three minutes after the merge (#686 `82d1c4d` at 09:45, #684 `4149829` at 07:00 and #683 `ca4f257` at 06:49 were verified the same way); `/ai/status` and `/ai-consent` refuse an unauthenticated call with 401. The frontend (`https://flow-mes.vercel.app`)
 answers 200 and so does its `/oem` portal page; `/oem/fleet?limit=100&offset=100`,
 `/ai/status`, `/oem/claims?status=Expired`, `/work-orders?limit=400` and
 `/notifications?unread=true&limit=1` refuse an unauthenticated call with 401, and
@@ -179,7 +179,29 @@ provider replaced by a recorder), `mutate_external_model_consent.py` 16/16;
 `test_amp_ai_integration_copilot.py` grant the consent they need first; the
 consent card is titled "AI consent" now that it holds two decisions. Production
 has no hosted key, so nothing changes there until one is set — and then every
-company answers from AMP's engine until its Admin consents. **Nothing is in flight.**
+company answers from AMP's engine until its Admin consents.
+
+**Then the gap that left open: the consent said WHO decided and WHEN, not WHAT
+about (ADR-0038).** Anthropic and Gemini's free tier ("may be used for
+training", the module docstring's own warning) are one variable apart, and with
+`AI_PROVIDER` unset the registry auto-detects whichever key is present — so
+removing the Anthropic key with a Gemini key still set would have moved every
+consenting company's questions onto the free tier under a decision nobody made.
+Now `external_model` is a SCOPED capability: the grant records the hosted
+provider configured at that moment in `ai_learning_consents.scope` (migration
+`0012_consent_scope`, one nullable column, added at boot too), the gate is asked
+with the provider about to be used and honours the row for that one only — a
+row given for another, or from before AMP recorded providers (NULL), refuses
+with what it was given for and what is configured now, until an Admin decides
+again; a grant with no hosted provider configured is refused by the route
+(400) and by the writer (nothing to consent to); the page carries `scoped`,
+`scope`, `configured`, `active`, and the card shows a lapsed grant as *Not
+active*, names the configured provider, and re-grants for it on review.
+`test_external_model_consent.py` §10, `mutate_external_model_consent.py`
+23/23 (one shadowed and explained: the route's 400 fires before the writer's
+refusal), `test_migration_0012_consent_scope.py` (chain, model, upgrade from
+the previous revision with rows, downgrade round trip, boot repair),
+`verify_pg_consent_scope.py` in the migration gate. **Nothing is in flight.**
 
 **Nothing else is awaiting review.** What a next session would do first, in order:
 (1) the OEM journey re-check against a real OEM's edge agent is still simulated

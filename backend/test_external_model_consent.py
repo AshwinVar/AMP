@@ -235,6 +235,8 @@ def section_contract():
     check("the learning capabilities are unchanged", contracts.LEARNING_CAPABILITIES == (LEARN,))
     check("the consent capabilities are the learning ones plus this one",
           contracts.CONSENT_CAPABILITIES == (LEARN, EXT), str(contracts.CONSENT_CAPABILITIES))
+    check("it is the one SCOPED capability: a consent to it names the provider it is for (ADR-0038)",
+          contracts.SCOPED_CAPABILITIES == (EXT,), str(contracts.SCOPED_CAPABILITIES))
     info = C.CAPABILITY_INFO.get(EXT, {})
     fields = ("title", "reads", "stored", "used_by", "without")
     check("the consent card wording has every field, none blank",
@@ -271,6 +273,13 @@ def section_page():
     print("=" * 74)
     install()
     seed()
+    clean_env()
+    code, body = grant(ADMIN_A, True)
+    check("with no hosted provider configured a grant is refused: nothing to consent to (ADR-0038)",
+          code == 400 and "nothing to consent to" in str(body), f"{code} {body}")
+    # A hosted provider is configured for the rest of the section: a scoped
+    # consent is given FOR the provider configured at that moment.
+    hosted_env()
     code, body = call("GET", "/ai-consent", ADMIN_A)
     caps = [c.get("capability") for c in body.get("capabilities", [])]
     check("Admin GET /ai-consent lists learning first, then the hosted model", code == 200 and caps == [LEARN, EXT],
@@ -292,6 +301,9 @@ def section_page():
     ext = {c.get("capability"): c for c in body.get("capabilities", [])}.get(EXT, {})
     check("TA's Admin grants it -> on, naming the Admin", code == 200 and ext.get("granted") is True
           and ext.get("granted_by") == "ta-admin", f"{code} {str(ext)[:200]}")
+    check("...given for the provider configured now, and active for it (ADR-0038)",
+          ext.get("scoped") is True and ext.get("scope") == "anthropic" and ext.get("configured") == "anthropic"
+          and ext.get("active") is True, str({k: ext.get(k) for k in ("scoped", "scope", "configured", "active")}))
     db = SessionLocal()
     audits = (db.query(models.AuditLog).filter(models.AuditLog.tenant_code == "TA",
                                                models.AuditLog.entity_type == C.AUDIT_ENTITY).all())
@@ -305,6 +317,7 @@ def section_page():
     ext = {c.get("capability"): c for c in body.get("capabilities", [])}.get(EXT, {})
     check("...and can withdraw it", code == 200 and ext.get("granted") is False and ext.get("revoked_by") == "ta-admin",
           f"{code} {str(ext)[:200]}")
+    clean_env()
 
 
 # ----------------------------------------------------------------------------
@@ -484,9 +497,9 @@ def section_self_hosted():
     asked = []
     original_check, original_adopted = C.DbConsentGate.check, llm_adoption.is_adopted
 
-    def spy(self, db, tenant, capability):
-        asked.append((tenant, capability))
-        return original_check(self, db, tenant, capability)
+    def spy(self, db, tenant, capability, scope=None):
+        asked.append((tenant, capability, scope))
+        return original_check(self, db, tenant, capability, scope=scope)
 
     C.DbConsentGate.check = spy
     llm_adoption.is_adopted = lambda provider, model, path=None: (True, None)
@@ -500,7 +513,8 @@ def section_self_hosted():
         hosted_env()
         llm, why = ai_copilot._copilot_llm(db, user)
         check("hosted, no consent row: not used, with the reason", llm is None and "consent" in str(why).lower(), str(why))
-        check("...and the gate was asked for exactly this tenant and this capability", asked == [("TC", EXT)], str(asked))
+        check("...and the gate was asked for exactly this tenant, this capability and this provider (ADR-0038)",
+              asked == [("TC", EXT, "anthropic")], str(asked))
     finally:
         C.DbConsentGate.check, llm_adoption.is_adopted = original_check, original_adopted
         db.close()
@@ -531,8 +545,9 @@ def section_structure():
     builders = [name for name, fn in funcs.items() if calls_in(fn, "ProviderLLM")]
     check("ProviderLLM is built in exactly one function, _copilot_llm", builders == ["_copilot_llm"], str(builders))
     gate_calls = calls_in(funcs["_copilot_llm"], "external_model_allowed")
-    check("...which asks external_model_allowed for the request's session and user",
-          len(gate_calls) == 1 and [getattr(a, "id", None) for a in gate_calls[0].args] == ["db", "current_user"],
+    check("...which asks external_model_allowed for the request's session, user and the provider about to be used",
+          len(gate_calls) == 1
+          and [getattr(a, "id", None) for a in gate_calls[0].args] == ["db", "current_user", "provider"],
           str([[getattr(a, "id", None) for a in c.args] for c in gate_calls]))
     for route in ("ai_ask", "ai_report"):
         c = calls_in(funcs[route], "_copilot_llm")
@@ -542,6 +557,118 @@ def section_structure():
     allowed = funcs["external_model_allowed"]
     check("external_model_allowed refuses a preview and reads the decision through DbConsentGate",
           bool(calls_in(allowed, "is_preview")) and bool(calls_in(allowed, "DbConsentGate")))
+
+
+# ----------------------------------------------------------------------------
+def section_scope():
+    print()
+    print("=" * 74)
+    print("10. A CONSENT NAMES THE PROVIDER IT WAS GIVEN FOR, AND HOLDS ONLY FOR THAT ONE (ADR-0038)")
+    print("=" * 74)
+    install()
+    seed()
+    hosted_env()                                         # Anthropic
+    original_gemini = ai_copilot._ask_gemini
+    ai_copilot._ask_gemini = recorder                    # the same recorder, whichever provider is asked
+    try:
+        grant(ADMIN_A, True)
+        code, body, calls = ask(ADMIN_A, "status of PRESS-01")
+        check("granted while Anthropic is configured: the question is sent", calls == 1 and body.get("source") == "llm",
+              f"{calls} {body.get('source')}")
+        db = SessionLocal()
+        d = C.DbConsentGate().check(db, "TA", EXT, scope="anthropic")
+        check("the gate's decision says what it was given for", d.granted is True and d.scope == "anthropic", repr(d))
+        d = C.DbConsentGate().check(db, "TA", EXT)
+        check("asked with no provider, the gate refuses: nothing to apply it to", d.granted is False
+              and "No hosted AI provider is configured" in d.reason, d.reason)
+        db.close()
+
+        # The operator switches providers -- or removes the Anthropic key with a
+        # Gemini key present, and auto-detection falls through to Gemini.
+        clean_env()
+        os.environ["AI_PROVIDER"] = "gemini"
+        os.environ["GEMINI_API_KEY"] = "g"
+        code, body, calls = ask(ADMIN_A, "status of PRESS-01")
+        check("Gemini configured: the consent given for Anthropic does not carry over -- not sent",
+              code == 200 and calls == 0 and body.get("source") == "rules", f"{code} {calls} {body.get('source')}")
+        note = body.get("note") or ""
+        check("...and the note says what it was given for and what is configured now",
+              "for anthropic" in note and "gemini is configured now" in note and "decides again" in note, note)
+        code, st = call("GET", "/ai/status", ADMIN_A)
+        ext = st.get("external") or {}
+        check("/ai/status says the same", ext.get("provider") == "gemini" and ext.get("consent") is False
+              and "for anthropic" in str(ext.get("reason")), str(ext))
+        code, page = call("GET", "/ai-consent", ADMIN_A)
+        ext = {c.get("capability"): c for c in page.get("capabilities", [])}.get(EXT, {})
+        check("the page shows the grant as given for Anthropic, Gemini configured, NOT active",
+              ext.get("granted") is True and ext.get("scope") == "anthropic" and ext.get("configured") == "gemini"
+              and ext.get("active") is False, str({k: ext.get(k) for k in ("granted", "scope", "configured", "active")}))
+
+        code, page = grant(ADMIN_A, True)
+        ext = {c.get("capability"): c for c in page.get("capabilities", [])}.get(EXT, {})
+        check("the Admin decides again, for Gemini: the grant now names Gemini and is active",
+              code == 200 and ext.get("scope") == "gemini" and ext.get("active") is True, str(ext)[:200])
+        code, body, calls = ask(ADMIN_A, "status of PRESS-01")
+        check("...and the question is sent to Gemini", calls == 1 and body.get("source") == "llm",
+              f"{calls} {body.get('source')}")
+        db = SessionLocal()
+        audits = (db.query(models.AuditLog).filter(models.AuditLog.tenant_code == "TA",
+                                                   models.AuditLog.entity_type == C.AUDIT_ENTITY)
+                  .order_by(models.AuditLog.id).all())
+        last = json.loads(audits[-1].details or "{}") if audits else {}
+        check("the audit record of that grant names the provider", last.get("scope") == "gemini" and last.get("new") is True,
+              str(last))
+        db.close()
+
+        code, page = call("PUT", f"/ai-consent/{LEARN}", ADMIN_A, body={"granted": True})
+        lrn = {c.get("capability"): c for c in page.get("capabilities", [])}.get(LEARN, {})
+        check("a learning consent names no third party: not scoped, no scope, active when granted",
+              code == 200 and lrn.get("scoped") is False and lrn.get("scope") is None and lrn.get("configured") is None
+              and lrn.get("active") is True, str({k: lrn.get(k) for k in ("scoped", "scope", "configured", "active")}))
+        db = SessionLocal()
+        learn_audit = [json.loads(a.details or "{}") for a in
+                       db.query(models.AuditLog).filter(models.AuditLog.tenant_code == "TA",
+                                                        models.AuditLog.entity_type == C.AUDIT_ENTITY).all()
+                       if LEARN in (a.details or "")]
+        check("...and its audit record carries no scope key", learn_audit and all("scope" not in a for a in learn_audit),
+              str(learn_audit))
+        db.close()
+
+        # No hosted provider at all: nothing to consent to, in advance or otherwise.
+        clean_env()
+        code, body = grant(ADMIN_A, True)
+        check("no hosted provider configured: a grant is refused, and says so",
+              code == 400 and "nothing to consent to" in str(body), f"{code} {body}")
+        code, page = call("GET", "/ai-consent", ADMIN_A)
+        ext = {c.get("capability"): c for c in page.get("capabilities", [])}.get(EXT, {})
+        check("...the page shows the Gemini grant with nothing configured, not active",
+              ext.get("granted") is True and ext.get("scope") == "gemini" and ext.get("configured") is None
+              and ext.get("active") is False, str({k: ext.get(k) for k in ("granted", "scope", "configured", "active")}))
+        db = SessionLocal()
+        try:
+            C.set_consent(db, "TA", EXT, True, "ta-admin")
+            check("the writer itself refuses a scoped grant with no provider", False, "no ValueError")
+        except ValueError as exc:
+            check("the writer itself refuses a scoped grant with no provider", "nothing to consent to" in str(exc), str(exc))
+        C.set_consent(db, "TA", LEARN, True, "ta-admin")
+        check("...while a learning grant needs none", C.DbConsentGate().check(db, "TA", LEARN).granted is True)
+        C.set_consent(db, "TA", EXT, False, "ta-admin")
+        check("a revocation needs no provider either", C.DbConsentGate().check(db, "TA", EXT, scope="gemini").granted is False)
+
+        # A row from before AMP recorded providers (scope NULL, granted): asked again.
+        row = (db.query(models.AiLearningConsent)
+               .filter(models.AiLearningConsent.tenant_code == "TA", models.AiLearningConsent.capability == EXT).first())
+        row.granted, row.scope = True, None
+        db.commit()
+        db.close()
+        hosted_env()
+        code, body, calls = ask(ADMIN_A, "status of PRESS-01")
+        check("a grant made before AMP recorded providers does not apply: not sent, asked again",
+              calls == 0 and "before AMP recorded which provider" in (body.get("note") or ""), body.get("note"))
+        grant(ADMIN_A, False)
+    finally:
+        ai_copilot._ask_gemini = original_gemini
+        clean_env()
 
 
 # ----------------------------------------------------------------------------
@@ -559,6 +686,7 @@ def main_():
         section_status()
         section_self_hosted()
         section_structure()
+        section_scope()
     finally:
         ai_copilot._ask_claude = original_ask
         for k, v in saved_env.items():

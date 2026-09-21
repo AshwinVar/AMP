@@ -217,6 +217,33 @@ describe("consentStateText", () => {
   it("distinguishes never granted from withdrawn", () => {
     expect(consentStateText(cap())).toBe("Off · never turned on");
   });
+
+  // ADR-0038: a scoped consent names the provider it was given for.
+  it("says what a scoped grant was given for, and that it is active", () => {
+    const text = consentStateText(cap({ granted: true, granted_by: "ta-admin", scoped: true, scope: "anthropic",
+      configured: "anthropic", active: true }));
+    expect(text).toBe("On for Anthropic · turned on by ta-admin");
+  });
+
+  it("says a grant given for another provider is not active, and what to do", () => {
+    const text = consentStateText(cap({ granted: true, granted_by: "ta-admin", scoped: true, scope: "anthropic",
+      configured: "gemini", active: false }));
+    expect(text).toMatch(/^Not active · given for Anthropic, turned on by ta-admin · Google Gemini is configured now/);
+    expect(text).toContain("turn it on again to allow Google Gemini");
+  });
+
+  it("says a grant made before AMP recorded providers is not active", () => {
+    const text = consentStateText(cap({ granted: true, scoped: true, scope: null, configured: "anthropic", active: false }));
+    expect(text).toMatch(/^Not active · given before AMP recorded which provider a consent is for/);
+  });
+
+  it("says there is nothing to consent to when nothing hosted is configured", () => {
+    expect(consentStateText(cap({ scoped: true, configured: null }))).toBe(
+      "Off · no hosted AI provider is configured, so there is nothing to consent to",
+    );
+    expect(consentStateText(cap({ granted: true, granted_by: "ta-admin", scoped: true, scope: "gemini", configured: null, active: false })))
+      .toMatch(/no hosted AI provider is configured now$/);
+  });
 });
 
 describe("describeAnomalyError", () => {

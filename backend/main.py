@@ -248,6 +248,11 @@ _ensure_column("work_orders", "material_state", "ALTER TABLE work_orders ADD COL
 _ensure_column("work_orders", "completed_at", "ALTER TABLE work_orders ADD COLUMN completed_at TIMESTAMP")
 _backfill_completed_at()
 _ensure_column("tenant_configs", "unit_value_gbp", "ALTER TABLE tenant_configs ADD COLUMN unit_value_gbp FLOAT")
+# A consent names the hosted provider it was given for (alembic 0012, ADR-0038).
+# Added at boot as well because the consent gate selects this column on every
+# Copilot request while a hosted key is configured; a missing column would be a
+# 500 on /ai/ask, not a degraded feature.
+_ensure_column("ai_learning_consents", "scope", "ALTER TABLE ai_learning_consents ADD COLUMN scope VARCHAR")
 # THE APPROVAL GATE'S REVOCATION FLAG (alembic 0005) — and the reason the block
 # below exists at all.
 #

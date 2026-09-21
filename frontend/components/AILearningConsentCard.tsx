@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 
-import { consentStateText, type ConsentCapability, type ConsentPage } from "../lib/aiModels";
+import { consentCanTurnOn, consentStateText, providerLabel, type ConsentCapability, type ConsentPage } from "../lib/aiModels";
 import { apiGet, apiPut, getUserRole } from "../lib/api";
 import { describeActionFailure } from "../lib/useActionError";
 import { LoadError, useLoadError } from "../lib/useLoadError";
@@ -93,9 +93,12 @@ export default function AILearningConsentCard() {
                 role="switch"
                 aria-checked={cap.granted}
                 aria-label={cap.title}
-                disabled={!page.can_edit || saving === cap.capability}
-                onClick={() => (cap.granted ? save(cap, false) : setConfirming(cap.capability))}
-                title={cap.granted ? "On — click to turn off" : "Off — click to review and turn on"}
+                disabled={!page.can_edit || saving === cap.capability || (!cap.granted && !consentCanTurnOn(cap))}
+                onClick={() => (cap.granted && cap.active !== false ? save(cap, false) : setConfirming(cap.capability))}
+                title={cap.granted && cap.active !== false ? "On — click to turn off"
+                  : cap.granted ? "Given for another provider — click to review and turn on for the one configured now"
+                  : consentCanTurnOn(cap) ? "Off — click to review and turn on"
+                  : "No hosted AI provider is configured, so there is nothing to consent to"}
                 className={`shrink-0 relative inline-flex h-6 w-11 items-center rounded-full transition disabled:opacity-50 disabled:cursor-not-allowed ${
                   cap.granted ? "bg-emerald-500" : "bg-slate-700"
                 }`}
@@ -119,10 +122,18 @@ export default function AILearningConsentCard() {
             </dl>
             {confirming === cap.capability && (
               <div role="dialog" aria-label={`Turn on ${cap.title}`} className="mt-3 rounded-xl border border-amber-500/40 bg-amber-500/10 p-3">
-                <p className="text-sm text-amber-200">Turn on &ldquo;{cap.title}&rdquo; for {page.tenant}?</p>
+                <p className="text-sm text-amber-200">
+                  Turn on &ldquo;{cap.title}&rdquo; for {page.tenant}
+                  {cap.scoped && cap.configured ? <> — for {providerLabel(cap.configured)}</> : null}?
+                </p>
                 <p className="text-xs text-amber-200/80 mt-1">
                   {cap.reads} {cap.stored} It is recorded in the audit log under your name, and any Admin can turn it off
                   again.
+                  {cap.scoped && cap.configured ? (
+                    // ADR-0038: the decision names the provider configured now, and lapses if that changes.
+                    <> This consent is given for {providerLabel(cap.configured)} only: if AMP is switched to another
+                    provider, it stops applying until an Admin decides again.</>
+                  ) : null}
                 </p>
                 <div className="mt-3 flex gap-2">
                   <button

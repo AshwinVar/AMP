@@ -384,7 +384,8 @@ def section_endpoints(engine, Session):
     from amp_ai.core.contracts import CAPABILITY_EXTERNAL_MODEL
     db = Session()
     try:
-        consent_mod.set_consent(db, T, CAPABILITY_EXTERNAL_MODEL, True, "nc-admin")
+        consent_mod.set_consent(db, T, CAPABILITY_EXTERNAL_MODEL, True, "nc-admin",
+                                scope="anthropic")   # ADR-0038: a consent names its provider
         counter0, stop0 = count_statements(engine)
         ai_copilot.external_model_allowed(db, USER)
         consent_cost = counter0["n"]

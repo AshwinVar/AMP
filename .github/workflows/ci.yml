@@ -317,6 +317,15 @@ jobs:
         working-directory: backend
         run: python verify_pg_action_outcomes.py 5432
 
+      # 2d. ADR-0038's consent scope column (0012), migrated from a POPULATED
+      #     previous revision: every consent row survives with its decision,
+      #     the new column is NULL for them (no backfill invents a provider),
+      #     the schema matches models.py, the downgrade/upgrade round trip is
+      #     clean, and a grant made after the upgrade records its provider.
+      - name: Consent scope column (0012) on PostgreSQL
+        working-directory: backend
+        run: python verify_pg_consent_scope.py 5432
+
       # 3. The suites that specifically guard this area, on PostgreSQL rather
       #    than SQLite — SQLite hid a foreign-key failure in the OEM work and
       #    would hide these too.

@@ -51,9 +51,10 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, StrictBool
 from sqlalchemy.orm import Session
 
+import ai_copilot
 import logging_config
 from amp_ai import consent, registry
-from amp_ai.core.contracts import ConsentRequired
+from amp_ai.core.contracts import CAPABILITY_EXTERNAL_MODEL, SCOPED_CAPABILITIES, ConsentRequired
 from amp_ai.failure_risk import baseline_rule, db_history, predict
 from amp_ai.failure_risk.history import LOOKBACK_DAYS, in_breakdown_at
 from amp_ai.telemetry_anomaly import service
@@ -216,8 +217,15 @@ def _consent_page(db, tenant, current_user):
         "tenant": tenant,
         "can_edit": reason is None,
         "read_only_reason": reason,
-        "capabilities": consent.consent_view(db, tenant),
+        "capabilities": consent.consent_view(db, tenant, configured=_configured_scopes()),
     }
+
+
+def _configured_scopes():
+    """What each SCOPED capability would be used for right now (ADR-0038): for
+    external_model, the hosted provider configured, or None when there is none."""
+    hosted = ai_copilot.hosted_provider()
+    return {CAPABILITY_EXTERNAL_MODEL: hosted.name if hosted is not None else None}
 
 
 @router.get("/ai-consent")
@@ -242,10 +250,18 @@ def put_learning_consent(capability: str, payload: ConsentUpdate, db: Session = 
             "A company's AI consent can only be given or withdrawn by that company's own Admin, not from a "
             "platform preview."))
     actor = current_user.get("sub") or current_user.get("username")
+    # ADR-0038: a scoped consent is given FOR the hosted provider configured at
+    # this moment, and for nothing when none is -- there is nothing to consent
+    # to, so the grant is refused rather than stored in advance (ADR-0017's rule).
+    scope = _configured_scopes().get(capability) if capability in SCOPED_CAPABILITIES else None
+    if payload.granted and capability in SCOPED_CAPABILITIES and not scope:
+        raise HTTPException(status_code=400, detail=(
+            "No hosted AI provider is configured, so there is nothing to consent to. The switch applies "
+            "once one is."))
     try:
         # set_consent is the one place a capability is validated: an unknown one
         # raises ValueError before anything is written, and that is a 400.
-        consent.set_consent(db, tenant, capability, payload.granted, actor)
+        consent.set_consent(db, tenant, capability, payload.granted, actor, scope=scope)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from None
     return _consent_page(db, tenant, current_user)

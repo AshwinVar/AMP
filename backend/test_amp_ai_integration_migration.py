@@ -132,7 +132,11 @@ def duplicate_refused(engine):
     print("OTHER_TENANT_OK", other is None, other)
 '''
 
+# The table as 0009 creates it. A later revision may add a column (0012 adds
+# `scope`, ADR-0038), so a database at HEAD carries the second set: this suite
+# pins 0009's own work at 0009 and the model's whole table at head.
 EXPECTED_COLUMNS = "capability,granted,granted_at,granted_by,id,revoked_at,revoked_by,tenant_code,updated_at"
+EXPECTED_COLUMNS_AT_HEAD = "capability,granted,granted_at,granted_by,id,revoked_at,revoked_by,scope,tenant_code,updated_at"
 EXPECTED_NOTNULL = "capability,granted,id,tenant_code"
 EXPECTED_UNIQUE = "uq_ai_learning_consent(tenant_code+capability)"
 EXPECTED_INDEXES = {"ix_ai_learning_consents_id", "ix_ai_learning_consents_tenant_code"}
@@ -143,9 +147,9 @@ def _line(out, key):
     return m.group(1).strip() if m else None
 
 
-def _check_table(prefix, out):
+def _check_table(prefix, out, columns=EXPECTED_COLUMNS):
     check(f"{prefix}: the consent table exists", _line(out, "TABLE") == "True", out[-600:])
-    check(f"{prefix}: its columns are exactly the model's", _line(out, "COLUMNS") == EXPECTED_COLUMNS,
+    check(f"{prefix}: its columns are exactly the expected ones", _line(out, "COLUMNS") == columns,
           str(_line(out, "COLUMNS")))
     check(f"{prefix}: tenant_code, capability and granted are NOT NULL",
           _line(out, "NOTNULL") == EXPECTED_NOTNULL, str(_line(out, "NOTNULL")))
@@ -182,7 +186,7 @@ duplicate_refused(engine)
               str(_line(out, "IN_CHAIN")))
         check("...and the database is stamped at head", _line(out, "CURRENT") == _line(out, "HEAD"),
               f"{_line(out, 'CURRENT')} vs {_line(out, 'HEAD')}")
-        _check_table("fresh", out)
+        _check_table("fresh", out, columns=EXPECTED_COLUMNS_AT_HEAD)
         check("fresh: no model/migration drift for the consent table",
               (_line(out, "DRIFT") or "").startswith("0 "), str(_line(out, "DRIFT")))
         check("CONTROL: the first consent row inserts cleanly",
@@ -218,6 +222,9 @@ print("BEFORE_TABLE", "ai_learning_consents" in set(inspect(engine).get_table_na
 command.upgrade(cfg, "0009_native_ai_consent")
 print("AFTER_CURRENT", migrate.current_revision(engine))
 describe(engine)
+# The drift comparison is against models.py, which describes the table at HEAD
+# (0012 adds `scope`, ADR-0038); 0009's own work is pinned by describe() above.
+command.upgrade(cfg, "head")
 drift(engine)
 with engine.begin() as c:
     print("MACHINES", c.execute(text("SELECT count(*) FROM machines WHERE name='PRESS-01'")).scalar())

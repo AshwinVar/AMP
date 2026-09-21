@@ -33,29 +33,51 @@ CONTRACTS = "amp_ai/core/contracts.py"
 MUTATIONS = [
     # --- the chokepoint ---------------------------------------------------------
     ("copilot: a hosted provider is used without the company's consent", COP,
-     "    if provider.external:\n        allowed, why = external_model_allowed(db, current_user)\n"
+     "    if provider.external:\n        allowed, why = external_model_allowed(db, current_user, provider)\n"
      "        if not allowed:\n            return None, why\n    else:",
-     "    if False:\n        allowed, why = external_model_allowed(db, current_user)\n"
+     "    if False:\n        allowed, why = external_model_allowed(db, current_user, provider)\n"
      "        if not allowed:\n            return None, why\n    else:"),
     ("copilot: consent is asked of the self-hosted model and not the hosted one", COP,
-     "    if provider.external:\n        allowed, why = external_model_allowed(db, current_user)",
-     "    if not provider.external:\n        allowed, why = external_model_allowed(db, current_user)"),
+     "    if provider.external:\n        allowed, why = external_model_allowed(db, current_user, provider)",
+     "    if not provider.external:\n        allowed, why = external_model_allowed(db, current_user, provider)"),
     ("copilot: a refusal still builds the model (the data leaves, the note stays)", COP,
      "        if not allowed:\n            return None, why\n    else:",
      "        if not allowed:\n            pass\n    else:"),
     ("copilot: the LEARNING consent is taken as consent to send data outside AMP", COP,
-     "    decision = consent.DbConsentGate().check(db, tenant, CAPABILITY_EXTERNAL_MODEL)",
+     "    decision = consent.DbConsentGate().check(db, tenant, CAPABILITY_EXTERNAL_MODEL, scope=provider.name)",
      '    decision = consent.DbConsentGate().check(db, tenant, "telemetry_baseline")'),
+    # --- ADR-0038: a consent names the provider it was given for ---------------------
+    ("copilot: the gate is asked without the provider about to be used", COP,
+     "    decision = consent.DbConsentGate().check(db, tenant, CAPABILITY_EXTERNAL_MODEL, scope=provider.name)",
+     "    decision = consent.DbConsentGate().check(db, tenant, CAPABILITY_EXTERNAL_MODEL)"),
+    ("copilot: the gate is asked for a fixed provider, whatever is configured", COP,
+     "    decision = consent.DbConsentGate().check(db, tenant, CAPABILITY_EXTERNAL_MODEL, scope=provider.name)",
+     '    decision = consent.DbConsentGate().check(db, tenant, CAPABILITY_EXTERNAL_MODEL, scope="anthropic")'),
+    ("gate: a consent given for one provider is honoured for another", GATE,
+     "            if row.scope != wanted:",
+     "            if False:"),
+    ("write: the grant does not record what it was for", GATE,
+     "            row.scope = scope if scoped else None",
+     "            row.scope = None"),
+    ("write: a scoped grant with no provider configured is stored (advance consent)", GATE,
+     "    if granted and scoped and not scope:\n        raise ValueError(",
+     "    if False:\n        raise ValueError("),
+    ("page: the entry does not say whether the grant is active for what is configured", GATE,
+     '            "active": granted and (not scoped or (now_for is not None and r.scope == now_for)),',
+     '            "active": granted,'),
+    ("contracts: the external-model consent names no provider", CONTRACTS,
+     "SCOPED_CAPABILITIES = (CAPABILITY_EXTERNAL_MODEL,)",
+     "SCOPED_CAPABILITIES = ()"),
     ("copilot: a founder preview uses the company's consent as its own", COP,
      "    if tenancy.is_preview(current_user):\n        return False,",
      "    if False:\n        return False,"),
     ("copilot: the decision is read once and remembered across requests", COP,
-     "    decision = consent.DbConsentGate().check(db, tenant, CAPABILITY_EXTERNAL_MODEL)\n"
+     "    decision = consent.DbConsentGate().check(db, tenant, CAPABILITY_EXTERNAL_MODEL, scope=provider.name)\n"
      "    if not decision.granted:",
      '    memo = external_model_allowed.__dict__.setdefault("memo", {})\n'
      "    decision = memo.get(tenant)\n"
      "    if decision is None:\n"
-     "        decision = memo[tenant] = consent.DbConsentGate().check(db, tenant, CAPABILITY_EXTERNAL_MODEL)\n"
+     "        decision = memo[tenant] = consent.DbConsentGate().check(db, tenant, CAPABILITY_EXTERNAL_MODEL, scope=provider.name)\n"
      "    if not decision.granted:"),
     ("copilot: the refusal loses its reason (answered from rules, silently)", COP,
      "        return False, (\"Answered from live factory data by AMP's own engine; the hosted AI model was not \"\n"
@@ -74,7 +96,7 @@ MUTATIONS = [
      "    try:"),
     # --- the status misreports ----------------------------------------------------
     ("status: the company is reported as consented without reading its decision", COP,
-     "        allowed, why = external_model_allowed(db, current_user)\n    finally:",
+     "        allowed, why = external_model_allowed(db, current_user, provider)\n    finally:",
      "        allowed, why = True, None\n    finally:"),
     ("status: a self-hosted model is reported as a hosted one needing consent", COP,
      "    if provider is None or not provider.is_configured() or not provider.external:\n"
@@ -115,7 +137,9 @@ def run_suites():
 
 
 # A mutation here is one a DIFFERENT guard already covers. Each needs a reason
-# that survives reading.
+# that survives reading. (The writer's own refusal of a scoped grant with no
+# provider is shadowed over HTTP by the route's 400, and is caught by the
+# direct-call check in test_external_model_consent §10 -- so it is not listed.)
 EXPECTED_SURVIVORS = {}
 
 

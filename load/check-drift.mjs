@@ -47,8 +47,8 @@ function fetchAllPaths(source) {
   const body = source.slice(start, end === -1 ? source.length : end);
   // apiGetWithTotal is the same GET (it also reads the X-Total-Count header a
   // paged list sends), so it is part of the round like any apiGet.
-  // pagedList<T>(listTotalsRef, "/path") is the same GET as apiGet<T[]>("/path").
-  const matches = body.match(/(?:apiGet(?:WithTotal)?<[^>]*>\(|pagedList<[^>]*>\(listTotalsRef, )"([^"]+)"\)/g) || [];
+  // pagedList<T>(listsRef, "/path") is the same GET as apiGet<T[]>("/path").
+  const matches = body.match(/(?:apiGet(?:WithTotal)?<[^>]*>\(|pagedList<[^>]*>\(listsRef, )"([^"]+)"\)/g) || [];
   return matches.map((m) => m.match(/"([^"]+)"\)$/)[1]);
 }
 

@@ -41,11 +41,16 @@ export default function InventorySection({
   createTransaction,
   generateLowStockEscalations,
   total = null,
+  more = null,
+  onMore,
 }: {
   items: InventoryItem[];
   // How many items the tenant has in all, when the list is a page of them
-  // (X-Total-Count from /inventory/items); null when not known.
+  // (X-Total-Count from /inventory/items); null when not known. `more` and
+  // `onMore` let the notice offer the next batch (lib/paged-list).
   total?: number | null;
+  more?: number | null;
+  onMore?: () => void;
   transactions: InventoryTransaction[];
   analytics: InventoryAnalytics | null;
   itemForm: {
@@ -255,7 +260,7 @@ export default function InventorySection({
         <h3 className="text-2xl font-semibold mb-4">Inventory Master</h3>
         {/* The list is the newest page, not the whole book (ADR-0036). */}
         <PageNotice shown={items.length} total={total} noun="items" exportName="Inventory"
-          testId="inventory-page-notice" className="-mt-2 mb-4" />
+          more={more} onMore={onMore} testId="inventory-page-notice" className="-mt-2 mb-4" />
 
         <div className="overflow-x-auto rounded-xl border border-slate-800">
           <table className="w-full min-w-[1050px] text-left text-sm">

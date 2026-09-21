@@ -9,12 +9,20 @@
  * over it is a confident wrong number. When the page IS the whole list, or
  * the count is not known (an older backend, a failed call), nothing is shown:
  * a notice that cries wolf on a complete list misleads just as much.
+ *
+ * When the screen can ask for a deeper page (lib/paged-list), the notice also
+ * offers it: "Show the next 200". The button is only there when `more` says
+ * how many rows the next batch adds -- never past the tenant's total or the
+ * backend's ceiling -- so a list that is everything, or one already at the
+ * ceiling, offers nothing.
  */
 export default function PageNotice({
   shown,
   total,
   noun,
   exportName,
+  more = null,
+  onMore,
   testId = "page-notice",
   className = "",
 }: {
@@ -26,14 +34,31 @@ export default function PageNotice({
   noun: string;
   /** the Reports CSV export that carries the complete list, when there is one */
   exportName?: string;
+  /** rows the next batch would add (lib/paged-list moreFor); null when none */
+  more?: number | null;
+  /** asks the screen for the next batch; the button needs both this and `more` */
+  onMore?: () => void;
   testId?: string;
   className?: string;
 }) {
   if (typeof total !== "number" || total <= shown) return null;
+  const offer = onMore && typeof more === "number" && more > 0;
   return (
     <p className={`text-amber-300/90 text-sm ${className}`.trim()} data-testid={testId}>
       Showing the newest {shown.toLocaleString()} of {total.toLocaleString()} {noun}
       {exportName ? ` — the complete list is in the ${exportName} CSV export (Reports).` : "."}
+      {offer && (
+        <>
+          {" "}
+          <button
+            type="button"
+            onClick={onMore}
+            className="ml-1 rounded-lg border border-amber-400/40 px-2 py-0.5 text-xs text-amber-200 hover:bg-amber-400/10"
+          >
+            Show the next {more.toLocaleString()}
+          </button>
+        </>
+      )}
     </p>
   );
 }

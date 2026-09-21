@@ -1,4 +1,4 @@
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import NotificationsSection from "./NotificationsSection";
@@ -47,5 +47,16 @@ describe("NotificationsSection counts unread over the whole tenant", () => {
     render(<NotificationsSection notifications={rows} generateNotifications={vi.fn()}
       updateNotification={vi.fn()} total={3} unreadTotal={2} />);
     expect(screen.queryByTestId("page-notice")).toBeNull();
+  });
+});
+
+describe("NotificationsSection can ask for the next page", () => {
+  it("passes the notice's offer through and reports the click", () => {
+    const onMore = vi.fn();
+    const rows = [notif(1, "Unread"), notif(2, "Read")] as never;
+    render(<NotificationsSection notifications={rows} generateNotifications={vi.fn()}
+      updateNotification={vi.fn()} total={734} unreadTotal={1} more={500} onMore={onMore} />);
+    fireEvent.click(screen.getByRole("button", { name: "Show the next 500" }));
+    expect(onMore).toHaveBeenCalledTimes(1);
   });
 });

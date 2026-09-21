@@ -237,14 +237,18 @@ Measured on PostgreSQL 18.3, one machine, real statement counting:
 
 | machines | fleet page | queries | service queue | queries | one customer | queries |
 |---|---|---|---|---|---|---|
-| 10 | 4.9 ms | 9 | 0.8 ms | 1 | 1.1 ms | 2 |
-| 100 | 3.8 ms | 9 | 1.2 ms | 1 | 0.7 ms | 2 |
-| 1,000 | 11.4 ms | 9 | 10.9 ms | 1 | 2.8 ms | 2 |
-| 10,000 | 136.4 ms | **9** | 94.5 ms | **1** | 8.8 ms | **2** |
+| 10 | 3.3 ms | 10 | 2.5 ms | 9 | 0.5 ms | 2 |
+| 100 | 3.2 ms | 10 | 2.5 ms | 9 | 0.5 ms | 2 |
+| 1,000 | 3.3 ms | 10 | 11.0 ms | 9 | 1.3 ms | 2 |
+| 10,000 | **4.4 ms** | **10** | 169.1 ms | **9** | 16.4 ms | **2** |
 
 **Query counts are constant across a 1000× range — there is no N+1.** Grants are
 cached per *customer*, so a 10,000-machine fleet across 8 sites costs 8 policy
-reads, not 10,000.
+reads, not 10,000. Since 2026-09-21 the fleet page is also taken in SQL
+(`oem_sharing.installations_query`, OFFSET/LIMIT, the whole count beside it):
+before that the handler hydrated every installation and sliced the list in
+Python, 48.7 ms for the same page at 10,000 machines, growing with the fleet;
+now 4.4 ms, flat. The tenth query is the count, cached for the poll interval.
 
 ---
 

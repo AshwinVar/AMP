@@ -59,14 +59,28 @@ real PostgreSQL 18 migration gate on every push (ADR-0018).
 
 | machines | fleet page | queries | service queue | queries | one customer | queries |
 |---|---|---|---|---|---|---|
-| 10 | 4.9 ms | 9 | 0.8 ms | 1 | 1.1 ms | 2 |
-| 100 | 3.8 ms | 9 | 1.2 ms | 1 | 0.7 ms | 2 |
-| 1,000 | 11.4 ms | 9 | 10.9 ms | 1 | 2.8 ms | 2 |
-| 10,000 | 125.3 ms | **9** | 93.1 ms | **1** | 9.1 ms | **2** |
+| 10 | 3.3 ms | 10 | 2.5 ms | 9 | 0.5 ms | 2 |
+| 100 | 3.2 ms | 10 | 2.5 ms | 9 | 0.5 ms | 2 |
+| 1,000 | 3.3 ms | 10 | 11.0 ms | 9 | 1.3 ms | 2 |
+| 10,000 | **4.4 ms** | **10** | 169.1 ms | **9** | 16.4 ms | **2** |
 
 Constant across a 1000× range. There is no N+1. Measured on one machine against
 local PostgreSQL with no network in between — the *latency* would differ in
 production; the *query counts* would not.
+
+**Re-measured 2026-09-21, after the fleet page moved into SQL.** Until then
+`/oem/fleet` paged its *response* but not its *query*: every installation of
+the manufacturer was hydrated, counted with `len()` and sliced in Python, so
+the same 100-row page cost 2.9 ms at 10 machines and **48.7 ms at 10,000** on
+this laptop that morning — flat query count, growing wall-clock. The page is
+now taken with OFFSET/LIMIT and the whole count beside it (`paging.cached_count`,
+at most 3 s old; the tenth query), and `/oem/claims` filters its derived state
+— a Pending invitation past its deadline reads Expired — in SQL as well:
+**4.4 ms at 10,000 machines**, and the page no longer knows how big the fleet
+is. The service queue still walks the whole fleet by design (a back-office
+view, not a poll); its wall-clock moves with the laptop between runs (121 ms
+that morning, 169 ms here on unchanged code). `test_oem_fleet_pages_in_sql.py`
+pins the page's shape; `mutate_oem_sharing.py` bends it four ways.
 
 ---
 

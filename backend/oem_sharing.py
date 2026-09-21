@@ -133,15 +133,20 @@ def grants_for(db, oem_code, tenant_code):
     return parse_grants(row.grants if row else None)
 
 
-def installations_for(db, oem_code, tenant_code=None, serial=None,
-                      installation_id=None):
-    """The OEM's OWN installations. The only way into the fleet.
+def installations_query(db, oem_code, tenant_code=None, serial=None,
+                        installation_id=None):
+    """The OEM's OWN installations, as a query. The only way into the fleet.
 
     Always filtered by `oem_code` explicitly. This query does not ride the
     ADR-0002 hook either — MachineInstallation is outside SCOPED_MODELS by
     design (the sentinel would hide the OEM's whole fleet), so the filter here
     IS the boundary. A missing filter is a cross-manufacturer leak, which is why
     oem_code is a required positional argument and never defaults.
+
+    A QUERY, not a list, so a screen that wants one page of a 10,000-machine
+    fleet can take that page in SQL (`/oem/fleet`); measured before this
+    existed, the page hydrated the whole fleet and sliced it in Python -- 48.7
+    ms for 100 rows at 10,000 machines, growing with the fleet.
     """
     # No early return for a falsy oem_code. `filter(oem_code == "")` and
     # `filter(oem_code == None)` already match nothing (the column is NOT NULL),
@@ -155,7 +160,14 @@ def installations_for(db, oem_code, tenant_code=None, serial=None,
         q = q.filter(models.MachineInstallation.serial_number == serial)
     if installation_id is not None:
         q = q.filter(models.MachineInstallation.id == installation_id)
-    return q.order_by(models.MachineInstallation.id.asc()).all()
+    return q.order_by(models.MachineInstallation.id.asc())
+
+
+def installations_for(db, oem_code, tenant_code=None, serial=None,
+                      installation_id=None):
+    """The OEM's OWN installations, every one (installations_query, listed)."""
+    return installations_query(db, oem_code, tenant_code=tenant_code, serial=serial,
+                               installation_id=installation_id).all()
 
 
 def get_installation(db, oem_code, installation_id):

@@ -18,6 +18,7 @@ from datetime import date, datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
+from sqlalchemy import and_, or_
 from sqlalchemy.orm import Session
 
 import models
@@ -27,6 +28,7 @@ import oem_events
 import oem_service
 import oem_sharing
 import oem_telemetry
+import paging
 from auth import create_access_token
 from database import SessionLocal
 from events import event_bus
@@ -114,9 +116,12 @@ def fleet(customer: str = Query(None, description="Filter to one customer"),
     applied first and unconditionally, so passing another manufacturer's
     customer simply returns an empty page rather than that manufacturer's fleet.
     """
-    rows = oem_sharing.installations_for(db, principal["oem"], tenant_code=customer)
-    total = len(rows)
-    page = rows[offset:offset + limit]
+    # One page in SQL, and the whole count beside it (paging.cached_count: at
+    # most 3 s old). Before this the handler hydrated the whole fleet and sliced
+    # it in Python -- 48.7 ms for 100 rows at 10,000 machines (oem_perf.py).
+    q = oem_sharing.installations_query(db, principal["oem"], tenant_code=customer)
+    total = paging.cached_count(q)
+    page = q.offset(offset).limit(limit).all()
     catalogue = _models_by_id(db, principal["oem"])
 
     # Grants are read once per CUSTOMER, not once per machine: a fleet of a
@@ -554,6 +559,18 @@ class ClaimRequest(BaseModel):
     intended_customer: str | None = None
 
 
+def _claim_state_is(status, now=None):
+    """The SQL of oem_claims.public_state(claim) == status: a Pending claim
+    whose deadline has passed reads Expired, and only then."""
+    now = now or datetime.utcnow()
+    c = models.MachineClaim
+    if status == oem_claims.EXPIRED:
+        return and_(c.status == oem_claims.PENDING, c.expires_at.isnot(None), c.expires_at <= now)
+    if status == oem_claims.PENDING:
+        return and_(c.status == oem_claims.PENDING, or_(c.expires_at.is_(None), c.expires_at > now))
+    return c.status == status
+
+
 def _claim_dict(claim, installation=None, model=None):
     return {
         "id": claim.id,
@@ -679,15 +696,17 @@ def list_claims(status: str = Query(None, description="Filter by claim status"),
     """This manufacturer's invitations. Filtered by the principal's oem_code, so
     a competitor's claims are not merely hidden — they are not selected."""
     q = (db.query(models.MachineClaim)
-           .filter(models.MachineClaim.oem_code == principal["oem"])
-           .order_by(models.MachineClaim.id.desc()))
-    rows = q.all()
+           .filter(models.MachineClaim.oem_code == principal["oem"]))
     # `Pending` becomes `Expired` once the deadline passes, so the filter has to
-    # run on the DERIVED state or a stale row would be listed as live.
+    # run on the DERIVED state or a stale row would be listed as live. The
+    # derivation is oem_claims.public_state, written here in SQL so the page and
+    # the count come from the database instead of every claim being hydrated
+    # and filtered in Python.
     if status:
-        rows = [c for c in rows if oem_claims.public_state(c) == status]
-    total = len(rows)
-    page = rows[offset:offset + limit]
+        q = q.filter(_claim_state_is(status))
+    q = q.order_by(models.MachineClaim.id.desc())
+    total = paging.cached_count(q)
+    page = q.offset(offset).limit(limit).all()
 
     insts = {}
     if page:

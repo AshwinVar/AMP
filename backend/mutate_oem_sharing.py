@@ -14,7 +14,7 @@ import sys
 
 SUITES = ["test_oem_sharing.py", "test_oem_routes.py", "test_oem_authorization.py",
           "test_oem_foundation.py", "test_oem_service_consent.py",
-          "test_oem_lifecycle_writes.py"]
+          "test_oem_lifecycle_writes.py", "test_oem_fleet_pages_in_sql.py"]
 
 MUTATIONS = [
     # --- default deny --------------------------------------------------------
@@ -67,8 +67,21 @@ MUTATIONS = [
 
     # --- the API forgets the principal --------------------------------------
     ("the fleet route takes the OEM from a query parameter", "oem_routes.py",
-     '    rows = oem_sharing.installations_for(db, principal["oem"], tenant_code=customer)',
-     "    rows = oem_sharing.installations_for(db, customer or principal[\"oem\"])"),
+     '    q = oem_sharing.installations_query(db, principal["oem"], tenant_code=customer)',
+     "    q = oem_sharing.installations_query(db, customer or principal[\"oem\"])"),
+    # --- the page is taken in SQL, and says the whole count ------------------
+    ("the fleet page hydrates the whole fleet again", "oem_routes.py",
+     "    page = q.offset(offset).limit(limit).all()\n    catalogue = _models_by_id(db, principal[\"oem\"])",
+     "    page = q.all()[offset:offset + limit]\n    catalogue = _models_by_id(db, principal[\"oem\"])"),
+    ("the fleet total is the page's length", "oem_routes.py",
+     "    total = paging.cached_count(q)\n    page = q.offset(offset).limit(limit).all()\n    catalogue",
+     "    page = q.offset(offset).limit(limit).all()\n    total = len(page)\n    catalogue"),
+    ("an expired invitation is listed as Pending", "oem_routes.py",
+     "        return and_(c.status == oem_claims.PENDING, or_(c.expires_at.is_(None), c.expires_at > now))",
+     "        return c.status == oem_claims.PENDING"),
+    ("the Expired filter ignores the deadline", "oem_routes.py",
+     "        return and_(c.status == oem_claims.PENDING, c.expires_at.isnot(None), c.expires_at <= now)",
+     "        return c.status == oem_claims.PENDING"),
     # Anchored on the line BELOW. Six handlers raise this identical 404, so the
     # bare pattern was ambiguous and this mutation printed SKIP on every run
     # since it was written — never once executed, while reading like a pass in a

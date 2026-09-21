@@ -42,6 +42,7 @@ def main():
     import models
     import oem_service
     import oem_sharing
+    import paging
     import tenancy
     from database import Base
 
@@ -116,12 +117,17 @@ def main():
 
         catalogue = {model.id: model}
 
-        # 1. A fleet PAGE — what the screen actually asks for.
+        # 1. A fleet PAGE — what the screen actually asks for, taken the way
+        #    /oem/fleet takes it: one page in SQL and the count beside it.
+        #    (Before: the whole fleet hydrated, then sliced -- 48.7 ms for
+        #    100 rows at 10,000 machines on this laptop.)
         page_ms, page_q = [], 0
         for _ in range(3):
+            paging.forget_counts()
             with Counted() as c:
-                insts = oem_sharing.installations_for(db, "OEM_PERF")
-                page = insts[:100]
+                q = oem_sharing.installations_query(db, "OEM_PERF")
+                total = q.order_by(None).count()
+                page = q.offset(0).limit(100).all()
                 grants_cache = {}
                 for inst in page:
                     t = inst.factory_tenant_code

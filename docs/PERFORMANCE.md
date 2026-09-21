@@ -129,6 +129,17 @@ properties (a short page's free total, an empty page past the end still
 counts, the cache's TTL and its tenant and query keys) and
 `mutate_lists_are_pages.py` bends each of them.
 
+**And the cache forgets on write.** Three seconds is invisible to the other
+tabs and very visible to the tab that just wrote: the dashboard refreshes at
+once after "Mark all read", and a cached 734 would have put the button straight
+back for one round. So every commit forgets the cached totals of the tables it
+touched — ORM inserts, updates and deletes (`after_flush`) and bulk `UPDATE` /
+`DELETE` statements (`do_orm_execute`, the path `read-all` takes) — and a
+commit to any other table forgets nothing. A total is therefore at most three
+seconds old *and* never older than this process's last write to that table
+(§9 of the same test; three more mutations). Raw SQL text is not seen by
+either hook; nothing on the request path writes that way.
+
 **Later the same day: one request fewer, and 500 rows fewer, every three
 seconds.** `IoTCommandSection` took a `telemetry` prop it never rendered (its
 table reads `/analytics/iot-command`'s `latest_signals`), so the 500-row page

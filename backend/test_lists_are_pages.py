@@ -26,14 +26,15 @@ download. As in test_growing_table_reads.py, the walk is over the AST, so a
 docstring quoting the pattern is not a finding, and an allowlist entry that
 no longer names a real capped read fails the build (section 2).
 
-WHAT THE HELPER PROMISES (sections 4-8)
+WHAT THE HELPER PROMISES (sections 4-9)
 ---------------------------------------
 Measured on real handlers, not on the helper alone: the default page is the
 old cap; the total is the whole scoped count, not the page's; a handler that
 annotates or serialises its rows still does; an endpoint with its own smaller
 ceiling keeps it; the notification unread count is over EVERY notification;
 and the count is paid only when a page is full, at most once per poll interval
-per tenant and query (section 8 -- measured first, docs/PERFORMANCE.md).
+per tenant and query (section 8 -- measured first, docs/PERFORMANCE.md), and
+never older than this process's last commit to a table it reads (section 9).
 
 Run: DATABASE_URL="sqlite:///./ci.db" python backend/test_lists_are_pages.py
 """
@@ -410,6 +411,18 @@ def not_a_route(db):
     check("an offset past the end says nothing about the count, so it counts: empty page, total 230 (never 300)",
           rows == [] and total == "230" and counts == 1, f"{len(rows)} / {total} / {counts} counts")
 
+    # PG_B gets 200 more rows NOW, before PG_A's total is cached below: the
+    # commit forgets cached totals (section 9), so seeding later would make the
+    # tenant-key check below pass for the wrong reason.
+    tok = tenancy.set_current_tenant(None)
+    try:
+        db.add_all([models.WorkOrder(tenant_code="PG_B", work_order_no=f"WOB2-{i:04d}", part_number="P",
+                                     batch_number="B", target_quantity=1, actual_quantity=0, status="Planned")
+                    for i in range(200)])
+        db.commit()
+    finally:
+        tenancy.reset_current_tenant(tok)
+
     paging.forget_counts()
     rows, total, counts = counted("PG_A", WO.get_work_orders, db=db, current_user=user_a)
     check("a FULL page (200 of 230) counts once", len(rows) == 200 and total == "230" and counts == 1,
@@ -421,16 +434,8 @@ def not_a_route(db):
     check("the same query with the same page size shares the entry", total == "230" and counts == 0,
           f"{total} / {counts} counts")
 
-    # The tenant is part of the key: PG_B's full page (make it one) must never
-    # read PG_A's 230. Give PG_B 200 rows so its default page is full too.
-    tok = tenancy.set_current_tenant(None)
-    try:
-        db.add_all([models.WorkOrder(tenant_code="PG_B", work_order_no=f"WOB2-{i:04d}", part_number="P",
-                                     batch_number="B", target_quantity=1, actual_quantity=0, status="Planned")
-                    for i in range(200)])
-        db.commit()
-    finally:
-        tenancy.reset_current_tenant(tok)
+    # The tenant is part of the key: PG_B's full page (203 rows, seeded above,
+    # nothing committed since) must never read PG_A's cached 230.
     statements.clear()
     b_rows, b_total = _as("PG_B", WO.get_work_orders, db=db, current_user=user_b)
     b_counts = sum(1 for st in statements if "count(" in st)
@@ -446,6 +451,19 @@ def not_a_route(db):
     u_counts = sum(1 for st in statements if "count(" in st)
     check("a different filter of the same table has its own total: unread 260, counted, not the list's 520",
           unread_total == str(truly_unread) and u_counts == 1, f"{unread_total} / {u_counts} counts")
+
+    # The bound VALUES are part of the key too: two filters with the same SQL
+    # shape and different values (the OEM fleet for customer A and for
+    # customer B) must never share a total.
+    paging.forget_counts()
+    tok = tenancy.set_current_tenant("PG_A")
+    try:
+        planned = paging.cached_count(db.query(models.WorkOrder).filter(models.WorkOrder.status == "Planned"))
+        completed = paging.cached_count(db.query(models.WorkOrder).filter(models.WorkOrder.status == "Completed"))
+    finally:
+        tenancy.reset_current_tenant(tok)
+    check("the same SQL with a different bound value has its own total: Planned 230, Completed 0",
+          planned == 230 and completed == 0, f"{planned} / {completed}")
 
     # The cache expires: a total is at most COUNT_TTL_S old.
     paging.forget_counts()
@@ -463,6 +481,84 @@ def not_a_route(db):
     check(f"a cached total is reused inside COUNT_TTL_S ({paging.COUNT_TTL_S}s) and counted again after it",
           first == again == later == 230 and recounted == 1, f"{first}/{again}/{later}, recounted {recounted}")
     check("the TTL is the dashboard's poll interval, not longer", paging.COUNT_TTL_S <= 3.0, str(paging.COUNT_TTL_S))
+
+    print()
+    print("=" * 74)
+    print("9. THE CACHE FORGETS ON WRITE: A TOTAL IS NEVER OLDER THAN THE LAST COMMIT TO ITS TABLE")
+    print("=" * 74)
+    # Three seconds is invisible to other tabs and very visible to the tab that
+    # just wrote: the dashboard refreshes at once after "Mark all read", and a
+    # cached 734 would put the button straight back for a round.
+    paging.forget_counts()
+    _, total, counts = counted("PG_A", WO.get_work_orders, db=db, current_user=user_a)
+    check("a full page's total is cached (230, counted once)", total == "230" and counts == 1, f"{total}/{counts}")
+    tok = tenancy.set_current_tenant("PG_A")
+    try:
+        db.add(models.WorkOrder(tenant_code="PG_A", work_order_no="WO-NEW", part_number="P", batch_number="B",
+                                target_quantity=1, actual_quantity=0, status="Planned"))
+        db.commit()
+    finally:
+        tenancy.reset_current_tenant(tok)
+    _, total, counts = counted("PG_A", WO.get_work_orders, db=db, current_user=user_a)
+    check("an ORM insert committed to work_orders forgets its total: the next request counts again, 231",
+          total == "231" and counts == 1, f"{total}/{counts}")
+
+    # An ORM attribute update (the unit of work's `dirty` list): the migration
+    # gate's OEM audit caught exactly this shape on PostgreSQL -- an
+    # installation unassigned from a customer, and the fleet page for that
+    # customer answering {"total": 1, "machines": []} for three seconds.
+    tok = tenancy.set_current_tenant("PG_A")
+    try:
+        moved = db.query(models.WorkOrder).filter(models.WorkOrder.work_order_no == "WO-NEW").one()
+        moved.status = "Completed"
+        db.commit()
+    finally:
+        tenancy.reset_current_tenant(tok)
+    _, total, counts = counted("PG_A", WO.get_work_orders, db=db, current_user=user_a)
+    check("an ORM attribute UPDATE committed to work_orders forgets its total too: counted again",
+          total == "231" and counts == 1, f"{total}/{counts}")
+
+    # The path read-all takes: a bulk UPDATE never passes through the unit of
+    # work, so it must be seen at execute time.
+    paging.forget_counts()
+    _, unread_before, _ = counted("PG_A", FO.get_notifications, unread=True, limit=1, db=db, current_user=user_a)
+    tok = tenancy.set_current_tenant("PG_A")
+    try:
+        (db.query(models.Notification).filter(models.Notification.title == "N0")
+           .update({models.Notification.status: "Read"}, synchronize_session=False))
+        db.commit()
+    finally:
+        tenancy.reset_current_tenant(tok)
+    _, unread_after, counts = counted("PG_A", FO.get_notifications, unread=True, limit=1, db=db, current_user=user_a)
+    check(f"a bulk UPDATE committed to notifications forgets the unread total: {unread_before} -> "
+          f"{int(unread_before) - 1}, counted again",
+          unread_after == str(int(unread_before) - 1) and counts == 1, f"{unread_after}/{counts}")
+
+    # A commit elsewhere leaves a total alone: no needless recount.
+    paging.forget_counts()
+    _, total, _ = counted("PG_A", WO.get_work_orders, db=db, current_user=user_a)
+    tok = tenancy.set_current_tenant("PG_A")
+    try:
+        db.add(models.Supplier(tenant_code="PG_A", supplier_code="SUP-Z", supplier_name="Zed"))
+        db.commit()
+    finally:
+        tenancy.reset_current_tenant(tok)
+    _, total2, counts = counted("PG_A", WO.get_work_orders, db=db, current_user=user_a)
+    check("a commit to another table (suppliers) keeps the work-orders total cached: 231, no count query",
+          total2 == "231" and counts == 0, f"{total2}/{counts}")
+
+    # A rollback forgets nothing and leaves nothing behind.
+    tok = tenancy.set_current_tenant("PG_A")
+    try:
+        db.add(models.WorkOrder(tenant_code="PG_A", work_order_no="WO-ROLLED", part_number="P", batch_number="B",
+                                target_quantity=1, actual_quantity=0, status="Planned"))
+        db.flush()
+        db.rollback()
+    finally:
+        tenancy.reset_current_tenant(tok)
+    _, total3, counts = counted("PG_A", WO.get_work_orders, db=db, current_user=user_a)
+    check("a flushed-then-rolled-back insert changes nothing: 231 still cached, no count query",
+          total3 == "231" and counts == 0 and paging._TOUCHED not in db.info, f"{total3}/{counts}")
     event.remove(engine, "before_cursor_execute", _log)
     paging.forget_counts()
     db.close()

@@ -14,6 +14,8 @@ export default function NotificationsSection({
   markAllRead,
   total = null,
   unreadTotal = null,
+  more = null,
+  onMore,
 }: {
   notifications: NotificationItem[];
   generateNotifications: () => void;
@@ -25,6 +27,9 @@ export default function NotificationsSection({
   // known, in which case the page is all there is to count.
   total?: number | null;
   unreadTotal?: number | null;
+  // The notice can offer the next batch (lib/paged-list).
+  more?: number | null;
+  onMore?: () => void;
 }) {
   // A NULL status is unread too: the read-all endpoint and the generator's
   // dedup both treat "not explicitly Read" as unread, and so does this count.
@@ -51,7 +56,7 @@ export default function NotificationsSection({
         </div>
       </div>
 
-      <PageNotice shown={notifications.length} total={total} noun="notifications" />
+      <PageNotice shown={notifications.length} total={total} noun="notifications" more={more} onMore={onMore} />
 
       <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
         {notifications.map((row) => (

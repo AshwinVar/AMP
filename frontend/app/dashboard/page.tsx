@@ -107,6 +107,7 @@ import CostingSection from "../../components/CostingSection";
 import OperatorTerminalSection from "../../components/OperatorTerminalSection";
 import NotificationsSection from "../../components/NotificationsSection";
 import PageNotice from "../../components/PageNotice";
+import { askForMore, emptyListState, moreFor, pagedList as fetchPagedList, type ListState } from "../../lib/paged-list";
 import ApprovalsInbox from "../../components/ApprovalsInbox";
 import TrendsSection from "../../components/TrendsSection";
 import EnterprisePolishSection from "../../components/EnterprisePolishSection";
@@ -214,16 +215,15 @@ function getUserName(): string {
 // byte-identical to it and was the one actually on screen, which is exactly how
 // a shared helper rots into decoration.
 
-// A list is a page (ADR-0036): the same GET as apiGet, plus a note of how many
-// rows the tenant has in all, kept per path in the ref the dashboard passes and
-// committed to state once the poll round settles. Module-level on purpose: a
-// helper declared inside the component would make fetchAll a reactive value
-// the live-socket effect would have to list.
-function pagedList<T>(totals: { current: Record<string, number | null> }, path: string): Promise<T[]> {
-  return apiGetWithTotal<T[]>(path).then(({ data, total }) => {
-    totals.current[path] = total;
-    return data;
-  });
+// A list is a page (ADR-0036), and the page can grow: the same GET as apiGet
+// at the depth the user asked for, plus a note of how many rows the tenant has
+// in all and how big the default page is, kept per path in the ref the
+// dashboard passes (lib/paged-list) and committed to state once the poll round
+// settles. Module-level on purpose: a helper declared inside the component
+// would make fetchAll a reactive value the live-socket effect would have to
+// list.
+function pagedList<T>(lists: { current: ListState }, path: string): Promise<T[]> {
+  return fetchPagedList<T>((p) => apiGetWithTotal<T[]>(p), lists.current, path);
 }
 
 export default function DashboardPage() {
@@ -420,9 +420,12 @@ export default function DashboardPage() {
   const [inventoryItems, setInventoryItems] = useState<InventoryItem[]>([]);
   // A list is a page (ADR-0036): how many rows the tenant has in all, per list
   // path (X-Total-Count, read by pagedList), so each section can say "the
-  // newest N of M". null for a list whose count is not known.
+  // newest N of M" -- and how big each default page is, so it can offer the
+  // next one. The ref is what the round writes; the state is what the screen
+  // reads, committed once per round.
   const [listTotals, setListTotals] = useState<Record<string, number | null>>({});
-  const listTotalsRef = useRef<Record<string, number | null>>({});
+  const [listPages, setListPages] = useState<Record<string, number>>({});
+  const listsRef = useRef<ListState>(emptyListState());
   // The tenant-wide unread notification count; null until known.
   const [unreadTotal, setUnreadTotal] = useState<number | null>(null);
   const [inventoryTransactions, setInventoryTransactions] = useState<InventoryTransaction[]>([]);
@@ -597,12 +600,19 @@ export default function DashboardPage() {
     window.location.href = "/login";
   }
 
+  // "Show the next N": remember the deeper page for this list, then refresh
+  // now rather than at the next tick. The depth is carried by every later
+  // round (lib/paged-list), so the list does not snap back three seconds on.
+  function showMore(path: string, shown: number) {
+    if (askForMore(listsRef.current, path, shown) !== null) void fetchAll();
+  }
+
   async function fetchAll() {
     try {
       const [machineData, logData, shiftData] = await Promise.all([
         apiGet<Machine[]>("/machines"),
-        pagedList<DowntimeLog>(listTotalsRef, "/downtime-logs"),
-        pagedList<Shift>(listTotalsRef, "/shifts"),
+        pagedList<DowntimeLog>(listsRef, "/downtime-logs"),
+        pagedList<Shift>(listsRef, "/shifts"),
       ]);
 
       setMachines(Array.isArray(machineData) ? machineData : []);
@@ -612,44 +622,44 @@ export default function DashboardPage() {
       const optionalCalls = await Promise.allSettled([
         apiGet<MachineEvent[]>("/analytics/machine-timeline"),
         apiGet<MachineStateSummaryType[]>("/analytics/machine-state-summary"),
-        pagedList<WorkOrder>(listTotalsRef, "/work-orders"),
+        pagedList<WorkOrder>(listsRef, "/work-orders"),
         apiGet<WorkOrderAnalytics>("/analytics/work-orders"),
         apiGet<PredictiveRisk[]>("/analytics/predictive-maintenance"),
-        pagedList<ProductionPlan>(listTotalsRef, "/production-plans"),
+        pagedList<ProductionPlan>(listsRef, "/production-plans"),
         apiGet<ProductionPlanAnalytics>("/analytics/production-plans"),
-        pagedList<Escalation>(listTotalsRef, "/escalations"),
+        pagedList<Escalation>(listsRef, "/escalations"),
         apiGet<EscalationAnalytics>("/analytics/escalations"),
-        pagedList<InventoryItem>(listTotalsRef, "/inventory/items"),
-        pagedList<InventoryTransaction>(listTotalsRef, "/inventory/transactions"),
+        pagedList<InventoryItem>(listsRef, "/inventory/items"),
+        pagedList<InventoryTransaction>(listsRef, "/inventory/transactions"),
         apiGet<InventoryAnalytics>("/analytics/inventory"),
-        pagedList<QualityInspection>(listTotalsRef, "/quality/inspections"),
+        pagedList<QualityInspection>(listsRef, "/quality/inspections"),
         apiGet<QualityAnalytics>("/analytics/quality"),
         apiGet<ExecutiveOee>("/analytics/executive-oee"),
         apiGet<FactoryLayoutNode[]>("/factory-layout/nodes"),
         apiGet<FactoryCommandCenter>("/analytics/factory-command-center"),
-        pagedList<CustomerOrder>(listTotalsRef, "/customer-orders"),
+        pagedList<CustomerOrder>(listsRef, "/customer-orders"),
         apiGet<CustomerOrderAnalytics>("/analytics/customer-orders"),
-        pagedList<Supplier>(listTotalsRef, "/suppliers"),
-        pagedList<PurchaseOrder>(listTotalsRef, "/purchase-orders"),
+        pagedList<Supplier>(listsRef, "/suppliers"),
+        pagedList<PurchaseOrder>(listsRef, "/purchase-orders"),
         apiGet<PurchasingAnalytics>("/analytics/purchasing"),
-        pagedList<ComplianceDocument>(listTotalsRef, "/documents"),
+        pagedList<ComplianceDocument>(listsRef, "/documents"),
         apiGet<DocumentAnalytics>("/analytics/documents"),
-        pagedList<MaintenanceTask>(listTotalsRef, "/maintenance/tasks"),
+        pagedList<MaintenanceTask>(listsRef, "/maintenance/tasks"),
         apiGet<MaintenanceAnalytics>("/analytics/maintenance"),
-        pagedList<ProductionSchedule>(listTotalsRef, "/production-schedules"),
+        pagedList<ProductionSchedule>(listsRef, "/production-schedules"),
         apiGet<ScheduleAnalytics>("/analytics/production-schedules"),
         apiGet<IoTCommandCenter>("/analytics/iot-command"),
-        pagedList<AIRecommendation>(listTotalsRef, "/ai/recommendations"),
+        pagedList<AIRecommendation>(listsRef, "/ai/recommendations"),
         apiGet<AIInsights>("/analytics/ai-insights"),
-        pagedList<CompanyTenant>(listTotalsRef, "/saas/tenants"),
+        pagedList<CompanyTenant>(listsRef, "/saas/tenants"),
         apiGet<SaaSAnalytics>("/analytics/saas"),
-        pagedList<CostRecord>(listTotalsRef, "/cost-records"),
+        pagedList<CostRecord>(listsRef, "/cost-records"),
         apiGet<CostingAnalytics>("/analytics/costing"),
-        pagedList<OperatorJobExecution>(listTotalsRef, "/operator/executions"),
+        pagedList<OperatorJobExecution>(listsRef, "/operator/executions"),
         apiGet<OperatorAnalytics>("/analytics/operator-terminal"),
-        pagedList<AuditLog>(listTotalsRef, "/audit-logs"),
-        pagedList<NotificationItem>(listTotalsRef, "/notifications"),
-        pagedList<ReportRequest>(listTotalsRef, "/reports"),
+        pagedList<AuditLog>(listsRef, "/audit-logs"),
+        pagedList<NotificationItem>(listsRef, "/notifications"),
+        pagedList<ReportRequest>(listsRef, "/reports"),
         apiGet<SystemHealth>("/analytics/system-health"),
         apiGet<FinalExecutiveSummary>("/analytics/final-executive-summary"),
         // The tenant-wide unread count (ADR-0036): one row, and X-Total-Count
@@ -657,7 +667,8 @@ export default function DashboardPage() {
         apiGetWithTotal<NotificationItem[]>("/notifications?unread=true&limit=1"),
       ]);
       // Every paged list has now said how many rows the tenant has in all.
-      setListTotals({ ...listTotalsRef.current });
+      setListTotals({ ...listsRef.current.totals });
+      setListPages({ ...listsRef.current.pages });
 
       if (optionalCalls[0].status === "fulfilled") {
         setMachineEvents(
@@ -2612,7 +2623,7 @@ export default function DashboardPage() {
           <div className="xl:col-span-2 rounded-2xl bg-slate-900 border border-slate-800 p-5">
             <h2 className="text-2xl font-semibold mb-4">Shift Performance</h2>
 
-            <PageNotice shown={shifts.length} total={listTotals["/shifts"]} noun="shifts" exportName="Shifts" />
+            <PageNotice shown={shifts.length} total={listTotals["/shifts"]} noun="shifts" exportName="Shifts" more={moreFor({ totals: listTotals, pages: listPages }, "/shifts", shifts.length)} onMore={() => showMore("/shifts", shifts.length)} />
             <div className="overflow-x-auto rounded-xl border border-slate-800">
               <table className="w-full min-w-[620px] text-left text-sm">
                 <thead className="text-slate-400 border-b border-slate-800">
@@ -2718,7 +2729,7 @@ export default function DashboardPage() {
       {renderSection("workorders", (
         <>
           <div className="mt-8"><WipAgingCard /></div>
-          <PageNotice shown={workOrders.length} total={listTotals["/work-orders"]} noun="work orders" exportName="Work orders" />
+          <PageNotice shown={workOrders.length} total={listTotals["/work-orders"]} noun="work orders" exportName="Work orders" more={moreFor({ totals: listTotals, pages: listPages }, "/work-orders", workOrders.length)} onMore={() => showMore("/work-orders", workOrders.length)} />
           <WorkOrdersSection
             machines={machines}
             workOrders={workOrders}
@@ -2737,7 +2748,7 @@ export default function DashboardPage() {
       {renderSection("planning", (
         <>
         <div className="mt-8"><ScheduleAdherenceCard /></div>
-        <PageNotice shown={productionPlans.length} total={listTotals["/production-plans"]} noun="production plans" />
+        <PageNotice shown={productionPlans.length} total={listTotals["/production-plans"]} noun="production plans" more={moreFor({ totals: listTotals, pages: listPages }, "/production-plans", productionPlans.length)} onMore={() => showMore("/production-plans", productionPlans.length)} />
         <ProductionPlanSection
           machines={machines}
           workOrders={workOrders}
@@ -2760,7 +2771,7 @@ export default function DashboardPage() {
       {renderSection("escalations", (
         <>
         <div className="mt-8"><EscalationQueueCard onOpen={setFocusedEscalationId} /></div>
-        <PageNotice shown={escalations.length} total={listTotals["/escalations"]} noun="escalations" exportName="Escalations" />
+        <PageNotice shown={escalations.length} total={listTotals["/escalations"]} noun="escalations" exportName="Escalations" more={moreFor({ totals: listTotals, pages: listPages }, "/escalations", escalations.length)} onMore={() => showMore("/escalations", escalations.length)} />
         <EscalationSection
           machines={machines}
           escalations={escalations}
@@ -2792,6 +2803,8 @@ export default function DashboardPage() {
           <InventorySection
             items={inventoryItems}
             total={listTotals["/inventory/items"] ?? null}
+            more={moreFor({ totals: listTotals, pages: listPages }, "/inventory/items", inventoryItems.length)}
+            onMore={() => showMore("/inventory/items", inventoryItems.length)}
             transactions={inventoryTransactions}
             analytics={inventoryAnalytics}
             itemForm={inventoryItemForm}
@@ -2850,7 +2863,7 @@ export default function DashboardPage() {
       {renderSection("quality", (
         <>
         <div className="mt-8"><QualityIntelCard /></div>
-        <PageNotice shown={qualityInspections.length} total={listTotals["/quality/inspections"]} noun="inspections" exportName="Quality" />
+        <PageNotice shown={qualityInspections.length} total={listTotals["/quality/inspections"]} noun="inspections" exportName="Quality" more={moreFor({ totals: listTotals, pages: listPages }, "/quality/inspections", qualityInspections.length)} onMore={() => showMore("/quality/inspections", qualityInspections.length)} />
         <QualitySection
           machines={machines}
           workOrders={workOrders}
@@ -2895,7 +2908,7 @@ export default function DashboardPage() {
       {renderSection("orders", (
         <>
         <div className="mt-8"><DeliveryIntelCard /></div>
-        <PageNotice shown={customerOrders.length} total={listTotals["/customer-orders"]} noun="customer orders" />
+        <PageNotice shown={customerOrders.length} total={listTotals["/customer-orders"]} noun="customer orders" more={moreFor({ totals: listTotals, pages: listPages }, "/customer-orders", customerOrders.length)} onMore={() => showMore("/customer-orders", customerOrders.length)} />
         <OrdersDispatchSection
           workOrders={workOrders}
           productionPlans={productionPlans}
@@ -2919,8 +2932,8 @@ export default function DashboardPage() {
           </div>
         )}
         <div className="mt-8"><SupplierPerformanceCard /></div>
-        <PageNotice shown={suppliers.length} total={listTotals["/suppliers"]} noun="suppliers" />
-        <PageNotice shown={purchaseOrders.length} total={listTotals["/purchase-orders"]} noun="purchase orders" exportName="Purchase orders" />
+        <PageNotice shown={suppliers.length} total={listTotals["/suppliers"]} noun="suppliers" more={moreFor({ totals: listTotals, pages: listPages }, "/suppliers", suppliers.length)} onMore={() => showMore("/suppliers", suppliers.length)} />
+        <PageNotice shown={purchaseOrders.length} total={listTotals["/purchase-orders"]} noun="purchase orders" exportName="Purchase orders" more={moreFor({ totals: listTotals, pages: listPages }, "/purchase-orders", purchaseOrders.length)} onMore={() => showMore("/purchase-orders", purchaseOrders.length)} />
         <PurchasingSection
           suppliers={suppliers}
           purchaseOrders={purchaseOrders}
@@ -2944,7 +2957,7 @@ export default function DashboardPage() {
       {renderSection("documents", (
         <>
         <div className="mt-8"><ComplianceIntelCard /></div>
-        <PageNotice shown={documents.length} total={listTotals["/documents"]} noun="documents" />
+        <PageNotice shown={documents.length} total={listTotals["/documents"]} noun="documents" more={moreFor({ totals: listTotals, pages: listPages }, "/documents", documents.length)} onMore={() => showMore("/documents", documents.length)} />
         <DocumentsSection documents={documents} analytics={documentAnalytics} form={documentForm} setForm={setDocumentForm} createDocument={isAdminOrSupervisor ? createDocument : async () => {}} updateDocument={isAdminOrSupervisor ? updateDocument : async () => {}} deleteDocument={isAdmin ? deleteDocument : undefined} generateReviewEscalations={isAdminOrSupervisor ? generateDocumentReviewEscalations : async () => {}} />
         </>
       ))}
@@ -2952,7 +2965,7 @@ export default function DashboardPage() {
       {renderSection("cmms", (
         <>
           <div className="mt-8"><MaintenanceForecastCard /></div>
-          <PageNotice shown={maintenanceTasks.length} total={listTotals["/maintenance/tasks"]} noun="maintenance tasks" exportName="Maintenance" />
+          <PageNotice shown={maintenanceTasks.length} total={listTotals["/maintenance/tasks"]} noun="maintenance tasks" exportName="Maintenance" more={moreFor({ totals: listTotals, pages: listPages }, "/maintenance/tasks", maintenanceTasks.length)} onMore={() => showMore("/maintenance/tasks", maintenanceTasks.length)} />
           <MaintenanceSection machines={machines} tasks={maintenanceTasks} analytics={maintenanceAnalytics} form={maintenanceForm} setForm={setMaintenanceForm} createTask={createMaintenanceTask} updateTask={updateMaintenanceTask} deleteTask={isAdmin ? deleteMaintenanceTask : undefined} generateOverdueEscalations={isAdminOrSupervisor ? generateMaintenanceOverdueEscalations : async () => {}} getMachineName={getMachineName} />
         </>
       ))}
@@ -2960,7 +2973,7 @@ export default function DashboardPage() {
       {renderSection("scheduling", (
         <>
           <div className="mt-8"><ScheduleLoadBoard /></div>
-          <PageNotice shown={productionSchedules.length} total={listTotals["/production-schedules"]} noun="schedules" />
+          <PageNotice shown={productionSchedules.length} total={listTotals["/production-schedules"]} noun="schedules" more={moreFor({ totals: listTotals, pages: listPages }, "/production-schedules", productionSchedules.length)} onMore={() => showMore("/production-schedules", productionSchedules.length)} />
           <SchedulingSection machines={machines} workOrders={workOrders} productionPlans={productionPlans} schedules={productionSchedules} analytics={scheduleAnalytics} form={scheduleForm} setForm={setScheduleForm} createSchedule={isAdminOrSupervisor ? createProductionSchedule : async () => {}} updateSchedule={updateProductionSchedule} deleteSchedule={isAdmin ? deleteProductionSchedule : undefined} getMachineName={getMachineName} />
         </>
       ))}
@@ -2974,14 +2987,14 @@ export default function DashboardPage() {
           <div className="mt-8">
             <PlatformStatusCard />
           </div>
-          <PageNotice shown={aiRecommendations.length} total={listTotals["/ai/recommendations"]} noun="recommendations" />
+          <PageNotice shown={aiRecommendations.length} total={listTotals["/ai/recommendations"]} noun="recommendations" more={moreFor({ totals: listTotals, pages: listPages }, "/ai/recommendations", aiRecommendations.length)} onMore={() => showMore("/ai/recommendations", aiRecommendations.length)} />
           <AIInsightsSection recommendations={aiRecommendations} insights={aiInsights} generateRecommendations={isAdminOrSupervisor ? generateAiRecommendations : async () => {}} updateRecommendation={updateAiRecommendation} />
         </>
       ))}
 
       {renderSection("saas", (
         <>
-          <PageNotice shown={tenants.length} total={listTotals["/saas/tenants"]} noun="tenants" />
+          <PageNotice shown={tenants.length} total={listTotals["/saas/tenants"]} noun="tenants" more={moreFor({ totals: listTotals, pages: listPages }, "/saas/tenants", tenants.length)} onMore={() => showMore("/saas/tenants", tenants.length)} />
           <SaaSAdminSection tenants={tenants} analytics={saasAnalytics} form={tenantForm} setForm={setTenantForm} createTenant={isAdmin ? createTenant : async () => {}} updateTenant={isAdmin ? updateTenant : async () => {}} deleteTenant={isAdmin ? deleteTenant : undefined} provisionAdmin={isAdmin ? provisionAdmin : undefined} adminCreds={adminCreds} clearAdminCreds={() => setAdminCreds(null)} />
           <div className="mt-8"><TenantAdoptionCard /></div>
           <div className="mt-8"><ModuleLicensingPanel /></div>
@@ -2991,7 +3004,7 @@ export default function DashboardPage() {
       {renderSection("costing", (
         <>
         <div className="mt-8"><CostIntelCard /></div>
-        <PageNotice shown={costRecords.length} total={listTotals["/cost-records"]} noun="cost records" />
+        <PageNotice shown={costRecords.length} total={listTotals["/cost-records"]} noun="cost records" more={moreFor({ totals: listTotals, pages: listPages }, "/cost-records", costRecords.length)} onMore={() => showMore("/cost-records", costRecords.length)} />
         <CostingSection costs={costRecords} analytics={costingAnalytics} form={costForm} setForm={setCostForm} createCost={isAdminOrSupervisor ? createCost : async () => {}} updateCost={isAdminOrSupervisor ? updateCost : async () => {}} deleteCost={isAdmin ? deleteCost : undefined} />
         </>
       ))}
@@ -2999,7 +3012,7 @@ export default function DashboardPage() {
       {renderSection("operator", (
         <>
         <div className="mt-8"><OperatorPerformanceCards operatorName={userName || undefined} /></div>
-        <PageNotice shown={operatorExecutions.length} total={listTotals["/operator/executions"]} noun="job executions" />
+        <PageNotice shown={operatorExecutions.length} total={listTotals["/operator/executions"]} noun="job executions" more={moreFor({ totals: listTotals, pages: listPages }, "/operator/executions", operatorExecutions.length)} onMore={() => showMore("/operator/executions", operatorExecutions.length)} />
         <OperatorTerminalSection machines={machines} workOrders={workOrders} productionPlans={productionPlans} executions={operatorExecutions} analytics={operatorAnalytics} form={operatorForm} setForm={setOperatorForm} createExecution={createOperatorExecution} updateExecution={updateOperatorExecution} deleteExecution={isAdmin ? deleteOperatorExecution : undefined} getMachineName={getMachineName} />
         </>
       ))}
@@ -3013,14 +3026,14 @@ export default function DashboardPage() {
       ))}
 
       {renderSection("notifications", (
-        <NotificationsSection notifications={notifications} generateNotifications={generateSystemNotifications} updateNotification={updateNotification} markAllRead={markAllNotificationsRead} total={listTotals["/notifications"]} unreadTotal={unreadTotal} />
+        <NotificationsSection notifications={notifications} generateNotifications={generateSystemNotifications} updateNotification={updateNotification} markAllRead={markAllNotificationsRead} total={listTotals["/notifications"]} unreadTotal={unreadTotal} more={moreFor({ totals: listTotals, pages: listPages }, "/notifications", notifications.length)} onMore={() => showMore("/notifications", notifications.length)} />
       ))}
 
       {renderSection("enterprise", (
         <>
         {isAdmin && <div className="mt-8"><BrandingSettingsCard onSaved={reloadTenantCfg} /></div>}
-        <PageNotice shown={auditLogs.length} total={listTotals["/audit-logs"]} noun="audit entries" />
-        <PageNotice shown={reports.length} total={listTotals["/reports"]} noun="reports" />
+        <PageNotice shown={auditLogs.length} total={listTotals["/audit-logs"]} noun="audit entries" more={moreFor({ totals: listTotals, pages: listPages }, "/audit-logs", auditLogs.length)} onMore={() => showMore("/audit-logs", auditLogs.length)} />
+        <PageNotice shown={reports.length} total={listTotals["/reports"]} noun="reports" more={moreFor({ totals: listTotals, pages: listPages }, "/reports", reports.length)} onMore={() => showMore("/reports", reports.length)} />
         <EnterprisePolishSection auditLogs={auditLogs} reports={reports} health={systemHealth} summary={finalSummary} reportForm={reportForm} setReportForm={setReportForm} createReport={createReport} />
         </>
       ))}

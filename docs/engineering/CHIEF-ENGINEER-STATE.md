@@ -117,7 +117,10 @@ as before. Measured: the honest page costs one `count(*)` per list — 135 → 1
 queries per dashboard refresh, flat at 10/50/200 machines (`docs/PERFORMANCE.md`,
 "Re-measured 2026-09-21"). Measuring it found the next thing: the round fetched
 500 `/iot/telemetry` rows every 3 s for a prop `IoTCommandSection` never
-rendered — **#675** (this PR) drops the fetch: 46 requests, 159 queries, flat.
+rendered — **#675** drops the fetch: 46 requests, 159 queries, flat. Then the
+page can grow: every notice offers "Show the next 200" (`lib/paged-list.ts`:
+the depth a user asks for is carried by every later poll round, capped at the
+backend's 2,000 and at the tenant's total) — this PR.
 
 **Nothing else is awaiting review.** What a next session would do first, in order:
 (1) the OEM journey re-check against a real OEM's edge agent is still simulated

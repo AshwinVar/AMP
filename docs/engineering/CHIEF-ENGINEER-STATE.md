@@ -29,17 +29,17 @@ the simulator's tenant guard: a tick with no tenant bound now refuses instead
 of filing every tenant's activity under DEFAULT — ADR-0002 postmortem). See
 AMP-10-DAY-SPRINT.md, AMP-NATIVE-MODEL-ACCEPTANCE.md and, for the twelve
 acceptance items with their evidence, AMP-SPRINT-ACCEPTANCE.md.
-**Master SHA:** `3481712` (#676).
-**Production SHA:** `3481712`, verified live, not assumed:
-`{"status":"ok","database":"ok","schema":"ok","version":"3481712"}` from
-`https://flowmes-production.up.railway.app/health`, read on 2026-09-21 04:04 UTC,
-under two minutes after the merge; `/readiness` 200. The frontend (`https://flow-mes.vercel.app`)
-answers 200; `/ai/status`, `/work-orders?limit=400`, `/iot/telemetry?limit=1` and
-`/notifications?unread=true&limit=1` refuse an unauthenticated call with 401, and at
-`a9bbd84` a cross-origin request from the frontend's origin got
-`access-control-expose-headers: X-Total-Count`, so the browser may read the
-count; `POST /copilot/ask` sent a valid `{question, thread}` body was refused
-with 401 at `ba06970`. Production has no
+**Master SHA:** `59fabf0` (#679).
+**Production SHA:** `59fabf0`, verified live, not assumed:
+`{"status":"ok","database":"ok","schema":"ok","version":"59fabf0"}` from
+`https://flowmes-production.up.railway.app/health`, read on 2026-09-21 05:52 UTC,
+under a minute after the merge; `/readiness` 200. The frontend (`https://flow-mes.vercel.app`)
+answers 200; `/ai/status`, `/oem/fleet?limit=1`, `/oem/claims?status=Expired`,
+`/work-orders?limit=400` and `/notifications?unread=true&limit=1` refuse an
+unauthenticated call with 401, and at `a9bbd84` a cross-origin request from the
+frontend's origin got `access-control-expose-headers: X-Total-Count`, so the
+browser may read the count; `POST /copilot/ask` sent a valid `{question, thread}`
+body was refused with 401 at `ba06970`. Production has no
 GPU and no `AMP_LLM_BASE_URL`, and no self-hosted model is currently adopted
 anywhere (the committed record is the failing one, below), so the Copilot
 answers from AMP's own engine everywhere.
@@ -122,6 +122,27 @@ rendered — **#675** drops the fetch: 46 requests, 159 queries, flat. Then the
 page can grow: every notice offers "Show the next 200" (`lib/paged-list.ts`:
 the depth a user asks for is carried by every later poll round, capped at the
 backend's 2,000 and at the tenant's total) — #676 `3481712`. #675 is `8f71358`.
+Then the HTTP cost of the header was measured with `loadtest.py`: a `count(*)`
+on every request cost the paged lists 1.3–1.9× `xfloor` at every scale, so
+`paging.page()` sets a short page's exact total for free and caches a full
+page's count per tenant and query for the 3 s poll interval — re-measured, no
+regression at any scale, zero errors (#678 `404d1d6`; `docs/PERFORMANCE.md`,
+the RC record's item 9, `test_lists_are_pages.py` §8). **CI then found what a
+3 s cache costs in honesty**: on #679 the migration gate's OEM audit read a
+fleet page as `{"total": 1, "machines": []}` right after an unassignment, and
+the backend job's AERON demo read `{"total": 0, "machines": [the machine]}`
+right after a registration — a stale count is a disclosure, however small. So
+**a cached total forgets on write** (#680 `46c2bce`): every commit forgets the
+totals of the tables it touched (ORM writes at `after_flush`, bulk UPDATE /
+DELETE at `do_orm_execute`), the key no longer renders bound values into SQL
+(PostgreSQL's driver refuses a datetime literal), and both audits pass —
+`test_lists_are_pages.py` §9, 24/24 mutations. On top of that, **the OEM fleet
+and claims pages come from SQL** (#679 `59fabf0`): `/oem/fleet` had paged its
+response but hydrated the whole fleet — 48.7 ms for a 100-row page at 10,000
+machines on this laptop — and now takes OFFSET/LIMIT with the cached count:
+4.4 ms, flat with fleet size; the claims list filters its derived state
+(Pending past its deadline reads Expired) in SQL; `test_oem_fleet_pages_in_sql.py`,
+`mutate_oem_sharing.py` 32/32, `oem_perf.py` re-run in the two OEM documents.
 
 **Nothing else is awaiting review.** What a next session would do first, in order:
 (1) the OEM journey re-check against a real OEM's edge agent is still simulated

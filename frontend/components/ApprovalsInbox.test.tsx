@@ -16,6 +16,9 @@ const apiPost = vi.fn();
 
 vi.mock("../lib/api", () => ({
   apiGet: (p: string) => apiGet(p),
+  // The unread KPI asks for the tenant-wide count (ADR-0036); these tests are
+  // about the queue, so the count is simply "not known" here.
+  apiGetWithTotal: (p: string) => apiGet(p).then((data: unknown) => ({ data, total: null })),
   apiPost: (p: string, b: unknown) => apiPost(p, b),
   apiPatch: vi.fn(),
 }));

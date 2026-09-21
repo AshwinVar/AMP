@@ -26,11 +26,14 @@ it has no reason to hold.
 """
 import secrets
 
-from fastapi import APIRouter, Depends, HTTPException
+from typing import Optional
+
+from fastapi import APIRouter, Depends, HTTPException, Response
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 import models
+import paging
 import oem_auth
 from auth import require_roles
 from database import SessionLocal
@@ -93,14 +96,15 @@ def _as_dict(org):
 
 
 @router.get("")
-def list_oems(db: Session = Depends(_get_db),
+def list_oems(response: Response = None, limit: Optional[int] = None, offset: int = 0,
+              db: Session = Depends(_get_db),
               current_user: dict = Depends(require_roles(["Admin"]))):
     """Every manufacturer on the platform. Founder-only, and deliberately NOT
     data-shaped-by-scope like the customer registry: a manufacturer has no
     business reading the list of manufacturers, so it is refused outright."""
     _require_founder(current_user)
-    rows = db.query(models.OemOrganization).order_by(
-        models.OemOrganization.id.desc()).limit(300).all()
+    rows = paging.page(response, db.query(models.OemOrganization).order_by(
+        models.OemOrganization.id.desc()), 300, limit, offset)
     out = []
     for org in rows:
         entry = _as_dict(org)

@@ -7,13 +7,14 @@ Work orders (list / create / update / delete). The behaviour that matters here:
 Peeled out of main.py per ADR-0009.
 """
 from datetime import datetime
-from typing import List
+from typing import List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Response
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 import models
+import paging
 import schemas
 from auth import get_current_user, require_roles
 from database import SessionLocal
@@ -33,8 +34,9 @@ router = APIRouter(prefix="/work-orders", tags=["Work Orders"])
 
 
 @router.get("", response_model=List[schemas.WorkOrderResponse])
-def get_work_orders(db: Session = Depends(_get_db), current_user: dict = Depends(get_current_user)):
-    return db.query(models.WorkOrder).order_by(models.WorkOrder.id.desc()).limit(200).all()
+def get_work_orders(response: Response = None, limit: Optional[int] = None, offset: int = 0,
+                    db: Session = Depends(_get_db), current_user: dict = Depends(get_current_user)):
+    return paging.page(response, db.query(models.WorkOrder).order_by(models.WorkOrder.id.desc()), 200, limit, offset)
 
 
 @router.post("", response_model=schemas.WorkOrderResponse)

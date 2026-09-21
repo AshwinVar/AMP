@@ -30,6 +30,7 @@ from sqlalchemy.pool import StaticPool  # noqa: E402
 
 import inventory_routes as ir  # noqa: E402
 import models  # noqa: E402
+import paging  # noqa: E402
 import tenancy  # noqa: E402
 from database import Base  # noqa: E402
 
@@ -76,7 +77,7 @@ def items(db, tenant, **kw):
         rows = ir.get_inventory_items(resp, kw.get("limit"), kw.get("offset", 0), db, {"tenant": tenant, "role": "Admin"})
     finally:
         tenancy.reset_current_tenant(tok)
-    return rows, resp.headers.get(ir.TOTAL_HEADER)
+    return rows, resp.headers.get(paging.TOTAL_HEADER)
 
 
 def transactions(db, tenant, **kw):
@@ -87,7 +88,7 @@ def transactions(db, tenant, **kw):
                                              {"tenant": tenant, "role": "Admin"})
     finally:
         tenancy.reset_current_tenant(tok)
-    return rows, resp.headers.get(ir.TOTAL_HEADER)
+    return rows, resp.headers.get(paging.TOTAL_HEADER)
 
 
 def main():
@@ -117,9 +118,9 @@ def main():
     seen = set()
     off = 0
     pages = 0
-    expected_pages = -(-A_ITEMS // ir.MAX_PAGE)
+    expected_pages = -(-A_ITEMS // paging.MAX_PAGE)
     for pages in range(1, expected_pages + 3):
-        page, _ = items(db, A, limit=ir.MAX_PAGE, offset=off)
+        page, _ = items(db, A, limit=paging.MAX_PAGE, offset=off)
         if not page:
             break
         seen |= {r.id for r in page}
@@ -127,7 +128,7 @@ def main():
     check(f"paging to the end reaches every one of the {A_ITEMS} items in {expected_pages} pages",
           len(seen) == A_ITEMS and pages == expected_pages + 1, f"{len(seen)} items over {pages - 1} pages")
     big, _ = items(db, A, limit=100000)
-    check(f"a limit past MAX_PAGE ({ir.MAX_PAGE}) is clamped, even for a direct caller", len(big) == ir.MAX_PAGE == 2000, str(len(big)))
+    check(f"a limit past MAX_PAGE ({paging.MAX_PAGE}) is clamped, even for a direct caller", len(big) == paging.MAX_PAGE == 2000, str(len(big)))
     tiny, _ = items(db, A, limit=0)
     check("a limit of 0 is treated as 1, not as everything", len(tiny) == 1, str(len(tiny)))
     neg, _ = items(db, A, limit=10, offset=-50)
@@ -152,7 +153,7 @@ def main():
     import main  # noqa: E402  (registers the app and its middleware)
     cors = [m for m in main.app.user_middleware if m.cls.__name__ == "CORSMiddleware"]
     exposed = list(cors[0].kwargs.get("expose_headers") or []) if cors else []
-    check(f"CORS exposes {ir.TOTAL_HEADER} to the browser", ir.TOTAL_HEADER in exposed, str(exposed))
+    check(f"CORS exposes {paging.TOTAL_HEADER} to the browser", paging.TOTAL_HEADER in exposed, str(exposed))
 
     db.close()
     print()

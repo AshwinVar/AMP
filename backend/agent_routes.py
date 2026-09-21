@@ -8,13 +8,16 @@ approve/reject) advance an AgentAction under human oversight (ADR-0005).
 """
 from datetime import datetime
 
-from fastapi import APIRouter, Depends, HTTPException
+from typing import Optional
+
+from fastapi import APIRouter, Depends, HTTPException, Response
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 import ai
 import approvals
 import models
+import paging
 import schemas
 from auth import get_current_user, require_roles
 from database import SessionLocal
@@ -104,21 +107,21 @@ router = APIRouter(tags=["Agents"])
 
 
 @router.get("/agent-actions")
-def list_agent_actions(status: str = None, limit: int = AGENT_ACTIONS_PAGE, offset: int = 0,
+def list_agent_actions(response: Response = None, status: str = None,
+                       limit: int = AGENT_ACTIONS_PAGE, offset: int = 0,
                        db: Session = Depends(_get_db), current_user: dict = Depends(get_current_user)):
     # Agent activity log + approval queue (ADR-0005), tenant-scoped, newest first,
     # one page at a time. Measured before paging: a held Draft PO whose proposal
     # was older than 300 newer Proposed rows never appeared here, while its own
     # PATCH answered 409 "decide it in Approvals" -- locked with no way out.
     # id breaks created_at ties, so consecutive pages neither repeat nor skip.
-    limit = max(1, min(limit, AGENT_ACTIONS_PAGE))
-    offset = max(0, offset)
     tenant = request_tenant(current_user)
     q = db.query(models.AgentAction).filter(models.AgentAction.tenant_code == tenant)
     if status:
         q = q.filter(models.AgentAction.status == status)
-    rows = (q.order_by(models.AgentAction.created_at.desc(), models.AgentAction.id.desc())
-            .offset(offset).limit(limit).all())
+    rows = paging.page(response,
+                       q.order_by(models.AgentAction.created_at.desc(), models.AgentAction.id.desc()),
+                       AGENT_ACTIONS_PAGE, limit, offset, max_page=AGENT_ACTIONS_PAGE)
     now = datetime.utcnow()
     return [_agent_action_dict(a, now) for a in rows]
 

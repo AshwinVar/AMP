@@ -10,9 +10,9 @@ test_orders_export.py).
 import csv
 import io
 from datetime import datetime
-from typing import List
+from typing import List, Optional
 
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, HTTPException, Response, UploadFile
 from sqlalchemy import case, func, or_
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -20,6 +20,7 @@ from sqlalchemy.orm import Session
 import ai.supply
 import approvals
 import models
+import paging
 from csv_safe import import_row_error, read_upload_text
 import schemas
 import stock_events
@@ -64,15 +65,15 @@ def export_customer_orders(db: Session = Depends(_get_db), current_user: dict = 
 
 @router.get("/customer-orders", response_model=List[schemas.CustomerOrderResponse])
 def get_customer_orders(
+    response: Response = None,
+    limit: Optional[int] = None,
+    offset: int = 0,
     db: Session = Depends(_get_db),
     current_user: dict = Depends(get_current_user),
 ):
-    return (
-        db.query(models.CustomerOrder)
-        .order_by(models.CustomerOrder.id.desc())
-        .limit(500)
-        .all()
-    )
+    return paging.page(response,
+                       db.query(models.CustomerOrder).order_by(models.CustomerOrder.id.desc()),
+                       500, limit, offset)
 
 
 @router.post("/customer-orders", response_model=schemas.CustomerOrderResponse)
@@ -411,10 +412,13 @@ def generate_late_order_escalations(
 
 @router.get("/suppliers", response_model=List[schemas.SupplierResponse])
 def get_suppliers(
+    response: Response = None,
+    limit: Optional[int] = None,
+    offset: int = 0,
     db: Session = Depends(_get_db),
     current_user: dict = Depends(get_current_user),
 ):
-    return db.query(models.Supplier).order_by(models.Supplier.id.desc()).limit(500).all()
+    return paging.page(response, db.query(models.Supplier).order_by(models.Supplier.id.desc()), 500, limit, offset)
 
 
 @router.post("/suppliers", response_model=schemas.SupplierResponse)
@@ -474,10 +478,13 @@ def delete_supplier(
 
 @router.get("/purchase-orders", response_model=List[schemas.PurchaseOrderResponse])
 def get_purchase_orders(
+    response: Response = None,
+    limit: Optional[int] = None,
+    offset: int = 0,
     db: Session = Depends(_get_db),
     current_user: dict = Depends(get_current_user),
 ):
-    rows = db.query(models.PurchaseOrder).order_by(models.PurchaseOrder.id.desc()).limit(500).all()
+    rows = paging.page(response, db.query(models.PurchaseOrder).order_by(models.PurchaseOrder.id.desc()), 500, limit, offset)
     return approvals.annotate_awaiting_decision(db, models.PurchaseOrder, rows)
 
 

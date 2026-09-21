@@ -5,14 +5,15 @@ delete) and a costing analytics summary (cost per good unit, spend by type and
 department). Fully self-contained — only CostRecord / PurchaseOrder /
 ProductionRecord. Peeled out of main.py per ADR-0009 (register(app) pattern).
 """
-from typing import List
+from typing import List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Response
 from sqlalchemy import func
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 import models
+import paging
 import schemas
 from auth import get_current_user, require_roles
 from database import SessionLocal
@@ -30,8 +31,9 @@ router = APIRouter(tags=["Costing"])
 
 
 @router.get("/cost-records", response_model=List[schemas.CostRecordResponse])
-def get_cost_records(db: Session = Depends(_get_db), current_user: dict = Depends(get_current_user)):
-    return db.query(models.CostRecord).order_by(models.CostRecord.id.desc()).limit(500).all()
+def get_cost_records(response: Response = None, limit: Optional[int] = None, offset: int = 0,
+                     db: Session = Depends(_get_db), current_user: dict = Depends(get_current_user)):
+    return paging.page(response, db.query(models.CostRecord).order_by(models.CostRecord.id.desc()), 500, limit, offset)
 
 
 @router.post("/cost-records", response_model=schemas.CostRecordResponse)

@@ -239,7 +239,7 @@ That is what `check-drift.mjs` is for. No k6, no server, no dependencies:
 
 ```
 $ node load/check-drift.mjs
-load/endpoints.js matches fetchAll: 46 endpoints, same order.
+load/endpoints.js matches fetchAll: 47 endpoints, same order.
 ```
 
 It exits non-zero with a diff when the two disagree, so it is cheap enough to be

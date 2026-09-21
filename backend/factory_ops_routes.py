@@ -7,9 +7,9 @@ with a "generate escalations/notifications" helper endpoint. Peeled out of
 main.py per ADR-0009. Plain CRUD; no event-bus coupling.
 """
 from datetime import datetime, timedelta
-from typing import List
+from typing import List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Response
 from sqlalchemy import func, or_
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -17,6 +17,7 @@ from sqlalchemy.orm import Session
 import ai.escalations
 import approvals
 import models
+import paging
 import schemas
 from auth import get_current_user, require_roles
 from database import SessionLocal
@@ -35,15 +36,14 @@ router = APIRouter(tags=["Factory Ops"])
 
 @router.get("/escalations", response_model=List[schemas.EscalationResponse])
 def get_escalations(
+    response: Response = None,
+    limit: Optional[int] = None,
+    offset: int = 0,
     db: Session = Depends(_get_db),
     current_user: dict = Depends(get_current_user),
 ):
-    rows = (
-        db.query(models.Escalation)
-        .order_by(models.Escalation.id.desc())
-        .limit(300)
-        .all()
-    )
+    rows = paging.page(response, db.query(models.Escalation).order_by(models.Escalation.id.desc()),
+                       300, limit, offset)
     return approvals.annotate_awaiting_decision(db, models.Escalation, rows)
 
 
@@ -249,10 +249,13 @@ def auto_generate_factory_layout(
 
 @router.get("/documents", response_model=List[schemas.ComplianceDocumentResponse])
 def get_documents(
+    response: Response = None,
+    limit: Optional[int] = None,
+    offset: int = 0,
     db: Session = Depends(_get_db),
     current_user: dict = Depends(get_current_user),
 ):
-    return db.query(models.ComplianceDocument).order_by(models.ComplianceDocument.id.desc()).limit(500).all()
+    return paging.page(response, db.query(models.ComplianceDocument).order_by(models.ComplianceDocument.id.desc()), 500, limit, offset)
 
 
 @router.post("/documents", response_model=schemas.ComplianceDocumentResponse)
@@ -389,10 +392,13 @@ def generate_document_review_escalations(
 
 @router.get("/maintenance/tasks", response_model=List[schemas.MaintenanceTaskResponse])
 def get_maintenance_tasks(
+    response: Response = None,
+    limit: Optional[int] = None,
+    offset: int = 0,
     db: Session = Depends(_get_db),
     current_user: dict = Depends(get_current_user),
 ):
-    rows = db.query(models.MaintenanceTask).order_by(models.MaintenanceTask.id.desc()).limit(500).all()
+    rows = paging.page(response, db.query(models.MaintenanceTask).order_by(models.MaintenanceTask.id.desc()), 500, limit, offset)
     return approvals.annotate_awaiting_decision(db, models.MaintenanceTask, rows)
 
 
@@ -609,8 +615,19 @@ def generate_oee_recovery_escalation(
 
 
 @router.get("/notifications", response_model=List[schemas.NotificationResponse])
-def get_notifications(db: Session = Depends(_get_db), current_user: dict = Depends(get_current_user)):
-    return db.query(models.Notification).order_by(models.Notification.id.desc()).limit(500).all()
+def get_notifications(response: Response = None, limit: Optional[int] = None, offset: int = 0,
+                      unread: bool = False,
+                      db: Session = Depends(_get_db), current_user: dict = Depends(get_current_user)):
+    q = db.query(models.Notification)
+    if unread:
+        # "Unread" = every notification NOT explicitly Read, NULL included -- the
+        # convention mark_all_notifications_read and the generator's dedup apply
+        # below. With ?unread=true&limit=1 the X-Total-Count header IS the unread
+        # count over every notification the tenant has, not over the newest page
+        # (the screen used to count unread rows in the newest 500 and call that
+        # the number).
+        q = q.filter(or_(models.Notification.status.is_(None), models.Notification.status != "Read"))
+    return paging.page(response, q.order_by(models.Notification.id.desc()), 500, limit, offset)
 
 
 @router.post("/notifications", response_model=schemas.NotificationResponse)

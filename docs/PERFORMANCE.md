@@ -439,9 +439,11 @@ entirely deterministic. From `frontend/app/dashboard/page.tsx`:
 usePolling(fetchAll, 3000, Boolean(getToken()));
 ```
 
-`fetchAll` issues **46 requests**: three awaited together (`/machines`,
-`/downtime-logs`, `/shifts` — these gate first paint) and 43 more as one
-`Promise.allSettled`. Every 3 seconds. For as long as the tab is open.
+`fetchAll` issues **47 requests**: three awaited together (`/machines`,
+`/downtime-logs`, `/shifts` — these gate first paint) and 44 more as one
+`Promise.allSettled` (the 44th, since ADR-0036, is the tenant-wide unread
+notification count: `/notifications?unread=true&limit=1`, one row and a
+`SELECT count(*)`). Every 3 seconds. For as long as the tab is open.
 
 Two mitigations already landed and both matter to how you model this:
 
@@ -461,7 +463,7 @@ So, per open tab, in steady state:
 
 | | Requests | Cadence | Per minute |
 | --- | ---: | --- | ---: |
-| `fetchAll` round | 46 | every 3s | **920** |
+| `fetchAll` round | 47 | every 3s | **940** |
 | Mounted snapshot cards | 0–34 | mostly every 30s | 0–~70 |
 
 The round dominates, overwhelmingly, and it does not vary with the view. Three

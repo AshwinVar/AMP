@@ -5,13 +5,14 @@ schedules, each plain CRUD (list / create / update / delete). Tenant scoping is
 handled by the ORM chokepoint (ADR-0002), so these need no explicit tenant
 argument. Peeled out of main.py per ADR-0009.
 """
-from typing import List
+from typing import List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Response
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 import models
+import paging
 import schemas
 from auth import get_current_user, require_roles
 from database import SessionLocal
@@ -29,8 +30,9 @@ router = APIRouter(tags=["Production Planning"])
 
 
 @router.get("/production-plans", response_model=List[schemas.ProductionPlanResponse])
-def get_production_plans(db: Session = Depends(_get_db), current_user: dict = Depends(get_current_user)):
-    return db.query(models.ProductionPlan).order_by(models.ProductionPlan.id.desc()).limit(200).all()
+def get_production_plans(response: Response = None, limit: Optional[int] = None, offset: int = 0,
+                         db: Session = Depends(_get_db), current_user: dict = Depends(get_current_user)):
+    return paging.page(response, db.query(models.ProductionPlan).order_by(models.ProductionPlan.id.desc()), 200, limit, offset)
 
 
 @router.post("/production-plans", response_model=schemas.ProductionPlanResponse)
@@ -138,10 +140,13 @@ def delete_production_plan(
 
 @router.get("/production-schedules", response_model=List[schemas.ProductionScheduleResponse])
 def get_production_schedules(
+    response: Response = None,
+    limit: Optional[int] = None,
+    offset: int = 0,
     db: Session = Depends(_get_db),
     current_user: dict = Depends(get_current_user),
 ):
-    return db.query(models.ProductionSchedule).order_by(models.ProductionSchedule.id.desc()).limit(500).all()
+    return paging.page(response, db.query(models.ProductionSchedule).order_by(models.ProductionSchedule.id.desc()), 500, limit, offset)
 
 
 @router.post("/production-schedules", response_model=schemas.ProductionScheduleResponse)

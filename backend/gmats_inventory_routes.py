@@ -27,11 +27,14 @@ from logging_config import get_logger
 log = get_logger(__name__)
 from datetime import datetime
 
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
+from typing import Optional
+
+from fastapi import APIRouter, Depends, File, HTTPException, Response, UploadFile
 from sqlalchemy.orm import Session
 
 import doc_numbers
 import models
+import paging
 import tenancy
 from payload_fields import int_cell, int_field, str_field
 from csv_safe import read_upload_text
@@ -333,17 +336,20 @@ def gmats_resolve(name: str, tenant: str = "GMATS", db: Session = Depends(get_db
 
 
 @router.get("/proformas")
-def gmats_proformas(tenant: str = "GMATS", db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
+def gmats_proformas(response: Response = None, tenant: str = "GMATS",
+                    limit: Optional[int] = None, offset: int = 0,
+                    db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
     tenant = _effective_tenant(current_user, tenant)
     # Bound the window (rule-4): proformas grow without limit as the tenant trades,
     # and this list is polled — yet it was the one transactional list endpoint with
     # no cap, where every sibling (/escalations, /operator/executions, /iot/telemetry,
     # …) already takes the newest .limit(300/500). Take the newest 500 (id desc), so a
     # long-lived tenant's oldest proformas can't turn the poll into a full-table scan.
-    rows = (db.query(models.GmatsProforma)
-            .filter(models.GmatsProforma.tenant_code == tenant)
-            .order_by(models.GmatsProforma.id.desc())
-            .limit(500).all())
+    rows = paging.page(response,
+                       db.query(models.GmatsProforma)
+                       .filter(models.GmatsProforma.tenant_code == tenant)
+                       .order_by(models.GmatsProforma.id.desc()),
+                       500, limit, offset)
     # Resolve line item names from THIS tenant's items only. GmatsItem is not in
     # tenancy.SCOPED_MODELS, so an unfiltered .all() loads every company's items
     # into memory (an unbounded cross-tenant scan) and would leak a foreign
@@ -480,15 +486,18 @@ def gmats_cancel_proforma(pid: int, db: Session = Depends(get_db), current_user:
 
 
 @router.get("/invoices")
-def gmats_invoices(tenant: str = "GMATS", db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
+def gmats_invoices(response: Response = None, tenant: str = "GMATS",
+                   limit: Optional[int] = None, offset: int = 0,
+                   db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
     tenant = _effective_tenant(current_user, tenant)
     # Bound the window (rule-4): invoices grow without limit and this list is polled;
     # take the newest 500 (id desc), matching /gmats/proformas and every other
     # transactional list endpoint that already caps rather than scanning the table.
-    rows = (db.query(models.GmatsInvoice)
-            .filter(models.GmatsInvoice.tenant_code == tenant)
-            .order_by(models.GmatsInvoice.id.desc())
-            .limit(500).all())
+    rows = paging.page(response,
+                       db.query(models.GmatsInvoice)
+                       .filter(models.GmatsInvoice.tenant_code == tenant)
+                       .order_by(models.GmatsInvoice.id.desc()),
+                       500, limit, offset)
     return [
         {"id": v.id, "invoice_no": v.invoice_no, "proforma_id": v.proforma_id,
          "customer_name": v.customer_name, "status": v.status, "created_at": v.created_at}
@@ -551,14 +560,17 @@ def gmats_generate_invoice(pid: int, db: Session = Depends(get_db), current_user
 
 
 @router.get("/min")
-def gmats_min_list(tenant: str = "GMATS", db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
+def gmats_min_list(response: Response = None, tenant: str = "GMATS",
+                   limit: Optional[int] = None, offset: int = 0,
+                   db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
     tenant = _effective_tenant(current_user, tenant)
     # Bound the window (rule-4): MINs grow without limit and this list is polled;
     # take the newest 500 (id desc), matching /gmats/proformas and the sibling lists.
-    rows = (db.query(models.GmatsMIN)
-            .filter(models.GmatsMIN.tenant_code == tenant)
-            .order_by(models.GmatsMIN.id.desc())
-            .limit(500).all())
+    rows = paging.page(response,
+                       db.query(models.GmatsMIN)
+                       .filter(models.GmatsMIN.tenant_code == tenant)
+                       .order_by(models.GmatsMIN.id.desc()),
+                       500, limit, offset)
     # Same tenant-scoping as the proforma listing: only resolve names from this
     # tenant's items, never every company's (see gmats_proformas above).
     items = {

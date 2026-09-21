@@ -4,13 +4,14 @@ The edge/OT-facing surface: IoT telemetry ingest + read, industrial devices,
 their signals, and PLC signal mappings. Plain CRUD; tenant scoping is handled by
 the ORM chokepoint (ADR-0002). Peeled out of main.py per ADR-0009.
 """
-from typing import List
+from typing import List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Response
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 import models
+import paging
 import schemas
 import telemetry_coverage
 from auth import get_current_user, require_roles
@@ -30,8 +31,9 @@ router = APIRouter(tags=["Industrial IoT"])
 
 
 @router.get("/iot/telemetry", response_model=List[schemas.IoTTelemetryResponse])
-def get_iot_telemetry(db: Session = Depends(_get_db), current_user: dict = Depends(get_current_user)):
-    return db.query(models.IoTTelemetry).order_by(models.IoTTelemetry.id.desc()).limit(500).all()
+def get_iot_telemetry(response: Response = None, limit: Optional[int] = None, offset: int = 0,
+                      db: Session = Depends(_get_db), current_user: dict = Depends(get_current_user)):
+    return paging.page(response, db.query(models.IoTTelemetry).order_by(models.IoTTelemetry.id.desc()), 500, limit, offset)
 
 
 @router.post("/iot/telemetry", response_model=schemas.IoTTelemetryResponse)
@@ -76,8 +78,9 @@ def create_iot_telemetry(telemetry: schemas.IoTTelemetryCreate, db: Session = De
 
 
 @router.get("/industrial/devices", response_model=List[schemas.IndustrialDeviceResponse])
-def get_industrial_devices(db: Session = Depends(_get_db), current_user: dict = Depends(get_current_user)):
-    return db.query(models.IndustrialDevice).order_by(models.IndustrialDevice.id.desc()).limit(300).all()
+def get_industrial_devices(response: Response = None, limit: Optional[int] = None, offset: int = 0,
+                           db: Session = Depends(_get_db), current_user: dict = Depends(get_current_user)):
+    return paging.page(response, db.query(models.IndustrialDevice).order_by(models.IndustrialDevice.id.desc()), 300, limit, offset)
 
 
 @router.post("/industrial/devices", response_model=schemas.IndustrialDeviceResponse)
@@ -109,8 +112,9 @@ def update_industrial_device(device_id: int, payload: schemas.IndustrialDeviceUp
 
 
 @router.get("/industrial/signals", response_model=List[schemas.IndustrialSignalResponse])
-def get_industrial_signals(db: Session = Depends(_get_db), current_user: dict = Depends(get_current_user)):
-    return db.query(models.IndustrialSignal).order_by(models.IndustrialSignal.id.desc()).limit(500).all()
+def get_industrial_signals(response: Response = None, limit: Optional[int] = None, offset: int = 0,
+                           db: Session = Depends(_get_db), current_user: dict = Depends(get_current_user)):
+    return paging.page(response, db.query(models.IndustrialSignal).order_by(models.IndustrialSignal.id.desc()), 500, limit, offset)
 
 
 @router.post("/industrial/signals", response_model=schemas.IndustrialSignalResponse)
@@ -157,8 +161,9 @@ def create_industrial_signal(signal: schemas.IndustrialSignalCreate, db: Session
 
 
 @router.get("/industrial/mappings", response_model=List[schemas.PlcSignalMappingResponse])
-def get_plc_signal_mappings(db: Session = Depends(_get_db), current_user: dict = Depends(get_current_user)):
-    return db.query(models.PlcSignalMapping).order_by(models.PlcSignalMapping.id.desc()).limit(300).all()
+def get_plc_signal_mappings(response: Response = None, limit: Optional[int] = None, offset: int = 0,
+                            db: Session = Depends(_get_db), current_user: dict = Depends(get_current_user)):
+    return paging.page(response, db.query(models.PlcSignalMapping).order_by(models.PlcSignalMapping.id.desc()), 300, limit, offset)
 
 
 @router.post("/industrial/mappings", response_model=schemas.PlcSignalMappingResponse)

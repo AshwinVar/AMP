@@ -83,6 +83,10 @@ export const DASHBOARD_OPTIONAL = [
   "/reports",
   "/analytics/system-health",
   "/analytics/final-executive-summary",
+  // The tenant-wide unread count (ADR-0036): one row, and X-Total-Count is
+  // the number. Issued with the round so the Notification Center never
+  // counts unread rows in a page and calls that the figure.
+  "/notifications?unread=true&limit=1",
 ];
 
 /** One poll round, in the order the browser issues it. */

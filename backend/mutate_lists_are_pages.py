@@ -1,44 +1,54 @@
-"""Mutation harness for the paged inventory lists (/inventory/items, /inventory/transactions).
+"""Mutation harness for "a list is a page, and says so" (paging.py, ADR-0036).
 
-A page that cannot be told from a complete list is the defect these endpoints
-had: the newest 500 items, silently. Each line that ends it is one a tidy
+A page that cannot be told from a complete list is the defect every capped
+list had: the newest 500 items, silently. Each line that ends it is one a tidy
 refactor could drop without any passing case noticing on its own -- the cap,
-the offset, the clamp, the total header, the total being the whole count and
-not the page's, the two defaults, and the CORS line that lets a browser read
-the header at all.
+the offset, the clamp, a limit of 0, an endpoint's own smaller ceiling, the
+total header, the total being the whole count and not the page's, the two
+inventory defaults, the CORS line that lets a browser read the header at all,
+a handler that quietly goes back to a raw .limit().all(), and the unread
+filter that makes the header an honest unread count.
 
-Run: DATABASE_URL="sqlite:///./ci.db" python backend/mutate_inventory_paging.py
+Run: DATABASE_URL="sqlite:///./ci.db" python backend/mutate_lists_are_pages.py
 """
 import io
 import os
 import subprocess
 import sys
 
-SUITES = ["test_inventory_list_paging.py", "test_api_smoke.py"]
-SUITE_TIMEOUT = 600  # seconds; both suites finish in well under a minute
+SUITES = ["test_lists_are_pages.py", "test_inventory_list_paging.py",
+          "test_enterprise_inventory_list_paging.py", "test_api_smoke.py"]
+SUITE_TIMEOUT = 600  # seconds; the four suites finish in well under a minute
 
+P = "paging.py"
 I = "inventory_routes.py"
 M = "main.py"
+W = "work_orders_routes.py"
+F = "factory_ops_routes.py"
+E = "enterprise_inventory_routes.py"
 
 MUTATIONS = [
-    ("the cap is dropped: every row comes back", I,
+    ("the cap is dropped: every row comes back", P,
      "    return query.offset(offset).limit(limit).all()",
      "    return query.offset(offset).all()"),
-    ("the offset is ignored: every page is the first", I,
+    ("the offset is ignored: every page is the first", P,
      "    return query.offset(offset).limit(limit).all()",
      "    return query.limit(limit).all()"),
-    ("the clamp is dropped: a direct caller may ask for everything", I,
-     "    limit = page_default if limit is None else max(1, min(int(limit), MAX_PAGE))",
-     "    limit = page_default if limit is None else max(1, int(limit))"),
-    ("a limit of 0 means everything", I,
-     "    limit = page_default if limit is None else max(1, min(int(limit), MAX_PAGE))",
-     "    limit = page_default if limit is None else min(int(limit), MAX_PAGE) or None"),
-    ("the total header is not sent", I,
-     "    response.headers[TOTAL_HEADER] = str(query.order_by(None).count())",
-     "    pass"),
-    ("the total is the page's count, not the tenant's", I,
-     "    response.headers[TOTAL_HEADER] = str(query.order_by(None).count())",
-     "    response.headers[TOTAL_HEADER] = str(query.limit(limit).count())"),
+    ("the clamp is dropped: a direct caller may ask for everything", P,
+     "    return max(1, min(limit, max_page)), max(0, _int(offset, 0))",
+     "    return max(1, limit), max(0, _int(offset, 0))"),
+    ("a limit of 0 means everything", P,
+     "    return max(1, min(limit, max_page)), max(0, _int(offset, 0))",
+     "    return (min(limit, max_page) or None), max(0, _int(offset, 0))"),
+    ("an endpoint's own smaller ceiling is ignored: every list caps at MAX_PAGE", P,
+     "    return max(1, min(limit, max_page)), max(0, _int(offset, 0))",
+     "    return max(1, min(limit, MAX_PAGE)), max(0, _int(offset, 0))"),
+    ("the total header is not sent", P,
+     "        response.headers[TOTAL_HEADER] = str(query.order_by(None).count())",
+     "        pass"),
+    ("the total is the page's count, not the tenant's", P,
+     "        response.headers[TOTAL_HEADER] = str(query.order_by(None).count())",
+     "        response.headers[TOTAL_HEADER] = str(query.limit(limit).count())"),
     ("the items default widens to everything", I,
      "ITEMS_PAGE = 500",
      "ITEMS_PAGE = 100000"),
@@ -48,6 +58,23 @@ MUTATIONS = [
     ("the count header is not exposed to browsers: the screen can never read it", M,
      '    expose_headers=["X-Total-Count"],',
      '    expose_headers=[],'),
+    ("a request's response is treated as a direct call: no header on the wire", P,
+     "    if response is not None:",
+     "    if response is None:"),
+    ("a handler quietly goes back to a raw .limit().all(): the guard must see it", W,
+     "    return paging.page(response, db.query(models.WorkOrder).order_by(models.WorkOrder.id.desc()), 200, limit, offset)",
+     "    return db.query(models.WorkOrder).order_by(models.WorkOrder.id.desc()).limit(200).all()"),
+    ("the unread filter is dropped: the header counts every notification", F,
+     '        q = q.filter(or_(models.Notification.status.is_(None), models.Notification.status != "Read"))',
+     '        pass'),
+    ("a NULL status stops counting as unread", F,
+     '        q = q.filter(or_(models.Notification.status.is_(None), models.Notification.status != "Read"))',
+     '        q = q.filter(models.Notification.status != "Read")'),
+    ("the enterprise lists lose their own ceiling of 200", E,
+     "    rows = paging.page(response, db.query(models.Remnant).order_by(models.Remnant.id.desc()),\n"
+     "                       _PAGE_DEFAULT, limit, offset, max_page=_PAGE_MAX)",
+     "    rows = paging.page(response, db.query(models.Remnant).order_by(models.Remnant.id.desc()),\n"
+     "                       _PAGE_DEFAULT, limit, offset)"),
 ]
 
 

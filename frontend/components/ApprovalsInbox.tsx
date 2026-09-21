@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { apiGet, apiPost, apiPatch } from "../lib/api";
+import { apiGet, apiGetWithTotal, apiPost, apiPatch } from "../lib/api";
 import { parseApiDate } from "../lib/apiDate";
 import {
   AGENT_ACTIONS_PAGE,
@@ -54,6 +54,11 @@ export default function ApprovalsInbox() {
   const [depth, setDepth] = useState(AGENT_ACTIONS_PAGE);
   const [more, setMore] = useState(false);
   const [notifs, setNotifs] = useState<Notif[]>([]);
+  // /notifications is a page of the newest 500 (ADR-0036); the unread KPI
+  // must count over ALL of them, so it asks for the tenant-wide unread total
+  // (X-Total-Count of ?unread=true&limit=1). null until known -- then, and
+  // only then, the page is what there is to count.
+  const [unreadTotal, setUnreadTotal] = useState<number | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -61,13 +66,15 @@ export default function ApprovalsInbox() {
     setLoading(true);
     setError(null);
     try {
-      const [a, n] = await Promise.all([
+      const [a, n, u] = await Promise.all([
         loadAgentActions((path) => apiGet<AgentAction[]>(path), "Proposed", depth),
         apiGet<Notif[]>("/notifications"),
+        apiGetWithTotal<Notif[]>("/notifications?unread=true&limit=1"),
       ]);
       setApprovals(a.rows);
       setMore(a.more);
       setNotifs(n);
+      setUnreadTotal(typeof u?.total === "number" ? u.total : null);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to load the inbox");
     } finally {
@@ -110,6 +117,7 @@ export default function ApprovalsInbox() {
   );
 
   const unread = notifs.filter((n) => n.status !== "Read");
+  const unreadCount = unreadTotal ?? unread.length;
 
   return (
     <section className="mt-8 space-y-6">
@@ -124,7 +132,7 @@ export default function ApprovalsInbox() {
       <div className="grid grid-cols-2 gap-4">
         <Kpi title="Pending approvals" value={more ? `${approvals.length}+` : approvals.length}
           highlight={approvals.length > 0} />
-        <Kpi title="Unread notifications" value={unread.length} />
+        <Kpi title="Unread notifications" value={unreadCount} />
       </div>
 
       {error && <div className="rounded-xl border border-red-500/40 bg-red-500/10 text-red-300 p-4">{error}</div>}

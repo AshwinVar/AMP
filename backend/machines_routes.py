@@ -12,13 +12,14 @@ exactly:
 """
 import csv
 import io
-from typing import List
+from typing import List, Optional
 
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, HTTPException, Response, UploadFile
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 import models
+import paging
 from csv_safe import import_row_error, read_upload_text
 import schemas
 from auth import get_current_user, require_roles
@@ -148,8 +149,9 @@ def update_machine_status(machine_id: int, status: str, db: Session = Depends(_g
 
 
 @router.get("/downtime-logs", response_model=List[schemas.DowntimeResponse])
-def get_downtime_logs(db: Session = Depends(_get_db), current_user: dict = Depends(get_current_user)):
-    return db.query(models.DowntimeLog).order_by(models.DowntimeLog.id.desc()).limit(100).all()
+def get_downtime_logs(response: Response = None, limit: Optional[int] = None, offset: int = 0,
+                      db: Session = Depends(_get_db), current_user: dict = Depends(get_current_user)):
+    return paging.page(response, db.query(models.DowntimeLog).order_by(models.DowntimeLog.id.desc()), 100, limit, offset)
 
 
 @router.post("/downtime-logs", response_model=schemas.DowntimeResponse)
@@ -176,8 +178,9 @@ def create_downtime_log(downtime: schemas.DowntimeCreate, db: Session = Depends(
 
 
 @router.get("/shifts", response_model=List[schemas.ShiftResponse])
-def get_shifts(db: Session = Depends(_get_db), current_user: dict = Depends(get_current_user)):
-    return db.query(models.ShiftData).order_by(models.ShiftData.id.desc()).limit(100).all()
+def get_shifts(response: Response = None, limit: Optional[int] = None, offset: int = 0,
+               db: Session = Depends(_get_db), current_user: dict = Depends(get_current_user)):
+    return paging.page(response, db.query(models.ShiftData).order_by(models.ShiftData.id.desc()), 100, limit, offset)
 
 
 @router.post("/shifts", response_model=schemas.ShiftResponse)
@@ -207,8 +210,9 @@ def create_shift(shift: schemas.ShiftCreate, db: Session = Depends(_get_db),
 
 
 @router.get("/production-records", response_model=List[schemas.ProductionResponse])
-def get_production_records(db: Session = Depends(_get_db), current_user: dict = Depends(get_current_user)):
-    return db.query(models.ProductionRecord).order_by(models.ProductionRecord.id.desc()).limit(100).all()
+def get_production_records(response: Response = None, limit: Optional[int] = None, offset: int = 0,
+                           db: Session = Depends(_get_db), current_user: dict = Depends(get_current_user)):
+    return paging.page(response, db.query(models.ProductionRecord).order_by(models.ProductionRecord.id.desc()), 100, limit, offset)
 
 
 @router.post("/production-records", response_model=schemas.ProductionResponse)
@@ -237,8 +241,9 @@ def create_production_record(record: schemas.ProductionCreate, db: Session = Dep
 
 
 @router.get("/machine-events")
-def get_machine_events(db: Session = Depends(_get_db), current_user: dict = Depends(get_current_user)):
-    return db.query(models.MachineEvent).order_by(models.MachineEvent.id.desc()).limit(200).all()
+def get_machine_events(response: Response = None, limit: Optional[int] = None, offset: int = 0,
+                       db: Session = Depends(_get_db), current_user: dict = Depends(get_current_user)):
+    return paging.page(response, db.query(models.MachineEvent).order_by(models.MachineEvent.id.desc()), 200, limit, offset)
 
 
 @router.post("/machines/import-csv")

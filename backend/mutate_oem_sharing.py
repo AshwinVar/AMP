@@ -82,6 +82,13 @@ MUTATIONS = [
     ("the Expired filter ignores the deadline", "oem_routes.py",
      "        return and_(c.status == oem_claims.PENDING, c.expires_at.isnot(None), c.expires_at <= now)",
      "        return c.status == oem_claims.PENDING"),
+    # --- the notifications list is a page, and says its whole count -----------
+    ("the notifications total is the page's length", "oem_routes.py",
+     "    total = int(response.headers.get(paging.TOTAL_HEADER, len(rows))) if isinstance(response, Response) \\",
+     "    total = len(rows) if isinstance(response, Response) \\"),
+    ("the notifications page ignores the offset", "oem_routes.py",
+     "    rows = paging.page(response, q, NOTIFICATIONS_PAGE, limit, offset)",
+     "    rows = paging.page(response, q, NOTIFICATIONS_PAGE, limit, 0)"),
     # Anchored on the line BELOW. Six handlers raise this identical 404, so the
     # bare pattern was ambiguous and this mutation printed SKIP on every run
     # since it was written — never once executed, while reading like a pass in a

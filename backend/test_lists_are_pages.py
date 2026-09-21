@@ -72,10 +72,6 @@ ALLOWED = {
     "analytics_routes.py::get_industrial_gateway_analytics":
         "GET /analytics/industrial -- a display window of the newest 500 signals "
         "next to a SQL count() for the headline",
-    # ---- A body envelope with its own convention.
-    "oem_routes.py::oem_notifications":
-        "GET /oem/notifications -- {\"notifications\": [...]} for the OEM portal; the "
-        "newest 100 for one OEM, a different screen and a different contract",
     # ---- On-demand downloads.
     "reports_routes.py::export_intelligence_summary":
         "GET /intelligence-summary.txt -- a text download whose alert feed takes the "

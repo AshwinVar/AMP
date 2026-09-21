@@ -128,13 +128,13 @@ export default function IndustrialConnectivity() {
           {protocols.map((p) => <option key={p.key} value={p.name}>{p.name}</option>)}
         </select>
         <input className="bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-sm" placeholder="IP : port" value={form.ip_address} onChange={(e) => setForm({ ...form, ip_address: e.target.value })} />
-        <button type="submit" className="rounded-xl bg-white text-slate-950 font-semibold px-4 py-2 text-sm">Connect device</button>
+        <button type="submit" className="rounded-xl bg-white text-slate-950 font-semibold px-4 py-2 text-sm">Register device</button>
         {msg && <p className={`md:col-span-5 text-sm ${msg.startsWith("✓") ? "text-green-400" : "text-red-400"}`}>{msg}</p>}
       </form>
 
-      {/* Connected devices + live signals */}
+      {/* Registered devices + their signals. "Connected" was the pre-#582 word: AMP opens no socket to a PLC. */}
       <div className="rounded-2xl bg-slate-900 border border-slate-800 p-5">
-        <h3 className="text-lg font-semibold mb-4">Connected devices <span className="text-slate-500 text-sm font-normal">({(deviceTotal ?? devices.length).toLocaleString()})</span></h3>
+        <h3 className="text-lg font-semibold mb-4">Registered devices <span className="text-slate-500 text-sm font-normal">({(deviceTotal ?? devices.length).toLocaleString()})</span></h3>
         <PageNotice shown={devices.length} total={deviceTotal} noun="devices" className="mb-3" />
         <PageNotice shown={signals.length} total={signalTotal} noun="signals" className="mb-3"
           testId="signals-page-notice" />

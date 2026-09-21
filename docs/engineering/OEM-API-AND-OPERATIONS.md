@@ -50,7 +50,7 @@ All require `read_fleet`. All are read-only in this release.
 | POST | `/oem/machines/{id}/claim` | `manage_installations` | issue an installation invitation |
 | GET | `/oem/claims` | `read_fleet` | invitations and their status |
 | POST | `/oem/claims/{id}/revoke` | `manage_installations` | withdraw an unused one |
-| GET | `/oem/notifications` | `read_fleet` | what happened to this fleet |
+| GET | `/oem/notifications` | `read_fleet` | what happened to this fleet — a page (ADR-0036): the newest 100 by default, `?limit=`/`?offset=`, the whole count in `X-Total-Count` and in the body's `total` |
 
 **Registering attaches the machine to nobody.** `factory_tenant_code` stays NULL
 and the lifecycle starts at `Manufactured`. There is no new entity — an

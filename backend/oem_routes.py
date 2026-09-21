@@ -16,7 +16,9 @@ import os
 import secrets
 from datetime import date, datetime
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from typing import Optional
+
+from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from pydantic import BaseModel
 from sqlalchemy import and_, or_
 from sqlalchemy.orm import Session
@@ -752,8 +754,12 @@ def revoke_claim(claim_id: int, db: Session = Depends(_get_db),
     return _claim_dict(claim)
 
 
+NOTIFICATIONS_PAGE = 100
+
+
 @router.get("/notifications")
-def oem_notifications(db: Session = Depends(_get_db),
+def oem_notifications(response: Response = None, limit: Optional[int] = None, offset: int = 0,
+                      db: Session = Depends(_get_db),
                       principal: dict = Depends(oem_auth.require_oem("read_fleet"))):
     """What has happened to this manufacturer's fleet that it should know about.
 
@@ -764,10 +770,19 @@ def oem_notifications(db: Session = Depends(_get_db),
 
     This corrects a claim in oem_subscribers.py that an OEM-side notification
     store did not exist. It did — the sentinel made it work all along.
+
+    A PAGE, and it says so (ADR-0036): the newest 100 by default, `?limit=` and
+    `?offset=` for the rest, and the manufacturer's whole count both in
+    `X-Total-Count` and in the body's `total`. It used to be the newest 100 with
+    nothing saying more existed -- one row per install, commission, service,
+    contract, statement and dispute event across the whole customer base, so a
+    manufacturer past 100 silently lost its older claim and dispute notices.
     """
-    rows = (db.query(models.Notification)
-              .order_by(models.Notification.id.desc()).limit(100).all())
-    return {"notifications": [{
+    q = db.query(models.Notification).order_by(models.Notification.id.desc())
+    rows = paging.page(response, q, NOTIFICATIONS_PAGE, limit, offset)
+    total = int(response.headers.get(paging.TOTAL_HEADER, len(rows))) if isinstance(response, Response) \
+        else paging.cached_count(q)
+    return {"total": total, "notifications": [{
         "id": n.id, "type": n.notification_type, "severity": n.severity,
         "title": n.title, "message": n.message, "status": n.status,
         "created_at": n.created_at.isoformat() if n.created_at else None,

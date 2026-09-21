@@ -187,6 +187,51 @@ def main():
           [r.id for r in every_inst] == sorted(r.id for r in every_inst), str(len(every_inst)))
     check("narrowed to one customer: 50", len(oem_sharing.installations_for(db, "OEM_ALPHA", tenant_code="FACTORY_2")) == 50)
 
+    print("6. THE NOTIFICATIONS LIST IS A PAGE, AND SAYS THE MANUFACTURER'S WHOLE COUNT")
+    # /oem/notifications was the newest 100 with nothing saying more existed --
+    # one row per install, commission, service, contract, statement and dispute
+    # event across the whole customer base, so a manufacturer past 100 silently
+    # lost its older claim and dispute notices. The rows are scoped by the OEM
+    # sentinel the request binds (ADR-0002), so the scoping hook is on here.
+    import oem_auth
+    import tenancy
+    from fastapi import Response
+    tenancy.install_scoping()
+    alpha_sentinel = oem_auth.sentinel_tenant("OEM_ALPHA")
+    tok0 = tenancy.set_current_tenant(None)
+    for i in range(130):
+        db.add(models.Notification(tenant_code=alpha_sentinel, notification_type="installation_accepted",
+                                   severity="Info", title=f"alpha {i}", message="m", status="Unread"))
+    for i in range(5):
+        db.add(models.Notification(tenant_code="FACTORY_1", notification_type="equipment_claimed",
+                                   severity="Info", title=f"factory {i}", message="m", status="Unread"))
+    db.commit()
+    tenancy.reset_current_tenant(tok0)
+    tok = tenancy.set_current_tenant(alpha_sentinel)
+    try:
+        paging.forget_counts()
+        r1 = Response()
+        page1 = oem_routes.oem_notifications(response=r1, limit=None, offset=0, db=db, principal=alpha)
+        check("the newest 100 of 130, and the whole count in the body AND the header",
+              len(page1["notifications"]) == 100 and page1["total"] == 130
+              and r1.headers.get(paging.TOTAL_HEADER) == "130",
+              f"{len(page1['notifications'])} / {page1['total']} / {r1.headers.get(paging.TOTAL_HEADER)}")
+        r2 = Response()
+        page2 = oem_routes.oem_notifications(response=r2, limit=50, offset=100, db=db, principal=alpha)
+        check("offset=100&limit=50 -> the last 30, total still 130",
+              len(page2["notifications"]) == 30 and page2["total"] == 130,
+              f"{len(page2['notifications'])} / {page2['total']}")
+        check("the pages do not overlap",
+              {n["id"] for n in page1["notifications"]}.isdisjoint({n["id"] for n in page2["notifications"]}))
+        check("the factory's own notifications are neither listed nor counted",
+              all(n["type"] == "installation_accepted" for n in page1["notifications"] + page2["notifications"])
+              and page1["total"] == 130)
+        direct = oem_routes.oem_notifications(limit=None, offset=0, db=db, principal=alpha)
+        check("called without a Response (as the suites do), the body still says the whole count",
+              direct["total"] == 130 and len(direct["notifications"]) == 100, str(direct.get("total")))
+    finally:
+        tenancy.reset_current_tenant(tok)
+
     event.remove(engine, "before_cursor_execute", _log)
     paging.forget_counts()
     db.close()

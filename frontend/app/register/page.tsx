@@ -9,7 +9,6 @@ export default function RegisterPage() {
 
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
-  const [role, setRole] = useState("Admin");
 
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
@@ -26,10 +25,12 @@ export default function RegisterPage() {
         headers: {
           "Content-Type": "application/json"
         },
+        // No role: /register only ever creates the first account, and that account
+        // is the Admin. The page used to offer Admin / Supervisor / Operator and the
+        // server created an Admin whatever was chosen.
         body: JSON.stringify({
           username,
-          password,
-          role
+          password
         })
       });
 
@@ -43,7 +44,7 @@ export default function RegisterPage() {
         );
       }
 
-      alert("Account created!");
+      alert("Account created. It is the Admin account for this AMP: sign in and add your team under Users.");
       router.push("/");
     } catch (err: any) {
       setError(err.message || "Registration failed");
@@ -61,7 +62,8 @@ export default function RegisterPage() {
           </h1>
 
           <p className="text-slate-400 mt-2">
-            Register for AMP
+            Set up the first account on this AMP. It becomes the Admin; after that, only an Admin can add people, under
+            Users.
           </p>
         </div>
 
@@ -89,18 +91,6 @@ export default function RegisterPage() {
             }
             required
           />
-
-          <select
-            className="w-full bg-slate-950 border border-slate-700 rounded-xl px-4 py-3 text-white"
-            value={role}
-            onChange={(e) =>
-              setRole(e.target.value)
-            }
-          >
-            <option>Admin</option>
-            <option>Supervisor</option>
-            <option>Operator</option>
-          </select>
 
           {error && (
             <div className="bg-red-500/10 border border-red-500/30 rounded-xl p-3 text-red-400 text-sm">

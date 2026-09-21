@@ -170,6 +170,12 @@ def main():
         ai_copilot.PROVIDERS = (StubProvider(),) + original
         os.environ["STUB_AI_KEY"] = "x"
         check("the stub counts as a configured LLM", ai_copilot._ai_enabled() is True)
+        # ADR-0037: the stub stands in for a HOSTED model (external = True, the
+        # AIProvider default), so the company consents first; this suite is about
+        # what /ai/ask does once the model IS used.
+        from amp_ai import consent as consent_mod
+        from amp_ai.core.contracts import CAPABILITY_EXTERNAL_MODEL
+        consent_mod.set_consent(db, T, CAPABILITY_EXTERNAL_MODEL, True, "drillin-admin")
 
         tok = tenancy.set_current_tenant(T)
         out = ai_copilot.ai_ask({"question": "which machines are down?"}, db, {"tenant": T})
@@ -247,6 +253,12 @@ def main():
         counted.clear()
         orchestrator.ask(db, Principal(tenant=T, role=""), "what needs my attention?")
         context_only = len(counted)
+        # ADR-0037: with a hosted model the endpoint also reads the company's
+        # consent. Measured on its own so the assertion below can say exactly
+        # what the model and the view add: nothing past that read.
+        counted.clear()
+        ai_copilot.external_model_allowed(db, {"tenant": T})
+        consent_cost = len(counted)
         counted.clear()
         ai_copilot.ai_ask({"question": "what needs my attention?"}, db, {"tenant": T})
         with_view = len(counted)
@@ -254,10 +266,11 @@ def main():
         event.remove(engine, "before_cursor_execute", _count)
         check(f"AMP's own answer (no model) costs {context_only} queries", context_only > 0,
               str(context_only))
-        check(f"...and /ai/ask with a model on the fallback route costs the same {context_only}, "
-              f"not more", with_view == context_only,
-              f"no-model={context_only} endpoint={with_view} "
-              f"(+{with_view - context_only} for the model and the view)")
+        check("the company's consent read is exactly one query (ADR-0037)", consent_cost == 1, str(consent_cost))
+        check(f"...and /ai/ask with a model on the fallback route costs the same {context_only} plus that "
+              f"one read, not more", with_view == context_only + consent_cost,
+              f"no-model={context_only} consent={consent_cost} endpoint={with_view} "
+              f"(+{with_view - context_only - consent_cost} for the model and the view)")
 
         print()
         print("=" * 74)

@@ -308,7 +308,7 @@ export function describeAnomalyError(error: unknown): AnomalyView {
     return {
       kind: "consent_required",
       alert: false,
-      text: "Learning from telemetry is off for this company. An Admin can turn it on under AI learning consent.",
+      text: "Learning from telemetry is off for this company. An Admin can turn it on under AI consent.",
       detail: typeof body.reason === "string" ? body.reason : null,
     };
   }

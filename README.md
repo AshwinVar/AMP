@@ -28,7 +28,7 @@ The AI is a platform, not scattered scripts. Business modules consume `ai.<servi
 
 - **Event-driven backbone** — an in-process domain event bus (`ProductionCompleted`, `DowntimeStarted`, `InventoryLow`, `QualityInspectionFailed`, …) that the AI platform and agents subscribe to.
 - **Multi-tenant by construction** — every query is auto-scoped to the caller's tenant at the ORM layer; stamped tables are filtered explicitly. Leak-proof by default.
-- **Prediction · Recommendations · Copilot** — predictive-maintenance risk scoring, AI recommendations, and a **rule-first, LLM-optional copilot** that answers plant questions with *no API key*: pillar Q&A, machine-by-name questions, week-on-week trends, and a one-shot "rundown" — each answer with a one-tap drill-in. Setting `ANTHROPIC_API_KEY` adds free-form LLM answers on top.
+- **Prediction · Recommendations · Copilot** — predictive-maintenance risk scoring, AI recommendations, and a **rule-first, LLM-optional copilot** that answers plant questions with *no API key*: pillar Q&A, machine-by-name questions, week-on-week trends, and a one-shot "rundown" — each answer with a one-tap drill-in. Setting `ANTHROPIC_API_KEY` adds free-form LLM answers on top — for a company only once its Admin consents to its questions and evidence leaving AMP (ADR-0037).
 
 ### Autonomous agents (with oversight)
 

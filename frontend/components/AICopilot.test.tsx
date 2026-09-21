@@ -9,7 +9,7 @@ vi.mock("../lib/api", () => ({
 }));
 
 import AICopilot from "./AICopilot";
-import { apiPost } from "../lib/api";
+import { apiGet, apiPost } from "../lib/api";
 
 /**
  * Follow-up questions (ADR-0035). The screen sends the conversation so far as a
@@ -86,5 +86,39 @@ describe("AICopilot follow-ups (ADR-0035)", () => {
     }
     const last = post.mock.calls[7][1] as { thread: { question: string }[] };
     expect(last.thread.map((t) => t.question)).toEqual(["question 1", "question 2", "question 3", "question 4", "question 5", "question 6"]);
+  });
+});
+
+/**
+ * A hosted provider is used for a company only with its consent (ADR-0037).
+ * /ai/status says whether THIS company's questions will reach it; the footer
+ * must not promise "conversational answers by <model>" when they will not.
+ */
+describe("AICopilot: the hosted model needs the company's consent (ADR-0037)", () => {
+  const get = apiGet as unknown as ReturnType<typeof vi.fn>;
+  const REASON = "Answered from live factory data by AMP's own engine; the hosted AI model was not asked: "
+    + "No Admin of this company has turned on 'Send Copilot questions and evidence to a hosted AI model'.";
+
+  it("shows the server's reason instead of promising the model's answers", async () => {
+    get.mockResolvedValueOnce({ enabled: true, provider: "anthropic", model: "claude-haiku-4-5", engine: "llm",
+      external: { provider: "anthropic", consent: false, reason: REASON } });
+    render(<AICopilot />);
+    await waitFor(() => expect(screen.getByTestId("copilot-engine-note").textContent).toBe(REASON));
+    expect(screen.getByTestId("copilot-engine-note").textContent).not.toContain("Conversational answers by");
+  });
+
+  it("promises the model's answers once the company has consented", async () => {
+    get.mockResolvedValueOnce({ enabled: true, provider: "anthropic", model: "claude-haiku-4-5", engine: "llm",
+      external: { provider: "anthropic", consent: true, reason: null } });
+    render(<AICopilot />);
+    await waitFor(() => expect(screen.getByTestId("copilot-engine-note").textContent).toContain("claude-haiku-4-5"));
+    expect(screen.getByTestId("copilot-engine-note").textContent).toContain("Conversational answers by");
+  });
+
+  it("says nothing about consent when there is nothing to consent to", async () => {
+    get.mockResolvedValueOnce({ enabled: false, engine: "rules", external: { provider: null, consent: null, reason: null } });
+    render(<AICopilot />);
+    await waitFor(() => expect(screen.getByTestId("copilot-engine-note").textContent).toContain("AMP's own engine"));
+    expect(screen.getByTestId("copilot-engine-note").textContent).not.toContain("consent");
   });
 });

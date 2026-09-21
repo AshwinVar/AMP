@@ -10,8 +10,17 @@ from that tenant's data. The only capability that does so today is
 ``telemetry_baseline``: the anomaly check fits one machine's normal range from its
 own last 14 days of telemetry, for the duration of one request.
 
-The rule: no learning capability runs for a tenant unless an ADMIN OF THAT TENANT
-has granted it, and it stops on the next request after they revoke it.
+WHAT "LEAVING AMP" MEANS HERE
+-----------------------------
+The Copilot may word an answer with a HOSTED language model (Anthropic, Gemini)
+when one is configured. AMP fits nothing to what it sends, but the question,
+AMP's draft answer and the evidence behind it - machine, order and item names,
+figures, windows - then leave infrastructure AMP runs. That is the second
+capability, ``external_model`` (ADR-0037): not learning, the same decision.
+The self-hosted model (ADR-0023) sends nothing anywhere and needs no consent.
+
+The rule: no capability listed here runs for a tenant unless an ADMIN OF THAT
+TENANT has granted it, and it stops on the next request after they revoke it.
 
 HOW THAT IS ENFORCED
 --------------------
@@ -23,7 +32,7 @@ HOW THAT IS ENFORCED
 * ``set_consent`` is the only writer of a decision. (``remove_for_company``
   only deletes a company's rows when the company leaves the registry, with an
   audit record per row.) ``set_consent`` validates the capability against
-  ``LEARNING_CAPABILITIES``, updates the row and adds the AuditLog record, then
+  ``CONSENT_CAPABILITIES``, updates the row and adds the AuditLog record, then
   COMMITS ONCE. If the audit row cannot be written the whole change is rolled
   back: consent never changes without a record of who changed it. (It builds the
   audit row with ``platform_routes.build_audit_row``, the same factory
@@ -32,6 +41,9 @@ HOW THAT IS ENFORCED
 * WHO may call it - Admin only, never from a founder preview - is decided by the
   route (native_ai_routes.py), before this module is reached. A model never
   decides it.
+* WHERE each capability is enforced: ``telemetry_baseline`` at the anomaly
+  check's call site (native_ai_routes.py); ``external_model`` at the one place
+  the Copilot builds a language model for a request (ai_copilot._copilot_llm).
 """
 import json
 from datetime import datetime
@@ -39,7 +51,8 @@ from datetime import datetime
 import models
 import platform_routes
 
-from .core.contracts import CAPABILITY_TELEMETRY_BASELINE, LEARNING_CAPABILITIES, ConsentDecision
+from .core.contracts import (CAPABILITY_EXTERNAL_MODEL, CAPABILITY_TELEMETRY_BASELINE, CONSENT_CAPABILITIES,
+                             ConsentDecision)
 
 __all__ = ["AUDIT_ACTION_PREFIX", "AUDIT_ENTITY", "AUDIT_GRANTED", "AUDIT_REMOVED_WITH_COMPANY", "AUDIT_REVOKED",
            "CAPABILITY_INFO", "DbConsentGate", "set_consent", "remove_for_company", "is_consent_audit_record",
@@ -68,10 +81,26 @@ CAPABILITY_INFO = {
         "used_by": "The anomaly check (GET /ai/native/anomaly/machines/{id}).",
         "without": "The anomaly check refuses and says why. Nothing else in AMP changes.",
     },
+    CAPABILITY_EXTERNAL_MODEL: {
+        "title": "Send Copilot questions and evidence to a hosted AI model",
+        "reads": ("When one of this company's own users asks the Copilot a question or opens the AI report, "
+                  "AMP sends the question, its own draft answer and the evidence its tools produced for it "
+                  "(names of machines, orders, items and people; figures, units and time windows) to the "
+                  "hosted model provider AMP is configured with (Anthropic or Google Gemini), which runs "
+                  "outside infrastructure AMP controls. The provider never receives the company's code, its "
+                  "users' names or roles, credentials, the database, or another company's rows. It never "
+                  "runs for AMP staff previewing the company from the platform workspace, and a self-hosted "
+                  "model needs no such consent because nothing leaves AMP."),
+        "stored": ("Nothing by AMP: the exchange is not saved and no model is trained on it. What the provider "
+                   "keeps is governed by the provider's own data terms, which AMP does not control."),
+        "used_by": "The Copilot (POST /ai/ask) and the AI report (POST /ai/report), only while a hosted provider is configured.",
+        "without": ("The Copilot answers from AMP's own engine over the same evidence, and every answer says so. "
+                    "Nothing else in AMP changes."),
+    },
 }
 
-if set(CAPABILITY_INFO) != set(LEARNING_CAPABILITIES):  # pragma: no cover - import-time consistency check
-    raise RuntimeError("CAPABILITY_INFO must describe exactly the LEARNING_CAPABILITIES")
+if set(CAPABILITY_INFO) != set(CONSENT_CAPABILITIES):  # pragma: no cover - import-time consistency check
+    raise RuntimeError("CAPABILITY_INFO must describe exactly the CONSENT_CAPABILITIES")
 
 
 def _iso(value):
@@ -89,9 +118,9 @@ class DbConsentGate:
         named = capability if isinstance(capability, str) and capability else "unknown"
         if not isinstance(tenant, str) or not tenant.strip():
             return _refused(named, "No company was given, so there is no consent to find.")
-        if capability not in LEARNING_CAPABILITIES:
-            return _refused(named, f"'{named}' is not a learning capability AMP offers, so it cannot "
-                                   "have been granted.")
+        if capability not in CONSENT_CAPABILITIES:
+            return _refused(named, f"'{named}' is not a capability AMP asks a company's consent for, so it "
+                                   "cannot have been granted.")
         # Spelled out, not aliased: test_unscoped_model_reads' sweep and the
         # integration structural test find consent reads by this exact name.
         row = (db.query(models.AiLearningConsent)
@@ -100,7 +129,7 @@ class DbConsentGate:
         title = CAPABILITY_INFO[capability]["title"]
         if row is None:
             return _refused(capability, f"No Admin of this company has turned on '{title}'. An Admin can "
-                                        "turn it on under Agent Activity, AI learning consent.")
+                                        "turn it on under Agent Activity, AI consent.")
         if row.granted is not True:
             if row.revoked_at is not None:
                 return _refused(capability, f"'{title}' was revoked by {row.revoked_by or 'an Admin'} on "
@@ -120,8 +149,8 @@ def set_consent(db, tenant, capability, granted, actor, *, now=None):
     """
     if not isinstance(tenant, str) or not tenant.strip():
         raise ValueError("a consent belongs to exactly one company; tenant is required")
-    if capability not in LEARNING_CAPABILITIES:
-        raise ValueError(f"unknown learning capability {capability!r}")
+    if capability not in CONSENT_CAPABILITIES:
+        raise ValueError(f"unknown consent capability {capability!r}")
     if type(granted) is not bool:
         raise TypeError("granted must be True or False")
     actor = actor or "unknown"
@@ -192,11 +221,11 @@ def is_consent_audit_record(action, entity_type) -> bool:
 
 
 def consent_view(db, tenant) -> list:
-    """Every learning capability for ``tenant``: what it reads, what it stores, and its current state."""
+    """Every consent capability for ``tenant``: what it reads, what it stores, and its current state."""
     rows = {r.capability: r for r in db.query(models.AiLearningConsent)
             .filter(models.AiLearningConsent.tenant_code == tenant).all()}
     out = []
-    for capability in LEARNING_CAPABILITIES:
+    for capability in CONSENT_CAPABILITIES:
         r = rows.get(capability)
         entry = {"capability": capability}
         entry.update(CAPABILITY_INFO[capability])

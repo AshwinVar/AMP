@@ -29,11 +29,11 @@ the simulator's tenant guard: a tick with no tenant bound now refuses instead
 of filing every tenant's activity under DEFAULT — ADR-0002 postmortem). See
 AMP-10-DAY-SPRINT.md, AMP-NATIVE-MODEL-ACCEPTANCE.md and, for the twelve
 acceptance items with their evidence, AMP-SPRINT-ACCEPTANCE.md.
-**Master SHA:** `3b4e5ee` (#682).
-**Production SHA:** `3b4e5ee`, verified live, not assumed:
-`{"status":"ok","database":"ok","schema":"ok","version":"3b4e5ee"}` from
-`https://flowmes-production.up.railway.app/health`, read on 2026-09-21 06:27 UTC,
-under two minutes after the merge; `/readiness` 200. The frontend (`https://flow-mes.vercel.app`)
+**Master SHA:** `4149829` (#684).
+**Production SHA:** `4149829`, verified live, not assumed:
+`{"status":"ok","database":"ok","schema":"ok","version":"4149829"}` from
+`https://flowmes-production.up.railway.app/health`, read on 2026-09-21 07:00 UTC,
+under three minutes after the merge (#683 `ca4f257` was verified the same way at 06:49). The frontend (`https://flow-mes.vercel.app`)
 answers 200 and so does its `/oem` portal page; `/oem/fleet?limit=100&offset=100`,
 `/ai/status`, `/oem/claims?status=Expired`, `/work-orders?limit=400` and
 `/notifications?unread=true&limit=1` refuse an unauthenticated call with 401, and
@@ -148,9 +148,38 @@ portal's fleet table says it is a page and offers the next 100 (#682 `3b4e5ee`;
 `lib/oem.loadFleet` walks the fleet a page at a time up to its own total, the
 depth survives the next refresh and the customer filter, `PageNotice` learned an
 `order` so the fleet reads "the first 100 of 250" where the dashboard reads
-"the newest"). **Nothing is in flight.** Every capped list AMP serves now says
+"the newest"). Every capped list AMP serves now says
 it is a page, offers the next batch, and pays for its count only when a page is
-full — at most once per poll interval, never past a commit to its table.
+full — at most once per poll interval, never past a commit to its table. The
+last four screens rendering a page as the list (Industrial Connectivity's
+devices and signals — its heading counted the page, not the plant — the Inbox's
+notifications, the three GMATS lists) say so since #684 `4149829`.
+
+**Then the sprint tracker's one open item under the provider adapter: a company's
+data leaves AMP only with that company's consent (ADR-0037).** Setting
+`ANTHROPIC_API_KEY` or `GEMINI_API_KEY` on the platform had sent every
+company's Copilot questions, AMP's draft and the evidence behind it (machine,
+order and item names, figures, windows) to the provider, with no company ever
+asked; ADR-0023 had recorded it as "the next change". `external_model` is now
+the second capability on the ADR-0020 consent gate (`CONSENT_CAPABILITIES` =
+the learning ones plus it; `LEARNING_CAPABILITIES` unchanged), with its own
+card wording in `amp_ai.consent.CAPABILITY_INFO`, and it is checked at the ONE
+place the Copilot builds a request's model (`ai_copilot._copilot_llm`, now
+taking the request's session and user): no row or a revoked one, or a founder
+preview, means `/ai/ask` and `/ai/report` answer from AMP's own engine and the
+`note` says why in the gate's own words; `/ai/status` gained `external`
+(`{provider, consent, reason}`, consent null when nothing is hosted) and the
+Copilot footer shows the reason where it promised "conversational answers by
+<model>"; the self-hosted provider never consults the gate. No schema change.
+Measured: the consent read is exactly one query per `/ai/ask` while a hosted
+key is configured, pinned as such by the two suites that count the endpoint's
+queries. `test_external_model_consent.py` (nine sections over ASGI with the
+provider replaced by a recorder), `mutate_external_model_consent.py` 16/16;
+`test_ai_copilot_fallback.py`, `test_copilot_drill_in.py` and
+`test_amp_ai_integration_copilot.py` grant the consent they need first; the
+consent card is titled "AI consent" now that it holds two decisions. Production
+has no hosted key, so nothing changes there until one is set — and then every
+company answers from AMP's engine until its Admin consents. **Nothing is in flight.**
 
 **Nothing else is awaiting review.** What a next session would do first, in order:
 (1) the OEM journey re-check against a real OEM's edge agent is still simulated

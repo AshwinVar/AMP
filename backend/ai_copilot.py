@@ -25,6 +25,17 @@ grounded in the company's real machines, downtime, OEE, shifts and inventory.
 No code change is needed to connect; keys live only in the environment.
 Both providers are called over plain REST via the standard library (no SDK
 dependency), so the copilot never affects the deploy build.
+
+  A KEY CONNECTS THE PLATFORM; IT DOES NOT SPEAK FOR A COMPANY (ADR-0037).
+  Either hosted provider runs outside infrastructure AMP controls, so a
+  company's question, AMP's draft answer and the evidence behind it go there
+  only after an Admin OF THAT COMPANY has turned on "external_model" under
+  AI consent (amp_ai.consent, the same stored, audited, revocable decision as
+  learning consent). The decision is read from the database on every request
+  at the ONE place a request's model is built, _copilot_llm(); without it, or
+  for a founder previewing the company, /ai/ask and /ai/report answer from
+  AMP's own engine and say why. The self-hosted model (ADR-0023) needs no
+  consent: nothing leaves AMP.
 """
 import os
 
@@ -666,23 +677,75 @@ def _ask_llm(system: str, user: str) -> str:
     return result
 
 
-def _copilot_llm():
-    """(the model the Copilot may use for /ai/ask, or None, and why not).
+def external_model_allowed(db, current_user):
+    """(may THIS request's company's data go to a hosted model, and if not, why).
 
-    A hosted provider is used as it always was: configured means used. The
-    self-hosted one is used only once its exact model has passed the Copilot
-    evaluation (ai/adopted_models.json, ADR-0023); until then /ai/ask answers from
-    AMP's own engine and says why."""
+    The company's own decision, read from ai_learning_consents on every call
+    through amp_ai.consent.DbConsentGate (ADR-0037): no row, or a revoked one,
+    is no, so a revocation bites on the very next question. The company is the
+    request's effective tenant, as on every read-model route. A founder
+    PREVIEWING the company from the platform workspace is refused before the
+    row is read: the consent an Admin gave covers the company's own users'
+    questions, not AMP staff's (ADR-0020's rule for the anomaly check)."""
+    from amp_ai import consent
+    from amp_ai.core.contracts import CAPABILITY_EXTERNAL_MODEL
+    tenant = tenancy.request_tenant(current_user)
+    if tenancy.is_preview(current_user):
+        return False, (f"Answered from live factory data by AMP's own engine; the hosted AI model was not "
+                       f"asked: you are previewing {tenant} from the platform workspace, and {tenant}'s "
+                       "consent to send its data to a hosted model covers only its own users.")
+    decision = consent.DbConsentGate().check(db, tenant, CAPABILITY_EXTERNAL_MODEL)
+    if not decision.granted:
+        return False, ("Answered from live factory data by AMP's own engine; the hosted AI model was not "
+                       f"asked: {decision.reason}")
+    return True, None
+
+
+def _copilot_llm(db, current_user):
+    """(the model the Copilot may use for THIS request, or None, and why not).
+
+    Three switches, and a model is used only when every one it meets is on:
+      * configured: a provider is named or auto-detected (_resolve_provider);
+      * a HOSTED provider (external = True) is used only with the company's
+        consent to send its data outside AMP (external_model_allowed, ADR-0037);
+      * the SELF-HOSTED one (external = False) needs no consent, because nothing
+        leaves infrastructure AMP runs, and is used only once its exact model has
+        passed the Copilot evaluation (ai/adopted_models.json, ADR-0023).
+    Otherwise /ai/ask and /ai/report answer from AMP's own engine and say why."""
     from ai import llm_adoption
     from ai.llm import ProviderLLM
     provider = _resolve_provider()
     if provider is None or not provider.is_configured():
         return None, None
-    if not provider.external:
+    if provider.external:
+        allowed, why = external_model_allowed(db, current_user)
+        if not allowed:
+            return None, why
+    else:
         adopted, reason = llm_adoption.is_adopted(provider.name, provider.model())
         if not adopted:
             return None, reason
     return ProviderLLM(provider, ask=_ask_llm, on_error=_record_llm_error), None
+
+
+def _external_status(db, current_user):
+    """For /ai/status: whether the configured provider is hosted, and whether THIS
+    request's company may use it. `consent` is None when no hosted provider is
+    configured, so a client can tell "nothing to consent to" from "not consented"."""
+    provider = _resolve_provider()
+    if provider is None or not provider.is_configured() or not provider.external:
+        return {"provider": None, "consent": None, "reason": None}
+    own = None
+    if not isinstance(db, Session):
+        # Called directly, without a request session (the suites do): read the
+        # decision through the module's own factory rather than skip it.
+        own = db = SessionLocal()
+    try:
+        allowed, why = external_model_allowed(db, current_user)
+    finally:
+        if own is not None:
+            own.close()
+    return {"provider": provider.name, "consent": allowed, "reason": why}
 
 
 router = APIRouter(prefix="/ai", tags=["AI Copilot"], dependencies=[Depends(get_current_user)])
@@ -697,10 +760,14 @@ def get_db():
 
 
 @router.get("/status")
-def ai_status(current_user: dict = Depends(get_current_user)):
+def ai_status(current_user: dict = Depends(get_current_user), db: Session = Depends(get_db)):
     """Lets the UI show 'connect to enable' vs the live copilot."""
     result = {"enabled": _ai_enabled(), "provider": _provider() if _ai_enabled() else None,
               "model": _current_model() if _ai_enabled() else None}
+    # ADR-0037: a hosted provider is used for THIS company only with its consent.
+    # `enabled` keeps meaning "a provider is configured"; this says whether the
+    # company's questions will reach it, and if not, why.
+    result["external"] = _external_status(db, current_user)
     # ADR-0020: which engine answers, and the native model's verdict. The model
     # card (/ai/models/copilot_intent) carries the numbers; this is the switch.
     native = NATIVE.status()
@@ -751,7 +818,7 @@ def ai_ask(payload: dict, db: Session = Depends(get_db), current_user: dict = De
         raise HTTPException(status_code=400, detail="Ask a question.")
     from ai import orchestrator
     from ai.tools import Principal
-    llm, not_used = _copilot_llm()
+    llm, not_used = _copilot_llm(db, current_user)
     # ADR-0035: the caller's own prior turns, reduced by the orchestrator to
     # questions and the calls AMP ran, so a follow-up can refer to the machine
     # the conversation named. Nothing in them can choose the principal.
@@ -790,7 +857,7 @@ def ai_report(db: Session = Depends(get_db), current_user: dict = Depends(get_cu
     tenant = current_user.get("tenant", "DEFAULT")
     from ai import orchestrator
     from ai.tools import Principal
-    llm, not_used = _copilot_llm()
+    llm, not_used = _copilot_llm(db, current_user)
     try:
         out = orchestrator.ask(db, Principal.from_user(current_user), "Give me my morning briefing.", llm=llm)
     except Exception as e:   # noqa: BLE001 - the report must exist even when the copilot path does not

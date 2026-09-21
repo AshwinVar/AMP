@@ -305,7 +305,9 @@ def main():
     saved = (ai_copilot._ai_enabled, ai_copilot._copilot_llm)
     try:
         ai_copilot._ai_enabled = lambda: True
-        ai_copilot._copilot_llm = lambda: (None, "no model here")
+        # ADR-0037: the builder takes the request's session and user (it reads
+        # the company's consent); this stub stands in for "no model available".
+        ai_copilot._copilot_llm = lambda db, user: (None, "no model here")
         r = ai_copilot.ai_ask({"question": "is it running now?", "thread": thread}, db, user)
     finally:
         ai_copilot._ai_enabled, ai_copilot._copilot_llm = saved

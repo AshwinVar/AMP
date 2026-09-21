@@ -1,4 +1,4 @@
-"""AMP-native AI routes (ADR-0020): failure risk, the anomaly check, model cards, learning consent.
+"""AMP-native AI routes (ADR-0020): failure risk, the anomaly check, model cards, AI consent.
 
 THE CHAIN, IN THE ORDER EVERY HANDLER HERE WALKS IT
 ---------------------------------------------------
@@ -12,9 +12,12 @@ USER -> AUTHENTICATION -> RBAC -> TENANT / CONSENT -> AMP TOOL -> DATA -> MODEL.
   * TENANT          `request_tenant(current_user)`, the same effective tenant
                     every other factory route uses. The models never supply one.
   * CONSENT         only the anomaly check learns from a tenant's own data, so
-                    only it consults a gate - ALWAYS `DbConsentGate()`, which
-                    reads the tenant's stored decision on every call
+                    only it consults a gate here - ALWAYS `DbConsentGate()`,
+                    which reads the tenant's stored decision on every call
                     (test_amp_ai_integration_structural.py pins the call site).
+                    The consent page below also carries the Copilot's
+                    `external_model` decision (ADR-0037); THAT gate sits where
+                    the Copilot builds a request's model, ai_copilot._copilot_llm.
   * TOOL / DATA     amp_ai.failure_risk.db_history and
                     amp_ai.telemetry_anomaly.db_telemetry: explicit tenant
                     filters, both time bounds, column-only reads.
@@ -31,13 +34,15 @@ http_security.RATE_LIMITS.
 WHY FOUNDER PREVIEW CANNOT CONSENT, OR LEARN
 --------------------------------------------
 A founder Admin may PREVIEW a customer (X-Tenant) and read that customer's
-consent page. Consent to learn from a company's data is that company's decision;
-a platform operator switching into their workspace is not an Admin OF that
-company, so the PUT refuses whenever the effective tenant differs from the
-token's own tenant claim. The founder's own DEFAULT workspace is its own company.
-The same test refuses the anomaly check (the one learning step) from a preview:
-what an Admin consents to is the company's OWN Admins and Supervisors opening
-it. Failure risk learns nothing, so it answers in a preview like any factory read.
+consent page. Consent to learn from a company's data, or to send it outside
+AMP, is that company's decision; a platform operator switching into their
+workspace is not an Admin OF that company, so the PUT refuses whenever the
+effective tenant differs from the token's own tenant claim. The founder's own
+DEFAULT workspace is its own company. The same test refuses the anomaly check
+(the one learning step) from a preview, and the Copilot's hosted model
+(ai_copilot.external_model_allowed): what an Admin consents to is the company's
+OWN people using it. Failure risk learns nothing, so it answers in a preview
+like any factory read.
 """
 from datetime import datetime
 
@@ -189,7 +194,7 @@ def native_model_card(name: str, current_user: dict = Depends(get_current_user))
     return card
 
 
-# --- learning consent -------------------------------------------------------------------------
+# --- AI consent: learning from the company's data, and sending it to a hosted model ----------
 class ConsentUpdate(BaseModel):
     """`granted` must be a JSON true/false: "yes", 1 or a missing field is a 422, never coerced."""
 
@@ -202,9 +207,9 @@ def _consent_page(db, tenant, current_user):
     is_admin = current_user.get("role") in CONSENT_EDITOR_ROLES
     if previewing:
         reason = (f"You are previewing {tenant} from the platform workspace. Only an Admin of {tenant} can "
-                  "give or withdraw consent to learn from its data, never a preview.")
+                  "give or withdraw its consent, never a preview.")
     elif not is_admin:
-        reason = "Only an Admin of this company can change learning consent."
+        reason = "Only an Admin of this company can change its AI consent."
     else:
         reason = None
     return {
@@ -218,14 +223,15 @@ def _consent_page(db, tenant, current_user):
 @router.get("/ai-consent")
 def get_learning_consent(db: Session = Depends(_get_db),
                          current_user: dict = Depends(require_roles(ANALYST_ROLES))):
-    """What AMP-native AI may learn from this company's own data, who decided, and when."""
+    """What AMP may learn from this company's own data, and whether its Copilot questions may go
+    to a hosted AI model: each decision, who made it, and when."""
     return _consent_page(db, request_tenant(current_user), current_user)
 
 
 @router.put("/ai-consent/{capability}")
 def put_learning_consent(capability: str, payload: ConsentUpdate, db: Session = Depends(_get_db),
                          current_user: dict = Depends(require_roles(CONSENT_EDITOR_ROLES))):
-    """Grant or withdraw one learning capability for THIS company. Admin only; never from a preview.
+    """Grant or withdraw one consent capability for THIS company. Admin only; never from a preview.
 
     The consent row and its AuditLog record are committed together
     (amp_ai.consent.set_consent): if the audit cannot be written, nothing changes.
@@ -233,8 +239,8 @@ def put_learning_consent(capability: str, payload: ConsentUpdate, db: Session = 
     tenant = request_tenant(current_user)
     if tenancy.is_preview(current_user):
         raise HTTPException(status_code=403, detail=(
-            "Consent to learn from a company's data can only be given or withdrawn by that company's own "
-            "Admin, not from a platform preview."))
+            "A company's AI consent can only be given or withdrawn by that company's own Admin, not from a "
+            "platform preview."))
     actor = current_user.get("sub") or current_user.get("username")
     try:
         # set_consent is the one place a capability is validated: an unknown one

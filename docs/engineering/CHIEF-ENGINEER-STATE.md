@@ -29,11 +29,11 @@ the simulator's tenant guard: a tick with no tenant bound now refuses instead
 of filing every tenant's activity under DEFAULT — ADR-0002 postmortem). See
 AMP-10-DAY-SPRINT.md, AMP-NATIVE-MODEL-ACCEPTANCE.md and, for the twelve
 acceptance items with their evidence, AMP-SPRINT-ACCEPTANCE.md.
-**Master SHA:** `8eabba9` (#690).
-**Production SHA:** `8eabba9`, verified live, not assumed:
-`{"status":"ok","database":"ok","schema":"ok","version":"8eabba9"}` from
-`https://flowmes-production.up.railway.app/health`, read on 2026-09-21 11:42 UTC,
-under three minutes after the merge; `/readiness` 200; `/industrial/mappings`, `/oem/notifications` refuse an unauthenticated call with 401 and `POST /register` refuses a body carrying a `role` with 422 (#689 `8459ad3` at 11:02, #688 `c7c674d` at 10:35 — `schema: ok` there means migration `0012_consent_scope` ran on the production database — #687 `854a634` at 09:55, #686 `82d1c4d` at 09:45, #685 `db2f074` at 09:47, #684 `4149829` at 07:00 and #683 `ca4f257` at 06:49 were verified the same way); `/ai/status`, `/ai-consent` and `POST /industrial/devices` refuse an unauthenticated call with 401. The Monday mutation fleet, dispatched by hand after #685 (the standing rule for AI-consent code), ran green on master at `db2f074`: every harness caught every mutation (run #3, 26 min). The frontend (`https://flow-mes.vercel.app`)
+**Master SHA:** `e4ef9f5` (#692).
+**Production SHA:** `e4ef9f5`, verified live, not assumed:
+`{"status":"ok","database":"ok","schema":"ok","version":"e4ef9f5"}` from
+`https://flowmes-production.up.railway.app/health`, read on 2026-09-21 14:05 UTC,
+under three minutes after the merge; `/readiness` 200 (#691 `ec836a3` at 11:51 — `/issue-slips` refuses an unauthenticated call with 401 — #690 `8eabba9` at 11:42 — `/industrial/mappings` and `/oem/notifications` refuse an unauthenticated call with 401 and `POST /register` refuses a body carrying a `role` with 422 — #689 `8459ad3` at 11:02, #688 `c7c674d` at 10:35 — `schema: ok` there means migration `0012_consent_scope` ran on the production database — #687 `854a634` at 09:55, #686 `82d1c4d` at 09:45, #685 `db2f074` at 09:47, #684 `4149829` at 07:00 and #683 `ca4f257` at 06:49 were verified the same way); `/ai/status`, `/ai-consent` and `POST /industrial/devices` refuse an unauthenticated call with 401. The Monday mutation fleet, dispatched by hand after #685 (the standing rule for AI-consent code), ran green on master at `db2f074`: every harness caught every mutation (run #3, 26 min). The frontend (`https://flow-mes.vercel.app`)
 answers 200 and so does its `/oem` portal page; `/oem/fleet?limit=100&offset=100`,
 `/ai/status`, `/oem/claims?status=Expired`, `/work-orders?limit=400` and
 `/notifications?unread=true&limit=1` refuse an unauthenticated call with 401, and
@@ -220,17 +220,45 @@ document's `storage_link` is asked for, shown and must be http(s) (a stored
 does not apply; a cost's reference is shown as data with what the figures group
 by (its first CI run failed on `test_currency_single.py`: a nested template
 literal reads as a JSX-text dollar to that guard — build strings with `+`; in
-memory as "currency guard nested template"). **#691** (in flight): the last
+memory as "currency guard nested template"). **#691 `ec836a3`**: the last
 inert input — an issue slip's job reference is resolved against the tenant's
 work orders on issue, so material issued "for WO-100" is in WO-100's trace, a
 reference AMP does not know says so on the transaction and on the screen, and
-the list marks which references resolved with one query per page. **This PR**:
+the list marks which references resolved with one query per page. **#692 `e4ef9f5`**:
 `docs/RETENTION.md` names the `machine_telemetry_spans` policy (400 days,
 evidence, `--days` can only lengthen it) and the real `--table` flag; the
 handbook's and README's counts are the tree's, dated (67 tables, 39 scoped,
 12 migrations, 38 ADRs, 30 routers, 8 middlewares, 352 suites, 40 harnesses,
 11 audits, 378 routes). The sweep's queue is then empty; the method is in
 memory as "sweep angles".
+
+**A second four-angle sweep the same afternoon, with four new angles**
+(failures swallowed and reported as success; authorization enforced only on
+the screen; figures published without their basis; the answer depending on the
+clock). Authorization: no write route is weaker than the screen that calls it —
+every Admin-only control maps to `require_roles(["Admin"])`, every OEM control
+to its capability — but six screens offer a write the backend refuses for the
+role looking at them, the reverse defect, recorded in the table below. Figures:
+the OEE family is hardened; ten figures beside it are not, ranked in the table.
+Clock: one live defect, fixed in **this PR** — the OEM portal's fleet headline
+read the naive-UTC `last_seen_at` with the bare `Date` constructor, so the
+48-hour "reporting / silent" line moved by the viewer's time zone, and read the
+date-only `warranty_end` as UTC midnight, so the last covered day counted as
+expired while the machine's own service drawer, asking the server, said
+"active". The rule leaves the browser: `oem_service.reporting_state`
+(`SILENT_AFTER_DAYS = 2`, the one rule the not-reporting recommendation reads
+too) and `warranty_state` are judged on the server, the fleet row carries the
+verdicts (`reporting`: reporting / silent / never, gated with `last_seen_at`;
+`warranty`, the OEM's own record, ungated), one clock is threaded through a
+page (`fleet_row(now=)`, `recommendations(now=)`), and the headline counts
+verdicts and parses no date. `lib/date-parsing.test.ts` — the guard for exactly
+these two shapes — scanned `app/` and `components/` and not `lib/`; it does now,
+with the parser exempt by name and the allowlist still empty. Eight new
+mutations in `mutate_oem_service.py` (27/27 caught, with `test_oem_sharing.py`
+added to its suites) and two in `mutate-oem-ui.mjs` (35/35 caught; its two
+stranded `lib/oem.ts` anchors re-pointed). The swallowed-failures angle was cut
+short by a rate limit after reporting the request path "unusually disciplined";
+it is re-run against the subscribers, jobs and frontend write paths next.
 
 **Nothing else is awaiting review.** What a next session would do first, in order:
 (1) the OEM journey re-check against a real OEM's edge agent is still simulated
@@ -285,6 +313,8 @@ CHIEF-ENGINEER-STATE.md and AMP-10-DAY-SPRINT.md."
 | The sign-up page offered Admin / Supervisor / Operator and the handler created an Admin whatever was chosen (it shared the Admin's "add employee" schema and ignored `role`); the page did not say it works only for the first account | P3 | fixed: `schemas.RegisterRequest` (username, password, `extra="forbid"` so a role is a 422, not a silent drop), the page sends none and says the first account is the Admin; `test_register_first_account_only.py`, `mutate_register_bootstrap.py` 5/5 |
 | The Machine Timeline said "from MQTT events" and "wait for MQTT status changes" while six writers stamp `MachineEvent.source` (`manual`, `import`, `iot`, `industrial_gateway`, `simulator`, mqtt) and MQTT is off unless `MQTT_BROKER` is set; the Connectivity screen's button and heading still said "Connect" / "Connected" after #582 established that AMP opens no socket to a PLC | P3 | fixed: wording names the sources; "Register device" / "Registered devices" |
 | Recorded, not yet fixed, from the same sweep: `PlcSignalMapping.source_signal/mes_field/transform_rule` stored and applied by nothing (README still says "PLC signal mapping"); `CostRecord.reference_type/reference_id` written by the costing form and read by no figure; `ComplianceDocument.storage_link` stored and never shown; `ReportRequest.report_type/format` dropdowns that choose nothing; `IssueSlip.work_order_ref` typed but never resolved (its sibling `purchase_order_ref` is); `docs/RETENTION.md` omits the `machine_telemetry_spans` policy (400 days, evidence), documents `--tables` (the flag is `--table`) and says `--days` overrides every window (evidence tables can only be lengthened); the handbook's counts (8 migrations, 37 scoped models, 57 tables, 19 ADRs, 27 routers) are all stale | P3 | the document link, the mapping record and the cost reference: **#690 `8eabba9`**; RETENTION.md and the counts: **the handover PR after #690**; `IssueSlip.work_order_ref`: **#691** |
+| **2026-09-21 (afternoon), the OEM fleet headline judged connectivity and warranty in the browser**: `lib/oem.ts` read the naive-UTC `last_seen_at` with the bare `Date` constructor (LOCAL time, so the 48 h "reporting / silent" line moved by the viewer's zone: a machine silent 44 h read "silent" in New York, one silent 49 h read "reporting" in London) and the date-only `warranty_end` as UTC midnight (the last covered day read as expired while `/oem/machines/{id}/service` said active); `lib/date-parsing.test.ts`, the guard for exactly these two shapes, scanned `app/` and `components/` and not `lib/` | P2 | fixed: the server's verdicts travel on the fleet row (`reporting`: reporting / silent / never, gated with `last_seen_at`; `warranty`, the OEM's own record, ungated) from `oem_service.reporting_state` (`SILENT_AFTER_DAYS = 2`, the one rule the not-reporting recommendation reads too) and `warranty_state`, one clock per page, and the headline counts verdicts and parses no date; the guard scans `lib/`; **this PR** |
+| Recorded, not yet fixed, from the afternoon sweep. **Screens that offer a write the backend refuses for the role looking at them** (the reverse of a missing gate — no write route is weaker than its screen): the dashboard's Add Machine form and Delete Machine button (`POST`/`DELETE /machines`, Admin) on `overview`/`machines` for every role; the Shift Performance Entry form (`POST /shifts`, Admin+Supervisor) on `overview` for an Operator; every write on `EnterpriseInventory.tsx` (remnants, slip approve/issue/reject, GRN create/accept, cycle-count create — Admin+Supervisor; cycle-count approve — Admin) for an Operator; agent Approve/Reject in `MissionControlSection.tsx` and `MachineDetailDrawer.tsx` (Admin+Supervisor) for an Operator; GMATS stock-in / proforma / invoice / cancel / MIN (Admin+Supervisor) for an Operator. **Figures without a basis**: the twin's `health_score` 100 / Healthy for a machine with nothing recorded in 30 days — verified: `calculate_predictive_risk` emits a row for every machine with `measured: 0` on every data rule, so the drawer says "all 11 health rules passed" (0 min, 0 events, 0%), `NOT_SCORED`'s own warning ("a score of 100 here means no assessment ran") is unreachable from the engine, the only `has_data` flag on the twin row is OEE's, and `pulse.avg_health` averages the phantom 100s (reading 0 for an empty fleet, beside an all-time `auto_rate` under a "/7d" label); the quality fail rate on three windows (7-day `ai/quality`, lifetime `/analytics/quality` and the command centre); shift attainment on three spans (7-day `ai/shift`, the last 50 rows in `executive-oee`, lifetime in `management`); `avg_utilization` with no coverage; `avg_repair_minutes`, the operator terminal's `quality_rate`, the executive summary's `quality_rate`/`dispatch_rate`/`total_cost` and the work-order/plan `achievement` all publishing `0` for "nothing measured". **Clock**: `build_risk_radar(now=)` calls `build_delivery_summary` (and coverage, forecast, quality) with no clock; `build_anomaly_sweep(now=)` never forwards `now` to the scorer; `test_date_basis_guard.py` cannot see `__import__("datetime").date.today()` (`test_risk_radar.py:156,188`) and does not scan `audit_*.py`. The swallowed-failures angle was cut short by a rate limit after "the backend is unusually disciplined" on the request path; not yet re-run | P3 | recorded 2026-09-21; the role screens next |
 | MQTT→WebSocket bridge: `asyncio.run` on a sync callee raised `ValueError` every message; delivery ran on a throwaway event loop | P1 | fixed, tested |
 | MQTT ingest published no domain events — machine-reported breakdowns never reached the bus, so the Escalation agent was blind to them | P1 | fixed, tested |
 | AI Phase 1 — `AIProvider` registry replacing four if/elif chains | P6 | merged #526 |

@@ -128,14 +128,17 @@ def fleet(customer: str = Query(None, description="Filter to one customer"),
 
     # Grants are read once per CUSTOMER, not once per machine: a fleet of a
     # thousand machines at four sites is four policy reads, not a thousand.
+    # And ONE clock for the page: every row's warranty and reporting state is
+    # judged at the same instant.
     grants_cache = {}
+    now = datetime.utcnow()
     out = []
     for inst in page:
         tenant = inst.factory_tenant_code
         if tenant not in grants_cache:
             grants_cache[tenant] = oem_sharing.grants_for(db, principal["oem"], tenant)
         out.append(oem_sharing.fleet_row(db, inst, grants_cache[tenant],
-                                         catalogue.get(inst.model_id)))
+                                         catalogue.get(inst.model_id), now=now))
     return {"total": total, "limit": limit, "offset": offset, "machines": out}
 
 

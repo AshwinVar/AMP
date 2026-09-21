@@ -337,7 +337,10 @@ export default function OemPortalPage() {
             <Tile
               label="Silent"
               value={summary.offline}
-              hint="reported, then stopped"
+              hint={
+                "reported, then stopped" +
+                (summary.never ? " · " + summary.never + " never reported" : "")
+              }
             />
             {/* The important tile. A machine whose owner has not shared health is
                 UNKNOWN, not offline — counting it as offline invents a fleet

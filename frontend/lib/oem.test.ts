@@ -108,55 +108,88 @@ describe("shareable", () => {
 });
 
 describe("fleetSummary", () => {
-  const recent = new Date(Date.now() - 3600 * 1000).toISOString();
-  const old = new Date(Date.now() - 5 * 24 * 3600 * 1000).toISOString();
+  // The wire shapes: a naive-UTC reading (no zone) and a date-only warranty end.
+  // Neither is parsed here any more — the states beside them are the server's.
+  const fiveDaysAgo = "2026-09-16T12:00:00";
+  const anHourAgo = "2026-09-21T11:00:00";
 
-  it("counts a machine that has not reported for days as offline", () => {
-    const s = fleetSummary([machine({ last_seen_at: old })]);
+  it("counts a machine the server calls silent as offline", () => {
+    const s = fleetSummary([machine({ last_seen_at: fiveDaysAgo, reporting: "silent" })]);
     expect(s.offline).toBe(1);
     expect(s.connected).toBe(0);
   });
 
-  it("counts a recently-seen machine as connected", () => {
-    const s = fleetSummary([machine({ last_seen_at: recent })]);
+  it("counts a machine the server calls reporting as connected", () => {
+    const s = fleetSummary([machine({ last_seen_at: anHourAgo, reporting: "reporting" })]);
     expect(s.connected).toBe(1);
     expect(s.offline).toBe(0);
   });
 
   it("counts an UNSHARED machine as unknown, never as offline", () => {
-    // The important one. `last_seen_at` is null because the customer did not
+    // The important one. `reporting` is null because the customer did not
     // grant SHARE_MACHINE_HEALTH — not because the machine stopped. Counting it
     // as offline invents a fleet problem out of a privacy setting.
-    const s = fleetSummary([machine({ last_seen_at: null })]);
+    const s = fleetSummary([machine({ last_seen_at: null, reporting: null })]);
     expect(s.unknown).toBe(1);
     expect(s.offline).toBe(0);
     expect(s.connected).toBe(0);
   });
 
-  it("keeps the three states separate across a mixed fleet", () => {
-    const s = fleetSummary([
-      machine({ serial_number: "a", last_seen_at: recent }),
-      machine({ serial_number: "b", last_seen_at: old }),
-      machine({ serial_number: "c", last_seen_at: null }),
-    ]);
-    expect(s).toMatchObject({ total: 3, connected: 1, offline: 1, unknown: 1 });
+  it("counts a machine that has never reported as neither silent nor unknown", () => {
+    // Health IS shared; the machine simply has not come online yet, which is
+    // normal before commissioning. Not a fleet problem, not a privacy setting.
+    const s = fleetSummary([machine({ last_seen_at: null, reporting: "never" })]);
+    expect(s).toMatchObject({ never: 1, offline: 0, unknown: 0, connected: 0 });
   });
 
-  it("counts warranty from the recorded end date only", () => {
-    const future = new Date(Date.now() + 90 * 24 * 3600 * 1000)
-      .toISOString()
-      .slice(0, 10);
-    const past = new Date(Date.now() - 90 * 24 * 3600 * 1000)
-      .toISOString()
-      .slice(0, 10);
+  it("takes the server's verdict and never re-derives it from the timestamp", () => {
+    // The bug this replaced: `new Date("2026-09-16T12:00:00")` reads a naive
+    // UTC reading in the VIEWER's zone, so the 48-hour line moved with whoever
+    // was looking. The reading here is five days old and the server says
+    // reporting; the server decided, so this side does not second-guess it.
+    const s = fleetSummary([machine({ last_seen_at: fiveDaysAgo, reporting: "reporting" })]);
+    expect(s.connected).toBe(1);
+    expect(s.offline).toBe(0);
+    // CONTROL: and a fresh reading the server calls silent is silent.
+    expect(fleetSummary([machine({ last_seen_at: anHourAgo, reporting: "silent" })]).offline).toBe(1);
+  });
+
+  it("counts a reading with no verdict beside it as unknown, not as reporting", () => {
+    // A server that does not say (the field is absent) is not a reason to
+    // invent an answer from the date on this side.
+    const s = fleetSummary([machine({ last_seen_at: anHourAgo })]);
+    expect(s).toMatchObject({ unknown: 1, connected: 0, offline: 0 });
+  });
+
+  it("keeps the states separate across a mixed fleet", () => {
     const s = fleetSummary([
-      machine({ serial_number: "a", warranty_end: future }),
-      machine({ serial_number: "b", warranty_end: past }),
-      machine({ serial_number: "c", warranty_end: null }), // never recorded
+      machine({ serial_number: "a", last_seen_at: anHourAgo, reporting: "reporting" }),
+      machine({ serial_number: "b", last_seen_at: fiveDaysAgo, reporting: "silent" }),
+      machine({ serial_number: "c", last_seen_at: null, reporting: null }),
+      machine({ serial_number: "d", last_seen_at: null, reporting: "never" }),
+    ]);
+    expect(s).toMatchObject({ total: 4, connected: 1, offline: 1, unknown: 1, never: 1 });
+  });
+
+  it("counts warranty from the server's verdict only", () => {
+    const s = fleetSummary([
+      machine({ serial_number: "a", warranty_end: "2028-01-01", warranty: "active" }),
+      machine({ serial_number: "b", warranty_end: "2026-06-01", warranty: "expired" }),
+      machine({ serial_number: "c", warranty_end: null, warranty: "unknown" }), // never recorded
+      machine({ serial_number: "d", warranty_end: "2029-06-01", warranty: "not_started" }),
     ]);
     // Exactly one is in warranty. The unrecorded one is NOT counted as covered —
-    // that is a commercial claim nobody made.
+    // that is a commercial claim nobody made — and neither is one not yet begun.
     expect(s.warrantyActive).toBe(1);
+  });
+
+  it("does not decide 'covered' from an end date on its own", () => {
+    // `new Date("2028-01-01")` is UTC MIDNIGHT — the START of the last covered
+    // day — so the old comparison called every warranty over a day early while
+    // the server, asked by the machine's own drawer, said "active". A date with
+    // no verdict beside it counts for nothing here.
+    const s = fleetSummary([machine({ warranty_end: "2028-01-01" })]);
+    expect(s.warrantyActive).toBe(0);
   });
 
   it("handles an empty fleet without inventing anything", () => {
@@ -164,6 +197,7 @@ describe("fleetSummary", () => {
       total: 0,
       connected: 0,
       offline: 0,
+      never: 0,
       unknown: 0,
       warrantyActive: 0,
     });

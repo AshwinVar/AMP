@@ -203,6 +203,41 @@ def warranty_state(installation, today=None):
             "reason": f"expires {end.isoformat()}"}
 
 
+# A machine that has not reported for this many days is SILENT. ONE number, read
+# by the fleet tile, the service recommendation and the portal's hint ("seen in
+# the last 48 h"). Before this the portal kept its own copy of the rule in
+# JavaScript and applied it to a timestamp it had parsed in the viewer's own
+# time zone, so the same machine was "reporting" in London and "silent" in New
+# York for an hour of every day — and the manufacturer's headline count moved
+# with whoever was looking at it.
+SILENT_AFTER_DAYS = 2
+
+
+def reporting_state(installation, now=None):
+    """Whether this machine is still reporting, from `last_seen_at` alone.
+
+    Three answers, none guessed: "never" (no reading has ever arrived, which is
+    normal for a machine not yet commissioned), "reporting" (seen within
+    SILENT_AFTER_DAYS) and "silent". Nothing here says WHY a machine is silent:
+    switched off, disconnected and faulty look identical from here, and the
+    recommendation that reads this says so in as many words.
+
+    Whether the manufacturer may SEE the answer is oem_sharing's decision
+    (SHARE_MACHINE_HEALTH), not this function's — it is arithmetic over a
+    column, and a derived fact discloses the fact it was derived from.
+    """
+    now = now or datetime.utcnow()
+    seen = installation.last_seen_at
+    if seen is None:
+        return {"state": "never", "silent_days": None, "reason": "never reported"}
+    silent_days = (now - seen).days
+    if silent_days >= SILENT_AFTER_DAYS:
+        return {"state": "silent", "silent_days": silent_days,
+                "reason": f"last reported {silent_days} days ago ({seen.isoformat()})"}
+    return {"state": "reporting", "silent_days": silent_days,
+            "reason": f"last reported {seen.isoformat()}"}
+
+
 def service_state(installation, model, today=None):
     """Service position from the hours counter. Arithmetic, and says so.
 
@@ -252,15 +287,21 @@ def service_state(installation, model, today=None):
                       f"interval, {round(remaining, 1)} h to the next service"}
 
 
-def recommendations(installation, model, today=None, history=None):
+def recommendations(installation, model, today=None, history=None, now=None):
     """Explainable service recommendations for one machine.
 
     `history` is an optional list of (date, operating_hours) samples. With fewer
     than three, no projection is offered — a trend drawn from two points is a
     line through noise, and dressing it up with a confidence figure would be the
     dishonesty this module exists to avoid.
+
+    `now` is the one instant every rule below reads; `today` is its date unless
+    a caller names one. The connectivity rule used to read the wall clock on its
+    own while the warranty and service rules read `today`, so a caller replaying
+    a past day got that day's warranty beside today's silence.
     """
-    today = today or datetime.utcnow().date()
+    now = now or datetime.utcnow()
+    today = today or now.date()
     out = []
     serial = installation.serial_number
 
@@ -305,23 +346,21 @@ def recommendations(installation, model, today=None, history=None):
 
     # Connectivity: an installation that stops reporting is either broken or
     # disconnected, and the OEM cannot tell which from here — so the wording
-    # says exactly that.
-    if installation.last_seen_at is not None:
-        silent_days = (datetime.utcnow() - installation.last_seen_at).days
-        if silent_days >= 2:
-            out.append({
-                "kind": "not_reporting",
-                "severity": "medium",
-                "machine": serial,
-                "reason": "This machine has not reported recently. It is either "
-                          "switched off, disconnected, or faulty — this cannot "
-                          "be told apart from here.",
-                "evidence": f"last reported {silent_days} days ago "
-                            f"({installation.last_seen_at.isoformat()})",
-                "action": "Check connectivity with the customer before travelling",
-                "confidence": None,
-                "at": datetime.utcnow().isoformat(),
-            })
+    # says exactly that. The rule is reporting_state's, not a second copy.
+    reporting = reporting_state(installation, now)
+    if reporting["state"] == "silent":
+        out.append({
+            "kind": "not_reporting",
+            "severity": "medium",
+            "machine": serial,
+            "reason": "This machine has not reported recently. It is either "
+                      "switched off, disconnected, or faulty — this cannot "
+                      "be told apart from here.",
+            "evidence": reporting["reason"],
+            "action": "Check connectivity with the customer before travelling",
+            "confidence": None,
+            "at": datetime.utcnow().isoformat(),
+        })
 
     proj = project_service_date(installation, model, history, today)
     if proj:

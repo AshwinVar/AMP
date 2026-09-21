@@ -31,9 +31,11 @@ factory would withdraw consent and the OEM would keep reading yesterday's copy.
 Recomputing is the difference between "revoked" and "revoked from now on".
 """
 import contextlib
+from datetime import datetime
 
 import models
 import oem_auth
+import oem_service
 
 # The grant vocabulary. A factory grants these; nothing else is shareable.
 SHARE_MACHINE_HEALTH = "SHARE_MACHINE_HEALTH"
@@ -295,7 +297,7 @@ def visible_machine(db, installation, grants):
     return machine
 
 
-def fleet_row(db, installation, grants, model=None):
+def fleet_row(db, installation, grants, model=None, now=None):
     """One machine as its MANUFACTURER may see it.
 
     Built field by field from the grants. The shape is constant — a caller
@@ -303,7 +305,18 @@ def fleet_row(db, installation, grants, model=None):
     and carries no value, so "not shared" and "no data" are distinguishable by
     the `shared` block rather than by a missing key. A UI that cannot tell those
     apart shows "0 hours" for a machine whose owner simply declined to say.
+
+    The two STATES here — `warranty` and `reporting` — are the server's answer,
+    read from the same rules the service drawer and the recommendations use
+    (oem_service.warranty_state, oem_service.reporting_state). The portal used
+    to work both out again in JavaScript from the raw dates: it parsed the
+    warranty's last day as the instant it began and the naive-UTC last reading
+    as the viewer's local time, so the headline was out by a day for every
+    warranty and by the viewer's time zone for every machine. One rule, stated
+    once, and `now` is threaded in so a page of a thousand machines is judged
+    at one instant rather than a thousand.
     """
+    now = now or datetime.utcnow()
     row = {
         # Facts from the OEM's OWN records. Visible with no policy at all.
         "installation_id": installation.id,
@@ -317,9 +330,16 @@ def fleet_row(db, installation, grants, model=None):
         "commissioned_at": _iso(installation.commissioned_at),
         "warranty_start": _iso(installation.warranty_start),
         "warranty_end": _iso(installation.warranty_end),
+        # The OEM's own dates, judged by the OEM's own rule: active, expired,
+        # not_started, or unknown when no end date was ever recorded.
+        "warranty": oem_service.warranty_state(installation, now.date())["state"],
         # Everything below is the FACTORY's to grant.
         "operating_hours": None,
         "last_seen_at": None,
+        # reporting / silent / never — derived from last_seen_at, so it is
+        # gated with it: a state that says "silent" discloses that the machine
+        # reported once, which is the fact the grant covers.
+        "reporting": None,
         "machine_status": None,
         "utilization": None,
         "shared": sorted(grants),
@@ -328,6 +348,7 @@ def fleet_row(db, installation, grants, model=None):
         row["operating_hours"] = installation.operating_hours
     if SHARE_MACHINE_HEALTH in grants:
         row["last_seen_at"] = _iso(installation.last_seen_at)
+        row["reporting"] = oem_service.reporting_state(installation, now)["state"]
         machine = visible_machine(db, installation, grants)
         if machine is not None:
             row["machine_status"] = machine.status
@@ -512,8 +533,9 @@ def fleet_recommendations(db, oem_code, installations, models_by_id, today=None)
     Grants are read once per CUSTOMER: a thousand machines at four sites is four
     policy reads, as on the fleet screen.
     """
-    import oem_service
-
+    # One instant for the whole fleet, as fleet_row: a thousand machines are
+    # judged silent-or-not against one clock, not a thousand readings of it.
+    now = datetime.utcnow()
     cache, out = {}, []
     for inst in installations:
         tenant = inst.factory_tenant_code
@@ -521,7 +543,7 @@ def fleet_recommendations(db, oem_code, installations, models_by_id, today=None)
             cache[tenant] = grants_for(db, oem_code, tenant)
         out.extend(visible_recommendations(
             oem_service.recommendations(inst, models_by_id.get(inst.model_id),
-                                        today),
+                                        today, now=now),
             cache[tenant]))
     return oem_service.by_severity(out)
 

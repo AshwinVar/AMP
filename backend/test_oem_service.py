@@ -251,6 +251,57 @@ def test_warranty_never_guesses():
           ["days_remaining"] == 30)
 
 
+def test_reporting_is_one_rule_and_its_boundary_is_stated():
+    print()
+    print("=" * 74)
+    print("6b. REPORTING OR SILENT IS ONE RULE, READ AT ONE INSTANT")
+    print("=" * 74)
+    # A fixed instant far from the real clock, so nothing below can pass by
+    # coincidence of the day it runs on. (The last check needs the real date to
+    # be more than 60 days from this one's warranty end; it is, until late 2029.)
+    now = datetime(2030, 1, 1, 12, 0, 0)
+    fresh = FakeInstall(last_seen=now - timedelta(hours=47, minutes=59))
+    edge = FakeInstall(last_seen=now - timedelta(hours=48))
+
+    never = oem_service.reporting_state(FakeInstall(last_seen=None), now)
+    check("no reading ever -> never, not silent (normal before commissioning)",
+          never["state"] == "never", str(never))
+    check("...and no silent-days figure is invented for it",
+          never["silent_days"] is None, str(never))
+    check("seen 47 h 59 min ago -> reporting",
+          oem_service.reporting_state(fresh, now)["state"] == "reporting")
+    at_edge = oem_service.reporting_state(edge, now)
+    check("seen exactly 48 h ago -> silent: the threshold is inclusive",
+          at_edge["state"] == "silent" and at_edge["silent_days"] == 2, str(at_edge))
+    check("the number the portal prints ('seen in the last 48 h') is the rule's",
+          oem_service.SILENT_AFTER_DAYS == 2, str(oem_service.SILENT_AFTER_DAYS))
+    week = oem_service.reporting_state(
+        FakeInstall(last_seen=now - timedelta(days=7)), now)
+    check("silent carries the days and the last reading as its evidence",
+          week["silent_days"] == 7 and "2029-12-25" in week["reason"], str(week))
+
+    # The recommendation is the SAME rule, not a second copy of the threshold:
+    # it fires exactly where the state says silent, and quotes its evidence.
+    recs_edge = oem_service.recommendations(edge, FakeModel(), now=now)
+    recs_fresh = oem_service.recommendations(fresh, FakeModel(), now=now)
+    quiet = [r for r in recs_edge if r["kind"] == "not_reporting"]
+    check("not_reporting fires at 48 h and not a minute before",
+          quiet and not any(r["kind"] == "not_reporting" for r in recs_fresh),
+          str([r["kind"] for r in recs_edge + recs_fresh]))
+    check("...and its evidence is the state's own sentence",
+          quiet and quiet[0]["evidence"] == at_edge["reason"],
+          str(quiet[0]["evidence"] if quiet else None))
+
+    # One instant for every rule in a call: `now` is also the day the warranty
+    # is judged on, so a replay of a past day does not mix that day's silence
+    # with today's warranty (or the reverse).
+    expiring = oem_service.recommendations(
+        FakeInstall(last_seen=now, w_end=date(2030, 1, 15)), FakeModel(), now=now)
+    check("the warranty rule reads the same instant (expires in 14 days -> expiring)",
+          any(r["kind"] == "warranty_expiring" for r in expiring),
+          str([r["kind"] for r in expiring]))
+
+
 def test_recommendations_carry_their_evidence():
     print()
     print("=" * 74)
@@ -420,6 +471,7 @@ def run_all():
     test_commissioning_names_what_is_missing()
     test_it_refuses_to_invent_a_service_interval()
     test_warranty_never_guesses()
+    test_reporting_is_one_rule_and_its_boundary_is_stated()
     test_recommendations_carry_their_evidence()
     test_confidence_appears_only_where_it_means_something()
     test_state_is_inferred_only_where_the_profile_says_so()

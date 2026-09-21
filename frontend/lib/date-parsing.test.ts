@@ -21,7 +21,16 @@ import { describe, expect, it } from "vitest";
  */
 
 const ROOT = join(__dirname, "..");
-const SCANNED = ["app", "components"];
+/**
+ * `lib` too. The scan covered the screens and left the helpers out, and the
+ * OEM portal's fleet headline (lib/oem.ts) parsed both a naive-UTC reading and
+ * a date-only warranty end by hand for ten months — the two shapes this file
+ * exists to catch — while the guard reported the tree clean.
+ */
+const SCANNED = ["app", "components", "lib"];
+
+/** The one file that may call `new Date(<string>)`: it is the rule, not an exception to it. */
+const PARSER = "lib/apiDate.ts";
 
 /**
  * Rot-proof by construction: an empty allowlist. A new violation cannot be
@@ -40,15 +49,19 @@ function walk(dir: string, out: string[] = []): string[] {
   return out;
 }
 
-/** `new Date(` followed by anything other than an immediate `)`. */
-const PARSING_DATE = /new\s+Date\s*\(\s*(?!\))/;
+/**
+ * `new Date(` followed by anything other than an immediate `)` or a
+ * `Date.UTC(` — the latter builds an instant from NUMBERS, which is not
+ * parsing and carries no zone to get wrong.
+ */
+const PARSING_DATE = /new\s+Date\s*\(\s*(?!\)|Date\.UTC\()/;
 
 function violations(): Hit[] {
   const hits: Hit[] = [];
   for (const dir of SCANNED) {
     for (const file of walk(join(ROOT, dir))) {
       const rel = relative(ROOT, file).replace(/\\/g, "/");
-      if (ALLOWED.includes(rel)) continue;
+      if (rel === PARSER || ALLOWED.includes(rel)) continue;
       readFileSync(file, "utf8")
         .split("\n")
         .forEach((text, i) => {
@@ -73,6 +86,18 @@ describe("API date parsing goes through lib/apiDate", () => {
     // ...and does not fire on "now", which is not parsing.
     expect(PARSING_DATE.test("const now = new Date();")).toBe(false);
     expect(PARSING_DATE.test("created_at: new Date().toISOString(),")).toBe(false);
+    // ...nor on an instant built from numbers (lib/contracts.ts parseUtcInput).
+    expect(PARSING_DATE.test("new Date(Date.UTC(year, month - 1, day, hour))")).toBe(false);
+  });
+
+  it("scans the helpers, not only the screens", () => {
+    // lib/oem.ts parsed two API dates by hand while `lib` was outside the scan.
+    expect(SCANNED).toContain("lib");
+    expect(walk(join(ROOT, "lib")).some((f) => /oem\.ts$/.test(f))).toBe(true);
+    // The parser itself is exempt by NAME, not by the allowlist — the
+    // allowlist stays empty.
+    expect(ALLOWED).toEqual([]);
+    expect(PARSER).toBe("lib/apiDate.ts");
   });
 
   it("finds no component parsing a date string by hand", () => {

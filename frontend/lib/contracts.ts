@@ -1,4 +1,5 @@
 import { API_URL, getAuthHeaders } from "./api";
+import { parseApiDate } from "./apiDate";
 import { OemRequestError, refusalText } from "./oem";
 
 /**
@@ -636,8 +637,12 @@ export function parseUtcInput(text: string): string | null {
  * starts at 2026-04-30T18:30:00Z.
  */
 export function startMonthOf(startsAt: string, timeZone: string): string {
+  // A canonical UTC instant from the server ("...Z"): parseApiDate leaves a
+  // zoned string alone, and is the one parser the date-parsing guard permits.
+  const date = parseApiDate(startsAt);
+  if (!date) return "";
   const parts = new Intl.DateTimeFormat("en-CA", { timeZone, year: "numeric", month: "2-digit" })
-    .formatToParts(new Date(startsAt));
+    .formatToParts(date);
   const part = (type: string) => parts.find((p) => p.type === type)?.value ?? "";
   return `${part("year")}-${part("month")}`;
 }

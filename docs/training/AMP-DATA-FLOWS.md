@@ -153,7 +153,10 @@ Factory Admin: PUT /connected-equipment/sharing {grants CSV}   → OemDataSharin
 OEM: GET /oem/fleet → oem_sharing.fleet_row(installation, grants):
      row = {} ; row["operating_hours"] = None (default hidden)
      if SHARE_OPERATING_HOURS in grants: row["operating_hours"] = installation.operating_hours
-     ... (one copy-in per grant; grants read FRESH each request)
+     if SHARE_MACHINE_HEALTH in grants:  row["last_seen_at"], row["reporting"] (reporting/silent/never —
+                                          oem_service.reporting_state, SILENT_AFTER_DAYS=2, ONE clock per page)
+     row["warranty"] = oem_service.warranty_state(...)["state"]   (the OEM's own dates: no grant needed)
+     ... (one copy-in per grant; grants read FRESH each request; the states are the SERVER's, the portal parses no date)
 toggle a grant OFF → next request: 'if' false → field stays None (fails closed)
 guard: a caller lacking SHARE_OPERATING_HOURS may not supply service_hours (no bisection oracle)
 ```

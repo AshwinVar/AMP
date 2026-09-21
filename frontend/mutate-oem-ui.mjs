@@ -74,14 +74,26 @@ const MUTATIONS = [
   {
     label: "an unshared machine is counted as OFFLINE",
     file: "lib/oem.ts",
-    from: "    if (stale === null) unknown += 1;",
-    to: "    if (stale === null) offline += 1;",
+    from: "    else unknown += 1;",
+    to: "    else offline += 1;",
+  },
+  {
+    label: "a machine that never reported is counted as OFFLINE",
+    file: "lib/oem.ts",
+    from: '    else if (state === "never") never += 1;',
+    to: '    else if (state === "never") offline += 1;',
+  },
+  {
+    label: "the headline re-derives 'reporting' from the timestamp on this side",
+    file: "lib/oem.ts",
+    from: "    const state = m.reporting ?? null;",
+    to: '    const state = m.reporting ?? (m.last_seen_at ? "reporting" : null);',
   },
   {
     label: "an unrecorded warranty is counted as cover",
     file: "lib/oem.ts",
-    from: "      (m) => m.warranty_end && new Date(m.warranty_end).getTime() > now,",
-    to: "      (m) => !m.warranty_end || new Date(m.warranty_end).getTime() > now,",
+    from: '    warrantyActive: machines.filter((m) => m.warranty === "active").length,',
+    to: '    warrantyActive: machines.filter((m) => m.warranty !== "expired").length,',
   },
 
   // --- the portal is chosen by the PRINCIPAL, not by a role string ---------

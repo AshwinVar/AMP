@@ -1,6 +1,7 @@
 "use client";
 import React, { useEffect, useState } from "react";
-import { apiGet, apiPost, apiPatch, apiDelete, API_URL, getDownloadHeaders } from "../lib/api";
+import { apiGet, apiGetWithTotal, apiPost, apiPatch, apiDelete, API_URL, getDownloadHeaders } from "../lib/api";
+import PageNotice from "./PageNotice";
 import { LoadError, useLoadError } from "../lib/useLoadError";
 import { parseApiDate } from "../lib/apiDate";
 
@@ -410,12 +411,14 @@ function StockTab({ tenant, items, reload, isAdmin }: { tenant: string; items: G
 
 function ProformaTab({ tenant, items, reload }: { tenant: string; items: GItem[]; reload: () => void }) {
   const [rows, setRows] = useState<Proforma[]>([]);
+  const [total, setTotal] = useState<number | null>(null);   // the list is a page (ADR-0036)
   const [customer, setCustomer] = useState("");
   const [lines, setLines] = useState([{ item_id: "", qty: "" }]);
   const [err, setErr] = useState("");
 
   const { error, track } = useLoadError();
-  const load = () => track(apiGet<Proforma[]>(`/gmats/proformas?tenant=${tenant}`), setRows, "proformas");
+  const load = () => track(apiGetWithTotal<Proforma[]>(`/gmats/proformas?tenant=${tenant}`)
+    .then((r) => { setTotal(r.total); return r.data; }), setRows, "proformas");
   useEffect(() => { load(); }, [tenant]);
 
   const addLine = () => setLines((p) => [...p, { item_id: "", qty: "" }]);
@@ -492,6 +495,7 @@ function ProformaTab({ tenant, items, reload }: { tenant: string; items: GItem[]
         {err && <p className="text-red-400 text-sm">{err}</p>}
       </form>
 
+      <PageNotice shown={rows.length} total={total} noun="proformas" />
       <div className="space-y-3">
         {rows.map((p) => (
           <div key={p.id} className="rounded-2xl bg-slate-900 border border-slate-800 p-5">
@@ -522,8 +526,10 @@ function ProformaTab({ tenant, items, reload }: { tenant: string; items: GItem[]
 
 function InvoiceTab({ tenant, reload, isAdmin }: { tenant: string; reload: () => void; isAdmin: boolean }) {
   const [rows, setRows] = useState<Invoice[]>([]);
+  const [total, setTotal] = useState<number | null>(null);   // the list is a page (ADR-0036)
   const { error, track } = useLoadError();
-  const load = () => track(apiGet<Invoice[]>(`/gmats/invoices?tenant=${tenant}`), setRows, "invoices");
+  const load = () => track(apiGetWithTotal<Invoice[]>(`/gmats/invoices?tenant=${tenant}`)
+    .then((r) => { setTotal(r.total); return r.data; }), setRows, "invoices");
   useEffect(() => { load(); }, [tenant]);
 
   async function voidInvoice(id: number) {
@@ -543,6 +549,7 @@ function InvoiceTab({ tenant, reload, isAdmin }: { tenant: string; reload: () =>
       </div>
       <div className="rounded-2xl bg-slate-900 border border-slate-800 p-5">
         <h3 className="text-lg font-semibold mb-4">Generated Invoices</h3>
+        <PageNotice shown={rows.length} total={total} noun="invoices" className="mb-3" />
         <div className="overflow-x-auto rounded-xl border border-slate-800">
           <table className="w-full text-left text-sm">
             <thead className="text-slate-400 border-b border-slate-800">
@@ -581,8 +588,10 @@ function MinTab({ tenant, items, reload, isAdmin }: { tenant: string; items: GIt
   const [lines, setLines] = useState([{ item_id: "", qty: "" }]);
   const [err, setErr] = useState("");
 
+  const [total, setTotal] = useState<number | null>(null);   // the list is a page (ADR-0036)
   const { error, track } = useLoadError();
-  const load = () => track(apiGet<MIN[]>(`/gmats/min?tenant=${tenant}`), setRows, "material issue notes");
+  const load = () => track(apiGetWithTotal<MIN[]>(`/gmats/min?tenant=${tenant}`)
+    .then((r) => { setTotal(r.total); return r.data; }), setRows, "material issue notes");
   useEffect(() => { load(); }, [tenant]);
 
   const addLine = () => setLines((p) => [...p, { item_id: "", qty: "" }]);
@@ -653,6 +662,7 @@ function MinTab({ tenant, items, reload, isAdmin }: { tenant: string; items: GIt
         {err && <p className="text-red-400 text-sm">{err}</p>}
       </form>
 
+      <PageNotice shown={rows.length} total={total} noun="material issue notes" />
       <div className="space-y-3">
         {rows.map((m) => (
           <div key={m.id} className="rounded-2xl bg-slate-900 border border-slate-800 p-5">

@@ -20,8 +20,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const apiGet = vi.fn();
 const apiPost = vi.fn();
 
+// Totals ride on the same mocked GET: a test that wants the tenant's count
+// returns a {data, total} envelope; a plain array means "total not known".
 vi.mock("../lib/api", () => ({
   apiGet: (p: string) => apiGet(p),
+  apiGetWithTotal: (p: string) => apiGet(p).then((r: unknown) =>
+    Array.isArray(r) ? { data: r, total: null } : r),
   apiPost: (p: string, b: unknown) => apiPost(p, b),
 }));
 
@@ -145,5 +149,27 @@ describe("IndustrialConnectivity", () => {
     mount([]);
     await screen.findByText("Modbus TCP", { selector: "span" });
     expect(screen.getByText(/A catalogue, not a driver list/)).toBeTruthy();
+  });
+});
+
+describe("IndustrialConnectivity: the lists are pages, and say so (ADR-0036)", () => {
+  it("counts the tenant's devices in the heading, not the page's, and says the list is a page", async () => {
+    apiGet.mockImplementation((path: string) => {
+      if (path === "/industrial/protocols") return Promise.resolve(PROTOCOLS);
+      if (path === "/industrial/devices") return Promise.resolve({ data: [device(), device({ id: 2, device_code: "COMP-02" })], total: 350 });
+      if (path === "/industrial/signals") return Promise.resolve({ data: [signal()], total: 12000 });
+      return Promise.resolve([]);
+    });
+    render(<IndustrialConnectivity />);
+    await waitFor(() => expect(screen.getByText("(350)")).toBeTruthy());
+    expect(screen.getByTestId("page-notice").textContent).toContain("Showing the newest 2 of 350 devices");
+    expect(screen.getByTestId("signals-page-notice").textContent).toContain("Showing the newest 1 of 12,000 signals");
+  });
+
+  it("says nothing about paging when the count is not known or the page is everything", async () => {
+    mount([device()], [signal()]);
+    await waitFor(() => expect(screen.getByText("(1)")).toBeTruthy());
+    expect(screen.queryByTestId("page-notice")).toBeNull();
+    expect(screen.queryByTestId("signals-page-notice")).toBeNull();
   });
 });

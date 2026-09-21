@@ -758,6 +758,11 @@ app.add_middleware(
     allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
+    # The paged lists (/inventory/items, /inventory/transactions) say how many
+    # rows the tenant has in X-Total-Count; a browser may read it only if it is
+    # exposed, and a page the screen cannot tell from a complete list is the
+    # defect that header exists to end.
+    expose_headers=["X-Total-Count"],
 )
 
 # Added LAST so it runs FIRST (Starlette runs the last-added middleware

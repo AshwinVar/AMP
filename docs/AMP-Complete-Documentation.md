@@ -587,8 +587,8 @@ GET    /analytics/things  → summary/KPIs for that module
 ### Inventory, suppliers, purchasing
 | Method | Endpoint | What it does |
 |---|---|---|
-| `GET`/`POST`/`PATCH`/`DELETE` | `/inventory/items[/{id}]` | Inventory‑item CRUD. |
-| `GET`/`POST` | `/inventory/transactions` | Record/list stock movements. |
+| `GET`/`POST`/`PATCH`/`DELETE` | `/inventory/items[/{id}]` | List (a page: the newest 500 by default, `?limit=` up to 2,000 and `?offset=` for the rest, and `X-Total-Count` carries the tenant's whole count so a page can be told from a complete list) and Inventory‑item CRUD. |
+| `GET`/`POST` | `/inventory/transactions` | Record/list stock movements (the list is a page: the newest 300 by default, `?limit=` up to 2,000 and `?offset=`, with the whole count in `X-Total-Count`). |
 | `GET` | `/analytics/inventory` | Inventory analytics. |
 | `POST` | `/inventory/generate-low-stock-escalations` | Auto low‑stock escalations. |
 | `GET`/`POST`/`PATCH`/`DELETE` | `/suppliers[/{id}]` | Supplier CRUD. |

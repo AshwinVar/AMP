@@ -45,8 +45,10 @@ function fetchAllPaths(source) {
   // fetchAll ends at its catch block; everything after that is other handlers.
   const end = source.indexOf("} catch (error) {", start);
   const body = source.slice(start, end === -1 ? source.length : end);
-  const matches = body.match(/apiGet<[^>]*>\("([^"]+)"\)/g) || [];
-  return matches.map((m) => m.replace(/^apiGet<[^>]*>\("/, "").replace(/"\)$/, ""));
+  // apiGetWithTotal is the same GET (it also reads the X-Total-Count header a
+  // paged list sends), so it is part of the round like any apiGet.
+  const matches = body.match(/apiGet(?:WithTotal)?<[^>]*>\("([^"]+)"\)/g) || [];
+  return matches.map((m) => m.replace(/^apiGet(?:WithTotal)?<[^>]*>\("/, "").replace(/"\)$/, ""));
 }
 
 const real = fetchAllPaths(fs.readFileSync(PAGE, "utf8"));

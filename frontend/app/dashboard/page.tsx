@@ -3,7 +3,7 @@
 import "../phase29-enterprise.css";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { apiGet, apiPost, apiPatch, apiDelete, getToken, getUserRole } from "../../lib/api";
+import { apiGet, apiGetWithTotal, apiPost, apiPatch, apiDelete, getToken, getUserRole } from "../../lib/api";
 import { useInFlight } from "../../lib/useInFlight";
 import { parseDurationToMinutes } from "../../lib/duration";
 import { readMachineOee } from "../../lib/oee";
@@ -406,6 +406,8 @@ export default function DashboardPage() {
   });
 
   const [inventoryItems, setInventoryItems] = useState<InventoryItem[]>([]);
+  // How many items the tenant has in all (X-Total-Count); null until known.
+  const [inventoryTotal, setInventoryTotal] = useState<number | null>(null);
   const [inventoryTransactions, setInventoryTransactions] = useState<InventoryTransaction[]>([]);
   const [inventoryAnalytics, setInventoryAnalytics] = useState<InventoryAnalytics | null>(null);
   const [inventoryItemForm, setInventoryItemForm] = useState({
@@ -600,7 +602,7 @@ export default function DashboardPage() {
         apiGet<ProductionPlanAnalytics>("/analytics/production-plans"),
         apiGet<Escalation[]>("/escalations"),
         apiGet<EscalationAnalytics>("/analytics/escalations"),
-        apiGet<InventoryItem[]>("/inventory/items"),
+        apiGetWithTotal<InventoryItem[]>("/inventory/items"),
         apiGet<InventoryTransaction[]>("/inventory/transactions"),
         apiGet<InventoryAnalytics>("/analytics/inventory"),
         apiGet<QualityInspection[]>("/quality/inspections"),
@@ -685,9 +687,12 @@ export default function DashboardPage() {
       }
 
       if (optionalCalls[9].status === "fulfilled") {
-        setInventoryItems(
-          Array.isArray(optionalCalls[9].value) ? optionalCalls[9].value : []
-        );
+        // The list is a PAGE (newest 500); the response also says how many the
+        // tenant has, so the screen can say "500 of 1,234" instead of implying
+        // the page is everything.
+        const inv = optionalCalls[9].value;
+        setInventoryItems(Array.isArray(inv?.data) ? inv.data : []);
+        setInventoryTotal(typeof inv?.total === "number" ? inv.total : null);
       }
 
       if (optionalCalls[10].status === "fulfilled") {
@@ -2760,6 +2765,7 @@ export default function DashboardPage() {
           <EnterpriseInventory items={inventoryItems} />
           <InventorySection
             items={inventoryItems}
+            total={inventoryTotal}
             transactions={inventoryTransactions}
             analytics={inventoryAnalytics}
             itemForm={inventoryItemForm}

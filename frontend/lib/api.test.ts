@@ -403,6 +403,60 @@ describe("request shape", () => {
 });
 
 /**
+ * A list is a page, and says so. /inventory/items answers with the newest 500
+ * and X-Total-Count with the whole count; apiGetWithTotal reads both so the
+ * screen can say "500 of 1,234" instead of implying the page is everything.
+ */
+describe("a paged list says how many rows there are", () => {
+  beforeEach(() => {
+    localStorage.setItem("token", LIVE_AND_FRESH);
+  });
+
+  const respondWithHeaders = (status: number, body: unknown, headers: Record<string, string>) =>
+    vi.fn().mockResolvedValue({
+      ok: status >= 200 && status < 300,
+      status,
+      headers: { get: (name: string) => headers[name] ?? headers[name.toLowerCase()] ?? null },
+      json: async () => body,
+      text: async () => JSON.stringify(body),
+    });
+
+  it("returns the rows and the total from X-Total-Count", async () => {
+    vi.stubGlobal("fetch", respondWithHeaders(200, [{ id: 1 }, { id: 2 }], { "X-Total-Count": "1234" }));
+    const out = await api.apiGetWithTotal<{ id: number }[]>("/inventory/items");
+    expect(out.data).toEqual([{ id: 1 }, { id: 2 }]);
+    expect(out.total).toBe(1234);
+  });
+
+  it("reports null, never a guess, when the endpoint sent no count", async () => {
+    vi.stubGlobal("fetch", respondWithHeaders(200, [{ id: 1 }], {}));
+    const out = await api.apiGetWithTotal<{ id: number }[]>("/inventory/items");
+    expect(out.data).toEqual([{ id: 1 }]);
+    expect(out.total).toBeNull();
+  });
+
+  it("and null for a count that is not a number", async () => {
+    vi.stubGlobal("fetch", respondWithHeaders(200, [], { "X-Total-Count": "lots" }));
+    expect((await api.apiGetWithTotal("/inventory/items")).total).toBeNull();
+  });
+
+  it("carries the cache-buster and the auth header like every other GET", async () => {
+    const fetchMock = respondWithHeaders(200, [], { "X-Total-Count": "0" });
+    vi.stubGlobal("fetch", fetchMock);
+    await api.apiGetWithTotal("/inventory/items?limit=100&offset=500");
+    expect(String(fetchMock.mock.calls[0][0])).toMatch(/\/inventory\/items\?limit=100&offset=500&t=\d+$/);
+    expect((fetchMock.mock.calls[0][1] as { headers: Record<string, string> }).headers.Authorization).toBe(
+      `Bearer ${LIVE_AND_FRESH}`,
+    );
+  });
+
+  it("throws on a failed request, like apiGet", async () => {
+    vi.stubGlobal("fetch", respondWithHeaders(500, { detail: "boom" }, {}));
+    await expect(api.apiGetWithTotal("/inventory/items")).rejects.toThrow(/500/);
+  });
+});
+
+/**
  * The founder company-switcher. When the platform workspace is previewing a
  * customer tenant, X-Tenant has to ride on EVERY request - miss it on one and
  * the preview shows a page of DEFAULT's numbers under the customer's name,

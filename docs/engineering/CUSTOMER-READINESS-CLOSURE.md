@@ -277,6 +277,37 @@ on every phase.
 on disk. A real recovery adds artifact download and a larger dump. This measures
 the software's part of an outage, not the whole outage.
 
+**Re-measured 2026-09-21, at scale.** `restore_drill.py --scale N` multiplies
+the three customers' machines (12 / 7 / 3 at scale 1) and, above 1, gives every
+machine a month of daily production records, so the dump is a production-sized
+one rather than a demo's. Same laptop, PostgreSQL 18.3, dump already on disk:
+
+| Phase | scale 1 (22 machines, 0.2 MB dump) | scale 100, a month (2,200 machines, 66,000 production records, 5.0 MB) | scale 100, a year (`--days 365`: 803,000 production records, 57 MB) |
+|---|---:|---:|---:|
+| pg_dump | 0.38 s | 0.30 s | 0.72 s |
+| create empty database | 1.45 s | 1.67 s | 2.14 s |
+| restore | 0.89 s | 1.25 s | 3.20 s |
+| alembic upgrade head | 1.30 s | 1.47 s | 1.22 s |
+| boot AMP | 3.06 s | 3.83 s | 3.05 s |
+| customers log in | 0.58 s | 0.58 s | 0.58 s |
+| verify data + isolation | 0.08 s | 0.14 s | 0.16 s |
+| **MEASURED RTO** | **7.73 s** | **9.23 s** | **11.06 s** |
+
+A year of production for 2,200 machines — 285 times the demo's data, a 57 MB
+dump — costs 3.3 s over the demo: the restore grows with the dump (0.9 → 1.3 →
+3.2 s) and everything else is fixed cost, with booting AMP the largest. Still
+not measured: the artifact download from GitHub, which depends on the network
+of the machine doing the recovery, not on AMP.
+
+The drill itself had to be fixed to measure this. It piped the booted server's
+output and read nothing; since AMP began writing a JSON access line per request
+the pipe filled after a dozen requests, the server's next log write blocked, the
+event loop froze with it, and phase 7 timed out at 30 s on `/inventory/items` —
+at scale 1, twelve items — while every earlier request had answered. The server
+now logs to a file (`dr_server.log`, kept only when a phase fails). A hung drill
+that looks like a slow restore is the worst kind of measurement, and the 7.47 s
+above predates the logging that exposed it.
+
 **RPO: 24 hours, and it is NOT measured — it is read from the schedule.**
 `.github/workflows/backup.yml` runs `cron: "17 2 * * *"`, once a day. A failure
 at 02:16 UTC loses almost a full day of production, quality and inventory

@@ -24,7 +24,7 @@ import json
 import re
 import os
 import sys
-from datetime import date, timedelta
+from datetime import datetime, timedelta
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
@@ -200,8 +200,9 @@ def main():
 
     # The cover Aeron gives, typed at registration exactly as the runbook has
     # Ash type it. Relative to today rather than hard-coded, so the demo does
-    # not quietly start showing an EXPIRED warranty some months from now.
-    w_start = date.today()
+    # not quietly start showing an EXPIRED warranty some months from now. UTC,
+    # the date oem_service.warranty_state judges against (test_date_basis_guard).
+    w_start = datetime.utcnow().date()
     w_end = w_start + timedelta(days=730)          # 24 months, the ACX-75's term
     c, reg = POST("/oem/machines", oem, {"serial_number": demo_aeron.DEMO_SERIAL,
                                          "model_id": model_id,

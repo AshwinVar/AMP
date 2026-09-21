@@ -54,7 +54,7 @@ def _state(order, today) -> str:
     return "on_track"
 
 
-def build_delivery_summary(db, tenant: str) -> dict:
+def build_delivery_summary(db, tenant: str, now=None) -> dict:
     """Delivery outlook across the order book: plant-wide state counts and unit
     fulfillment, a per-customer breakdown (worst first), and the specific
     at-risk/late orders to chase. customer_orders is auto-scoped (ADR-0002).
@@ -67,8 +67,12 @@ def build_delivery_summary(db, tenant: str) -> dict:
     reliability rate, and inflated units-at-risk. Cancelled orders are dropped here
     and reported separately as ``cancelled``; every state / unit / chase /
     reliability number below is then over live orders only and reconciles within
-    the surface (rule 3)."""
-    today = datetime.utcnow().date()
+    the surface (rule 3).
+
+    `now` is the instant the order book is judged at; a composing read-model
+    (the Risk Radar, the brief) passes its own so every state it reads is the
+    same day's. Left out, it is the wall clock, as on the route."""
+    today = (now or datetime.utcnow()).date()
     all_orders = db.query(models.CustomerOrder).all()
     cancelled = sum(1 for o in all_orders if _is_cancelled(o))
     orders = [o for o in all_orders if not _is_cancelled(o)]

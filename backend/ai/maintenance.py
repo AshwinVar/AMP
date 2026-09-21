@@ -319,7 +319,7 @@ def build_maintenance_execution(db, tenant: str) -> dict:
     }
 
 
-def build_maintenance_forecast(db, tenant: str) -> dict:
+def build_maintenance_forecast(db, tenant: str, now=None) -> dict:
     """The forward maintenance schedule: open tasks due over the next 14 days laid
     out day by day, with the overdue backlog to clear first, so a planner sees the
     week ahead and where the crunch is. The forward complement to
@@ -332,8 +332,9 @@ def build_maintenance_forecast(db, tenant: str) -> dict:
     future work, and a task with no planned date can't be placed on the calendar.
     Overdue tasks (planned before today) are carried separately as the backlog to
     clear, never folded into a future day, so each in-horizon day's count is the
-    work genuinely due that day (the per-day counts sum to `scheduled`)."""
-    today = datetime.utcnow().date()
+    work genuinely due that day (the per-day counts sum to `scheduled`).
+    `now`: the instant "today" is taken from (a composing read-model's clock)."""
+    today = (now or datetime.utcnow()).date()
     horizon = today + timedelta(days=FORECAST_WINDOW_DAYS - 1)
     # Bounded in SQL: open tasks with a planned date at or before the horizon — the
     # far-future backlog isn't scanned on every poll. Overdue (planned < today) is

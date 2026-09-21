@@ -22,6 +22,7 @@ Run: DATABASE_URL="sqlite:///./ci.db" python backend/test_risk_radar.py
 """
 import json
 import sys
+from datetime import date, datetime, timedelta
 
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
@@ -153,7 +154,7 @@ def main():
     try:
         db.add(models.CustomerOrder(tenant_code="EMPTY", order_no="ORD-1", customer_name="X", product_name="P",
                                     order_quantity=100, dispatched_quantity=0,
-                                    due_date=__import__("datetime").date.today(), status="Pending"))
+                                    due_date=datetime.utcnow().date(), status="Pending"))
         db.commit()
         blank = build_risk_radar(db, "EMPTY")
     finally:
@@ -185,7 +186,7 @@ def main():
     try:
         db.add(models.CustomerOrder(tenant_code=F.A, order_no="ORD-A-LATE", customer_name="Aurora Foods",
                                     product_name="FG-001", order_quantity=500, dispatched_quantity=0,
-                                    due_date=__import__("datetime").date.today() - __import__("datetime").timedelta(days=2),
+                                    due_date=datetime.utcnow().date() - timedelta(days=2),
                                     status="Pending"))
         db.commit()
         priced = build_risk_radar(db, F.A)
@@ -200,6 +201,40 @@ def main():
         blob = json.dumps(card, default=str)
         leaks = [f"{o}:{m}" for o, ms in F.MARKERS.items() if o != tenant for m in ms if m in blob]
         check(f"{tenant}: no other factory's data", not leaks, str(leaks))
+
+    print()
+    print("=" * 74)
+    print("7. ONE INSTANT FOR EVERY RULE")
+    print("=" * 74)
+    # `now` used to reach the order rule's own arithmetic and generated_at, while
+    # the delivery outlook the rule READS judged the order book at the wall
+    # clock. A replay of a past day therefore saw that day's arithmetic over
+    # today's states. Far from the real clock, so nothing here passes by the
+    # day it runs on: an order due 2030-01-10 is past its date on the 11th and
+    # not on the 9th — and only if delivery is judged at the instant named.
+    due = date(2030, 1, 10)
+    db = Session()
+    tok = tenancy.set_current_tenant(F.A)
+    try:
+        db.add(models.CustomerOrder(tenant_code=F.A, order_no="ORD-A-2030", customer_name="Aurora Foods",
+                                    product_name="FG-001", order_quantity=300, dispatched_quantity=0,
+                                    due_date=due, status="Pending"))
+        db.commit()
+        after = build_risk_radar(db, F.A, now=datetime(2030, 1, 11, 9, 0, 0))
+        before = build_risk_radar(db, F.A, now=datetime(2030, 1, 9, 9, 0, 0))
+    finally:
+        tenancy.reset_current_tenant(tok)
+        db.close()
+    past = next((r for r in after["risks"] if r["key"] == "order.ORD-A-2030"), None)
+    check("judged the day after its date, the order is already past it (a fact, LIKELY)",
+          past is not None and past["likelihood"] == ev.LIKELY and "past its date" in past["title"],
+          str(past))
+    early = next((r for r in before["risks"] if r["key"] == "order.ORD-A-2030"), None)
+    check("judged the day before its date, it is not",
+          early is None or "past its date" not in early["title"], str(early))
+    check("the card is stamped with the instant it was judged at",
+          after["generated_at"].startswith("2030-01-11") and before["generated_at"].startswith("2030-01-09"),
+          f"{after['generated_at']} / {before['generated_at']}")
 
     if failures:
         print(f"\n{len(failures)} FAILED")

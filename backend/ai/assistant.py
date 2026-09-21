@@ -392,7 +392,10 @@ def _machine_answer(db, tenant, machine):
 def say_machine(machine_name, tw):
     if tw is None:
         return f"{machine_name}: no data yet.", "machines"
-    parts = [f"{tw['name']} is {tw['status']}", f"health {tw['health_score']}/100"]
+    parts = [f"{tw['name']} is {tw['status']}",
+             f"health {tw['health_score']}/100"
+             + (" (nothing recorded in the risk window, so that is an absence, not a clean bill)"
+                if tw.get("health_measured") is False else "")]
     if tw.get("oee") and tw["oee"].get("has_data"):
         parts.append(f"OEE {tw['oee']['oee']}%")
     if tw.get("open_maintenance_tasks"):

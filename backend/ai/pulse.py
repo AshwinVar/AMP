@@ -11,8 +11,18 @@ from ai import twin, impact
 name = "pulse"
 
 
-def _headline(avg_health, needs_attention, awaiting) -> str:
-    parts = [f"Fleet health {avg_health}"]
+def _headline(avg_health, measured, machines, needs_attention, awaiting) -> str:
+    # The average is over the machines whose score read something. A fleet
+    # where nothing has been recorded has no health figure, and says so —
+    # it used to read "Fleet health 100" (every unmeasured 100 averaged in) or,
+    # with no machines at all, "Fleet health 0".
+    if avg_health is None:
+        parts = ["Fleet health not measured"
+                 + (" (nothing recorded yet)" if machines else " (no machines yet)")]
+    elif measured < machines:
+        parts = [f"Fleet health {avg_health} ({measured} of {machines} measured)"]
+    else:
+        parts = [f"Fleet health {avg_health}"]
     if needs_attention:
         parts.append(f"{needs_attention} machine{'s' if needs_attention != 1 else ''} need attention")
     if awaiting:
@@ -30,13 +40,19 @@ def build_pulse(db, tenant: str) -> dict:
     imp = impact.build_impact(db, tenant)
 
     machines = len(twins)
-    avg_health = round(sum(t["health_score"] for t in twins) / machines) if machines else 0
+    # Only the twins whose score read something (twin.health_measured): a
+    # machine with nothing recorded scores 100 by absence, and averaging it in
+    # made a fleet look healthier the less it reported. None, not 0, when no
+    # machine could be measured — 0 is the worst score there is.
+    measured = [t for t in twins if t.get("health_measured", True)]
+    avg_health = round(sum(t["health_score"] for t in measured) / len(measured)) if measured else None
     needs_attention = sum(1 for t in twins if t["health_band"] in ("At risk", "Critical"))
     worst = twins[0] if twins else None
 
     return {
         "fleet": {
             "machines": machines,
+            "measured": len(measured),
             "avg_health": avg_health,
             "needs_attention": needs_attention,
             "worst": None if not worst else {
@@ -52,5 +68,6 @@ def build_pulse(db, tenant: str) -> dict:
             "auto_rate": imp["auto_rate"],
             "awaiting_you": imp["pending_backlog"],
         },
-        "headline": _headline(avg_health, needs_attention, imp["pending_backlog"]),
+        "headline": _headline(avg_health, len(measured), machines, needs_attention,
+                              imp["pending_backlog"]),
     }

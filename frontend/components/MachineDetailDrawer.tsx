@@ -36,6 +36,8 @@ type Detail = {
   downtime: string;
   health_score: number;
   health_band: string;
+  /** false: nothing was recorded in the risk window, so the score is an absence (ai/twin.py). */
+  health_measured?: boolean;
   risk_score: number;
   risk_level: string;
   oee: { oee: number; availability: number; performance: number; quality: number; has_data: boolean };
@@ -257,6 +259,11 @@ export default function MachineDetailDrawer({
                 <div>
                   <p className={`text-5xl font-bold ${healthColor(detail.health_score)}`}>{detail.health_score}</p>
                   <p className="text-xs text-slate-500">health score</p>
+                  {detail.health_measured === false && (
+                    <p role="note" className="text-[11px] text-amber-300/90 mt-0.5">
+                      nothing recorded — an absence, not a clean bill
+                    </p>
+                  )}
                 </div>
                 <div className="flex-1 text-sm text-slate-400 space-y-0.5 pb-1">
                   <p>

@@ -7,7 +7,10 @@ import { apiGet } from "../lib/api";
 type Pulse = {
   fleet: {
     machines: number;
-    avg_health: number;
+    /** How many twins' scores read something; the average is over these. */
+    measured?: number;
+    /** null when no machine could be measured — never 0, which is the worst score there is. */
+    avg_health: number | null;
     needs_attention: number;
     worst: { machine_id: number; name: string; health_score: number; health_band: string } | null;
   };
@@ -44,6 +47,19 @@ export default function FactoryPulse() {
 
   if (!pulse) return null;
 
+  // "Fleet health" is the average over the machines whose score read something
+  // (ai/pulse.py). A fleet where nothing has been recorded has no figure, and
+  // the tile says so rather than showing the 100 every unmeasured machine
+  // scores by absence — or the 0 an empty fleet used to show.
+  const measured = pulse.fleet.measured ?? pulse.fleet.machines;
+  const health = pulse.fleet.avg_health;
+  const coverage =
+    health === null
+      ? pulse.fleet.machines ? "nothing recorded yet" : "no machines yet"
+      : measured < pulse.fleet.machines
+        ? `${measured} of ${pulse.fleet.machines} measured`
+        : undefined;
+
   return (
     <div className="rounded-2xl border border-indigo-500/30 bg-gradient-to-br from-indigo-500/10 to-slate-900 p-6">
       <div className="flex items-start justify-between flex-wrap gap-2">
@@ -58,7 +74,12 @@ export default function FactoryPulse() {
         )}
       </div>
       <div className="mt-5 grid grid-cols-2 md:grid-cols-4 gap-4">
-        <PulseTile label="Fleet health" value={pulse.fleet.avg_health} color={healthColor(pulse.fleet.avg_health)} />
+        <PulseTile
+          label="Fleet health"
+          value={health === null ? "—" : health}
+          color={health === null ? "text-slate-500" : healthColor(health)}
+          sub={coverage}
+        />
         <PulseTile label="Need attention" value={pulse.fleet.needs_attention} />
         <PulseTile label="Awaiting you" value={pulse.agents.awaiting_you} highlight={pulse.agents.awaiting_you > 0} />
         <PulseTile label="Autonomy" value={`${pulse.agents.auto_rate}%`} sub={`${pulse.agents.actions_7d} actions / 7d`} />

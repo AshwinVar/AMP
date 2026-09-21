@@ -113,6 +113,10 @@ def test_twin_composes_health_and_is_tenant_scoped():
     assert len(twins[0]["recent_downtime"]) == 1
     assert twins[1]["machine_id"] == 2 and twins[1]["health_band"] == "Healthy"
     assert "oee" in twins[0] and twins[0]["oee"]["has_data"] is False   # no production -> zeroed OEE
+    # CNC-02 has nothing recorded at all: its 100 is an absence, and the twin
+    # says so beside the band; PRESS-01's 20 read a downtime row and a status.
+    assert twins[1]["health_measured"] is False, twins[1]
+    assert twins[0]["health_measured"] is True, twins[0]
 
 
 def test_machine_detail_composes_cockpit_and_scopes_actions():

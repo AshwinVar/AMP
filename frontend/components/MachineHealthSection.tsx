@@ -16,6 +16,12 @@ type Twin = {
   downtime: string;
   health_score: number;
   health_band: string;
+  /**
+   * Whether the score read anything (ai/twin.py): recorded history in the risk
+   * window, or a rule that fired on the machine itself. false means the 100 is
+   * an absence — nothing was recorded — and the average leaves it out.
+   */
+  health_measured?: boolean;
   risk_score: number;
   risk_level: string;
   top_reason: string;
@@ -93,7 +99,19 @@ export default function MachineHealthSection() {
     return () => clearInterval(id);
   }, [load]);
 
-  const avg = twins.length ? Math.round(twins.reduce((s, t) => s + t.health_score, 0) / twins.length) : 0;
+  // The average is over the machines whose score read something, as the
+  // Factory Pulse's is (ai/pulse.py): a machine with nothing recorded scores
+  // 100 by absence, and averaging it in made a fleet look healthier the less
+  // it reported. "—" when none could be measured.
+  const measuredTwins = twins.filter((t) => t.health_measured !== false);
+  const avg = measuredTwins.length
+    ? Math.round(measuredTwins.reduce((s, t) => s + t.health_score, 0) / measuredTwins.length)
+    : null;
+  const avgLabel = avg === null
+    ? "—"
+    : measuredTwins.length < twins.length
+      ? `${avg} (${measuredTwins.length} of ${twins.length} measured)`
+      : avg;
   const attention = twins.filter((t) => t.health_band === "Critical" || t.health_band === "At risk").length;
   const pending = twins.reduce((s, t) => s + t.pending_agent_actions, 0);
   const oeeMachines = twins.filter((t) => t.oee.has_data);
@@ -116,7 +134,7 @@ export default function MachineHealthSection() {
 
       <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
         <Kpi title="Machines" value={twins.length} />
-        <Kpi title="Avg health" value={avg} />
+        <Kpi title="Avg health" value={avgLabel} />
         <Kpi title="Avg OEE" value={`${avgOee}%`} />
         <Kpi title="Need attention" value={attention} />
         <Kpi title="Pending actions" value={pending} />
@@ -187,6 +205,11 @@ export default function MachineHealthSection() {
                 <div>
                   <p className={`text-4xl font-bold ${healthColor(t.health_score)}`}>{t.health_score}</p>
                   <p className="text-xs text-slate-500">health score</p>
+                  {t.health_measured === false && (
+                    <p role="note" className="text-[11px] text-amber-300/90 mt-0.5">
+                      nothing recorded — an absence, not a clean bill
+                    </p>
+                  )}
                 </div>
                 {t.oee.has_data && (
                   <div>

@@ -29,6 +29,10 @@ export type HealthExplanation = {
   capped: boolean;
   state: string;
   note: string;
+  /** false when nothing was recorded in the risk window (state PARTIAL DATA). */
+  has_recorded_input?: boolean;
+  /** How many of the rules read nothing recorded. */
+  rules_unmeasured?: number;
 };
 
 /**
@@ -48,6 +52,10 @@ export default function HealthExplanation({ x }: { x?: HealthExplanation | null 
 
   const notice = stateNotice(x.state);
   const scored = x.health_score != null;
+  // PARTIAL DATA: the scorer had a row but nothing recorded to read for the
+  // history rules. The arithmetic is shown as it is; "all rules passed" is
+  // not, because six of them read nothing — the backend's note says which.
+  const unrecorded = scored && x.state === "PARTIAL DATA";
   return (
     <div>
       <h3 className="text-sm font-semibold text-slate-300 uppercase tracking-wide">
@@ -76,7 +84,13 @@ export default function HealthExplanation({ x }: { x?: HealthExplanation | null 
         </p>
       )}
 
-      {x.deductions.length === 0 && scored && (
+      {unrecorded && (
+        <p role="status" className="text-amber-300/90 text-xs mt-2">
+          {x.state} · {x.note}
+        </p>
+      )}
+
+      {x.deductions.length === 0 && scored && !unrecorded && (
         <p className="text-slate-400 text-sm mt-2">
           All {x.checks_run} health rules passed — nothing was taken off.
         </p>

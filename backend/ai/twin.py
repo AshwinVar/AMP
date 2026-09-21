@@ -185,6 +185,12 @@ def _machine_twin(machine, risk, oee=None, recent_downtime=None,
     score = int(risk["risk_score"]) if risk else 0
     health = max(0, 100 - score)
     recent_downtime = recent_downtime or []
+    # Whether the score read anything: recorded history in the risk window, or
+    # a rule that fired on the machine's own row (a Breakdown status is a
+    # reading). A 100 with neither is an absence — the fleet average leaves it
+    # out and the card says "no data" beside the band. A row without the field
+    # (an older scorer) is read as measured, the default that invents nothing.
+    measured = bool(risk) and (bool(risk.get("has_recorded_input", True)) or score > 0)
     return {
         "machine_id": machine.id,
         "name": machine.name,
@@ -194,6 +200,7 @@ def _machine_twin(machine, risk, oee=None, recent_downtime=None,
         "downtime": machine.downtime,
         "health_score": health,
         "health_band": _band(health),
+        "health_measured": measured,
         "risk_score": score,
         "risk_level": risk["risk_level"] if risk else "Low",
         "top_reason": (risk["reasons"][0] if risk and risk.get("reasons") else "no major risk indicators"),

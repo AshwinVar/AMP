@@ -53,6 +53,18 @@ NOTE = ("Health starts at 100 and each rule below takes its points away. Every r
 # of health, and the twin's 100 in that case is an absence, not a measurement.
 NOT_SCORED = ("AMP has not scored this machine, so there is nothing to explain. A score of 100 "
               "here means no assessment ran, not that every check passed.")
+# The rules that read RECORDED HISTORY — downtime rows, production records and
+# breakdown transitions in the risk window. The other five read the machine row
+# itself (status, utilisation) or the open orders now, and always have a reading.
+HISTORY_RULES = ("downtime_high", "downtime_moderate", "downtime_frequent",
+                 "breakdown_repeat", "reject_high", "reject_moderate")
+# Said when the scorer had a row but nothing recorded to score it over. The
+# engine used to read a 0 for every history rule of such a machine and this
+# module printed "0 min", "0 events", "0%" — so a machine whose gateway dropped a
+# month ago read "all 11 health rules passed", the healthiest in the fleet.
+NOTHING_RECORDED = ("Nothing was recorded for this machine in the risk window — no downtime, no "
+                    "production, no breakdown — so {n} of the {m} rules read nothing and took no "
+                    "points off. The score is an absence, not a clean bill of health.")
 
 
 def _reading(component) -> str:
@@ -65,8 +77,13 @@ def _reading(component) -> str:
     return f"{measured}{unit}" if unit == "%" else f"{measured} {unit}"
 
 
-def _line(component) -> dict:
-    """One rule, as the UI and the tools both read it."""
+def _line(component, unrecorded=False) -> dict:
+    """One rule, as the UI and the tools both read it.
+
+    `unrecorded`: the machine had no recorded history at all, so a history rule's
+    0 is not a reading — it is printed as "not measured", never as "0 min"."""
+    if unrecorded and component["key"] in HISTORY_RULES:
+        component = dict(component, measured=None)
     return {
         "key": component["key"],
         "label": component["label"],
@@ -91,14 +108,19 @@ def explain(risk) -> dict:
         return {"health_score": None, "band": None, "band_rule": BAND_RULE, "start": START,
                 "deductions": [], "clear": [], "checks_run": 0, "points_deducted": 0,
                 "points_before_cap": 0, "capped": False, "state": ev.NOT_MEASURED,
-                "note": NOT_SCORED, "facts": []}
+                "note": NOT_SCORED, "has_recorded_input": False, "rules_unmeasured": 0,
+                "facts": []}
 
     components = list(risk.get("components") or [])
     score = int(risk.get("risk_score") or 0)
     health = max(0, START - score)
-    deductions = [_line(c) for c in components if c["fired"]]
+    # A row without the field (built by hand, or by an older scorer) is read as
+    # recorded: the honest default is the one that does not invent an absence.
+    unrecorded = bool(components) and not risk.get("has_recorded_input", True)
+    deductions = [_line(c, unrecorded) for c in components if c["fired"]]
     deductions.sort(key=lambda d: -d["points"])
-    clear = [_line(c) for c in components if not c["fired"]]
+    clear = [_line(c, unrecorded) for c in components if not c["fired"]]
+    unmeasured = sum(1 for c in components if unrecorded and c["key"] in HISTORY_RULES)
     capped = bool(risk.get("capped"))
 
     # Serialised the way every other read-model serialises evidence
@@ -116,6 +138,12 @@ def explain(risk) -> dict:
         ev.Fact(key="health.rules_fired", label="Rules that fired", value=len(deductions),
                 provenance=ev.MEASURED, unit="rules", source="predictive_engine", window="now",
                 detail="every check passed" if not deductions else ""),
+        # How many rules had nothing recorded to read — a count of zero is a
+        # result too, and a reader (or the grounding gate) can see it either way.
+        ev.Fact(key="health.rules_unmeasured", label="Rules that read nothing recorded",
+                value=unmeasured, provenance=ev.MEASURED, unit="rules", source="predictive_engine",
+                window="risk window",
+                detail="nothing recorded for this machine in the risk window" if unmeasured else ""),
     ]
     # One fact per rule that fired, carrying its POINTS as the value: a figure a
     # reader can add up, and a figure the grounding gate can check a sentence
@@ -140,8 +168,14 @@ def explain(risk) -> dict:
         # A capped score is a real difference: two machines can both read 0 with
         # very different amounts wrong, and the card says so rather than hiding it.
         "capped": capped,
-        "state": ev.OK if components else ev.NOT_MEASURED,
-        "note": NOTE if components else NOT_SCORED,
+        # PARTIAL DATA when the machine had nothing recorded: the score is real
+        # arithmetic over the rules that could read something, and an absence
+        # over the ones that could not — the state says so, the note says why.
+        "state": (ev.PARTIAL_DATA if unrecorded else ev.OK) if components else ev.NOT_MEASURED,
+        "note": ((NOTHING_RECORDED.format(n=unmeasured, m=len(components)) if unrecorded else NOTE)
+                 if components else NOT_SCORED),
+        "has_recorded_input": bool(components) and not unrecorded,
+        "rules_unmeasured": unmeasured,
         "facts": [f.to_dict(f.key) for f in facts],
     }
 
@@ -163,12 +197,25 @@ def say(machine_name: str, explanation: dict) -> str:
     if explanation["state"] == ev.NOT_MEASURED:
         return f"{machine_name} has not been scored, so AMP cannot explain a health number for it."
     score, deductions = explanation["health_score"], explanation["deductions"]
+    checks = explanation["checks_run"]
+    # Nothing recorded: the sentence says what the score is an absence of,
+    # rather than reading a 100 out as a clean bill.
+    unrecorded = explanation["state"] == ev.PARTIAL_DATA
+    unmeasured = explanation.get("rules_unmeasured", 0)
     if not deductions:
-        return (f"{machine_name} is at {score} out of 100: all {explanation['checks_run']} health "
+        if unrecorded:
+            return (f"{machine_name} is at {score} out of 100, but nothing was recorded for it in "
+                    f"the risk window: {unmeasured} of {checks} rules read nothing, so that is an "
+                    f"absence, not a clean bill of health.")
+        return (f"{machine_name} is at {score} out of 100: all {checks} health "
                 f"rules passed, so nothing was taken off.")
     biggest = deductions[0]
     lost = explanation["points_deducted"]
-    return (f"{machine_name} is at {score} out of 100 ({explanation['band']}). {lost} points came "
-            f"off across {len(deductions)} of {explanation['checks_run']} rules, the largest being "
+    said = (f"{machine_name} is at {score} out of 100 ({explanation['band']}). {lost} points came "
+            f"off across {len(deductions)} of {checks} rules, the largest being "
             f"{biggest['label'].lower()} at {biggest['points']} points "
             f"({biggest['reading']}, rule: {biggest['threshold']}).")
+    if unrecorded:
+        said += (f" Nothing was recorded for it in the risk window, so {unmeasured} of the "
+                 f"{checks} rules read nothing.")
+    return said

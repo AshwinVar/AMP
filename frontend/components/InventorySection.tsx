@@ -1,5 +1,6 @@
 import React, { useState } from "react";
 import { LiveInput } from "../lib/useLiveField";
+import PageNotice from "./PageNotice";
 import type {
   InventoryAnalytics,
   InventoryItem,
@@ -252,15 +253,9 @@ export default function InventorySection({
 
       <div className="rounded-2xl bg-slate-900 border border-slate-800 p-5">
         <h3 className="text-2xl font-semibold mb-4">Inventory Master</h3>
-        {total !== null && total > items.length && (
-          // The list is the newest page, not the whole book. Saying so beats
-          // a table that looks complete and is not; the complete list is the
-          // CSV export, which is never paged.
-          <p className="text-amber-300/90 text-sm -mt-2 mb-4" data-testid="inventory-page-notice">
-            Showing the newest {items.length.toLocaleString()} of {total.toLocaleString()} items — the complete list is
-            in the Inventory CSV export (Reports).
-          </p>
-        )}
+        {/* The list is the newest page, not the whole book (ADR-0036). */}
+        <PageNotice shown={items.length} total={total} noun="items" exportName="Inventory"
+          testId="inventory-page-notice" className="-mt-2 mb-4" />
 
         <div className="overflow-x-auto rounded-xl border border-slate-800">
           <table className="w-full min-w-[1050px] text-left text-sm">

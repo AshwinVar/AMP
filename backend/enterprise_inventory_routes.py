@@ -7,12 +7,15 @@ import io
 from collections import defaultdict
 from datetime import datetime
 
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
+from typing import Optional
+
+from fastapi import APIRouter, Depends, File, HTTPException, Response, UploadFile
 from sqlalchemy import case, func
 from sqlalchemy.orm import Session
 
 import doc_numbers
 import models
+import paging
 import stock_events
 import tenancy
 from csv_safe import import_row_error, read_upload_text
@@ -50,16 +53,9 @@ _IN_CHUNK = 500
 
 
 def _page(limit: int, offset: int):
-    """Clamp caller-supplied paging into a range that cannot exhaust the server."""
-    try:
-        limit = int(limit)
-    except (TypeError, ValueError):
-        limit = _PAGE_DEFAULT
-    try:
-        offset = int(offset)
-    except (TypeError, ValueError):
-        offset = 0
-    return max(1, min(limit, _PAGE_MAX)), max(0, offset)
+    """Clamp caller-supplied paging into a range that cannot exhaust the server.
+    The rule itself lives in paging.clamp now (one place for every list)."""
+    return paging.clamp(limit, _PAGE_DEFAULT, offset, _PAGE_MAX)
 
 
 def _in_chunks(db, model, column, values):
@@ -104,7 +100,7 @@ def _item_labels(db, item_ids):
 
 
 @router.get("/remnants")
-def get_remnants(limit: int = _PAGE_DEFAULT, offset: int = 0,
+def get_remnants(response: Response = None, limit: int = _PAGE_DEFAULT, offset: int = 0,
                  db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
     """Remnant (offcut) stock, newest first, one page at a time.
 
@@ -115,10 +111,8 @@ def get_remnants(limit: int = _PAGE_DEFAULT, offset: int = 0,
     grows (one row per offcut logged), so paging keeps the response bounded, and
     _item_labels fetches only the (item_code, item_name) of the items THIS page
     references. Tenant scoping stays automatic (ADR-0002)."""
-    limit, offset = _page(limit, offset)
-    rows = (db.query(models.Remnant)
-            .order_by(models.Remnant.id.desc())
-            .limit(limit).offset(offset).all())
+    rows = paging.page(response, db.query(models.Remnant).order_by(models.Remnant.id.desc()),
+                       _PAGE_DEFAULT, limit, offset, max_page=_PAGE_MAX)
     items = _item_labels(db, {r.item_id for r in rows})
     return [
         {
@@ -181,7 +175,7 @@ def update_remnant_status(rid: int, payload: dict, db: Session = Depends(get_db)
 
 
 @router.get("/issue-slips")
-def get_issue_slips(limit: int = _PAGE_DEFAULT, offset: int = 0,
+def get_issue_slips(response: Response = None, limit: int = _PAGE_DEFAULT, offset: int = 0,
                     db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
     """Material issue slips, newest first, one page at a time.
 
@@ -189,10 +183,9 @@ def get_issue_slips(limit: int = _PAGE_DEFAULT, offset: int = 0,
     material request, and this used to `.all()` it whole and hydrate the entire
     InventoryItem master just to read two columns. Page the slips and label only
     the items this page references. Tenant scoping stays automatic (ADR-0002)."""
-    limit, offset = _page(limit, offset)
-    rows = (db.query(models.MaterialIssueSlip)
-            .order_by(models.MaterialIssueSlip.id.desc())
-            .limit(limit).offset(offset).all())
+    rows = paging.page(response,
+                       db.query(models.MaterialIssueSlip).order_by(models.MaterialIssueSlip.id.desc()),
+                       _PAGE_DEFAULT, limit, offset, max_page=_PAGE_MAX)
     items = _item_labels(db, {s.item_id for s in rows})
     return [
         {
@@ -308,7 +301,7 @@ def reject_issue_slip(sid: int, db: Session = Depends(get_db), current_user: dic
 
 
 @router.get("/grns")
-def get_grns(limit: int = _PAGE_DEFAULT, offset: int = 0,
+def get_grns(response: Response = None, limit: int = _PAGE_DEFAULT, offset: int = 0,
              db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
     """Receipt history, newest first, one page at a time.
 
@@ -319,10 +312,9 @@ def get_grns(limit: int = _PAGE_DEFAULT, offset: int = 0,
     that fetched the data took 0.19s. Grouping the lines once into a dict gives
     identical output, and paging keeps the response bounded as the table grows
     (a receipt table only ever grows)."""
-    limit, offset = _page(limit, offset)
-    grns = (db.query(models.GoodsReceiptNote)
-            .order_by(models.GoodsReceiptNote.id.desc())
-            .limit(limit).offset(offset).all())
+    grns = paging.page(response,
+                       db.query(models.GoodsReceiptNote).order_by(models.GoodsReceiptNote.id.desc()),
+                       _PAGE_DEFAULT, limit, offset, max_page=_PAGE_MAX)
     grn_items = _children(db, models.GRNItem, models.GRNItem.grn_id, [g.id for g in grns])
     by_grn = _group_by(grn_items, "grn_id")
     items = _item_labels(db, {x.item_id for x in grn_items})
@@ -447,7 +439,7 @@ def accept_grn(gid: int, db: Session = Depends(get_db), current_user: dict = Dep
 
 
 @router.get("/cycle-counts")
-def get_cycle_counts(limit: int = _PAGE_DEFAULT, offset: int = 0,
+def get_cycle_counts(response: Response = None, limit: int = _PAGE_DEFAULT, offset: int = 0,
                      db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
     """Cycle-count history, newest first, one page at a time.
 
@@ -455,10 +447,9 @@ def get_cycle_counts(limit: int = _PAGE_DEFAULT, offset: int = 0,
     the UI makes a count containing every SKU, so a year of weekly full counts is
     already 26k lines — measured 28s at 2,000 counts / 20,000 lines, and a 17 MB
     JSON body at five years of history."""
-    limit, offset = _page(limit, offset)
-    counts = (db.query(models.CycleCount)
-              .order_by(models.CycleCount.id.desc())
-              .limit(limit).offset(offset).all())
+    counts = paging.page(response,
+                         db.query(models.CycleCount).order_by(models.CycleCount.id.desc()),
+                         _PAGE_DEFAULT, limit, offset, max_page=_PAGE_MAX)
     count_items = _children(db, models.CycleCountItem, models.CycleCountItem.count_id,
                             [c.id for c in counts])
     by_count = _group_by(count_items, "count_id")

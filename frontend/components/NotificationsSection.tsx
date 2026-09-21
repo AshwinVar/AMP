@@ -1,4 +1,5 @@
 import type { NotificationItem } from "../lib/phase27-types";
+import PageNotice from "./PageNotice";
 
 function severityStyle(severity: string) {
   if (severity === "Critical") return "border-red-500/40 bg-red-500/10 text-red-300";
@@ -6,13 +7,29 @@ function severityStyle(severity: string) {
   return "border-blue-500/40 bg-blue-500/10 text-blue-300";
 }
 
-export default function NotificationsSection({ notifications, generateNotifications, updateNotification, markAllRead }: {
+export default function NotificationsSection({
+  notifications,
+  generateNotifications,
+  updateNotification,
+  markAllRead,
+  total = null,
+  unreadTotal = null,
+}: {
   notifications: NotificationItem[];
   generateNotifications: () => void;
   updateNotification: (id: number, status: string) => void;
   markAllRead?: () => void;
+  // The list is a page of the newest 500 (ADR-0036). `total` is how many the
+  // tenant has in all; `unreadTotal` is the unread count over ALL of them
+  // (/notifications?unread=true&limit=1, X-Total-Count). Both null when not
+  // known, in which case the page is all there is to count.
+  total?: number | null;
+  unreadTotal?: number | null;
 }) {
-  const unread = notifications.filter((n) => n.status !== "Read").length;
+  // A NULL status is unread too: the read-all endpoint and the generator's
+  // dedup both treat "not explicitly Read" as unread, and so does this count.
+  const unreadOnPage = notifications.filter((n) => n.status !== "Read").length;
+  const unread = typeof unreadTotal === "number" ? unreadTotal : unreadOnPage;
   return (
     <section className="mt-8 space-y-6">
       <div className="flex flex-col md:flex-row md:items-end md:justify-between gap-4">
@@ -33,6 +50,8 @@ export default function NotificationsSection({ notifications, generateNotificati
           <button onClick={generateNotifications} className="rounded-xl bg-white text-slate-950 font-semibold px-4 py-3">Generate Notifications</button>
         </div>
       </div>
+
+      <PageNotice shown={notifications.length} total={total} noun="notifications" />
 
       <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
         {notifications.map((row) => (

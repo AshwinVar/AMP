@@ -47,7 +47,7 @@ def _serialise_list(db, user):
     validate every ORM row the handler returns through the response schema. This
     is the exact step that raised before the heal — calling the handler alone did
     not, because the handler returns ORM objects and never serialises them."""
-    rows = saas_routes.get_company_tenants(db, user)
+    rows = saas_routes.get_company_tenants(db=db, current_user=user)
     return [schemas.CompanyTenantResponse.model_validate(r) for r in rows]
 
 

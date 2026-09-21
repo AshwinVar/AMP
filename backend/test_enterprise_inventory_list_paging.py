@@ -126,7 +126,10 @@ def test_paging_reproduces_the_whole_result_with_no_gaps_or_repeats():
     for name, new_fn, old_fn in CASES:
         old = old_fn(db)
         walked, offset = [], 0
-        while True:
+        # Bounded, never `while True`: an endpoint that ignores its offset serves
+        # the first page forever, and this walk must stop and FAIL, not spin
+        # (it did, for ten minutes, under exactly that mutation).
+        for _ in range(120 // 25 + 3):
             page = new_fn(limit=25, offset=offset, db=db, current_user=USER)
             if not page:
                 break

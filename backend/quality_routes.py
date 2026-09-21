@@ -7,14 +7,15 @@ commit atomically. Also exposes the defect escalation generator (builds
 models.Escalation rows directly; self-contained). Peeled out of main.py per
 ADR-0009.
 """
-from typing import List
+from typing import List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Response
 from sqlalchemy import or_
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 import models
+import paging
 import schemas
 from auth import get_current_user, require_roles
 from database import SessionLocal
@@ -36,15 +37,15 @@ router = APIRouter(prefix="/quality", tags=["Quality"])
 
 @router.get("/inspections", response_model=List[schemas.QualityInspectionResponse])
 def get_quality_inspections(
+    response: Response = None,
+    limit: Optional[int] = None,
+    offset: int = 0,
     db: Session = Depends(_get_db),
     current_user: dict = Depends(get_current_user),
 ):
-    return (
-        db.query(models.QualityInspection)
-        .order_by(models.QualityInspection.id.desc())
-        .limit(300)
-        .all()
-    )
+    return paging.page(response,
+                       db.query(models.QualityInspection).order_by(models.QualityInspection.id.desc()),
+                       300, limit, offset)
 
 
 @router.post("/inspections", response_model=schemas.QualityInspectionResponse)

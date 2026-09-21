@@ -6,13 +6,14 @@ completed_at (datetime.utcnow). Tenant scoping is handled by the ORM chokepoint
 (ADR-0002). Peeled out of main.py per ADR-0009.
 """
 from datetime import datetime
-from typing import List
+from typing import List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Response
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 import models
+import paging
 import schemas
 from auth import get_current_user, require_roles
 from database import SessionLocal
@@ -30,8 +31,9 @@ router = APIRouter(prefix="/operator", tags=["Operator"])
 
 
 @router.get("/executions", response_model=List[schemas.OperatorJobExecutionResponse])
-def get_operator_executions(db: Session = Depends(_get_db), current_user: dict = Depends(get_current_user)):
-    return db.query(models.OperatorJobExecution).order_by(models.OperatorJobExecution.id.desc()).limit(500).all()
+def get_operator_executions(response: Response = None, limit: Optional[int] = None, offset: int = 0,
+                            db: Session = Depends(_get_db), current_user: dict = Depends(get_current_user)):
+    return paging.page(response, db.query(models.OperatorJobExecution).order_by(models.OperatorJobExecution.id.desc()), 500, limit, offset)
 
 
 @router.post("/executions", response_model=schemas.OperatorJobExecutionResponse)

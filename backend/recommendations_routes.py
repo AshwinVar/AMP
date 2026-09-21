@@ -10,13 +10,14 @@ Named recommendations_routes (not ai_routes) to avoid confusion with the `ai`
 read-model package.
 """
 from datetime import datetime, timedelta
-from typing import List
+from typing import List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Response
 from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
 import models
+import paging
 import schemas
 from analytics_engine import parse_duration_to_minutes
 from auth import get_current_user, require_roles
@@ -47,8 +48,9 @@ RECOMMENDATION_WINDOW_DAYS = 30
 
 
 @router.get("/recommendations", response_model=List[schemas.AIRecommendationResponse])
-def get_ai_recommendations(db: Session = Depends(_get_db), current_user: dict = Depends(get_current_user)):
-    return db.query(models.AIRecommendation).order_by(models.AIRecommendation.id.desc()).limit(300).all()
+def get_ai_recommendations(response: Response = None, limit: Optional[int] = None, offset: int = 0,
+                           db: Session = Depends(_get_db), current_user: dict = Depends(get_current_user)):
+    return paging.page(response, db.query(models.AIRecommendation).order_by(models.AIRecommendation.id.desc()), 300, limit, offset)
 
 
 @router.patch("/recommendations/{recommendation_id}", response_model=schemas.AIRecommendationResponse)

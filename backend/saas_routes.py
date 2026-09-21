@@ -14,14 +14,15 @@ unit-tested directly by name (test_onboarding / test_offboarding call
 saas_routes.<handler>); register() just attaches them to the app.
 """
 import secrets
-from typing import List
+from typing import List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Response
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 import ai.escalations
 import models
+import paging
 import offboard_tenant
 import onboard_tenant
 import plan_gate
@@ -88,9 +89,10 @@ def _require_founder(current_user):
         raise HTTPException(status_code=403, detail="Only the platform workspace can manage tenants")
 
 
-def get_company_tenants(db: Session = Depends(_get_db), current_user: dict = Depends(get_current_user)):
+def get_company_tenants(response: Response = None, limit: Optional[int] = None, offset: int = 0,
+                        db: Session = Depends(_get_db), current_user: dict = Depends(get_current_user)):
     q = _registry_scope(db.query(models.CompanyTenant), current_user)
-    return q.order_by(models.CompanyTenant.id.desc()).limit(300).all()
+    return paging.page(response, q.order_by(models.CompanyTenant.id.desc()), 300, limit, offset)
 
 
 def create_company_tenant(tenant: schemas.CompanyTenantCreate, db: Session = Depends(_get_db), current_user: dict = Depends(require_roles(["Admin"]))):

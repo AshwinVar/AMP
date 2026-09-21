@@ -11,13 +11,14 @@ Note: /reports/daily-summary.txt deliberately stays in main; it calls the
 analytics-summary compute is factored out of main into the shared engine.
 """
 from datetime import datetime
-from typing import List
+from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Response
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 import models
+import paging
 import schemas
 from csv_safe import csv_response
 from analytics_engine import (
@@ -261,8 +262,9 @@ def export_intelligence_summary(db: Session = Depends(_get_db), current_user: di
 
 
 @router.get("", response_model=List[schemas.ReportRequestResponse])
-def get_reports(db: Session = Depends(_get_db), current_user: dict = Depends(get_current_user)):
-    return db.query(models.ReportRequest).order_by(models.ReportRequest.id.desc()).limit(300).all()
+def get_reports(response: Response = None, limit: Optional[int] = None, offset: int = 0,
+                db: Session = Depends(_get_db), current_user: dict = Depends(get_current_user)):
+    return paging.page(response, db.query(models.ReportRequest).order_by(models.ReportRequest.id.desc()), 300, limit, offset)
 
 
 @router.post("", response_model=schemas.ReportRequestResponse)

@@ -605,10 +605,12 @@ router = APIRouter(prefix="/inventory", tags=["Inventory"])   # a sub-menu main.
 
 @router.get("/items", response_model=List[schemas.InventoryItemResponse])
 def get_inventory_items(
+    response: Response = None,                     # injected on a request; a test may omit it
+    limit: Optional[int] = None, offset: int = 0,  # ?limit= (≤ 2,000) and ?offset=
     db: Session = Depends(_get_db),                # injected DB session
     current_user: dict = Depends(get_current_user), # injected, verified caller (any role)
 ):
-    return db.query(models.InventoryItem).order_by(...).limit(500).all()
+    return paging.page(response, db.query(models.InventoryItem).order_by(...), 500, limit, offset)
 
 @router.post("/items", response_model=schemas.InventoryItemResponse)
 def create_inventory_item(
@@ -619,6 +621,8 @@ def create_inventory_item(
     ...
 ```
 Four ideas: **`APIRouter`** (a domain's sub-menu), the **`@router.get/post/patch`** decorator (URL+verb → function), **`Depends`** (inject db/user/role), and the **model↔schema** conversion. That's it — every endpoint is a variation.
+
+**A list is a page, and says so (ADR-0036).** Every list that reads a table which grows with time takes a cap — the newest 500 here — because a three-second poll must never hydrate a whole append-only table (`test_growing_table_reads.py`). What used to be missing was any sign of the cap: a plant with 1,200 stock items saw 500 on the dashboard and nothing said so. `paging.page()` is the one place the honest version lives: the endpoint's old cap is its default page, `?limit=`/`?offset=` page through the rest (clamped in the helper, not the signature, so a test calling the function gets the same page a request would), and the caller's **whole** count travels in the `X-Total-Count` header — so the screen can say "the newest 500 of 1,234" and a KPI computed over a page can be told it is one (`/notifications?unread=true&limit=1` makes the header the tenant's unread count). `test_lists_are_pages.py` fails the build for a capped GET that does not go through it; a cap that is a *window* (the newest 200 records feeding a chart) is allowed by name, with the reason.
 
 ### The full request lifecycle (what wraps every call)
 ```mermaid

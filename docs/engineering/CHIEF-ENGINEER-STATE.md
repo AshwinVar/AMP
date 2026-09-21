@@ -29,12 +29,12 @@ the simulator's tenant guard: a tick with no tenant bound now refuses instead
 of filing every tenant's activity under DEFAULT — ADR-0002 postmortem). See
 AMP-10-DAY-SPRINT.md, AMP-NATIVE-MODEL-ACCEPTANCE.md and, for the twelve
 acceptance items with their evidence, AMP-SPRINT-ACCEPTANCE.md.
-**Master SHA:** `bbfdc4f` (#667).
-**Production SHA:** `bbfdc4f`, verified live, not assumed:
-`{"status":"ok","database":"ok","schema":"ok","version":"bbfdc4f"}` from
-`https://flowmes-production.up.railway.app/health`, read 48 s after the deploy
-on 2026-09-21 (UTC); `/readiness` 200. The frontend (`https://flow-mes.vercel.app`)
-answers 200; `/ai/status` refuses an unauthenticated call with 401, and so did
+**Master SHA:** `f3351dc` (#673).
+**Production SHA:** `f3351dc`, verified live, not assumed:
+`{"status":"ok","database":"ok","schema":"ok","version":"f3351dc"}` from
+`https://flowmes-production.up.railway.app/health`, read on 2026-09-21 00:58 UTC,
+under two minutes after the merge; `/readiness` 200. The frontend (`https://flow-mes.vercel.app`)
+answers 200; `/ai/status` and `/inventory/items?limit=1` refuse an unauthenticated call with 401, and so did
 `POST /copilot/ask` sent a valid `{question, thread}` body at `ba06970`. Production has no
 GPU and no `AMP_LLM_BASE_URL`, and no self-hosted model is currently adopted
 anywhere (the committed record is the failing one, below), so the Copilot
@@ -80,6 +80,37 @@ before any next run. Also merged: #667 `bbfdc4f`, test-only — the schema
 guard's throwaway databases use `NullPool`, so the coverage job's
 single-process pytest run passes on Windows too (it re-creates the same temp
 file twice; the default pool held it open).
+
+**Merged 2026-09-21: the restore drill measures at scale, and every list is
+a page that says so.** #669 `839076a` runs the three-factory simulation audit
+on PostgreSQL in the migration-gate job (98/98). #670 `14ceef1` guards the
+intelligence-classification guard itself (seven bends of the handbook and the
+record, all caught; `test_mutation_anchors_apply.py` now checks `.md`/`.json`
+anchors too). #671 `8a42506`: `restore_drill.py` no longer freezes at its
+verify phase (its server's access log filled an unread pipe) and takes
+`--scale N --days N` — RTO measured 7.7 s at demo size, 9.2 s at 100× for a
+month, **11.1 s at 100× for a year** (803,000 records, 57 MB dump, restore
+3.2 s); `CUSTOMER-READINESS-CLOSURE.md` §8 carries the table. That drill found
+the defect #672 `2c70932` (two suites read the clock at import; the coverage
+job's single-process run crossed midnight UTC) sat beside and #673 `f3351dc`
+closed for the two inventory lists: **the dashboard showed the newest 500
+items with no sign that 700 were missing.** The survey that followed found
+thirty-three more capped list endpoints with the same shape, and the
+notification screen counting unread rows in the newest 500 as *the* number —
+so **ADR-0036** (this PR): one helper, `paging.page()`, serves every capped
+list with the tenant's whole count in `X-Total-Count`, `?limit=`/`?offset=`
+clamped in one place, the old cap as the default page; `test_lists_are_pages.py`
+fails the build for a capped GET that does not go through it (35 page, 10
+windows/envelopes/downloads allowed by name and reason);
+`/notifications?unread=true&limit=1` makes the header the tenant's unread
+count; the dashboard shows "Showing the newest 200 of 1,234 work orders" above
+eighteen lists and the Notification Center and Inbox count unread over the
+whole tenant. `mutate_lists_are_pages.py` 15/15 (one survived the first run
+and the TEST was wrong: `status=None` on a column with `default="Unread"` is
+omitted from the INSERT, so its "NULL" rows were never NULL — #407's trap;
+the seed now NULLs with an UPDATE), `mutate_approval_gate.py` re-anchored
+(the Approvals list's clamp now lives in `paging.clamp`), 75/77, 2 pg-only
+as before.
 
 **Nothing else is awaiting review.** What a next session would do first, in order:
 (1) the OEM journey re-check against a real OEM's edge agent is still simulated

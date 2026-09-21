@@ -16,6 +16,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 import models
+import paging
 import schemas
 import stock_events
 from auth import get_current_user, require_roles
@@ -35,41 +36,30 @@ def _get_db():
 router = APIRouter(prefix="/inventory", tags=["Inventory"])
 
 
-# A list is a PAGE, and says so. These two endpoints always returned the newest
-# 500 items / 300 transactions and nothing else: a plant with 1,200 stock items
-# saw 500 of them on the dashboard with no sign that 700 were missing (found by
-# the restore drill at scale, whose verify phase counted 500 of 1,200). The
-# defaults are unchanged so nothing that reads these lists moves; what changes
-# is that a caller may ask for another page (`limit`, `offset`, capped at
-# MAX_PAGE rows) and that every response carries the tenant's TOTAL in
-# X-Total-Count, so a full page can be told from a complete list.
+# A list is a PAGE, and says so (paging.py). These two endpoints always returned
+# the newest 500 items / 300 transactions and nothing else: a plant with 1,200
+# stock items saw 500 of them on the dashboard with no sign that 700 were
+# missing (found by the restore drill at scale, whose verify phase counted 500
+# of 1,200). The defaults are unchanged so nothing that reads these lists
+# moves; what changes is that a caller may ask for another page (`limit`,
+# `offset`, capped at paging.MAX_PAGE rows) and that every response carries the
+# tenant's TOTAL in X-Total-Count, so a full page can be told from a complete
+# list. The rule was written here first (#673) and then moved to paging.page
+# when every other capped list turned out to have the same defect.
 ITEMS_PAGE = 500
 TRANSACTIONS_PAGE = 300
-MAX_PAGE = 2000
-TOTAL_HEADER = "X-Total-Count"
-
-
-def _page(response, query, limit, page_default, offset):
-    """One page of `query`, and the whole count in X-Total-Count. The bounds are
-    enforced here, not in the signatures, so a direct caller (a test, a script)
-    gets the same clamped page a request would -- the same rule the enterprise
-    inventory lists follow (enterprise_inventory_routes._page)."""
-    limit = page_default if limit is None else max(1, min(int(limit), MAX_PAGE))
-    offset = max(0, int(offset or 0))
-    response.headers[TOTAL_HEADER] = str(query.order_by(None).count())
-    return query.offset(offset).limit(limit).all()
 
 
 @router.get("/items", response_model=List[schemas.InventoryItemResponse])
 def get_inventory_items(
-    response: Response,
-    limit: Optional[int] = None,     # rows per page, default ITEMS_PAGE, at most MAX_PAGE
+    response: Response = None,
+    limit: Optional[int] = None,     # rows per page, default ITEMS_PAGE, at most paging.MAX_PAGE
     offset: int = 0,
     db: Session = Depends(_get_db),
     current_user: dict = Depends(get_current_user),
 ):
-    return _page(response, db.query(models.InventoryItem).order_by(models.InventoryItem.id.desc()),
-                 limit, ITEMS_PAGE, offset)
+    return paging.page(response, db.query(models.InventoryItem).order_by(models.InventoryItem.id.desc()),
+                       ITEMS_PAGE, limit, offset)
 
 
 def check_stock_levels(current_stock, reorder_level):
@@ -185,15 +175,15 @@ def delete_inventory_item(
 
 @router.get("/transactions", response_model=List[schemas.InventoryTransactionResponse])
 def get_inventory_transactions(
-    response: Response,
-    limit: Optional[int] = None,     # rows per page, default TRANSACTIONS_PAGE, at most MAX_PAGE
+    response: Response = None,
+    limit: Optional[int] = None,     # rows per page, default TRANSACTIONS_PAGE, at most paging.MAX_PAGE
     offset: int = 0,
     db: Session = Depends(_get_db),
     current_user: dict = Depends(get_current_user),
 ):
-    return _page(response,
-                 db.query(models.InventoryTransaction).order_by(models.InventoryTransaction.id.desc()),
-                 limit, TRANSACTIONS_PAGE, offset)
+    return paging.page(response,
+                       db.query(models.InventoryTransaction).order_by(models.InventoryTransaction.id.desc()),
+                       TRANSACTIONS_PAGE, limit, offset)
 
 
 @router.post("/transactions", response_model=schemas.InventoryTransactionResponse)

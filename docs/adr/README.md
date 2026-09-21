@@ -41,6 +41,7 @@ Guiding principles: incremental (strangler) evolution, never a rewrite; backward
 | [0033](0033-oem-intelligence-floor.md) | An aggregate can disclose what a field could not, so every cross-customer figure has a floor | Accepted |
 | [0034](0034-real-local-model.md) | A reasoning model needs room to name a tool, and AMP gave it none | Accepted |
 | [0035](0035-copilot-follow-ups.md) | Follow-up questions: a thread the client carries, re-authorized every turn | Accepted |
+| [0036](0036-lists-are-pages.md) | A list is a page, and says so: one helper, the whole count in X-Total-Count, a guard for every capped GET | Accepted |
 
 **Recommended order:** 0001 first (smaller, proves the pattern; events carry `tenant_code`), then 0002.
 

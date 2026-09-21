@@ -17,12 +17,15 @@ import re
 from datetime import datetime, timedelta
 from urllib.parse import urlparse
 
-from fastapi import APIRouter, Depends, HTTPException
+from typing import Optional
+
+from fastapi import APIRouter, Depends, HTTPException, Response
 from fastapi.responses import JSONResponse
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 import models
+import paging
 import module_manifest
 import schema_guard
 import schemas
@@ -440,8 +443,10 @@ def apply_plan(tenant_code: str, payload: dict, db: Session = Depends(get_db),
 
 
 @router.get("/audit-logs")
-def audit_logs(db: Session = Depends(get_db), current_user: dict = Depends(require_roles(["Admin"]))):
-    rows = db.query(models.AuditLog).order_by(models.AuditLog.id.desc()).limit(200).all()
+def audit_logs(response: Response = None, limit: Optional[int] = None, offset: int = 0,
+               db: Session = Depends(get_db), current_user: dict = Depends(require_roles(["Admin"]))):
+    rows = paging.page(response, db.query(models.AuditLog).order_by(models.AuditLog.id.desc()),
+                       200, limit, offset)
     return [
         {"id": r.id, "actor": r.actor, "action": r.action, "entity_type": r.entity_type,
          "entity_id": r.entity_id, "details": r.details, "created_at": r.created_at}

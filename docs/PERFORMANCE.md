@@ -56,6 +56,39 @@ or pushing more over the existing WebSocket), not a defect, and it should be
 decided against an HTTP-level measurement. `loadtest.py` supplies one; see the
 HTTP section below.
 
+### Re-measured 2026-09-21: the honest page costs one `count(*)` per list (ADR-0036)
+
+Every capped list in the round now carries the tenant's whole count in
+`X-Total-Count` (`paging.page`), which is one more statement per list: the
+`SELECT count(*)` beside the page itself. Measured with `dashboard_perf.py`
+on the same laptop, SQLite, before and after:
+
+| | master `f3351dc` | ADR-0036 |
+|---|---:|---:|
+| endpoints measured | 49 (two `ERR`, see below) | 50 |
+| whole refresh, 10 machines | 135 queries | **161 queries** |
+| whole refresh, 50 machines | 135 | **161** |
+| whole refresh, 200 machines | 135 | **161** |
+| a paged list (`/work-orders`, `/suppliers`, …) | 1 query, ~1.0 ms | 2 queries, ~1.9 ms |
+| the tenant-wide unread count (new request) | — | 2 queries, ~1.9 ms |
+
+The 26 extra statements are exactly 22 lists × 1 `count(*)`, the two inventory
+lists that master's harness could not call at all (`ERR`: after #673 their
+handlers *required* a `Response`; the harness passed none — 2 statements once
+counted), and the new unread-count request (a count and a one-row page). **No
+endpoint grows with the size of the factory**: 161 at 10 machines, 161 at 200.
+The rate per open tab is now ~54 queries/second instead of ~45; the product
+question above is unchanged, only its number.
+
+Two things about the method changed with it. The harness now passes a real
+`Response()` to any handler that declares one, because that is what a request
+carries and what the count is set on — a direct call with no response issues no
+count, and would have measured the old figure. And the harness's cycle carries
+the 47th request (`/notifications?unread=true&limit=1`) as an entry with its
+own query parameters, so the measured round is the round the browser issues.
+`node load/check-drift.mjs` still pins `load/endpoints.js` to `fetchAll`;
+`dashboard_perf.py`'s own list is hand-kept beside it.
+
 **Method and its limits:** route functions are called directly against a seeded
 database and statements are counted via a SQLAlchemy `before_cursor_execute`
 hook — the same technique `oem_perf.py` uses. It measures SQL shape, **not**
@@ -439,9 +472,11 @@ entirely deterministic. From `frontend/app/dashboard/page.tsx`:
 usePolling(fetchAll, 3000, Boolean(getToken()));
 ```
 
-`fetchAll` issues **46 requests**: three awaited together (`/machines`,
-`/downtime-logs`, `/shifts` — these gate first paint) and 43 more as one
-`Promise.allSettled`. Every 3 seconds. For as long as the tab is open.
+`fetchAll` issues **47 requests**: three awaited together (`/machines`,
+`/downtime-logs`, `/shifts` — these gate first paint) and 44 more as one
+`Promise.allSettled` (the 44th, since ADR-0036, is the tenant-wide unread
+notification count: `/notifications?unread=true&limit=1`, one row and a
+`SELECT count(*)`). Every 3 seconds. For as long as the tab is open.
 
 Two mitigations already landed and both matter to how you model this:
 
@@ -461,7 +496,7 @@ So, per open tab, in steady state:
 
 | | Requests | Cadence | Per minute |
 | --- | ---: | --- | ---: |
-| `fetchAll` round | 46 | every 3s | **920** |
+| `fetchAll` round | 47 | every 3s | **940** |
 | Mounted snapshot cards | 0–34 | mostly every 30s | 0–~70 |
 
 The round dominates, overwhelmingly, and it does not vary with the view. Three

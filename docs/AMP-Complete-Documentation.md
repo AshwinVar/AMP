@@ -649,7 +649,7 @@ GET    /analytics/things  → summary/KPIs for that module
 |---|---|---|
 | `GET`/`POST` | `/iot/telemetry` | IoT telemetry read/write. |
 | `GET` | `/analytics/iot-command` | IoT command‑center analytics. |
-| `GET`/`POST`/`PATCH` | `/industrial/devices[/{id}]` | Industrial‑device CRUD. |
+| `GET`/`POST`/`PATCH` | `/industrial/devices[/{id}]` | Industrial‑device CRUD. A per‑device `topic` is refused (422): MQTT routes per tenant and site (ADR‑0011), so nothing would read it. |
 | `GET`/`POST` | `/industrial/signals` | Live industrial signal read/write. |
 | `GET`/`POST` | `/industrial/mappings` | PLC‑signal → MES‑field mappings. |
 | `GET` | `/analytics/industrial-gateway` | Gateway analytics. |

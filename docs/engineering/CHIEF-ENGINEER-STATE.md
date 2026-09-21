@@ -612,8 +612,9 @@ merged — see "Branches awaiting review" below. Of the 39 candidates the sweep
 could not verify, two were checked and fixed while working nearby (#603, #604);
 the rest are still candidates, not facts.
 
-Also still open, lower: `IndustrialDevice.topic` (P3 — the registration form never
-sends it; API-only). Refuted by the verifiers (do NOT re-raise without new
+~~Also still open, lower: `IndustrialDevice.topic` (P3 — the registration form never
+sends it; API-only).~~ **Closed 2026-09-21** — see "the device topic is not routing"
+below. Refuted by the verifiers (do NOT re-raise without new
 evidence): `is_active` unchecked at login/refresh; agent-policy PUT unaudited;
 SaaS registry writes unaudited; login rate limit keyed on spoofable XFF; enterprise
 CSV `int_cell` bound.
@@ -655,11 +656,27 @@ untracked local config. Local MQTT ingest now *says* it is deaf instead of
 pretending; set `MQTT_LEGACY_TENANT=DEFAULT` or repoint the simulator at
 `flowmes/DEFAULT/-/machines` to actually receive.
 
-**Still open in this family** (verified, not yet shipped): `IndustrialDevice.topic`
+~~**Still open in this family** (verified, not yet shipped): `IndustrialDevice.topic`
 is settable on create and rendered in the connection drawer beside the device,
-but nothing subscribes to it or routes by it — routing is per-(tenant, site) by
-design, so a free-text per-device topic cannot route without breaking the
-tenant-in-topic security model. Same shape as #582's "Online" default.
+but nothing subscribes to it or routes by it~~ — **closed 2026-09-21: the device
+topic is not routing, and the API says so.** Routing is per-(tenant, site) by
+design (ADR-0011), so a free-text per-device topic cannot route without breaking
+the tenant-in-topic security model. Same shape as #582's "Online" default, and
+the #593 shape (an input accepted and read by nothing). Now `POST
+/industrial/devices` refuses a non-empty `topic` with a 422 that says how
+routing works and what to do instead (`schemas.DEVICE_TOPIC_NOT_ROUTING`, a
+`field_validator` on `IndustrialDeviceCreate`; blank or null stays NULL, and
+the field stays in the schema so a caller is told rather than silently
+ignored — pydantic drops an unknown field without a word); the connection
+drawer's read model and the drawer itself no longer print a stored topic as if
+it configured ingest (`IndustrialDeviceResponse.topic` still reports what an
+old row holds, as data); the column stays (no schema change; the frozen
+baseline has it). The claim behind the refusal is pinned, not assumed:
+`mqtt_service.py`, `mqtt_identity.py` and `industrial_adapters.py` never read
+`IndustrialDevice.topic`, and PATCH cannot set one.
+`test_device_topic_is_not_routing.py` (26 checks over the schema, the route
+at the ASGI layer, the read model and the claim), `mutate_device_topic.py`
+6/6.
 
 ### 2026-09-14 — an idle day is not a catastrophic day (#592)
 

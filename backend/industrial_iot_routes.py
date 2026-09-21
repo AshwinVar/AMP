@@ -85,6 +85,9 @@ def get_industrial_devices(response: Response = None, limit: Optional[int] = Non
 
 @router.post("/industrial/devices", response_model=schemas.IndustrialDeviceResponse)
 def create_industrial_device(device: schemas.IndustrialDeviceCreate, db: Session = Depends(_get_db), current_user: dict = Depends(require_roles(["Admin", "Supervisor"]))):
+    # A `topic` in the payload was refused by the schema before this ran
+    # (schemas.DEVICE_TOPIC_NOT_ROUTING): a 422 that says how routing works,
+    # never a stored value nothing reads.
     existing = db.query(models.IndustrialDevice).filter(models.IndustrialDevice.device_code == device.device_code).first()
     if existing:
         raise HTTPException(status_code=400, detail="Device code already exists")

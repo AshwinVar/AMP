@@ -5,6 +5,9 @@ export type IndustrialDevice = {
   device_type: string;
   protocol: string;
   ip_address?: string | null;
+  // Reported as stored for old rows; the API refuses a value and nothing
+  // routes by it (MQTT routes per tenant and site, ADR-0011). Never render it
+  // as configuration.
   topic?: string | null;
   linked_machine_id?: number | null;
   status: string;

@@ -351,7 +351,8 @@ def build_connection_detail(db, tenant: str, machine_id: int) -> dict:
             "device_type": d.device_type,
             "protocol": d.protocol,
             "ip_address": d.ip_address,
-            "topic": d.topic,
+            # No "topic": nothing routes by a device's topic (ADR-0011), and
+            # printing one beside the device read as if it configured ingest.
             "status": d.status,
             "online": _is_online(d.status),
             "signals": agg["total"],

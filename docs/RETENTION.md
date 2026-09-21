@@ -12,6 +12,7 @@ stops that, and the reasoning behind each number.
 | `iot_telemetry` | `created_at` | **14 days** | Fastest-growing table in the schema. The connectivity read-model only looks at a 15-minute freshness window. The longest reader is the AMP-native anomaly check (ADR-0020), which fits a machine's baseline from the last 14 days, so this number caps its history (see the note below). |
 | `industrial_signals` | `created_at` | **14 days** | Same shape, same reasoning — per-tick signal rows; the anomaly check reads the same 14 days. |
 | `machine_events` | `created_at` | **180 days** | The closest thing to a machine's service record. `/analytics/machine-state-summary` tallies status counts over the whole history, so this is not pure noise. Six months keeps a seasonal comparison. |
+| `machine_telemetry_spans` | `span_end` | **400 days** | The per-source status history the downtime-attribution engine reads (ADR-0021): one row per run of one status per source, so it grows with status changes, not with the tick rate. 400 days covers a yearly contract's statements plus a quarter for disputes to settle; after that a statement cannot be recomputed — `contract_statements.EvidenceExpired` reads this number, never a copy — and acceptance falls back to the stored revision. Pruned on `span_end`, because the engine reads every span whose end reaches the period. **An evidence table:** a `--days` override can lengthen this window, never shorten it. |
 | `notifications` | `created_at` | **90 days** | The UI lists the newest 500 and the only aggregate is an unread count. A notification nobody opened in a quarter will not be opened. |
 | `ai_recommendations` | `created_at` | **365 days** | The AI advice log. A year lets you answer "did the maintenance agent warn us before that failure?" — the first question anyone asks after an incident, and unanswerable if you pruned the evidence. |
 | `agent_actions` | `decided_at` | **365 days** | The agent oversight trail (ADR-0005). Pruned on `decided_at`, so a proposal still sitting in an approval queue has a NULL timestamp and is kept forever. A retention job must never quietly clear a work queue. |
@@ -69,12 +70,15 @@ tenant-scoped read would have hidden. `test_bulk_write_scoping.py` allowlists
 python backend/retention.py                 # report what would go
 python backend/retention.py --apply         # do it
 python backend/retention.py --days 30       # override the window
-python backend/retention.py --tables iot_telemetry
+python backend/retention.py --table iot_telemetry --table industrial_signals   # one table, or several
 ```
 
 The `--days` override cannot resurrect an exempt table: `audit_logs` and
-`event_log` stay exempt even at `--days 0`. Changing that requires editing the
-policy table, which is a reviewed code change.
+`event_log` stay exempt even at `--days 0`. Nor can it shorten an **evidence**
+table's window: `machine_telemetry_spans` stays at 400 days under `--days 30`
+(`retention.py` takes the larger of the two), because a statement that can no
+longer be recomputed is a contract dispute nobody can settle. Changing either
+rule requires editing the policy table, which is a reviewed code change.
 
 ## Scheduling
 

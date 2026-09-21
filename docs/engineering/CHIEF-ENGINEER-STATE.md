@@ -29,11 +29,11 @@ the simulator's tenant guard: a tick with no tenant bound now refuses instead
 of filing every tenant's activity under DEFAULT — ADR-0002 postmortem). See
 AMP-10-DAY-SPRINT.md, AMP-NATIVE-MODEL-ACCEPTANCE.md and, for the twelve
 acceptance items with their evidence, AMP-SPRINT-ACCEPTANCE.md.
-**Master SHA:** `db2f074` (#685).
-**Production SHA:** `db2f074`, verified live, not assumed:
-`{"status":"ok","database":"ok","schema":"ok","version":"db2f074"}` from
-`https://flowmes-production.up.railway.app/health`, read on 2026-09-21 09:47 UTC,
-under three minutes after the merge (#686 `82d1c4d` at 09:45, #684 `4149829` at 07:00 and #683 `ca4f257` at 06:49 were verified the same way); `/ai/status` and `/ai-consent` refuse an unauthenticated call with 401. The frontend (`https://flow-mes.vercel.app`)
+**Master SHA:** `8eabba9` (#690).
+**Production SHA:** `8eabba9`, verified live, not assumed:
+`{"status":"ok","database":"ok","schema":"ok","version":"8eabba9"}` from
+`https://flowmes-production.up.railway.app/health`, read on 2026-09-21 11:42 UTC,
+under three minutes after the merge; `/readiness` 200; `/industrial/mappings`, `/oem/notifications` refuse an unauthenticated call with 401 and `POST /register` refuses a body carrying a `role` with 422 (#689 `8459ad3` at 11:02, #688 `c7c674d` at 10:35 — `schema: ok` there means migration `0012_consent_scope` ran on the production database — #687 `854a634` at 09:55, #686 `82d1c4d` at 09:45, #685 `db2f074` at 09:47, #684 `4149829` at 07:00 and #683 `ca4f257` at 06:49 were verified the same way); `/ai/status`, `/ai-consent` and `POST /industrial/devices` refuse an unauthenticated call with 401. The Monday mutation fleet, dispatched by hand after #685 (the standing rule for AI-consent code), ran green on master at `db2f074`: every harness caught every mutation (run #3, 26 min). The frontend (`https://flow-mes.vercel.app`)
 answers 200 and so does its `/oem` portal page; `/oem/fleet?limit=100&offset=100`,
 `/ai/status`, `/oem/claims?status=Expired`, `/work-orders?limit=400` and
 `/notifications?unread=true&limit=1` refuse an unauthenticated call with 401, and
@@ -201,7 +201,36 @@ active*, names the configured provider, and re-grants for it on review.
 23/23 (one shadowed and explained: the route's 400 fires before the writer's
 refusal), `test_migration_0012_consent_scope.py` (chain, model, upgrade from
 the previous revision with rows, downgrade round trip, boot repair),
-`verify_pg_consent_scope.py` in the migration gate. **Nothing is in flight.**
+`verify_pg_consent_scope.py` in the migration gate.
+
+**Then, with the recorded queue empty, a four-angle read-only sweep** (four
+`Explore` agents: accepted-but-inert inputs; UI copy promising an effect; doc
+guarantees vs code; a rule at N sites with one missing — the 2026-09-16 method,
+re-run) found one P2 and a queue of P3s, each verified before it was touched.
+**#689 `8459ad3`**: `/ai/report`'s rules fallback built the weekly report for
+the TOKEN's tenant (a founder previewing a company got its rows priced at the
+founder's unit value and the filtered sections empty — the defect `/ai/ask`'s
+docstring records as fixed, missed on that branch); `/oem/notifications` was the
+newest 100 with no total (ADR-0036's one exemption that carried none); the
+sign-up page offered a role the handler ignored; the Machine Timeline said
+"from MQTT events"; "Connect device" after #582. **#690 `8eabba9`**: a
+document's `storage_link` is asked for, shown and must be http(s) (a stored
+`javascript:` link never becomes an href); a PLC signal mapping answers
+`applied: false` on every row and README no longer advertises a mapping AMP
+does not apply; a cost's reference is shown as data with what the figures group
+by (its first CI run failed on `test_currency_single.py`: a nested template
+literal reads as a JSX-text dollar to that guard — build strings with `+`; in
+memory as "currency guard nested template"). **#691** (in flight): the last
+inert input — an issue slip's job reference is resolved against the tenant's
+work orders on issue, so material issued "for WO-100" is in WO-100's trace, a
+reference AMP does not know says so on the transaction and on the screen, and
+the list marks which references resolved with one query per page. **This PR**:
+`docs/RETENTION.md` names the `machine_telemetry_spans` policy (400 days,
+evidence, `--days` can only lengthen it) and the real `--table` flag; the
+handbook's and README's counts are the tree's, dated (67 tables, 39 scoped,
+12 migrations, 38 ADRs, 30 routers, 8 middlewares, 352 suites, 40 harnesses,
+11 audits, 378 routes). The sweep's queue is then empty; the method is in
+memory as "sweep angles".
 
 **Nothing else is awaiting review.** What a next session would do first, in order:
 (1) the OEM journey re-check against a real OEM's edge agent is still simulated
@@ -255,7 +284,7 @@ CHIEF-ENGINEER-STATE.md and AMP-10-DAY-SPRINT.md."
 | `GET /oem/notifications` was the newest 100 with nothing saying more existed — one row per install, commission, service, contract, statement and dispute event across the whole customer base — exempted from ADR-0036's guard as "an envelope with its own convention" that carried no total | P3 | fixed: `paging.page`, `X-Total-Count` and a body `total`, `?limit=`/`?offset=`; `test_oem_fleet_pages_in_sql.py` §6, `mutate_oem_sharing.py` +2; the exemption removed |
 | The sign-up page offered Admin / Supervisor / Operator and the handler created an Admin whatever was chosen (it shared the Admin's "add employee" schema and ignored `role`); the page did not say it works only for the first account | P3 | fixed: `schemas.RegisterRequest` (username, password, `extra="forbid"` so a role is a 422, not a silent drop), the page sends none and says the first account is the Admin; `test_register_first_account_only.py`, `mutate_register_bootstrap.py` 5/5 |
 | The Machine Timeline said "from MQTT events" and "wait for MQTT status changes" while six writers stamp `MachineEvent.source` (`manual`, `import`, `iot`, `industrial_gateway`, `simulator`, mqtt) and MQTT is off unless `MQTT_BROKER` is set; the Connectivity screen's button and heading still said "Connect" / "Connected" after #582 established that AMP opens no socket to a PLC | P3 | fixed: wording names the sources; "Register device" / "Registered devices" |
-| Recorded, not yet fixed, from the same sweep: `PlcSignalMapping.source_signal/mes_field/transform_rule` stored and applied by nothing (README still says "PLC signal mapping"); `CostRecord.reference_type/reference_id` written by the costing form and read by no figure; `ComplianceDocument.storage_link` stored and never shown; `ReportRequest.report_type/format` dropdowns that choose nothing; `IssueSlip.work_order_ref` typed but never resolved (its sibling `purchase_order_ref` is); `docs/RETENTION.md` omits the `machine_telemetry_spans` policy (400 days, evidence), documents `--tables` (the flag is `--table`) and says `--days` overrides every window (evidence tables can only be lengthened); the handbook's counts (8 migrations, 37 scoped models, 57 tables, 19 ADRs, 27 routers) are all stale | P3 | queued |
+| Recorded, not yet fixed, from the same sweep: `PlcSignalMapping.source_signal/mes_field/transform_rule` stored and applied by nothing (README still says "PLC signal mapping"); `CostRecord.reference_type/reference_id` written by the costing form and read by no figure; `ComplianceDocument.storage_link` stored and never shown; `ReportRequest.report_type/format` dropdowns that choose nothing; `IssueSlip.work_order_ref` typed but never resolved (its sibling `purchase_order_ref` is); `docs/RETENTION.md` omits the `machine_telemetry_spans` policy (400 days, evidence), documents `--tables` (the flag is `--table`) and says `--days` overrides every window (evidence tables can only be lengthened); the handbook's counts (8 migrations, 37 scoped models, 57 tables, 19 ADRs, 27 routers) are all stale | P3 | the document link, the mapping record and the cost reference: **#690 `8eabba9`**; RETENTION.md and the counts: **the handover PR after #690**; `IssueSlip.work_order_ref`: **#691** |
 | MQTT→WebSocket bridge: `asyncio.run` on a sync callee raised `ValueError` every message; delivery ran on a throwaway event loop | P1 | fixed, tested |
 | MQTT ingest published no domain events — machine-reported breakdowns never reached the bus, so the Escalation agent was blind to them | P1 | fixed, tested |
 | AI Phase 1 — `AIProvider` registry replacing four if/elif chains | P6 | merged #526 |

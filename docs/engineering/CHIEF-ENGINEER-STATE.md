@@ -29,13 +29,16 @@ the simulator's tenant guard: a tick with no tenant bound now refuses instead
 of filing every tenant's activity under DEFAULT — ADR-0002 postmortem). See
 AMP-10-DAY-SPRINT.md, AMP-NATIVE-MODEL-ACCEPTANCE.md and, for the twelve
 acceptance items with their evidence, AMP-SPRINT-ACCEPTANCE.md.
-**Master SHA:** `f3351dc` (#673).
-**Production SHA:** `f3351dc`, verified live, not assumed:
-`{"status":"ok","database":"ok","schema":"ok","version":"f3351dc"}` from
-`https://flowmes-production.up.railway.app/health`, read on 2026-09-21 00:58 UTC,
+**Master SHA:** `a9bbd84` (#674, ADR-0036).
+**Production SHA:** `a9bbd84`, verified live, not assumed:
+`{"status":"ok","database":"ok","schema":"ok","version":"a9bbd84"}` from
+`https://flowmes-production.up.railway.app/health`, read on 2026-09-21 01:54 UTC,
 under two minutes after the merge; `/readiness` 200. The frontend (`https://flow-mes.vercel.app`)
-answers 200; `/ai/status` and `/inventory/items?limit=1` refuse an unauthenticated call with 401, and so did
-`POST /copilot/ask` sent a valid `{question, thread}` body at `ba06970`. Production has no
+answers 200; `/ai/status`, `/work-orders?limit=1` and `/notifications?unread=true&limit=1`
+refuse an unauthenticated call with 401, and a cross-origin request from the
+frontend's origin gets `access-control-expose-headers: X-Total-Count`, so the
+browser may read the count; `POST /copilot/ask` sent a valid `{question, thread}`
+body was refused with 401 at `ba06970`. Production has no
 GPU and no `AMP_LLM_BASE_URL`, and no self-hosted model is currently adopted
 anywhere (the committed record is the failing one, below), so the Copilot
 answers from AMP's own engine everywhere.
@@ -97,7 +100,7 @@ closed for the two inventory lists: **the dashboard showed the newest 500
 items with no sign that 700 were missing.** The survey that followed found
 thirty-three more capped list endpoints with the same shape, and the
 notification screen counting unread rows in the newest 500 as *the* number —
-so **ADR-0036** (this PR): one helper, `paging.page()`, serves every capped
+so **ADR-0036** (#674 `a9bbd84`): one helper, `paging.page()`, serves every capped
 list with the tenant's whole count in `X-Total-Count`, `?limit=`/`?offset=`
 clamped in one place, the old cap as the default page; `test_lists_are_pages.py`
 fails the build for a capped GET that does not go through it (35 page, 10
@@ -110,7 +113,11 @@ and the TEST was wrong: `status=None` on a column with `default="Unread"` is
 omitted from the INSERT, so its "NULL" rows were never NULL — #407's trap;
 the seed now NULLs with an UPDATE), `mutate_approval_gate.py` re-anchored
 (the Approvals list's clamp now lives in `paging.clamp`), 75/77, 2 pg-only
-as before.
+as before. Measured: the honest page costs one `count(*)` per list — 135 → 161
+queries per dashboard refresh, flat at 10/50/200 machines (`docs/PERFORMANCE.md`,
+"Re-measured 2026-09-21"). Measuring it found the next thing: the round fetched
+500 `/iot/telemetry` rows every 3 s for a prop `IoTCommandSection` never
+rendered — **#675** (this PR) drops the fetch: 46 requests, 159 queries, flat.
 
 **Nothing else is awaiting review.** What a next session would do first, in order:
 (1) the OEM journey re-check against a real OEM's edge agent is still simulated

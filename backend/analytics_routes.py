@@ -28,6 +28,7 @@ import ai.twin
 import machine_status
 import models
 import oee_contract
+import shift_contract
 import work_order_status
 from analytics_engine import (
     build_management_summary,
@@ -164,13 +165,16 @@ def analytics_summary(db: Session = Depends(_get_db), current_user: dict = Depen
     # scoped the scan. COALESCE(SUM(..), 0) matches the old `sum(.. or 0 ..)` byte
     # for byte: SQL SUM already skips a (theoretical, nullable-legacy) NULL row the
     # way `or 0` did, and COALESCE returns 0 for the empty-table SUM (NULL).
-    total_shift_target, total_shift_actual = db.query(
-        func.coalesce(func.sum(models.ShiftData.target_output), 0),
-        func.coalesce(func.sum(models.ShiftData.actual_output), 0),
-    ).one()
-    total_shift_target = int(total_shift_target)
-    total_shift_actual = int(total_shift_actual)
-    avg_shift_efficiency = round((total_shift_actual / total_shift_target) * 100) if total_shift_target else 0
+    #
+    # THE CANONICAL WINDOW, not all of history. The pooling above was right and
+    # the SPAN was not: this summed every shift ever recorded, while the shift
+    # card (ai/shift.py) pooled the week, so the two disagreed on the same day
+    # for any plant with a history. shift_contract.pooled_attainment is the one
+    # function every plant attainment reads — the same seven days the plant
+    # OEE beside it pools (test_shift_rollups_one_window.py).
+    shift = shift_contract.pooled_attainment(db, request_tenant(current_user), _oee_window)
+    total_shift_target = shift["target"]
+    avg_shift_efficiency = shift["attainment"] if shift["measured"] else 0
 
     # reason_counts here tallies EVENTS (the old loop did `+ 1`), while
     # executive-oee tallies MINUTES for its Pareto. downtime_aggregates returns
@@ -218,6 +222,9 @@ def analytics_summary(db: Session = Depends(_get_db), current_user: dict = Depen
         # avg_oee: 0 with no target anywhere is "not measured", not "produced
         # nothing", and only this tells them apart.
         "shift_efficiency_measured": total_shift_target > 0,
+        # The span the figure covers, said beside it: the same window as avg_oee.
+        "shift_window": shift["window"],
+        "shift_days": shift["days"],
         "top_reason": top_reason,
         "top_machine": top_machine_name,
         "reason_counts": reason_counts,
@@ -412,17 +419,20 @@ def get_management_dashboard(db: Session = Depends(_get_db), current_user: dict 
         func.count(models.ProductionRecord.id),
     ).filter(models.ProductionRecord.created_at >= _oee_window.start,
              models.ProductionRecord.created_at < _oee_window.end).one()
-    shift_sums = db.query(
-        func.coalesce(func.sum(models.ShiftData.target_output), 0),
-        func.coalesce(func.sum(models.ShiftData.actual_output), 0),
-    ).one()
+    # The same window as the production sums three lines above. This summed
+    # every shift ever recorded under a production figure that was windowed —
+    # the one place in the file where the two spans sat side by side
+    # (shift_contract; test_shift_rollups_one_window.py).
+    shift = shift_contract.pooled_attainment(db, request_tenant(current_user), _oee_window)
 
     rate = tenant_unit_value(db, request_tenant(current_user))
     summary = build_management_summary(
         machines, [], [], [], unit_value_gbp=rate, downtime_agg=downtime,
         production_sums=tuple(int(v) for v in production_sums),
-        shift_sums=tuple(int(v) for v in shift_sums),
+        shift_sums=(shift["target"], shift["actual"]),
     )
+    summary["shift_window"] = shift["window"]
+    summary["shift_days"] = shift["days"]
     # How much of the plant avg_oee measured over the same window (OEE contract
     # s4); the intelligence report prints it from here
     # (test_every_plant_oee_states_coverage.py).
@@ -767,8 +777,14 @@ def get_executive_oee(
     # reverse idiom /analytics/oee-trends uses, and the order the old SQLite `.all()`
     # scan happened to return. The headline production_target/actual below sum this SAME
     # bounded set, so the per-shift breakdown still sums to the headline (rule-3).
-    shifts = db.query(models.ShiftData).order_by(models.ShiftData.id.desc()).limit(50).all()
-    shifts.reverse()
+    #
+    # ...and "the most recent 50" was a COUNT, not a span: at three shifts a day
+    # it was seventeen days on one plant and fifty days on another, and it was
+    # never the week the plant OEE beside it pooled. The window is now the
+    # canonical one (shift_contract.rows_in), the same seven days as every other
+    # figure on this page; the per-shift chart still sums to the headline.
+    _oee_window = oee_contract.OeeWindow(oee_contract.DEFAULT_WINDOW_DAYS)
+    shifts = shift_contract.rows_in(db, _oee_window)
 
     # downtime_logs carries a FREE-TEXT duration ("2 hrs 15 min") that only
     # parse_duration_to_minutes can read, so there is no SQL SUM for it -- which
@@ -785,8 +801,8 @@ def get_executive_oee(
     # under the same name -- 35% against the cockpit's 83% on a machine that ran
     # badly a year ago and well this week. The standard had been applied to the
     # FORMULA (pooled_oee_from_sums) and not to the SPAN. See
-    # test_oee_rollups_one_window.py.
-    _oee_window = oee_contract.OeeWindow(oee_contract.DEFAULT_WINDOW_DAYS)
+    # test_oee_rollups_one_window.py. (Built above, where the shift rows are
+    # read from it; downtime, production, quality and shifts share the one.)
     downtime = downtime_aggregates(db, _oee_window.start, _oee_window.end)
 
     machine_map = {machine.id: machine.name for machine in machines}
@@ -964,9 +980,12 @@ def get_executive_oee(
     # not retro-applied to old rows) made `sum(...)` raise TypeError and 500 this
     # Admin-polled endpoint, while the SQL-summed /analytics/management returned a
     # number. SQL SUM skips a NULL row, so `or 0` per row reconciles the two (rule-3).
-    total_target = sum((shift.target_output or 0) for shift in shifts)
-    total_actual = sum((shift.actual_output or 0) for shift in shifts)
-    plan_achievement = round((total_actual / total_target) * 100) if total_target else 0
+    # The headline is THE pooled attainment (shift_contract), over the same
+    # window the rows above were read from — so the chart still sums to it.
+    plan = shift_contract.pooled_attainment(db, request_tenant(current_user), _oee_window)
+    total_target = plan["target"]
+    total_actual = plan["actual"]
+    plan_achievement = plan["attainment"] if plan["measured"] else 0
 
     downtime_pareto = [
         {"reason": reason, "minutes": minutes}
@@ -1037,6 +1056,12 @@ def get_executive_oee(
         "production_target": total_target,
         "production_actual": total_actual,
         "production_achievement": plan_achievement,
+        # 0 with no target in the window is "not measured", not "achieved
+        # nothing" — the integer-plus-flag convention /analytics/summary
+        # carries as shift_efficiency_measured — and the span is said beside it.
+        "production_achievement_measured": plan["measured"],
+        "shift_window": plan["window"],
+        "shift_days": plan["days"],
         # See /analytics/summary: 0% and "did not run" are different answers.
         "has_data": plant["has_data"],
         "running_machines": len([machine for machine in machines if machine.status == "Running"]),

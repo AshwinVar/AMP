@@ -64,8 +64,6 @@ ALLOWED = {
     "analytics_routes.py::get_smart_alerts":
         "GET /alerts/smart -- alerts derived from the newest 100 production and "
         "downtime records",
-    "analytics_routes.py::get_executive_oee":
-        "GET /analytics/executive-oee -- the newest 50 shifts feed the executive figures",
     "analytics_routes.py::get_iot_command_center":
         "GET /analytics/iot-command -- a display window of the newest 300 telemetry "
         "rows next to a SQL count() for the headline (the cap does not leak into it)",

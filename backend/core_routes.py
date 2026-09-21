@@ -240,9 +240,12 @@ def daily_summary_report(db: Session = Depends(_get_db), current_user: dict = De
                      "(no production recorded in this window)")
     # No shift had a target: the pooled efficiency is not measured, not 0%
     # (test_no_target_no_shift_efficiency.py).
-    shift_line = (f"Shift Efficiency, all shifts: {summary['avg_shift_efficiency']}%"
+    # The same window as the plant OEE above (shift_contract): it used to say
+    # "all shifts" and pool every shift ever recorded.
+    shift_span = summary.get("shift_window") or f"last {days} days"
+    shift_line = (f"Shift Efficiency, {shift_span}: {summary['avg_shift_efficiency']}%"
                   if summary.get("shift_efficiency_measured")
-                  else "Shift Efficiency, all shifts: not measured (no shift has a target)")
+                  else f"Shift Efficiency, {shift_span}: not measured (no shift in this window has a target)")
     report = f"""
 AMP Daily Factory Summary
 Generated: {datetime.utcnow().isoformat()} UTC

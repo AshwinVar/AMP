@@ -1,7 +1,9 @@
 "use client";
 import React, { useEffect, useState, useRef } from "react";
-import { apiGet, apiPost, apiPatch, API_URL, errorDetail, getAuthHeaders, getDownloadHeaders } from "../lib/api";
+import { apiGet, apiPost, apiPatch, API_URL, errorDetail, getAuthHeaders, getDownloadHeaders, getUserRole } from "../lib/api";
 import { LoadError, useLoadError } from "../lib/useLoadError";
+import { isAdminOrSupervisorRole, isAdminRole, onlyRoles } from "../lib/roles";
+import RoleNote from "./RoleNote";
 
 // How many history rows to fetch at a time. The GRN and cycle-count endpoints
 // page (default 50, hard cap 200) because both tables only ever grow — see
@@ -92,8 +94,30 @@ type Tab = typeof TABS[number];
 
 // ── Main component ────────────────────────────────────────────────
 
+/**
+ * What each role may write here, as enterprise_inventory_routes gates it. This
+ * screen is Operator-visible (lib/modules OPERATOR_VIEWS) and used to offer an
+ * Operator every approval, receipt and count — each of which the server refused
+ * with 403 once pressed. A form the server will refuse is not offered; a note
+ * says who can. Raising a slip stays open to every role (POST /issue-slips is
+ * `get_current_user`: an Operator requests material).
+ */
+type Can = {
+  /** Admin or Supervisor: remnants, slip approve / issue / reject, GRN create / accept, cycle-count create, the variance report. */
+  write: boolean;
+  /** Admin: cycle-count approve, CSV import. */
+  admin: boolean;
+};
+
+const SUPERVISOR_UP = "an Admin or Supervisor" as const;
+
 export default function EnterpriseInventory({ items }: { items: InventoryItem[] }) {
   const [tab, setTab] = useState<Tab>("Remnants");
+  const role = getUserRole();
+  const can: Can = { write: isAdminOrSupervisorRole(role), admin: isAdminRole(role) };
+  // A tab whose only content the server refuses to this role is not offered.
+  const tabs = TABS.filter((t) =>
+    t === "Variance Report" ? can.write : t === "Import CSV" ? can.admin : true);
 
   return (
     <div className="mt-8 space-y-6">
@@ -105,7 +129,7 @@ export default function EnterpriseInventory({ items }: { items: InventoryItem[] 
       </div>
 
       <div className="flex flex-wrap gap-2 border-b border-slate-800 pb-3">
-        {TABS.map((t) => (
+        {tabs.map((t) => (
           <button
             key={t}
             onClick={() => setTab(t)}
@@ -120,19 +144,19 @@ export default function EnterpriseInventory({ items }: { items: InventoryItem[] 
         ))}
       </div>
 
-      {tab === "Remnants"        && <RemnantsTab items={items} />}
-      {tab === "Issue Slips"     && <IssueSlipsTab items={items} />}
-      {tab === "GRN"             && <GRNTab items={items} />}
-      {tab === "Cycle Count"     && <CycleCountTab items={items} />}
-      {tab === "Variance Report" && <VarianceReportTab />}
-      {tab === "Import CSV"      && <ImportCSVTab />}
+      {tab === "Remnants"        && <RemnantsTab items={items} can={can} />}
+      {tab === "Issue Slips"     && <IssueSlipsTab items={items} can={can} />}
+      {tab === "GRN"             && <GRNTab items={items} can={can} />}
+      {tab === "Cycle Count"     && <CycleCountTab items={items} can={can} />}
+      {tab === "Variance Report" && can.write && <VarianceReportTab />}
+      {tab === "Import CSV"      && can.admin && <ImportCSVTab />}
     </div>
   );
 }
 
 // ── Remnants ──────────────────────────────────────────────────────
 
-function RemnantsTab({ items }: { items: InventoryItem[] }) {
+function RemnantsTab({ items, can }: { items: InventoryItem[]; can: Can }) {
   const [rows, setRows] = useState<Remnant[]>([]);
   const [form, setForm] = useState({ item_id: "", original_qty: "", remaining_qty: "", unit: "m", location: "", source_reference: "", notes: "" });
   const [loading, setLoading] = useState(false);
@@ -170,6 +194,8 @@ function RemnantsTab({ items }: { items: InventoryItem[] }) {
         </p>
       </div>
 
+      {!can.write && <RoleNote>{onlyRoles(SUPERVISOR_UP, "log a remnant or scrap one")}</RoleNote>}
+      {can.write && (
       <form onSubmit={submit} className="rounded-2xl bg-slate-900 border border-slate-800 p-5 grid grid-cols-2 md:grid-cols-4 xl:grid-cols-8 gap-3">
         <select className="bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-sm col-span-2" value={form.item_id} onChange={e => setForm({ ...form, item_id: e.target.value })} required>
           <option value="">Select item</option>
@@ -184,6 +210,7 @@ function RemnantsTab({ items }: { items: InventoryItem[] }) {
           {loading ? "Logging…" : "Log Remnant"}
         </button>
       </form>
+      )}
 
       <div className="rounded-2xl bg-slate-900 border border-slate-800 p-5">
         <h3 className="text-lg font-semibold mb-4">Remnant Register <span className="text-slate-500 text-sm font-normal">({rows.length} entries)</span></h3>
@@ -213,7 +240,7 @@ function RemnantsTab({ items }: { items: InventoryItem[] }) {
                   <td className="py-3 px-4 text-slate-400 text-xs">{r.location || "—"}</td>
                   <td className="py-3 px-4">{statusBadge(r.status)}</td>
                   <td className="py-3 px-4 flex gap-2">
-                    {r.status === "Available" && (
+                    {can.write && r.status === "Available" && (
                       <button onClick={() => updateStatus(r.id, "Scrapped", r.remaining_qty)} className="text-xs text-red-400 border border-red-500/30 rounded-lg px-2 py-1 hover:bg-red-500/10">Scrap</button>
                     )}
                   </td>
@@ -234,7 +261,7 @@ function RemnantsTab({ items }: { items: InventoryItem[] }) {
 
 // ── Issue Slips ───────────────────────────────────────────────────
 
-function IssueSlipsTab({ items }: { items: InventoryItem[] }) {
+function IssueSlipsTab({ items, can }: { items: InventoryItem[]; can: Can }) {
   const [rows, setRows] = useState<IssueSlip[]>([]);
   const [form, setForm] = useState({ item_id: "", requested_qty: "", work_order_ref: "", requested_by: "", notes: "" });
   const [loading, setLoading] = useState(false);
@@ -323,14 +350,17 @@ function IssueSlipsTab({ items }: { items: InventoryItem[] }) {
                   <td className="py-3 px-4 text-slate-400">{s.approved_by || "—"}</td>
                   <td className="py-3 px-4">{statusBadge(s.status)}</td>
                   <td className="py-3 px-4 flex gap-2 flex-wrap">
-                    {s.status === "Pending" && (
+                    {can.write && s.status === "Pending" && (
                       <>
                         <button onClick={() => slipAction(s.id, "approve")} className="text-xs text-blue-400 border border-blue-500/30 rounded-lg px-2 py-1 hover:bg-blue-500/10">Approve</button>
                         <button onClick={() => slipAction(s.id, "reject")} className="text-xs text-red-400 border border-red-500/30 rounded-lg px-2 py-1 hover:bg-red-500/10">Reject</button>
                       </>
                     )}
-                    {s.status === "Approved" && (
+                    {can.write && s.status === "Approved" && (
                       <button onClick={() => slipAction(s.id, "issue")} className="text-xs text-green-400 border border-green-500/30 rounded-lg px-2 py-1 hover:bg-green-500/10">Issue & Deduct</button>
+                    )}
+                    {!can.write && (s.status === "Pending" || s.status === "Approved") && (
+                      <span className="text-xs text-slate-500">awaiting {SUPERVISOR_UP}</span>
                     )}
                   </td>
                 </tr>
@@ -370,7 +400,7 @@ function grnLineOutcome(received: string, accepted: string): string {
 
 const blankGrnLine = () => ({ item_id: "", received_qty: "", accepted_qty: "", lot_no: "" });
 
-function GRNTab({ items }: { items: InventoryItem[] }) {
+function GRNTab({ items, can }: { items: InventoryItem[]; can: Can }) {
   const [rows, setRows] = useState<GRN[]>([]);
   const [supplier, setSupplier] = useState("");
   const [poRef, setPoRef] = useState("");
@@ -423,6 +453,8 @@ function GRNTab({ items }: { items: InventoryItem[] }) {
         </p>
       </div>
 
+      {!can.write && <RoleNote>{onlyRoles(SUPERVISOR_UP, "raise or accept a goods receipt")}</RoleNote>}
+      {can.write && (
       <form onSubmit={submit} className="rounded-2xl bg-slate-900 border border-slate-800 p-5 space-y-4">
         <div className="grid grid-cols-2 gap-3">
           <input className="bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-sm" placeholder="Supplier name" value={supplier} onChange={e => setSupplier(e.target.value)} required />
@@ -450,6 +482,7 @@ function GRNTab({ items }: { items: InventoryItem[] }) {
           <button type="submit" disabled={loading} className="rounded-xl bg-white text-slate-950 font-semibold px-5 py-2 text-sm">{loading ? "Creating…" : "Create GRN"}</button>
         </div>
       </form>
+      )}
 
       <div className="space-y-4">
         <LoadError message={error} />
@@ -463,7 +496,7 @@ function GRNTab({ items }: { items: InventoryItem[] }) {
                 <span className="text-slate-400 text-sm">{g.supplier_name}</span>
                 {g.purchase_order_ref && <span className="text-slate-500 text-xs">PO: {g.purchase_order_ref}</span>}
               </div>
-              {g.status === "Draft" && (
+              {can.write && g.status === "Draft" && (
                 <button onClick={async () => { await apiPatch(`/grns/${g.id}/accept`, {}); load(); }} className="text-sm text-green-400 border border-green-500/30 rounded-xl px-4 py-1.5 hover:bg-green-500/10 font-semibold">
                   Accept GRN → Post to Stock
                 </button>
@@ -502,7 +535,7 @@ function GRNTab({ items }: { items: InventoryItem[] }) {
 
 // ── Cycle Count ───────────────────────────────────────────────────
 
-function CycleCountTab({ items }: { items: InventoryItem[] }) {
+function CycleCountTab({ items, can }: { items: InventoryItem[]; can: Can }) {
   const [rows, setRows] = useState<CycleCount[]>([]);
   const [countedBy, setCountedBy] = useState("");
   const [physicals, setPhysicals] = useState<Record<number, string>>({});
@@ -545,6 +578,8 @@ function CycleCountTab({ items }: { items: InventoryItem[] }) {
         </p>
       </div>
 
+      {!can.write && <RoleNote>{onlyRoles(SUPERVISOR_UP, "submit a count")}</RoleNote>}
+      {can.write && (
       <form onSubmit={submit} className="rounded-2xl bg-slate-900 border border-slate-800 p-5 space-y-4">
         <input className="bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-sm w-64" placeholder="Counted by (name)" value={countedBy} onChange={e => setCountedBy(e.target.value)} required />
         <div className="overflow-x-auto rounded-xl border border-slate-800">
@@ -594,6 +629,7 @@ function CycleCountTab({ items }: { items: InventoryItem[] }) {
           {loading ? "Submitting…" : `Submit Count (${selectedItems.length} items selected)`}
         </button>
       </form>
+      )}
 
       <div className="space-y-4">
         <LoadError message={error} />
@@ -605,10 +641,13 @@ function CycleCountTab({ items }: { items: InventoryItem[] }) {
                 {statusBadge(c.status)}
                 <span className="text-slate-400 text-sm">by {c.counted_by}</span>
               </div>
-              {c.status === "Draft" && (
+              {can.admin && c.status === "Draft" && (
                 <button onClick={async () => { await apiPatch(`/cycle-counts/${c.id}/approve`, {}); load(); }} className="text-sm text-green-400 border border-green-500/30 rounded-xl px-4 py-1.5 hover:bg-green-500/10 font-semibold">
                   Approve & Adjust Stock
                 </button>
+              )}
+              {!can.admin && c.status === "Draft" && (
+                <span className="text-xs text-slate-500">awaiting an Admin&apos;s approval</span>
               )}
             </div>
             <div className="overflow-x-auto rounded-xl border border-slate-800">

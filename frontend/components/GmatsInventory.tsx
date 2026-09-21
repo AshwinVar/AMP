@@ -2,8 +2,10 @@
 import React, { useEffect, useState } from "react";
 import { apiGet, apiGetWithTotal, apiPost, apiPatch, apiDelete, API_URL, getDownloadHeaders } from "../lib/api";
 import PageNotice from "./PageNotice";
+import RoleNote from "./RoleNote";
 import { LoadError, useLoadError } from "../lib/useLoadError";
 import { parseApiDate } from "../lib/apiDate";
+import { onlyRoles } from "../lib/roles";
 
 // ── Types ─────────────────────────────────────────────────────────
 
@@ -51,7 +53,14 @@ type Tab = typeof TABS[number];
 
 // ── Main ──────────────────────────────────────────────────────────
 
-export default function GmatsInventory({ tenant = "GMATS", isAdmin = false }: { tenant?: string; isAdmin?: boolean }) {
+/**
+ * `isAdmin` gates the corrections and voids (gmats_inventory_routes: Admin);
+ * `canWrite` gates stock-in, proformas, invoices, cancellations and issue notes
+ * (Admin or Supervisor). This screen is Operator-visible, and offered an
+ * Operator every one of those — each a 403 once pressed.
+ */
+export default function GmatsInventory({ tenant = "GMATS", isAdmin = false, canWrite = false }:
+                                       { tenant?: string; isAdmin?: boolean; canWrite?: boolean }) {
   const [tab, setTab] = useState<Tab>("Stock");
   const [items, setItems] = useState<GItem[]>([]);
   const [summary, setSummary] = useState<Summary | null>(null);
@@ -98,10 +107,10 @@ export default function GmatsInventory({ tenant = "GMATS", isAdmin = false }: { 
         ))}
       </div>
 
-      {tab === "Stock"              && <StockTab tenant={tenant} items={items} reload={loadItems} isAdmin={isAdmin} />}
-      {tab === "Proforma (Reserve)" && <ProformaTab tenant={tenant} items={items} reload={loadItems} />}
+      {tab === "Stock"              && <StockTab tenant={tenant} items={items} reload={loadItems} isAdmin={isAdmin} canWrite={canWrite} />}
+      {tab === "Proforma (Reserve)" && <ProformaTab tenant={tenant} items={items} reload={loadItems} canWrite={canWrite} />}
       {tab === "Tax Invoice"        && <InvoiceTab tenant={tenant} reload={loadItems} isAdmin={isAdmin} />}
-      {tab === "Free Spares (MIN)"  && <MinTab tenant={tenant} items={items} reload={loadItems} isAdmin={isAdmin} />}
+      {tab === "Free Spares (MIN)"  && <MinTab tenant={tenant} items={items} reload={loadItems} isAdmin={isAdmin} canWrite={canWrite} />}
       {tab === "Reorder Alerts"     && <ReorderTab items={items} />}
       {tab === "Import"             && <ImportTab tenant={tenant} reload={loadItems} isAdmin={isAdmin} />}
     </section>
@@ -233,7 +242,8 @@ function printInvoice(invoiceNo: string, customer: string, lines: { name: string
 
 // ── Stock tab ─────────────────────────────────────────────────────
 
-function StockTab({ tenant, items, reload, isAdmin }: { tenant: string; items: GItem[]; reload: () => void; isAdmin: boolean }) {
+function StockTab({ tenant, items, reload, isAdmin, canWrite }:
+                  { tenant: string; items: GItem[]; reload: () => void; isAdmin: boolean; canWrite: boolean }) {
   const [resolveInput, setResolveInput] = useState("");
   const [resolveResult, setResolveResult] = useState<string | null>(null);
   const [stockInId, setStockInId] = useState<number | null>(null);
@@ -391,7 +401,7 @@ function StockTab({ tenant, items, reload, isAdmin }: { tenant: string; items: G
                       </div>
                     ) : (
                       <div className="flex gap-1">
-                        <button onClick={() => { setStockInId(it.id); setStockInQty(""); setMsg(""); }} className="text-xs text-slate-300 border border-slate-700 rounded-lg px-2 py-1 hover:border-slate-500">+ Stock</button>
+                        {canWrite && <button onClick={() => { setStockInId(it.id); setStockInQty(""); setMsg(""); }} className="text-xs text-slate-300 border border-slate-700 rounded-lg px-2 py-1 hover:border-slate-500">+ Stock</button>}
                         {isAdmin && <button onClick={() => startEdit(it)} className="text-xs text-indigo-300 border border-indigo-500/30 rounded-lg px-2 py-1 hover:bg-indigo-500/10">Edit</button>}
                         {isAdmin && <button onClick={() => deleteItem(it)} className="text-xs text-red-400 border border-red-500/30 rounded-lg px-2 py-1 hover:bg-red-500/10">Del</button>}
                       </div>
@@ -409,7 +419,7 @@ function StockTab({ tenant, items, reload, isAdmin }: { tenant: string; items: G
 
 // ── Proforma tab ──────────────────────────────────────────────────
 
-function ProformaTab({ tenant, items, reload }: { tenant: string; items: GItem[]; reload: () => void }) {
+function ProformaTab({ tenant, items, reload, canWrite }: { tenant: string; items: GItem[]; reload: () => void; canWrite: boolean }) {
   const [rows, setRows] = useState<Proforma[]>([]);
   const [total, setTotal] = useState<number | null>(null);   // the list is a page (ADR-0036)
   const [customer, setCustomer] = useState("");
@@ -475,6 +485,8 @@ function ProformaTab({ tenant, items, reload }: { tenant: string; items: GItem[]
         </p>
       </div>
 
+      {!canWrite && <RoleNote>{onlyRoles("an Admin or Supervisor", "raise, invoice or cancel a proforma")}</RoleNote>}
+      {canWrite && (
       <form onSubmit={submit} className="rounded-2xl bg-slate-900 border border-slate-800 p-5 space-y-4">
         <input className="bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-sm w-full md:w-80" placeholder="Customer name" value={customer} onChange={(e) => setCustomer(e.target.value)} required />
         <div className="space-y-2">
@@ -494,6 +506,7 @@ function ProformaTab({ tenant, items, reload }: { tenant: string; items: GItem[]
         </div>
         {err && <p className="text-red-400 text-sm">{err}</p>}
       </form>
+      )}
 
       <PageNotice shown={rows.length} total={total} noun="proformas" />
       <div className="space-y-3">
@@ -505,7 +518,7 @@ function ProformaTab({ tenant, items, reload }: { tenant: string; items: GItem[]
                 {statusBadge(p.status)}
                 <span className="text-slate-400 text-sm">{p.customer_name}</span>
               </div>
-              {p.status === "Open" && (
+              {canWrite && p.status === "Open" && (
                 <div className="flex gap-2">
                   <button onClick={() => generateInvoice(p.id)} className="text-sm text-green-400 border border-green-500/30 rounded-xl px-4 py-1.5 hover:bg-green-500/10 font-semibold">Generate Tax Invoice →</button>
                   <button onClick={() => cancel(p.id)} className="text-sm text-red-400 border border-red-500/30 rounded-xl px-3 py-1.5 hover:bg-red-500/10">Cancel</button>
@@ -581,7 +594,8 @@ function InvoiceTab({ tenant, reload, isAdmin }: { tenant: string; reload: () =>
 
 // ── Material Issue Note (free spares) ─────────────────────────────
 
-function MinTab({ tenant, items, reload, isAdmin }: { tenant: string; items: GItem[]; reload: () => void; isAdmin: boolean }) {
+function MinTab({ tenant, items, reload, isAdmin, canWrite }:
+                { tenant: string; items: GItem[]; reload: () => void; isAdmin: boolean; canWrite: boolean }) {
   const [rows, setRows] = useState<MIN[]>([]);
   const [customer, setCustomer] = useState("");
   const [machine, setMachine] = useState("");
@@ -639,6 +653,8 @@ function MinTab({ tenant, items, reload, isAdmin }: { tenant: string; items: GIt
         </div>
       </div>
 
+      {!canWrite && <RoleNote>{onlyRoles("an Admin or Supervisor", "issue free spares")}</RoleNote>}
+      {canWrite && (
       <form onSubmit={submit} className="rounded-2xl bg-slate-900 border border-slate-800 p-5 space-y-4">
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
           <input className="bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-sm" placeholder="Customer name" value={customer} onChange={(e) => setCustomer(e.target.value)} required />
@@ -661,6 +677,7 @@ function MinTab({ tenant, items, reload, isAdmin }: { tenant: string; items: GIt
         </div>
         {err && <p className="text-red-400 text-sm">{err}</p>}
       </form>
+      )}
 
       <PageNotice shown={rows.length} total={total} noun="material issue notes" />
       <div className="space-y-3">

@@ -13,15 +13,19 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const apiGet = vi.fn();
 const apiPost = vi.fn();
+// The signed-in role: the machine cockpit offers Approve / Reject only to a
+// role the server lets decide (Admin or Supervisor).
+let role = "Admin";
 
 vi.mock("../lib/api", () => ({
   apiGet: (p: string) => apiGet(p),
   apiPost: (p: string, b: unknown) => apiPost(p, b),
+  getUserRole: () => role,
 }));
 
 import AgentDetailDrawer from "./AgentDetailDrawer";
 import MachineDetailDrawer from "./MachineDetailDrawer";
-import { EXPIRED_PROPOSAL_NOTE } from "../lib/agent-actions";
+import { DECISION_ROLE_NOTE, EXPIRED_PROPOSAL_NOTE } from "../lib/agent-actions";
 
 function action(id: number, expired: boolean) {
   return {
@@ -87,5 +91,23 @@ describe.each([
     await screen.findByText(/was withdrawn/);
     await waitFor(() => expect(apiGet.mock.calls.length).toBeGreaterThan(loadsBefore));
     expect(onChanged).toHaveBeenCalled();
+  });
+});
+
+describe("MachineDetailDrawer offers a decision only to a role the server lets decide", () => {
+  // The cockpit opens from the OEE, production, quality and downtime snapshots
+  // and the machine-health list — all Operator-visible — and used to offer an
+  // Operator Approve / Reject on every open proposal; the click came back 403.
+  it("shows an Operator the open proposals with no buttons, and says whose decision it is", async () => {
+    role = "Operator";
+    apiGet.mockResolvedValue(MACHINE);
+    render(<MachineDetailDrawer machineId={1} onClose={() => {}} onChanged={() => {}} />);
+    await screen.findByText("proposal 1");
+    expect(screen.queryByRole("button", { name: "Approve" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Reject" })).toBeNull();
+    // One note per proposal saying whose decision it is (plus the expiry note on
+    // the expired one).
+    expect(screen.getAllByText(DECISION_ROLE_NOTE)).toHaveLength(2);
+    role = "Admin";
   });
 });

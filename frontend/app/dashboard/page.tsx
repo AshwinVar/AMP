@@ -2329,6 +2329,10 @@ export default function DashboardPage() {
               <CsvImportButton label="Import machines CSV" path="/machines/import-csv" />
             </div>
           )}
+          {/* POST /machines is Admin-only (machines_routes.create_machine); this
+              is the landing view for every role, and the form used to be offered
+              to all of them and refused with 403 on submit. */}
+          {isAdmin && (
           <form
             onSubmit={addMachine}
             className="mb-8 rounded-2xl bg-slate-900 border border-slate-800 p-5 grid grid-cols-1 md:grid-cols-5 gap-4"
@@ -2378,6 +2382,7 @@ export default function DashboardPage() {
               Add Machine
             </button>
           </form>
+          )}
 
           <section className="mb-10">
             <h2 className="text-2xl font-semibold mb-4">Machine Status</h2>
@@ -2437,6 +2442,9 @@ export default function DashboardPage() {
                     </p>
                   </div>
 
+                  {/* PATCH /machines/{id}/status: Admin or Supervisor;
+                      DELETE /machines/{id}: Admin (machines_routes). */}
+                  {isAdminOrSupervisor && (
                   <select
                     className="mt-5 w-full bg-slate-950 border border-slate-700 rounded-xl px-4 py-2 text-sm"
                     value={machine.status}
@@ -2449,13 +2457,16 @@ export default function DashboardPage() {
                     <option>Breakdown</option>
                     <option>Maintenance</option>
                   </select>
+                  )}
 
+                  {isAdmin && (
                   <button
                     onClick={() => deleteMachine(machine.id)}
                     className="mt-4 w-full rounded-xl border border-red-500/40 text-red-400 py-2 text-sm hover:bg-red-500/10"
                   >
                     Delete Machine
                   </button>
+                  )}
                 </div>
                 );
               })}
@@ -2575,6 +2586,10 @@ export default function DashboardPage() {
 
       {(activeView === "overview" || activeView === "shifts") && (
         <section className="mt-8 grid grid-cols-1 xl:grid-cols-3 gap-6">
+          {/* POST /shifts is Admin or Supervisor (machines_routes.create_shift);
+              an Operator sees this block on the landing view and used to be
+              offered the form. */}
+          {isAdminOrSupervisor && (
           <form
             onSubmit={addShift}
             className="rounded-2xl bg-slate-900 border border-slate-800 p-5"
@@ -2619,6 +2634,7 @@ export default function DashboardPage() {
               </button>
             </div>
           </form>
+          )}
 
           <div className="xl:col-span-2 rounded-2xl bg-slate-900 border border-slate-800 p-5">
             <h2 className="text-2xl font-semibold mb-4">Shift Performance</h2>
@@ -2791,7 +2807,7 @@ export default function DashboardPage() {
 
       {renderSection("inventory", (
         company === "GMATS" ? (
-          <GmatsInventory tenant="GMATS" isAdmin={isAdmin} />
+          <GmatsInventory tenant="GMATS" isAdmin={isAdmin} canWrite={isAdminOrSupervisor} />
         ) : (
         <>
           {/* ADR-0030: what each shortage will actually stop, before the stock

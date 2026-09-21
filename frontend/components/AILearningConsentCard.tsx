@@ -8,16 +8,20 @@ import { describeActionFailure } from "../lib/useActionError";
 import { LoadError, useLoadError } from "../lib/useLoadError";
 
 /**
- * AI learning consent (ADR-0020): whether AMP-native AI may learn from THIS
- * company's own data.
+ * AI consent (ADR-0020, ADR-0037): whether AMP-native AI may learn from THIS
+ * company's own data, and whether the Copilot may send this company's
+ * questions and evidence to a hosted AI model outside AMP.
  *
  * AMP's models ship trained on synthetic data. The one capability that fits
  * anything to a company's own records (a machine's normal telemetry range, for
  * the anomaly check) runs only if an Admin of that company turned it on here,
- * and stops on the next request after they turn it off. The backend enforces
- * all of it: Admin only, never from a founder preview, and the change and its
- * audit record commit together. This card only says so plainly and asks before
- * turning something ON.
+ * and stops on the next request after they turn it off. The same holds for the
+ * hosted model: a configured key connects the platform, and a company's data
+ * reaches the provider only once its own Admin says so here. The backend
+ * enforces all of it: Admin only, never from a founder preview, and the change
+ * and its audit record commit together. This card only says so plainly and
+ * asks before turning something ON. The capabilities and their wording come
+ * from the server, so a new decision appears here without a client change.
  *
  * Operators are not shown the card (the endpoint refuses them). Supervisors see
  * it read-only, with the server's reason.
@@ -32,7 +36,7 @@ export default function AILearningConsentCard() {
   const { error, track } = useLoadError();
 
   const load = useCallback(() => {
-    track(apiGet<ConsentPage>("/ai-consent"), setPage, "AI learning consent");
+    track(apiGet<ConsentPage>("/ai-consent"), setPage, "AI consent");
   }, [track]);
 
   useEffect(() => {
@@ -59,10 +63,11 @@ export default function AILearningConsentCard() {
     <div className="rounded-2xl border border-slate-800 bg-slate-900/60 p-6">
       <div className="flex items-start justify-between flex-wrap gap-2">
         <div>
-          <h3 className="text-xs font-semibold uppercase tracking-wide text-slate-300">AI learning consent</h3>
+          <h3 className="text-xs font-semibold uppercase tracking-wide text-slate-300">AI consent</h3>
           <p className="text-slate-400 text-sm mt-1">
-            AMP&apos;s models are trained on synthetic data. Nothing learns from {page.tenant}&apos;s own data unless an
-            Admin of {page.tenant} turns it on here.
+            AMP&apos;s models are trained on synthetic data. Nothing learns from {page.tenant}&apos;s own data, and
+            nothing about {page.tenant} is sent to an AI model outside AMP, unless an Admin of {page.tenant} turns
+            it on here.
           </p>
         </div>
         {!page.can_edit && <span className="text-[11px] text-slate-500 mt-1">Read only</span>}

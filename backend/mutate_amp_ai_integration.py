@@ -60,7 +60,7 @@ MUTATIONS = [
      "        if row is None:\n            return _refused(capability,",
      "        if False:\n            return _refused(capability,", CONSENT),
     ("gate: an unknown capability is looked up instead of refused", GATE,
-     "        if capability not in LEARNING_CAPABILITIES:\n            return _refused(named,",
+     "        if capability not in CONSENT_CAPABILITIES:\n            return _refused(named,",
      "        if False:\n            return _refused(named,", CONSENT),
 
     # --- consent: the write ----------------------------------------------------------------

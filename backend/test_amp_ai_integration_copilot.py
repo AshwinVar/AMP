@@ -377,6 +377,21 @@ def section_endpoints(engine, Session):
     original = ai_copilot._ask_claude
     ai_copilot._ask_claude = lambda system, user: "Some prose."
     q = "zzz qqq"
+    # ADR-0037: a hosted provider is used for a company only with its consent, so
+    # this section grants it first (it is about what the endpoint does WITH the
+    # model) and measures what the consent read costs, to pin it below.
+    from amp_ai import consent as consent_mod
+    from amp_ai.core.contracts import CAPABILITY_EXTERNAL_MODEL
+    db = Session()
+    try:
+        consent_mod.set_consent(db, T, CAPABILITY_EXTERNAL_MODEL, True, "nc-admin")
+        counter0, stop0 = count_statements(engine)
+        ai_copilot.external_model_allowed(db, USER)
+        consent_cost = counter0["n"]
+        stop0()
+    finally:
+        db.close()
+    check("the company's consent read is exactly one query (ADR-0037)", consent_cost == 1, str(consent_cost))
     try:
         counter, stop = count_statements(engine)
         db = Session()
@@ -412,8 +427,10 @@ def section_endpoints(engine, Session):
         finally:
             stop2()
             db.close()
-        check("...at zero extra queries over AMP's own answer for that pillar", native_n == counter2["n"],
-              f"{native_n} vs {counter2['n']}")
+        # The endpoint pays exactly the consent read (ADR-0037) over AMP's own
+        # answer: the proposal, the model's wording and the view still add nothing.
+        check("...at zero extra queries over AMP's own answer for that pillar, past the consent read",
+              native_n == counter2["n"] + consent_cost, f"{native_n} vs {counter2['n']} + {consent_cost}")
         check("...the prose is still the LLM's and labelled llm", native.get("answer") == "Some prose."
               and native.get("source") == "llm")
         check("a NOT adopted model changes nothing", unadopted.get("view") == plain.get("view"))

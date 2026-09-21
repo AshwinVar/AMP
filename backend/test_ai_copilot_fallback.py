@@ -29,6 +29,15 @@ def _endpoint(path):
     return next(r for r in main.app.routes if getattr(r, "path", "") == path).endpoint
 
 
+def _consented(db):
+    """ADR-0037: a hosted provider is used for a company only with its consent, so a
+    company that never said yes never reaches the provider at all. These tests are
+    about what happens once the provider IS reached, so DEFAULT consents first."""
+    from amp_ai import consent
+    from amp_ai.core.contracts import CAPABILITY_EXTERNAL_MODEL
+    consent.set_consent(db, "DEFAULT", CAPABILITY_EXTERNAL_MODEL, True, "admin_new")
+
+
 def _boom(system, user):
     raise RuntimeError("Anthropic API 400: credit balance is too low")
 
@@ -37,6 +46,7 @@ def test_ask_falls_back_to_rules():
     db = _fresh_session()
     db.add(models.Machine(name="CNC-01", status="Running", utilization=80, tenant_code="DEFAULT"))
     db.commit()
+    _consented(db)
     founder = {"tenant": "DEFAULT", "role": "Admin", "sub": "admin_new"}
 
     os.environ["ANTHROPIC_API_KEY"] = "test-key"
@@ -57,6 +67,7 @@ def test_ask_falls_back_to_rules():
 
 def test_report_falls_back_to_rules():
     db = _fresh_session()
+    _consented(db)
     founder = {"tenant": "DEFAULT", "role": "Admin", "sub": "admin_new"}
 
     os.environ["ANTHROPIC_API_KEY"] = "test-key"
@@ -75,6 +86,7 @@ def test_report_falls_back_to_rules():
 
 def test_llm_success_is_labelled():
     db = _fresh_session()
+    _consented(db)
     founder = {"tenant": "DEFAULT", "role": "Admin", "sub": "admin_new"}
     os.environ["ANTHROPIC_API_KEY"] = "test-key"
     original = ai_copilot._ask_claude
@@ -116,6 +128,7 @@ def test_provider_selection():
 
 def test_gemini_route_is_used_and_labelled():
     db = _fresh_session()
+    _consented(db)
     founder = {"tenant": "DEFAULT", "role": "Admin", "sub": "admin_new"}
     _clean_env()
     os.environ["AI_PROVIDER"] = "gemini"
@@ -137,6 +150,7 @@ def test_gemini_failure_falls_back_to_rules():
     db = _fresh_session()
     db.add(models.Machine(name="CNC-01", status="Running", utilization=80, tenant_code="DEFAULT"))
     db.commit()
+    _consented(db)
     founder = {"tenant": "DEFAULT", "role": "Admin", "sub": "admin_new"}
     _clean_env()
     os.environ["AI_PROVIDER"] = "gemini"

@@ -2,7 +2,7 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 /**
- * The AI learning consent card (ADR-0020).
+ * The AI consent card (ADR-0020, ADR-0037).
  *
  * The backend is the boundary (Admin only, never from a preview, audited in the
  * same commit). What this pins is that the screen does not mislead around it:
@@ -130,6 +130,6 @@ describe("AILearningConsentCard", () => {
     apiGet.mockRejectedValue(new Error("Failed request: /ai-consent | 500 | boom"));
     render(<AILearningConsentCard />);
     const alert = await screen.findByRole("alert");
-    expect(alert.textContent).toMatch(/Could not load AI learning consent/);
+    expect(alert.textContent).toMatch(/Could not load AI consent/);
   });
 });

@@ -131,7 +131,7 @@ The scripted model behaviours test what AMP does with a model; they are not a mo
 ## Next tasks
 
 1. ~~**Provider adapter.**~~ Done in ADR-0023. `/ai/ask` now goes through the orchestrator, which also fixed its tenant. The model is used only once it is adopted. The adapter is tested over HTTP against a stub.
-   - **Still open:** per-company consent before factory data goes to an **external** provider (Anthropic or Gemini). That is the next change.
+   - ~~**Still open:** per-company consent before factory data goes to an **external** provider (Anthropic or Gemini). That is the next change.~~ **Done, ADR-0037 (2026-09-21):** `external_model` is the second capability on the ADR-0020 consent gate, checked at the one place the Copilot builds a request's model; without it, and for a founder preview, `/ai/ask` and `/ai/report` answer from AMP's own engine and say why. `test_external_model_consent.py`, `mutate_external_model_consent.py` 16/16.
 2. ~~**Command Centre and Daily Brief**~~ (Day 5). ADR-0024 and ADR-0028.
 3. ~~**Root-Cause Explorer and Risk Radar**~~ (Day 6). ADR-0025 and ADR-0026.
 4. ~~**Machine Health, anomaly and failure-risk surfaced honestly**~~ (Day 7). ADR-0027 and ADR-0032.

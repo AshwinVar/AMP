@@ -42,7 +42,7 @@ MAX_MACHINES = 60
 NOT_ADOPTED = ("This check is experimental: on held-out synthetic data it did not beat the rules AMP "
                "already uses, so it is shown as an estimate and never as an alarm.")
 NO_CONSENT = ("Learning from telemetry is off for this company, so AMP fitted no baselines and scored "
-              "nothing. An Admin can turn it on under AI learning consent.")
+              "nothing. An Admin can turn it on under AI consent.")
 PREVIEW = ("The anomaly check learns from this company's own telemetry, and its consent covers only its "
            "own Admins and Supervisors, so it does not run from a platform preview.")
 

@@ -8,10 +8,10 @@ THE AUTHORIZATION CHAIN THEY SERVE
 ----------------------------------
 USER -> AUTHENTICATION -> RBAC -> TENANT / OEM / CONSENT -> AMP TOOL -> DATA -> MODEL.
 A model never decides who may see what. ``ConsentGate`` is how a capability
-asks "may this tenant's own data be learned from for this purpose?" and gets an
-answer with a REASON it can show; ``RouteDecision`` is the only thing the native
-copilot model produces - a proposed intent, which the existing tenant-scoped
-tool functions then act on.
+asks "may this tenant's own data be learned from, or sent outside AMP, for this
+purpose?" and gets an answer with a REASON it can show; ``RouteDecision`` is the
+only thing the native copilot model produces - a proposed intent, which the
+existing tenant-scoped tool functions then act on.
 """
 import math
 from dataclasses import dataclass
@@ -20,14 +20,24 @@ from typing import Protocol, runtime_checkable
 
 __all__ = [
     "ConsentDecision", "ConsentGate", "ConsentRequired", "RouteDecision",
-    "CAPABILITY_TELEMETRY_BASELINE", "LEARNING_CAPABILITIES",
+    "CAPABILITY_TELEMETRY_BASELINE", "CAPABILITY_EXTERNAL_MODEL", "LEARNING_CAPABILITIES",
+    "CONSENT_CAPABILITIES",
 ]
 
 # Learning a per-machine telemetry baseline from the tenant's OWN readings.
 CAPABILITY_TELEMETRY_BASELINE = "telemetry_baseline"
-# Every capability that learns from tenant data. Anything not listed here has no
-# consent that could be granted, so a gate must refuse it.
+# Every capability that learns from tenant data. AMP-native models never learn
+# from a tenant's data except through one of these.
 LEARNING_CAPABILITIES = (CAPABILITY_TELEMETRY_BASELINE,)
+# Sending the tenant's Copilot questions and the evidence behind their answers
+# to a HOSTED language model (Anthropic, Gemini): the data leaves infrastructure
+# AMP runs (ADR-0037). Not learning - AMP fits nothing to it - but the same
+# decision shape: the company's, explicit, audited, revocable.
+CAPABILITY_EXTERNAL_MODEL = "external_model"
+# Every capability a company must consent to before AMP uses it: learning from
+# its data, or letting its data leave AMP. Anything not listed here has no
+# consent that could be granted, so a gate must refuse it.
+CONSENT_CAPABILITIES = LEARNING_CAPABILITIES + (CAPABILITY_EXTERNAL_MODEL,)
 
 
 @dataclass(frozen=True)

@@ -33,6 +33,11 @@ type AiStatus = {
   provider?: string | null;
   model?: string | null;
   engine?: "llm" | "amp-native" | "rules";
+  // ADR-0037: a hosted provider is used for THIS company only with its consent.
+  // `consent` is null when no hosted provider is configured (nothing to consent
+  // to), false when the company has not said yes (or this is a founder preview),
+  // and then `reason` is the server's sentence for it.
+  external?: { provider: string | null; consent: boolean | null; reason: string | null };
 };
 type RulesAnswer = {
   // ADR-0035: the calls AMP ran (sent back as the thread of a follow-up) and
@@ -236,8 +241,13 @@ export default function AICopilot({ onOpen }: { onOpen?: (viewKey: string) => vo
         )}
       </div>
 
-      <p className="text-slate-600 text-xs">
-        {ai.enabled
+      <p className="text-slate-600 text-xs" data-testid="copilot-engine-note">
+        {ai.enabled && ai.external?.consent === false
+          // A key is configured, but this company has not consented to its data
+          // leaving AMP (or this is a preview): the answers are AMP's own, and
+          // saying "conversational answers by <model>" here would be untrue.
+          ? <>{ai.external.reason}</>
+          : ai.enabled
           ? <>Conversational answers by <span className="text-slate-400">{ai.model}</span>, grounded in your live plant data — with instant rule-based answers as backup.</>
           : ai.engine === "amp-native"
             ? <>Questions are routed by AMP&apos;s own intent model, running inside AMP with no external AI service, with keyword rules as backup.</>

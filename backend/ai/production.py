@@ -20,11 +20,12 @@ def _pct(part, whole):
     return round(part / whole * 100) if whole else 0
 
 
-def build_production_summary(db, tenant: str) -> dict:
+def build_production_summary(db, tenant: str, now=None) -> dict:
     """Throughput and output quality over the last 7 days, plus the top
     producing machines and a daily good-count series. production_records and
-    machines are auto-scoped (ADR-0002)."""
-    today = datetime.utcnow().date()
+    machines are auto-scoped (ADR-0002). `now`: the instant the window ends at
+    (a composing read-model's clock)."""
+    today = (now or datetime.utcnow()).date()
     window = [today - timedelta(days=i) for i in range(WINDOW_DAYS - 1, -1, -1)]
     window_set = set(window)
     # Windowed in SQL (the table grows continuously); the set check keeps the

@@ -246,13 +246,22 @@ def _quality_risk(trend):
 
 
 def build_risk_radar(db, tenant: str, now=None) -> dict:
-    """What is likely to become a problem, by rule, with the measurement behind it."""
+    """What is likely to become a problem, by rule, with the measurement behind it.
+
+    ONE instant for every rule. `now` used to reach only `today` (the order
+    rule's own arithmetic), the shortage link and `generated_at`, while the five
+    read-models this composes each read the wall clock — so a caller replaying
+    a past day (the brief, proactive restraint, a test at a fixed NOW) got that
+    day's arithmetic over today's states: an order due on the replayed day came
+    back LIKELY / "the due date has passed" because delivery had judged it
+    against the real date. Every read-model now takes the same `now`.
+    """
     today = (now or datetime.utcnow()).date()
-    production = build_production_summary(db, tenant)
-    delivery = build_delivery_summary(db, tenant)
-    coverage = build_coverage_summary(db, tenant)
-    forecast = build_maintenance_forecast(db, tenant)
-    quality = build_quality_trend(db, tenant)
+    production = build_production_summary(db, tenant, now=now)
+    delivery = build_delivery_summary(db, tenant, now=now)
+    coverage = build_coverage_summary(db, tenant, now=now)
+    forecast = build_maintenance_forecast(db, tenant, now=now)
+    quality = build_quality_trend(db, tenant, now=now)
     unit_value = tenant_unit_value(db, tenant)
     daily_rate = (production["good"] / production["days"]) if production["runs"] else None
     # What each shortage would actually stop, through the tenant's own bills of

@@ -38,11 +38,16 @@ ALLOWED = {
 
 
 def _calls_date_today(tree) -> list:
-    """Line numbers of `date.today()` / `datetime.date.today()` calls.
+    """Line numbers of `date.today()` calls, whatever the receiver.
 
     AST rather than grep on purpose: four test files mention ``date.today()`` in
     a comment explaining why they avoid it, and a textual guard would flag those
     for saying the right thing.
+
+    The receiver is ANY `date` — a bare name, `datetime.date`, or the `.date` of
+    whatever expression: `__import__("datetime").date.today()` is the same local
+    date, and two such calls in test_risk_radar.py sat under this guard for
+    months while it only recognised a bare `datetime` name as the owner.
     """
     hits = []
     for node in ast.walk(tree):
@@ -54,21 +59,22 @@ def _calls_date_today(tree) -> list:
         target = func.value
         if isinstance(target, ast.Name) and target.id == "date":
             hits.append(node.lineno)
-        elif (
-            isinstance(target, ast.Attribute)
-            and target.attr == "date"
-            and isinstance(target.value, ast.Name)
-            and target.value.id == "datetime"
-        ):
+        elif isinstance(target, ast.Attribute) and target.attr == "date":
             hits.append(node.lineno)
     return hits
+
+
+def _scanned(name: str) -> bool:
+    """The test suites AND the audit scripts: an audit seeds and asserts the
+    same way a test does, against the same UTC-dated code."""
+    return (name.startswith("test_") or name.startswith("audit_")) and name.endswith(".py")
 
 
 def test_no_test_seeds_rows_with_the_local_date():
     offenders = {}
     checked = 0
     for name in sorted(os.listdir(HERE)):
-        if not (name.startswith("test_") and name.endswith(".py")):
+        if not _scanned(name):
             continue
         if name == os.path.basename(__file__):
             continue
@@ -108,6 +114,18 @@ def test_the_guard_can_actually_see_a_violation():
 
     tree = ast.parse("import datetime\nx = datetime.date.today()\n")
     assert _calls_date_today(tree) == [2], _calls_date_today(tree)
+
+    # The receiver can be any expression whose `.date` is taken: an inline
+    # import, an aliased module. Both are the local date all the same.
+    tree = ast.parse('x = __import__("datetime").date.today()\n')
+    assert _calls_date_today(tree) == [1], _calls_date_today(tree)
+    tree = ast.parse("import datetime as dt\nx = dt.date.today()\n")
+    assert _calls_date_today(tree) == [2], _calls_date_today(tree)
+
+    # The audit scripts are in the sweep, and there are some to sweep.
+    assert _scanned("audit_oem_demo_journey.py") and _scanned("test_x.py")
+    assert not _scanned("mutate_x.py") and not _scanned("test_x.pyc")
+    assert sum(1 for n in os.listdir(HERE) if n.startswith("audit_") and n.endswith(".py")) >= 5
 
     # A comment mentioning it is not a call — this is why the guard parses.
     tree = ast.parse("# date.today() is local and would drift the window\nx = 1\n")

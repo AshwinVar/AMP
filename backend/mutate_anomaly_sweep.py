@@ -50,6 +50,9 @@ MUTATIONS = [
      "        except ConsentRequired:\n", "        except NotImplementedError:\n"),
     ("a preview starts fitting baselines from a customer's telemetry", SW,
      "    if previewing:\n", "    if False:\n"),
+    ("each machine is scored at the wall clock, not the sweep's instant", SW,
+     "            rows.append(_row(m, scorer(db, tenant, m.id, gate=gate, now=at)))",
+     "            rows.append(_row(m, scorer(db, tenant, m.id, gate=gate)))"),
 
     # --- the experimental model is not an alarm -----------------------------
     ("a score is relabelled a measurement", SW,

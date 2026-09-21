@@ -88,9 +88,12 @@ def _row(machine, result):
 def build_anomaly_sweep(db, tenant: str, *, scorer, gate, previewing=False, now=None) -> dict:
     """Score every machine this tenant owns, or say why not.
 
-    `scorer(db, tenant, machine_id, gate=...)` is the SAME function the
+    `scorer(db, tenant, machine_id, gate=..., now=...)` is the SAME function the
     single-machine route calls, passed in so this module runs no model of its
-    own and cannot drift from it.
+    own and cannot drift from it. It is handed this sweep's `now`, so every
+    machine's score window ends at the instant `generated_at` names; the sweep
+    used to stamp the caller's instant on the envelope and score each machine
+    at the wall clock.
     """
     at = now or datetime.utcnow()
     if previewing:
@@ -104,7 +107,7 @@ def build_anomaly_sweep(db, tenant: str, *, scorer, gate, previewing=False, now=
     rows, consent_ok = [], True
     for m in machines:
         try:
-            rows.append(_row(m, scorer(db, tenant, m.id, gate=gate)))
+            rows.append(_row(m, scorer(db, tenant, m.id, gate=gate, now=at)))
         except ConsentRequired:
             # The consent refusal is the whole FLEET's answer, not one machine's:
             # the consent is per company, so a second machine would refuse for

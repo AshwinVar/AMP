@@ -82,12 +82,13 @@ def _stockout_date(today, days_of_cover):
     return today + timedelta(days=int(days_of_cover))
 
 
-def build_coverage_summary(db, tenant: str) -> dict:
+def build_coverage_summary(db, tenant: str, now=None) -> dict:
     """Days-of-cover across the item master: how many items are already out or
     projected to run dry within a week, plus the specific items to reorder first
     (soonest stockout first). inventory_items + inventory_transactions are
-    auto-scoped (ADR-0002); the transaction scan is bounded to the window."""
-    today = datetime.utcnow().date()
+    auto-scoped (ADR-0002); the transaction scan is bounded to the window.
+    `now`: the instant the window ends at (a composing read-model's clock)."""
+    today = (now or datetime.utcnow()).date()
     cutoff = datetime.combine(today - timedelta(days=WINDOW_DAYS - 1), datetime.min.time())
 
     items = db.query(models.InventoryItem).all()

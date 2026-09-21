@@ -93,6 +93,10 @@ MUTATIONS = [
     ("the empty and the stocked workspace get the same sentence", SH,
      '                    "headline": ("No stock items are set up, so AMP cannot say what a shortage "',
      '                    "headline": ("Nothing is at or below its reorder level. "'),
+    # --- one instant for every rule ------------------------------------------
+    ("the radar's delivery outlook is judged at the wall clock, not the instant named", RADAR,
+     "    delivery = build_delivery_summary(db, tenant, now=now)\n",
+     "    delivery = build_delivery_summary(db, tenant)\n"),
 ]
 
 

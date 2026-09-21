@@ -38,10 +38,10 @@ MIN_MACHINE_UNITS = 25
 MIN_SAMPLE_UNITS = 50
 
 
-def _inspections_since(db, days: int):
+def _inspections_since(db, days: int, now=None):
     """The last `days` days of inspections, bounded in SQL (the table grows
     continuously). Day-aligned in UTC, like every other window read-model."""
-    cutoff = datetime.combine(datetime.utcnow().date() - timedelta(days=days - 1),
+    cutoff = datetime.combine((now or datetime.utcnow()).date() - timedelta(days=days - 1),
                               datetime.min.time())
     return (db.query(models.QualityInspection)
             .filter(models.QualityInspection.created_at >= cutoff).all())
@@ -182,13 +182,14 @@ def _half_of(day, today):
     return None
 
 
-def build_quality_trend(db, tenant: str) -> dict:
+def build_quality_trend(db, tenant: str, now=None) -> dict:
     """Which way is quality going, and who moved it? Compares the last 7 days of
     inspections against the 7 before on the same numerator and denominator, then
     attributes the swing to machines and defect categories. Composes
-    quality_inspections (auto-scoped, ADR-0002); it adds no storage."""
-    today = datetime.utcnow().date()
-    inspections = _inspections_since(db, TREND_WINDOW_DAYS)
+    quality_inspections (auto-scoped, ADR-0002); it adds no storage. `now`: the
+    instant the window ends at (a composing read-model's clock)."""
+    today = (now or datetime.utcnow()).date()
+    inspections = _inspections_since(db, TREND_WINDOW_DAYS, now=now)
 
     # Daily series across the whole window, zero-filled so a silent day reads as
     # a gap in inspection rather than as perfect quality.

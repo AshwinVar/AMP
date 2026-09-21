@@ -87,14 +87,18 @@ def within(Session, tenant, fn):
         db.close()
 
 
-def scripted(results, seen=None):
-    """A scorer that returns a canned result per machine id, honouring the gate."""
+def scripted(results, seen=None, clocks=None):
+    """A scorer that returns a canned result per machine id, honouring the gate.
+    `clocks` collects the `now` each call was handed, so a test can pin that the
+    sweep's instant reaches the scorer."""
     def scorer(db, tenant, machine_id, *, gate, now=None):
         decision = gate.check(db, tenant, CAPABILITY_TELEMETRY_BASELINE)
         if not decision.granted:
             raise ConsentRequired(decision)
         if seen is not None:
             seen.append(machine_id)
+        if clocks is not None:
+            clocks.append(now)
         return results.get(machine_id, {"status": "ok", "score": 1.0})
     return scorer
 
@@ -113,10 +117,16 @@ def main_():
                  "needed": {"distinct_days": 7}, "have": {"distinct_days": 2}},
         ids[2]: {"status": "model_unavailable", "score": None, "reason": "the artifact did not verify"},
     }
+    clocks = []
     sweep = within(Session, F.B, lambda db: sw.build_anomaly_sweep(
-        db, F.B, scorer=scripted(results), gate=Granted(), now=NOW))
+        db, F.B, scorer=scripted(results, clocks=clocks), gate=Granted(), now=NOW))
     check("every machine is in the list", len(sweep["machines"]) == len(ids),
           f"{len(sweep['machines'])} of {len(ids)}")
+    # The instant on the envelope is the instant every machine was scored at:
+    # the sweep used to stamp `now` on generated_at and let each scorer call
+    # read the wall clock, so a replay of a past hour scored today's telemetry.
+    check("every machine is scored at the sweep's own instant, not the wall clock",
+          len(clocks) == len(ids) and all(c == NOW for c in clocks), str(clocks))
     check("the counts reconcile", sweep["scored"] + sweep["not_scored"] == len(ids),
           f"{sweep['scored']} + {sweep['not_scored']}")
     by_id = {r["machine_id"]: r for r in sweep["machines"]}
@@ -236,8 +246,11 @@ def main_():
           f"{r.state}: {r.summary}")
     # The tool runs the REAL scorer and the REAL consent gate, so whatever it
     # comes back with, the two counts must match what the sweep itself says.
+    # Both at the wall clock: the tool takes no instant, and now that the sweep
+    # hands its `now` to the scorer, a sweep built at NOW would score a
+    # different hour of telemetry from the tool's and the counts could differ.
     live = within(Session, F.B, lambda db: sw.build_anomaly_sweep(
-        db, F.B, scorer=service.score_machine, gate=consent.DbConsentGate(), now=NOW))
+        db, F.B, scorer=service.score_machine, gate=consent.DbConsentGate()))
     not_scored = [f for f in r.facts if f.key == "anomaly.not_scored"]
     scored_fact = [f for f in r.facts if f.key == "anomaly.scored"]
     check("how many it could not score is a fact", len(not_scored) == 1)

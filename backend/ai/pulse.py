@@ -32,12 +32,17 @@ def _headline(avg_health, measured, machines, needs_attention, awaiting) -> str:
     return " · ".join(parts)
 
 
-def build_pulse(db, tenant: str) -> dict:
+def build_pulse(db, tenant: str, now=None) -> dict:
     """The command header for one tenant: fleet health from the twins, agent
     workload from the impact rollup, and the single machine that most needs a
-    look (the twins are already worst-health-first)."""
+    look (the twins are already worst-health-first).
+
+    `now`: the instant the agent window ends at. A composing read-model passes
+    its own clock rather than letting each component read the wall clock
+    separately (#696) — and it is what lets a test pin the week the Autonomy
+    tile reports, instead of hoping the fixture and the query agree."""
     twins = twin.build_twins(db, tenant)
-    imp = impact.build_impact(db, tenant)
+    imp = impact.build_impact(db, tenant, now=now)
 
     machines = len(twins)
     # Only the twins whose score read something (twin.health_measured): a
@@ -65,7 +70,15 @@ def build_pulse(db, tenant: str) -> dict:
         "agents": {
             "agents_active": len(imp["agents_active"]),
             "actions_7d": imp["last_7_days"]["total"],
-            "auto_rate": imp["auto_rate"],
+            # THE WINDOWED RATE, because this tile's own caption says "/7d".
+            # It used to be the lifetime rate under that caption: a fleet that
+            # auto-approved everything for a year and nothing this week read
+            # "Autonomy 100% · 12 actions / 7d". None, never 0, when the week
+            # decided nothing — "0% ran autonomously" is a real reading.
+            "auto_rate": imp["last_7_days"]["auto_rate"],
+            "auto_measured": imp["last_7_days"]["measured"],
+            "auto_decided": imp["last_7_days"]["decided"],
+            "auto_window": imp["last_7_days"]["window"],
             "awaiting_you": imp["pending_backlog"],
         },
         "headline": _headline(avg_health, len(measured), machines, needs_attention,

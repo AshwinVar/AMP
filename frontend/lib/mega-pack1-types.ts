@@ -59,7 +59,9 @@ export type MaintenanceAnalytics = {
   preventive: number;
   breakdown: number;
   total_downtime_minutes: number;
-  avg_repair_minutes: number;
+  /** Null when the denominator was empty — never 0, which is a real reading on this scale. */
+  avg_repair_minutes: number | null;
+  avg_repair_measured?: boolean;
   machine_counts: Record<string, number>;
 };
 

@@ -23,7 +23,10 @@ type Impact = {
   approved: number;
   rejected: number;
   auto_approved: number;
-  auto_rate: number;
+  /** Over every decision ever made. Null when none has been. */
+  auto_rate: number | null;
+  auto_measured?: boolean;
+  window?: string;
   pending_backlog: number;
   outputs: Outputs;
   by_agent: AgentContribution[];
@@ -91,7 +94,12 @@ export default function AgentRoiSection() {
             <p className="text-lg font-semibold mt-1">{imp.headline}</p>
             <div className="mt-5 grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-4">
               <Tile label="Actions taken" value={imp.total_actions} />
-              <Tile label="Ran autonomously" value={`${imp.auto_rate}%`} sub="of decisions" accent />
+              <Tile
+                label="Ran autonomously"
+                value={imp.auto_rate == null ? "—" : imp.auto_rate + "%"}
+                sub={imp.auto_rate == null ? "nothing decided yet" : "of decisions, " + (imp.window ?? "all time")}
+                accent
+              />
               <Tile label="Tasks opened" value={imp.outputs.maintenance_tasks} />
               <Tile label="POs drafted" value={imp.outputs.purchase_orders} />
               <Tile label="Escalations" value={imp.outputs.escalations} />

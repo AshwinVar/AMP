@@ -15,7 +15,9 @@ export type ProductionPlanAnalytics = {
   total_plans: number;
   planned_quantity: number;
   actual_quantity: number;
-  achievement: number;
+  /** Null when the denominator was empty — never 0, which is a real reading on this scale. */
+  achievement: number | null;
+  achievement_measured?: boolean;
   planned: number;
   running: number;
   completed: number;

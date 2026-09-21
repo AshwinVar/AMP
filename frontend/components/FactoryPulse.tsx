@@ -14,7 +14,18 @@ type Pulse = {
     needs_attention: number;
     worst: { machine_id: number; name: string; health_score: number; health_band: string } | null;
   };
-  agents: { agents_active: number; actions_7d: number; auto_rate: number; awaiting_you: number };
+  agents: {
+    agents_active: number;
+    actions_7d: number;
+    /** The rate over THIS week, matching the caption beside it. Null when
+     *  the week decided nothing — never 0, which says every decision
+     *  needed a human. */
+    auto_rate: number | null;
+    auto_measured?: boolean;
+    auto_decided?: number;
+    auto_window?: string;
+    awaiting_you: number;
+  };
   headline: string;
 };
 
@@ -82,7 +93,20 @@ export default function FactoryPulse() {
         />
         <PulseTile label="Need attention" value={pulse.fleet.needs_attention} />
         <PulseTile label="Awaiting you" value={pulse.agents.awaiting_you} highlight={pulse.agents.awaiting_you > 0} />
-        <PulseTile label="Autonomy" value={`${pulse.agents.auto_rate}%`} sub={`${pulse.agents.actions_7d} actions / 7d`} />
+        {/* The caption names a week, so the rate is that week's. It used to
+            be the lifetime rate under this caption: a fleet that
+            auto-approved everything last year and nothing since read
+            "Autonomy 100%" beside "12 actions / 7d". */}
+        <PulseTile
+          label="Autonomy"
+          value={pulse.agents.auto_rate == null ? "—" : pulse.agents.auto_rate + "%"}
+          color={pulse.agents.auto_rate == null ? "text-slate-500" : undefined}
+          sub={
+            pulse.agents.auto_rate == null
+              ? "no decisions this week"
+              : pulse.agents.actions_7d + " actions / " + (pulse.agents.auto_window ?? "last 7 days")
+          }
+        />
       </div>
     </div>
   );

@@ -61,7 +61,12 @@ export type Summary = {
   breakdown: number;
   maintenance: number;
   offline: number;
-  avg_utilization: number;
+  /** Null when no machine has reported a utilization — 0% is the WORST
+   *  reading on this scale, and an unreported plant used to publish it. */
+  avg_utilization: number | null;
+  utilization_measured?: boolean;
+  /** How many machines the average covers, out of `machines`. */
+  utilization_machines?: number;
   avg_oee: number;
   avg_availability: number;
   avg_performance: number;

@@ -48,7 +48,14 @@ def test_impact_rolls_up_outputs_autonomy_and_backlog():
     assert imp["outputs"]["escalations"] == 0
     # decisions = approved(2) + rejected(1) = 3; auto(1)/3 -> 33%
     assert imp["auto_rate"] == 33
+    assert imp["auto_decided"] == 3 and imp["auto_measured"] is True
+    assert imp["window"] == "all time"                                     # the lifetime figure says so
     assert imp["last_7_days"]["total"] == 4                                # all just created
+    # ...and the windowed rate is the SAME 33% here, because every row was just
+    # created. The command header shows this one, under its own "/7d" caption.
+    assert imp["last_7_days"]["auto_rate"] == 33
+    assert imp["last_7_days"]["decided"] == 3 and imp["last_7_days"]["measured"] is True
+    assert imp["last_7_days"]["window"] == "last 7 days"
     assert "agent" in imp["headline"]
     # per-agent contribution (ROI view): reorder led with 1 auto-approved PO
     by_agent = {a["agent"]: a for a in imp["by_agent"]}
@@ -59,9 +66,14 @@ def test_impact_rolls_up_outputs_autonomy_and_backlog():
     assert by_agent["quality"]["approved"] == 1
     assert all(a["name"] for a in imp["by_agent"])                         # display names present
 
-    # empty tenant -> zeroed, no divide-by-zero
+    # A tenant whose agents have decided nothing has NO autonomy rate. It used
+    # to read 0%, which says every decision needed a human — a damning reading
+    # of a fleet that has not been asked for one yet.
     empty = impact.build_impact(db, "NOBODY")
-    assert empty["total_actions"] == 0 and empty["auto_rate"] == 0 and empty["agents_active"] == []
+    assert empty["total_actions"] == 0 and empty["agents_active"] == []
+    assert empty["auto_rate"] is None and empty["auto_measured"] is False
+    assert empty["last_7_days"]["auto_rate"] is None
+    assert empty["last_7_days"]["measured"] is False
     assert empty["by_agent"] == []
 
 

@@ -88,12 +88,18 @@ def _old_get_remnants(db):
 def _old_get_issue_slips(db):
     rows = db.query(models.MaterialIssueSlip).order_by(models.MaterialIssueSlip.id.desc()).all()
     items = {i.id: i for i in db.query(models.InventoryItem).all()}
+    # The whole work-order roster, the un-paged way: which job references name
+    # a work order in this tenant (the resolved job and its flag joined the
+    # payload when an issued slip started counting against its job).
+    work_orders = {w.work_order_no for w in db.query(models.WorkOrder).all()}
     return [
         {
             "id": s.id, "slip_no": s.slip_no, "item_id": s.item_id,
             "item_code": items[s.item_id].item_code if s.item_id in items else "",
             "item_name": items[s.item_id].item_name if s.item_id in items else "",
             "remnant_id": s.remnant_id, "work_order_ref": s.work_order_ref,
+            "work_order_no": (s.work_order_ref or "").strip() if (s.work_order_ref or "").strip() in work_orders else None,
+            "work_order_resolved": (s.work_order_ref or "").strip() in work_orders,
             "requested_qty": s.requested_qty, "issued_qty": s.issued_qty,
             "requested_by": s.requested_by, "approved_by": s.approved_by,
             "status": s.status, "notes": s.notes,

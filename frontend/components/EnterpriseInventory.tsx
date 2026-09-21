@@ -25,6 +25,9 @@ interface Remnant {
 interface IssueSlip {
   id: number; slip_no: string; item_id: number; item_code: string; item_name: string;
   remnant_id: number | null; work_order_ref: string; requested_qty: number;
+  // Whether the typed job reference names a work order in AMP: only then does
+  // the issued material count in that job's trace (the server resolves it).
+  work_order_no?: string | null; work_order_resolved?: boolean;
   issued_qty: number; requested_by: string; approved_by: string | null;
   status: string; notes: string; created_at: string;
 }
@@ -309,7 +312,12 @@ function IssueSlipsTab({ items }: { items: InventoryItem[] }) {
                     <div className="font-medium">{s.item_name}</div>
                     <div className="text-slate-500 text-xs">{s.item_code}</div>
                   </td>
-                  <td className="py-3 px-4 text-slate-400 text-xs">{s.work_order_ref || "—"}</td>
+                  <td className="py-3 px-4 text-slate-400 text-xs">
+                    {s.work_order_ref || "—"}
+                    {s.work_order_ref && s.work_order_resolved === false && (
+                      <span className="block text-amber-300/80" data-testid={`slip-job-unresolved-${s.id}`}>not a work order in AMP — not in any job&apos;s trace</span>
+                    )}
+                  </td>
                   <td className="py-3 px-4 font-semibold">{s.requested_qty}</td>
                   <td className="py-3 px-4">{s.requested_by}</td>
                   <td className="py-3 px-4 text-slate-400">{s.approved_by || "—"}</td>

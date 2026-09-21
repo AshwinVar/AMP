@@ -1,10 +1,10 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { apiGet, apiPost } from "../lib/api";
+import { apiGet, apiPost, getUserRole } from "../lib/api";
 import { useModalFocus } from "../lib/useModalFocus";
 import { parseApiDate } from "../lib/apiDate";
-import { EXPIRED_PROPOSAL_NOTE } from "../lib/agent-actions";
+import { DECISION_ROLE_NOTE, EXPIRED_PROPOSAL_NOTE, canDecideProposals } from "../lib/agent-actions";
 import HealthExplanation, { type HealthExplanation as HealthExplanationData } from "./HealthExplanation";
 
 // Mirrors the backend detail read-model (ai/twin.py build_machine_detail).
@@ -165,6 +165,10 @@ export default function MachineDetailDrawer({
   const [detail, setDetail] = useState<Detail | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  // The cockpit opens from Operator-visible screens (OEE, production, downtime,
+  // machine health), so Approve / Reject are offered only to a role the server
+  // lets decide — lib/agent-actions.canDecideProposals.
+  const canDecide = canDecideProposals(getUserRole());
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -368,6 +372,10 @@ export default function MachineDetailDrawer({
                       {a.expired === true && (
                         <p role="note" className="mt-2 text-sm text-amber-300">{EXPIRED_PROPOSAL_NOTE}</p>
                       )}
+                      {!canDecide && (
+                        <p role="note" className="mt-2 text-sm text-slate-500">{DECISION_ROLE_NOTE}</p>
+                      )}
+                      {canDecide && (
                       <div className="mt-3 flex gap-2">
                         <button
                           onClick={() => decide(a.id, "approve")}
@@ -383,6 +391,7 @@ export default function MachineDetailDrawer({
                           Reject
                         </button>
                       </div>
+                      )}
                     </div>
                   ))}
                 </div>

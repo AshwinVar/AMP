@@ -13,15 +13,20 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const apiGet = vi.fn();
 const apiPost = vi.fn();
+// The signed-in role. Approve / Reject are offered only to a role
+// POST /agent-actions/{id}/approve|reject lets decide (Admin or Supervisor).
+let role = "Admin";
 
 vi.mock("../lib/api", () => ({
   apiGet: (p: string) => apiGet(p),
   apiPost: (p: string, b: unknown) => apiPost(p, b),
   apiPatch: vi.fn(),
+  getUserRole: () => role,
 }));
 vi.mock("./FactoryPulse", () => ({ default: () => null }));
 
 import MissionControlSection from "./MissionControlSection";
+import { DECISION_ROLE_NOTE } from "../lib/agent-actions";
 
 const ACTION = {
   source: "action", kind: "open_task", severity: "Critical",
@@ -35,6 +40,32 @@ afterEach(cleanup);
 beforeEach(() => {
   apiGet.mockReset();
   apiPost.mockReset();
+  role = "Admin";
+});
+
+describe("MissionControlSection offers a decision only to a role the server lets decide", () => {
+  it("shows an Operator no Approve / Reject on a proposal, and says whose decision it is", async () => {
+    // Mission Control is an Operator-visible view (lib/modules OPERATOR_VIEWS);
+    // the buttons used to be offered and the click came back 403.
+    role = "Operator";
+    apiGet.mockImplementation((p: string) => Promise.resolve(p === "/insights" ? [ACTION] : null));
+
+    render(<MissionControlSection />);
+    await screen.findByText(ACTION.title);
+    expect(screen.queryByRole("button", { name: "Approve" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Reject" })).toBeNull();
+    expect(screen.getByRole("note").textContent).toBe(DECISION_ROLE_NOTE);
+  });
+
+  it("offers a Supervisor both buttons, with no note", async () => {
+    role = "Supervisor";
+    apiGet.mockImplementation((p: string) => Promise.resolve(p === "/insights" ? [ACTION] : null));
+
+    render(<MissionControlSection />);
+    await screen.findByRole("button", { name: "Approve" });
+    expect(screen.getByRole("button", { name: "Reject" })).toBeTruthy();
+    expect(screen.queryByRole("note")).toBeNull();
+  });
 });
 
 describe("MissionControlSection agent proposals", () => {

@@ -72,3 +72,17 @@ export async function loadAgentActions(
 /** The sentence shown on a proposal that can no longer be approved. */
 export const EXPIRED_PROPOSAL_NOTE =
   "This proposal has expired and can no longer be approved. It can only be rejected, which releases the item it holds.";
+
+/**
+ * Who may press Approve / Reject: POST /agent-actions/{id}/approve|reject is
+ * `require_roles(["Admin", "Supervisor"])` (agent_routes). Mission Control and
+ * the machine cockpit are Operator-visible screens, and both offered the two
+ * buttons to an Operator, whose click came back 403.
+ */
+export function canDecideProposals(role: string): boolean {
+  return role === "Admin" || role === "Supervisor";
+}
+
+/** Shown in place of Approve / Reject to a role the server would refuse. */
+export const DECISION_ROLE_NOTE =
+  "Approving or rejecting an agent's proposal is a Supervisor's or Admin's decision.";

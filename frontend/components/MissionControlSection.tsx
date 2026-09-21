@@ -1,10 +1,10 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { apiGet, apiPatch, apiPost } from "../lib/api";
+import { apiGet, apiPatch, apiPost, getUserRole } from "../lib/api";
 import FactoryPulse from "./FactoryPulse";
 import { parseApiDate } from "../lib/apiDate";
-import { EXPIRED_PROPOSAL_NOTE } from "../lib/agent-actions";
+import { DECISION_ROLE_NOTE, EXPIRED_PROPOSAL_NOTE, canDecideProposals } from "../lib/agent-actions";
 
 // Mirrors the backend Insight shape (ai/insights.py build_feed).
 type Insight = {
@@ -53,6 +53,9 @@ export default function MissionControlSection() {
   const [insights, setInsights] = useState<Insight[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  // Approve / Reject are offered only to a role the server lets decide; an
+  // Operator opens this screen too, and used to get two buttons that 403'd.
+  const canDecide = canDecideProposals(getUserRole());
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -171,7 +174,10 @@ export default function MissionControlSection() {
                 {i.source === "action" && i.expired === true && (
                   <p role="note" className="mt-3 text-sm text-amber-300">{EXPIRED_PROPOSAL_NOTE}</p>
                 )}
-                {i.source === "action" && i.ref_id != null && (
+                {i.source === "action" && i.ref_id != null && !canDecide && (
+                  <p role="note" className="mt-3 text-sm text-slate-500">{DECISION_ROLE_NOTE}</p>
+                )}
+                {i.source === "action" && i.ref_id != null && canDecide && (
                   <div className="mt-4 flex gap-2">
                     <button onClick={() => decideAction(i.ref_id as number, "approve")} disabled={i.expired === true}
                       className="rounded-lg bg-emerald-500/90 text-slate-950 font-semibold px-3 py-1.5 text-sm hover:bg-emerald-400 disabled:cursor-not-allowed disabled:opacity-40">

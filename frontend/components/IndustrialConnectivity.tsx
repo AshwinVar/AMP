@@ -1,7 +1,8 @@
 "use client";
 import React, { useEffect, useState } from "react";
-import { apiGet, apiPost } from "../lib/api";
+import { apiGet, apiGetWithTotal, apiPost } from "../lib/api";
 import { LoadError, useLoadError } from "../lib/useLoadError";
+import PageNotice from "./PageNotice";
 
 interface Protocol { key: string; name: string; port: number; library: string; transport: string; desc: string; }
 interface Device {
@@ -18,21 +19,30 @@ export default function IndustrialConnectivity() {
   const [protocols, setProtocols] = useState<Protocol[]>([]);
   const [devices, setDevices] = useState<Device[]>([]);
   const [signals, setSignals] = useState<Signal[]>([]);
+  // Both lists are pages (ADR-0036): the newest 300 devices and the newest
+  // 500 signals. The totals say how many the tenant has in all, so the device
+  // count in the heading is the tenant's, not the page's, and a plant past
+  // either page is told so. null until known.
+  const [deviceTotal, setDeviceTotal] = useState<number | null>(null);
+  const [signalTotal, setSignalTotal] = useState<number | null>(null);
   const [form, setForm] = useState({ device_code: "", device_name: "", protocol: "", ip_address: "" });
   const [msg, setMsg] = useState("");
 
   const { error, track } = useLoadError();
   const load = () => {
     track(apiGet<Protocol[]>("/industrial/protocols"), setProtocols, "protocols");
-    track(apiGet<Device[]>("/industrial/devices"), setDevices, "devices");
-    track(apiGet<Signal[]>("/industrial/signals"), setSignals, "signals");
+    track(apiGetWithTotal<Device[]>("/industrial/devices").then((r) => { setDeviceTotal(r.total); return r.data; }),
+          setDevices, "devices");
+    track(apiGetWithTotal<Signal[]>("/industrial/signals").then((r) => { setSignalTotal(r.total); return r.data; }),
+          setSignals, "signals");
   };
   useEffect(() => {
     load();
     // The 8s refresh deliberately stays silent: one blip should not flash an
     // error over a page that is already showing good data. The initial load
     // above is the one that must report failure.
-    const t = setInterval(() => apiGet<Signal[]>("/industrial/signals").then(setSignals).catch(() => {}), 8000);
+    const t = setInterval(() => apiGetWithTotal<Signal[]>("/industrial/signals")
+      .then((r) => { setSignalTotal(r.total); setSignals(r.data); }).catch(() => {}), 8000);
     return () => clearInterval(t);
   }, []);
 
@@ -124,7 +134,10 @@ export default function IndustrialConnectivity() {
 
       {/* Connected devices + live signals */}
       <div className="rounded-2xl bg-slate-900 border border-slate-800 p-5">
-        <h3 className="text-lg font-semibold mb-4">Connected devices <span className="text-slate-500 text-sm font-normal">({devices.length})</span></h3>
+        <h3 className="text-lg font-semibold mb-4">Connected devices <span className="text-slate-500 text-sm font-normal">({(deviceTotal ?? devices.length).toLocaleString()})</span></h3>
+        <PageNotice shown={devices.length} total={deviceTotal} noun="devices" className="mb-3" />
+        <PageNotice shown={signals.length} total={signalTotal} noun="signals" className="mb-3"
+          testId="signals-page-notice" />
         <div className="space-y-3">
           <LoadError message={error} />
           {!error && devices.length === 0 && <p className="text-slate-400 text-sm">No devices yet.</p>}

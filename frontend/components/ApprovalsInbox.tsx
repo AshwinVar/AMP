@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { apiGet, apiGetWithTotal, apiPost, apiPatch } from "../lib/api";
 import { parseApiDate } from "../lib/apiDate";
+import PageNotice from "./PageNotice";
 import {
   AGENT_ACTIONS_PAGE,
   EXPIRED_PROPOSAL_NOTE,
@@ -59,6 +60,9 @@ export default function ApprovalsInbox() {
   // (X-Total-Count of ?unread=true&limit=1). null until known -- then, and
   // only then, the page is what there is to count.
   const [unreadTotal, setUnreadTotal] = useState<number | null>(null);
+  // ...and how many notifications there are in all, so the list below can say
+  // it is the newest page of them.
+  const [notifTotal, setNotifTotal] = useState<number | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -68,12 +72,13 @@ export default function ApprovalsInbox() {
     try {
       const [a, n, u] = await Promise.all([
         loadAgentActions((path) => apiGet<AgentAction[]>(path), "Proposed", depth),
-        apiGet<Notif[]>("/notifications"),
+        apiGetWithTotal<Notif[]>("/notifications"),
         apiGetWithTotal<Notif[]>("/notifications?unread=true&limit=1"),
       ]);
       setApprovals(a.rows);
       setMore(a.more);
-      setNotifs(n);
+      setNotifs(Array.isArray(n?.data) ? n.data : []);
+      setNotifTotal(typeof n?.total === "number" ? n.total : null);
       setUnreadTotal(typeof u?.total === "number" ? u.total : null);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to load the inbox");
@@ -191,6 +196,7 @@ export default function ApprovalsInbox() {
       {/* Notifications */}
       <div>
         <h3 className="text-sm font-semibold text-slate-300 uppercase tracking-wide">Notifications</h3>
+        <PageNotice shown={notifs.length} total={notifTotal} noun="notifications" className="mt-2" />
         {notifs.length === 0 ? (
           <p className="text-slate-500 text-sm mt-3">No notifications.</p>
         ) : (

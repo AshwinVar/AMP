@@ -68,7 +68,6 @@ export const DASHBOARD_OPTIONAL = [
   "/analytics/maintenance",
   "/production-schedules",
   "/analytics/production-schedules",
-  "/iot/telemetry",
   "/analytics/iot-command",
   "/ai/recommendations",
   "/analytics/ai-insights",

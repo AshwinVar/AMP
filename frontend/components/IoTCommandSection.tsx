@@ -1,9 +1,12 @@
-import type { IoTCommandCenter, IoTTelemetry } from "../lib/mega-pack2-types";
+import type { IoTCommandCenter } from "../lib/mega-pack2-types";
 
 type Machine = { id: number; name: string; status: string; utilization: number; downtime: string; };
 
-export default function IoTCommandSection({ machines, telemetry, command, form, setForm, createTelemetry }: {
-  machines: Machine[]; telemetry: IoTTelemetry[]; command: IoTCommandCenter | null; form: any; setForm: (v:any)=>void; createTelemetry: (e:React.FormEvent)=>void;
+// The section shows /analytics/iot-command's latest_signals; it never took a
+// telemetry list of its own, and the 500-row page the dashboard fetched for
+// the prop it did not render is gone from the round (docs/PERFORMANCE.md).
+export default function IoTCommandSection({ machines, command, form, setForm, createTelemetry }: {
+  machines: Machine[]; command: IoTCommandCenter | null; form: any; setForm: (v:any)=>void; createTelemetry: (e:React.FormEvent)=>void;
 }) {
   return (
     <section className="mt-8 space-y-6">

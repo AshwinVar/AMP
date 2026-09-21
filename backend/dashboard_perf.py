@@ -3,9 +3,10 @@
 WHY THIS EXISTS
 ---------------
 `frontend/app/dashboard/page.tsx` calls `usePolling(fetchAll, 3000)`, and
-`fetchAll` issues 3 mandatory requests followed by 44 optional ones — 47 per
-round, every three seconds, per open tab (the 44th, since ADR-0036, is the
-tenant-wide unread notification count). Nobody had measured what that costs.
+`fetchAll` issues 3 mandatory requests followed by 43 optional ones — 46 per
+round, every three seconds, per open tab (one of them, since ADR-0036, is the
+tenant-wide unread notification count; the dead /iot/telemetry fetch left the
+round the same day). Nobody had measured what that costs.
 
 That is the point. `docs/PERFORMANCE.md` opens with "nothing in this document has
 been measured" and `load/thresholds.js` calls its numbers "DERIVED BUDGETS, not
@@ -104,7 +105,7 @@ def main(url):
         "/documents", "/analytics/documents",
         "/maintenance/tasks", "/analytics/maintenance",
         "/production-schedules", "/analytics/production-schedules",
-        "/iot/telemetry", "/analytics/iot-command",
+        "/analytics/iot-command",
         "/ai/recommendations", "/analytics/ai-insights",
         "/saas/tenants", "/analytics/saas",
         "/cost-records", "/analytics/costing",

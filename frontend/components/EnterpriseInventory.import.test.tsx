@@ -38,10 +38,11 @@ beforeEach(() => {
   localStorage.setItem("token", TOKEN);
 });
 
-function stubFetch() {
+function stubFetch(importResponse?: () => Response) {
   const calls: { url: string; init: RequestInit }[] = [];
   vi.stubGlobal("fetch", vi.fn(async (url: string, init: RequestInit = {}) => {
     calls.push({ url: String(url), init });
+    if (String(url).includes("/inventory/import-csv") && importResponse) return importResponse();
     const body = String(url).includes("/inventory/import-csv")
       ? { created: 1, updated: 0, skipped: 0, errors: [] }
       : [];
@@ -85,5 +86,50 @@ describe("EnterpriseInventory CSV import — tenant preview", () => {
 
     const headers = importCall(calls)!.init.headers as Record<string, string>;
     expect(headers).not.toHaveProperty("X-Tenant");
+  });
+});
+
+/**
+ * A refused upload is said as a refusal.
+ *
+ * The handler fed whatever came back into the success panel with no `res.ok`
+ * check, so a 403 ({detail: "..."}) rendered as a green "Import complete" with
+ * "Created: undefined" — or threw mid-render on `errors.length`. The sibling
+ * upload on the GMATS screen checked the status; this one did not.
+ */
+describe("EnterpriseInventory CSV import — a refusal is not a success", () => {
+  it("shows a 403 as refused, with the server's sentence, and no counts", async () => {
+    stubFetch(() => new Response(JSON.stringify({ detail: "Only an Admin can import stock" }),
+                                 { status: 403, headers: { "Content-Type": "application/json" } }));
+    await uploadOnImportTab();
+    await screen.findByRole("alert");
+    expect(screen.getByRole("alert").textContent).toContain("Import refused — nothing was imported");
+    expect(screen.getByRole("alert").textContent).toContain("Only an Admin can import stock");
+    expect(screen.queryByText(/Import complete/)).toBeNull();
+    expect(screen.queryByText(/Created:/)).toBeNull();
+  });
+
+  it("shows a 500 with a non-JSON body as refused, with the status", async () => {
+    stubFetch(() => new Response("<html>Bad gateway</html>", { status: 502, headers: { "Content-Type": "text/html" } }));
+    await uploadOnImportTab();
+    await screen.findByRole("alert");
+    expect(screen.getByRole("alert").textContent).toContain("The server refused the upload (502).");
+  });
+
+  it("reads a validation refusal's messages", async () => {
+    stubFetch(() => new Response(JSON.stringify({ detail: [{ loc: ["body", "file"], msg: "field required" }] }),
+                                 { status: 422, headers: { "Content-Type": "application/json" } }));
+    await uploadOnImportTab();
+    await screen.findByRole("alert");
+    expect(screen.getByRole("alert").textContent).toContain("field required");
+  });
+
+  it("CONTROL: a 200 with counts still renders the success panel", async () => {
+    stubFetch(() => new Response(JSON.stringify({ created: 2, updated: 1, skipped: 0, errors: ["Row 4: bad"] }),
+                                 { status: 200, headers: { "Content-Type": "application/json" } }));
+    await uploadOnImportTab();
+    await screen.findByText("Import completed with warnings");
+    expect(screen.getByText("Created: 2")).toBeTruthy();
+    expect(screen.queryByRole("alert")).toBeNull();
   });
 });

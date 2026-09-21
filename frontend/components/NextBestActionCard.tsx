@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { apiGet, apiPost } from "../lib/api";
 import { money } from "../lib/money";
+import { ActionError, useActionError } from "../lib/useActionError";
 
 // Mirrors the recovery read-model's "fix this first" fields (ai/recovery.py).
 type Component = { key: string; label: string; current: number; target: number; gap_points: number };
@@ -27,13 +28,18 @@ type RecoverySummary = {
 export default function NextBestActionCard({
   onRaised,
 }: {
-  // Called after the CTA raises (or surfaces) the recovery escalation, with its
-  // id so the caller can focus it in the Escalation Center. id is null if it
-  // couldn't be created (e.g. the viewer lacks permission) — still route there.
+  // Called after the server raised (or surfaced) the recovery escalation, with
+  // its id so the caller can focus it in the Escalation Center. id is null only
+  // when the server answered that there was nothing to raise (the plant is at
+  // world class) — still route there. It is NOT called when the request
+  // failed: that used to call onRaised(null) too, which is byte-for-byte the
+  // same screen change as a success, so a 500 walked the owner to the
+  // Escalation Center to look for a row that was never created.
   onRaised?: (escalationId: number | null) => void;
 }) {
   const [s, setS] = useState<RecoverySummary | null>(null);
   const [raising, setRaising] = useState(false);
+  const { error, report, clear } = useActionError();
 
   const load = useCallback(async () => {
     try {
@@ -45,18 +51,21 @@ export default function NextBestActionCard({
 
   const raise = useCallback(async () => {
     setRaising(true);
+    clear();
     try {
       const res = await apiPost<{ created: number; escalation_id: number | null }>(
         "/escalations/generate-oee-recovery",
         {},
       );
       onRaised?.(res.escalation_id ?? null);
-    } catch {
-      onRaised?.(null); // couldn't create — still take them to the Escalation Center
+    } catch (e) {
+      // A failed raise is said here, in the card, with the server's reason —
+      // and the owner stays on this screen, where the button is.
+      report(e, "raise the recovery escalation");
     } finally {
       setRaising(false);
     }
-  }, [onRaised]);
+  }, [onRaised, report, clear]);
 
   useEffect(() => {
     load();
@@ -103,6 +112,7 @@ export default function NextBestActionCard({
 
       {onRaised && (
         <div className="mt-5">
+          <ActionError message={error} onDismiss={clear} />
           <button
             type="button"
             onClick={raise}

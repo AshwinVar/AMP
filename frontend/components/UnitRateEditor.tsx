@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useState } from "react";
-import { apiPatch } from "../lib/api";
+import { apiPatch, errorDetail } from "../lib/api";
 import { CURRENCY } from "../lib/money";
 
 // Shared inline editor for the tenant's £/good-unit rate
@@ -20,18 +20,26 @@ export default function UnitRateEditor({
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState("");
   const [saving, setSaving] = useState(false);
+  // Why the last save did not happen, in the server's words. This is the rate
+  // every loss figure is priced from, and a save that did nothing used to say
+  // nothing — the editor just stayed open, which reads as "still typing".
+  const [failed, setFailed] = useState<string | null>(null);
 
   const save = useCallback(async () => {
     const trimmed = draft.trim();
     const value = trimmed === "" ? null : Number(trimmed);
-    if (value !== null && (!Number.isFinite(value) || value < 0)) return; // ignore bad input
+    if (value !== null && (!Number.isFinite(value) || value < 0)) {
+      setFailed("Enter a rate of 0 or more.");
+      return;
+    }
     setSaving(true);
+    setFailed(null);
     try {
       await apiPatch("/tenant-config", { unit_value_gbp: value });
       await onSaved();
       setEditing(false);
-    } catch {
-      // Non-admin (403) or a transient error — stay quiet, leave things as they are.
+    } catch (e) {
+      setFailed(`Not saved: ${errorDetail(e)}`);
     } finally {
       setSaving(false);
     }
@@ -59,7 +67,8 @@ export default function UnitRateEditor({
         <button onClick={save} disabled={saving} className="text-emerald-400 hover:text-emerald-300 disabled:opacity-50">
           {saving ? "…" : "save"}
         </button>
-        <button onClick={() => setEditing(false)} className="text-slate-500 hover:text-slate-400">cancel</button>
+        <button onClick={() => { setEditing(false); setFailed(null); }} className="text-slate-500 hover:text-slate-400">cancel</button>
+        {failed && <span role="alert" className="text-xs text-red-400">{failed}</span>}
       </span>
     );
   }
@@ -68,6 +77,7 @@ export default function UnitRateEditor({
     <button
       onClick={() => {
         setDraft(rate != null ? String(rate) : "");
+        setFailed(null);
         setEditing(true);
       }}
       className="text-emerald-400 hover:text-emerald-300"

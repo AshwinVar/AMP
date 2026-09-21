@@ -23,6 +23,7 @@ export default function PageNotice({
   exportName,
   more = null,
   onMore,
+  order = "newest",
   testId = "page-notice",
   className = "",
 }: {
@@ -38,6 +39,9 @@ export default function PageNotice({
   more?: number | null;
   /** asks the screen for the next batch; the button needs both this and `more` */
   onMore?: () => void;
+  /** which end of the list the page holds: the dashboard's lists are newest
+   *  first; the OEM fleet is listed in the order machines were registered */
+  order?: "newest" | "first";
   testId?: string;
   className?: string;
 }) {
@@ -45,7 +49,7 @@ export default function PageNotice({
   const offer = onMore && typeof more === "number" && more > 0;
   return (
     <p className={`text-amber-300/90 text-sm ${className}`.trim()} data-testid={testId}>
-      Showing the newest {shown.toLocaleString()} of {total.toLocaleString()} {noun}
+      Showing the {order === "first" ? "first" : "newest"} {shown.toLocaleString()} of {total.toLocaleString()} {noun}
       {exportName ? ` — the complete list is in the ${exportName} CSV export (Reports).` : "."}
       {offer && (
         <>

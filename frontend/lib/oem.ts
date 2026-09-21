@@ -151,6 +151,41 @@ export const fetchFleet = (customer?: string, limit = 100, offset = 0) =>
       (customer ? `&customer=${encodeURIComponent(customer)}` : ""),
   );
 
+/** Mirrors oem_routes.MAX_PAGE: the most fleet rows one request returns. */
+export const FLEET_PAGE = 100;
+
+/**
+ * The fleet, page by page, until at least `atLeast` rows are held or the
+ * manufacturer has no more (ADR-0036: a list is a page, and the page can
+ * grow). Each page carries the whole count, so `total` is the fleet's, not
+ * the page's. A row that shifts between two pages while they load is kept
+ * once; `added === 0` stops a server that ignores `offset` from looping.
+ */
+export async function loadFleet(
+  customer: string | undefined,
+  atLeast: number = FLEET_PAGE,
+  fetchPage: typeof fetchFleet = fetchFleet,
+): Promise<{ machines: FleetMachine[]; total: number }> {
+  const machines: FleetMachine[] = [];
+  const seen = new Set<number>();
+  let offset = 0;
+  let total = 0;
+  for (;;) {
+    const page = await fetchPage(customer, FLEET_PAGE, offset);
+    total = page.total;
+    let added = 0;
+    for (const row of page.machines) {
+      if (seen.has(row.installation_id)) continue;
+      seen.add(row.installation_id);
+      machines.push(row);
+      added += 1;
+    }
+    offset += page.machines.length;
+    const more = page.machines.length >= FLEET_PAGE && offset < total;
+    if (!more || added === 0 || machines.length >= atLeast) return { machines, total };
+  }
+}
+
 export const fetchCustomers = () =>
   get<{
     customers: Array<{

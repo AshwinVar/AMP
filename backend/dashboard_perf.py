@@ -3,9 +3,9 @@
 WHY THIS EXISTS
 ---------------
 `frontend/app/dashboard/page.tsx` calls `usePolling(fetchAll, 3000)`, and
-`fetchAll` issues 3 mandatory requests followed by 43 optional ones — 46 per
-round, every three seconds, per open tab. The file's own comment says "~47
-requests". Nobody has ever measured what that costs.
+`fetchAll` issues 3 mandatory requests followed by 44 optional ones — 47 per
+round, every three seconds, per open tab (the 44th, since ADR-0036, is the
+tenant-wide unread notification count). Nobody had measured what that costs.
 
 That is the point. `docs/PERFORMANCE.md` opens with "nothing in this document has
 been measured" and `load/thresholds.js` calls its numbers "DERIVED BUDGETS, not
@@ -111,6 +111,9 @@ def main(url):
         "/operator/executions", "/analytics/operator-terminal",
         "/audit-logs", "/notifications", "/reports",
         "/analytics/system-health", "/analytics/final-executive-summary",
+        # ADR-0036: the tenant-wide unread count -- the same handler, one row,
+        # and the X-Total-Count header carries the number.
+        ("/notifications?unread=true&limit=1", "/notifications", {"unread": True, "limit": 1}),
         # read-models the dashboard's own sections fetch on top of fetchAll
         "/machine-health", "/oee-summary", "/losses-summary",
     ]
@@ -135,12 +138,13 @@ def main(url):
 
     CYCLE = []
     unresolved = []
-    for path in PATHS:
+    for entry in PATHS:
+        label, path, extra = entry if isinstance(entry, tuple) else (entry, entry, {})
         fn = by_path.get(path)
         if fn is None:
             unresolved.append(path)
             continue
-        CYCLE.append((path, fn))
+        CYCLE.append((label, fn, extra))
 
     per_scale = {}
     print(f"Measuring {len(CYCLE)} endpoints of the poll cycle."
@@ -178,16 +182,22 @@ def main(url):
         total_ms = 0.0
         rows = []
         import inspect
-        for name, fn in CYCLE:
+        for name, fn, extra in CYCLE:
             db = Session()
             tok = tenancy.set_current_tenant(TENANT)
             try:
                 params = inspect.signature(fn).parameters
-                kwargs = {}
+                kwargs = dict(extra)
                 if "db" in params:
                     kwargs["db"] = db
                 if "current_user" in params:
                     kwargs["current_user"] = user
+                if "response" in params:
+                    # A paged list (ADR-0036) sets X-Total-Count on the response
+                    # a request carries, and that is one count(*) more than a
+                    # direct call with no response issues. Measure the request.
+                    from fastapi import Response
+                    kwargs["response"] = Response()
                 with Counted() as c:
                     fn(**kwargs)
                 flag = ""

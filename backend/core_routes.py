@@ -58,9 +58,11 @@ def get_me(current_user: dict = Depends(get_current_user)):
 
 
 @router.post("/register", response_model=schemas.UserResponse)
-def register_user(user: schemas.UserCreate, db: Session = Depends(_get_db)):
+def register_user(user: schemas.RegisterRequest, db: Session = Depends(_get_db)):
     """Bootstrap only: creates the very first Admin when the system has no users.
-    Once any user exists, self-registration is disabled — an Admin must add employees."""
+    Once any user exists, self-registration is disabled — an Admin must add employees.
+    The request carries no role (schemas.RegisterRequest): the first account is
+    the Admin, and a role in the body is refused rather than accepted and ignored."""
     if db.query(models.User).count() > 0:
         raise HTTPException(status_code=403, detail="Self-registration is disabled. Ask your Admin to add you.")
 

@@ -872,7 +872,14 @@ def ai_report(db: Session = Depends(get_db), current_user: dict = Depends(get_cu
     # produce the evidence, the model may word it, and the grounding gate decides
     # whether that wording is shown. A wording the gate refuses is replaced by
     # AMP's own sentence and the response says so.
-    tenant = current_user.get("tenant", "DEFAULT")
+    # The request's effective tenant, as on every read-model route and as the
+    # orchestrator path below already does through Principal.from_user. This
+    # read the token's own claim, so when the orchestrator raised and the
+    # report fell back to the rules, a founder previewing a company got that
+    # company's rows priced at the founder's own unit value and the explicitly
+    # filtered sections (escalations, maintenance, outcomes) came back empty --
+    # the defect /ai/ask's docstring records as fixed, missed on this branch.
+    tenant = tenancy.request_tenant(current_user)
     from ai import orchestrator
     from ai.tools import Principal
     llm, not_used = _copilot_llm(db, current_user)

@@ -83,6 +83,10 @@ MUTATIONS = [
      "        return False, (\"Answered from live factory data by AMP's own engine; the hosted AI model was not \"\n"
      "                       f\"asked: {decision.reason}\")",
      "        return False, None"),
+    # --- the report's rules fallback names the wrong company -------------------------
+    ("report: the rules fallback builds the report for the token's tenant, not the request's", COP,
+     "    tenant = tenancy.request_tenant(current_user)\n    from ai import orchestrator",
+     '    tenant = current_user.get("tenant", "DEFAULT")\n    from ai import orchestrator'),
     # --- the routes bypass the chokepoint -----------------------------------------
     ("copilot: /ai/ask words the answer with the provider regardless", COP,
      "    llm, not_used = _copilot_llm(db, current_user)\n    # ADR-0035: the caller's own prior turns",

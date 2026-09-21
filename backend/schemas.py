@@ -1,5 +1,5 @@
 from datetime import datetime, date
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, ConfigDict, field_validator
 from typing import Optional
 
 
@@ -162,6 +162,19 @@ class UserCreate(BaseModel):
     username: str
     password: str
     role: str
+
+
+class RegisterRequest(BaseModel):
+    """POST /register: the very first account, which is always the Admin of DEFAULT.
+
+    No `role`: the handler never honoured one, while the schema it shared with
+    the Admin's "add employee" form accepted it -- so the sign-up page offered
+    Admin / Supervisor / Operator and created an Admin whatever was chosen.
+    `extra="forbid"` makes a `role` (or anything else) a 422, not a silent drop.
+    """
+    model_config = ConfigDict(extra="forbid")
+    username: str
+    password: str
 
 
 class UserLogin(BaseModel):

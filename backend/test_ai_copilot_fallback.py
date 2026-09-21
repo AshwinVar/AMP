@@ -85,6 +85,45 @@ def test_report_falls_back_to_rules():
     print("PASS /ai/report falls back to the rule-composed report")
 
 
+def test_report_fallback_uses_the_effective_tenant():
+    """The rules fallback of /ai/report builds the report for the REQUEST's tenant.
+
+    It read the token's own claim. A founder previewing a company (X-Tenant) has
+    the company bound as the effective tenant and DEFAULT in the token, so when
+    the orchestrator raised, the weekly report was built for DEFAULT over the
+    company's scoped rows: the company's production priced at the founder's own
+    unit value, and the explicitly filtered sections (escalations, maintenance,
+    outcomes) empty. /ai/ask's docstring records this defect as fixed; this
+    branch was missed."""
+    import tenancy
+    from ai import orchestrator, report as report_mod
+    db = _fresh_session()
+    founder = {"tenant": "DEFAULT", "role": "Admin", "sub": "admin_new"}
+    seen = []
+    original_ask, original_build = orchestrator.ask, report_mod.build_weekly_report
+
+    def boom_ask(*a, **k):
+        raise RuntimeError("orchestrator down")
+
+    def spy_build(db_, tenant):
+        seen.append(tenant)
+        return {"markdown": f"report for {tenant}"}
+
+    orchestrator.ask, report_mod.build_weekly_report = boom_ask, spy_build
+    os.environ["ANTHROPIC_API_KEY"] = "test-key"      # a provider is configured; ACME has not consented
+    tok = tenancy.set_current_tenant("ACME")          # the founder's preview of ACME
+    try:
+        out = _endpoint("/ai/report")(db=db, current_user=founder)
+    finally:
+        tenancy.reset_current_tenant(tok)
+        del os.environ["ANTHROPIC_API_KEY"]
+        orchestrator.ask, report_mod.build_weekly_report = original_ask, original_build
+    assert out["source"] == "rules", out
+    assert seen == ["ACME"], f"the fallback built the report for {seen}, not the previewed company"
+    assert out["report"] == "report for ACME"
+    print("PASS /ai/report's rules fallback builds the report for the request's tenant, not the token's")
+
+
 def test_llm_success_is_labelled():
     db = _fresh_session()
     _consented(db)
@@ -224,6 +263,7 @@ def test_gemini_unusable_model_self_heals():
 if __name__ == "__main__":
     test_ask_falls_back_to_rules()
     test_report_falls_back_to_rules()
+    test_report_fallback_uses_the_effective_tenant()
     test_llm_success_is_labelled()
     test_provider_selection()
     test_gemini_route_is_used_and_labelled()

@@ -24,7 +24,8 @@ export default function MachineTimeline({ events }: { events: MachineEvent[] }) 
       <div className="mb-5">
         <h3 className="text-2xl font-semibold">Machine Timeline</h3>
         <p className="text-sm text-slate-400 mt-1">
-          Live machine state transition history from MQTT events.
+          Machine state transition history. Each row names the source that reported it — an operator, a CSV import,
+          the demo simulator, an HTTP or MQTT gateway.
         </p>
       </div>
 
@@ -60,7 +61,8 @@ export default function MachineTimeline({ events }: { events: MachineEvent[] }) 
 
         {visibleEvents.length === 0 && (
           <div className="rounded-2xl border border-slate-800 p-6 text-slate-400">
-            No machine timeline events yet. Wait for MQTT status changes.
+            No machine state changes recorded yet. A row appears when a machine&apos;s status changes — set by an
+            operator, a CSV import, the demo simulator or a gateway.
           </div>
         )}
       </div>

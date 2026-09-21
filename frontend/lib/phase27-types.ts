@@ -46,10 +46,17 @@ export type FinalExecutiveSummary = {
   running_machines: number;
   work_orders: number;
   production_plans: number;
-  quality_rate: number;
+  /** Null when the denominator was empty — never 0, which is a real reading on this scale. */
+  quality_rate: number | null;
+  quality_measured?: boolean;
+  /** "last 7 days" — the same window every other quality figure is pooled over. */
+  quality_window?: string;
   low_stock_items: number;
   customer_orders: number;
-  dispatch_rate: number;
+  /** Null when the denominator was empty — never 0, which is a real reading on this scale. */
+  dispatch_rate: number | null;
+  dispatch_measured?: boolean;
   purchase_orders: number;
+  /** A SUM, not a ratio: money not spent really is zero money. Stays a number. */
   total_cost: number;
 };

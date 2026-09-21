@@ -9,15 +9,19 @@ slice. A read-model over an existing table (adds no storage); agent_actions is
 tenant-stamped, so it is filtered by tenant explicitly (ADR-0002).
 """
 from collections import Counter
-from datetime import datetime, timedelta
 
 from sqlalchemy import func
 
 import models
+import oee_contract
 
 name = "impact"
 
-WINDOW_DAYS = 7
+# The canonical reporting week, not a private copy of the number (#586). The
+# recent slice used to be `utcnow() - timedelta(days=7)` with NO upper bound,
+# so an agent action stamped in the future by a skewed clock inflated the
+# command header's "actions / 7d" for as long as it stayed in the future.
+WINDOW_DAYS = oee_contract.DEFAULT_WINDOW_DAYS
 # What each agent produces, keyed by the AgentAction.ref_kind it creates.
 _OUTPUT_LABELS = {
     "maintenance_task": "maintenance_tasks",
@@ -37,7 +41,16 @@ def _headline(agents_active, total, auto, pending) -> str:
     return " · ".join(parts)
 
 
-def build_impact(db, tenant: str) -> dict:
+def _rate(part, whole):
+    """A percentage, or None when nothing has been decided.
+
+    NOT zero. "0% ran autonomously" is a real, damning reading of an agent
+    fleet — it says every decision needed a human — and it was what a factory
+    on its first day published, before any agent had proposed anything."""
+    return round(part / whole * 100) if whole else None
+
+
+def build_impact(db, tenant: str, now=None) -> dict:
     """Executive rollup of the agent fleet's activity for one tenant.
 
     agent_actions grows a row per agent decision and this rollup is polled on the
@@ -99,14 +112,23 @@ def build_impact(db, tenant: str) -> dict:
     rejected = by_status.get("Rejected", 0)
     decided = approved + rejected
 
-    # Last-7-days slice: a windowed status count (created_at is indexed), not a
-    # re-scan of the whole history in Python.
-    cutoff = datetime.utcnow() - timedelta(days=WINDOW_DAYS)
-    recent_status: Counter = Counter(dict(
-        db.query(models.AgentAction.status, func.count())
-        .filter(models.AgentAction.tenant_code == tenant,
-                models.AgentAction.created_at >= cutoff)
-        .group_by(models.AgentAction.status).all()))
+    # The recent slice: a windowed count (created_at is indexed), not a re-scan
+    # of the whole history in Python. THE canonical window — half-open and
+    # bounded at BOTH ends, so a future-dated row is outside the week it has not
+    # happened in yet.
+    window = oee_contract.OeeWindow(WINDOW_DAYS, now=now)
+    recent = (db.query(models.AgentAction.status, models.AgentAction.decided_by, func.count())
+              .filter(models.AgentAction.tenant_code == tenant,
+                      models.AgentAction.created_at >= window.start,
+                      models.AgentAction.created_at < window.end)
+              .group_by(models.AgentAction.status, models.AgentAction.decided_by).all())
+    recent_status: Counter = Counter()
+    recent_auto = 0
+    for status, decided_by, count in recent:
+        recent_status[status] += count
+        if decided_by == "auto-policy":
+            recent_auto += count
+    recent_decided = recent_status.get("Approved", 0) + recent_status.get("Rejected", 0)
 
     # Busiest agent first; the agent key breaks ties so the order is deterministic.
     by_agent = sorted(per_agent.values(), key=lambda a: (-a["actions"], a["agent"]))
@@ -118,7 +140,13 @@ def build_impact(db, tenant: str) -> dict:
         "approved": approved,
         "rejected": rejected,
         "auto_approved": auto,
-        "auto_rate": round(auto / decided * 100) if decided else 0,   # % of decisions made autonomously
+        # % of decisions made autonomously, over EVERY decision ever made. The
+        # command header shows the windowed one below instead, because the
+        # caption beside it names a week.
+        "auto_rate": _rate(auto, decided),
+        "auto_decided": decided,
+        "auto_measured": decided > 0,
+        "window": "all time",
         "pending_backlog": by_status.get("Proposed", 0),              # human decisions still waiting
         "outputs": outputs,
         "by_agent": by_agent,                                         # per-agent contribution
@@ -127,6 +155,15 @@ def build_impact(db, tenant: str) -> dict:
             "proposed": recent_status.get("Proposed", 0),
             "approved": recent_status.get("Approved", 0),
             "rejected": recent_status.get("Rejected", 0),
+            # The autonomy rate over THIS week, on the same rows as `total`
+            # above — the figure the command header's "N actions / 7d" caption
+            # was always describing, and never showed.
+            "auto_approved": recent_auto,
+            "decided": recent_decided,
+            "auto_rate": _rate(recent_auto, recent_decided),
+            "measured": recent_decided > 0,
+            "window": window.label(),
+            "days": window.days,
         },
         "headline": _headline(agents_active, total, auto, by_status.get("Proposed", 0)),
     }

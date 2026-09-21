@@ -96,14 +96,19 @@ def test_unknown_machine_falls_back_to_id_label():
     print("PASS unknown machine_id -> 'Machine {id}' label")
 
 
-def test_empty_factory_is_all_zeros_no_crash():
+def test_empty_factory_counts_zero_and_does_not_claim_a_repair_time():
     out = get_maintenance_analytics(db=_fresh_session(), current_user=USER)
     assert out["total_tasks"] == 0
     assert out["completed"] == 0
+    # A COUNT and a SUM over no task really are zero...
     assert out["total_downtime_minutes"] == 0
-    assert out["avg_repair_minutes"] == 0            # zero denominator -> 0, no ZeroDivision
+    # ...but an AVERAGE over no completed task is not. "0 minutes to repair" is
+    # the BEST possible maintenance record, and it was what a factory that had
+    # never finished a job published (test_rates_say_not_measured.py).
+    assert out["avg_repair_minutes"] is None, out["avg_repair_minutes"]
+    assert out["avg_repair_measured"] is False, out
     assert out["machine_counts"] == {}
-    print("PASS empty factory -> zeros, no divide-by-zero")
+    print("PASS empty factory -> counts 0, MTTR not measured, no divide-by-zero")
 
 
 def test_distinct_unknown_machines_are_not_collapsed_by_group_by():
@@ -209,7 +214,7 @@ def test_overdue_counts_a_null_status_past_dated_task():
 if __name__ == "__main__":
     test_mttr_uses_completed_downtime_over_completed_count()
     test_unknown_machine_falls_back_to_id_label()
-    test_empty_factory_is_all_zeros_no_crash()
+    test_empty_factory_counts_zero_and_does_not_claim_a_repair_time()
     test_distinct_unknown_machines_are_not_collapsed_by_group_by()
     test_total_reconciles_and_overdue_excludes_completed_and_future()
     test_overdue_counts_a_null_status_past_dated_task()

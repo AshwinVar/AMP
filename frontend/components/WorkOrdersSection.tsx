@@ -90,7 +90,9 @@ export default function WorkOrdersSection({
         <Kpi title="Completed" value={analytics?.completed ?? 0} />
         <Kpi title="Delayed" value={analytics?.delayed ?? 0} />
         <Kpi title="Target" value={analytics?.total_target ?? 0} />
-        <Kpi title="Achievement" value={`${analytics?.achievement ?? 0}%`} />
+        {/* A dash, not 0%: no work order on the book carries a target, so
+            there is nothing to achieve. "0% achieved" was a verdict. */}
+        <Kpi title="Achievement" value={analytics?.achievement == null ? "—" : analytics.achievement + "%"} />
       </div>
 
       <form

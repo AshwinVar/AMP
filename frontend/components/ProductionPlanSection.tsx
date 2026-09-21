@@ -71,7 +71,7 @@ export default function ProductionPlanSection({
         <Kpi title="Plans" value={analytics?.total_plans ?? 0} />
         <Kpi title="Planned Qty" value={analytics?.planned_quantity ?? 0} />
         <Kpi title="Actual Qty" value={analytics?.actual_quantity ?? 0} />
-        <Kpi title="Achievement" value={`${analytics?.achievement ?? 0}%`} />
+        <Kpi title="Achievement" value={analytics?.achievement == null ? "—" : analytics.achievement + "%"} />
         <Kpi title="Planned" value={analytics?.planned ?? 0} />
         <Kpi title="Running" value={analytics?.running ?? 0} />
         <Kpi title="Completed" value={analytics?.completed ?? 0} />

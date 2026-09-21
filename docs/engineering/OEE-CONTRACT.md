@@ -87,8 +87,33 @@ whole else 0` publishes the BEST value on a fail-rate scale for a plant that
 inspected nothing, and the worst on an attainment scale for a plant that
 planned nothing. The contracts return `None` and a `measured` flag instead, and
 the screens print a dash with the reason beside it — the shift attainment
-(`shift_contract`), the quality rates (`quality_contract`) and the machine
-health score all follow this rule.
+(`shift_contract`), the quality rates (`quality_contract`), the machine health
+score, and the six that followed them: work-order and production-plan
+achievement, average repair minutes, the operator terminal's quality rate, the
+executive page's dispatch rate, the agent fleet's autonomy rate and the plant's
+average utilization.
+
+Which lie the zero tells depends on the scale, and every one is actionable:
+
+| Figure | `0` said |
+|---|---|
+| Achievement | the book failed to deliver everything it promised |
+| Operator quality | every part the crew made was scrap |
+| Average repair | a perfect maintenance record |
+| Autonomy | every agent decision needed a human |
+| Average utilization | an idle plant |
+
+**But a SUM or a COUNT over an empty set really is zero.** The rule is about an
+empty DENOMINATOR, not an empty table: money not spent is zero money, and
+`total_cost` on `/analytics/final-executive-summary` stays a number. Refusing
+to state a figure we do have is the same defect from the other side, and
+`mutate_not_measured.py` mutates that direction too.
+
+**A figure that covers only part of the plant says how much.** `avg_utilization`
+averaged every machine with a reading and said nothing about the ones without,
+which is the survivorship problem `coverage` exists for one figure to its left;
+it now carries `utilization_machines` of `machines`, and the daily summary
+prints "from N of M machines" exactly as the plant OEE does.
 
 **The dates a window touches are not its day count.** A rolling 7×24h window
 that opens part-way through a day touches EIGHT calendar dates.
@@ -182,6 +207,9 @@ what it measured but cannot say what the missing machine did.
 | `/reports/intelligence-summary.txt` | **all history**, under the dashboard's labels | last 7 days: `/analytics/management`'s own summary, window named on every line, + coverage |
 | Shift attainment (the card, `/analytics/summary`, `/analytics/management`, `/analytics/executive-oee`) | the card's own rolling cutoff / all history / all history / **the most recent 50 rows** | last 7 days, from `shift_contract.pooled_attainment`, window named on each |
 | Quality fail rate and first-pass yield (the intel card and snapshot, `/analytics/quality`, `/analytics/factory-command-center`, the machine cockpit) | seven calendar dates with no upper bound / **all history** / **all history** / last 7 days | last 7 days, from `quality_contract.plant_quality`, window named on each |
+| First-pass yield on `/analytics/final-executive-summary` | **all history** — a fourth copy of `passed / inspected` | last 7 days, from `quality_contract.plant_quality`, window named on the tile |
+| The command header's Autonomy tile | the **lifetime** auto-approval rate, under a caption reading "N actions / 7d" | last 7 days, from `ai/impact`'s own `OeeWindow` slice, beside the count it is actually over |
+| `ai/impact`'s recent slice | `utcnow() - 7d`, **no upper bound** (a future-dated action inflated the count) | the canonical window, bounded at both ends |
 
 Measured before, on one factory at one moment:
 

@@ -212,14 +212,16 @@ def test_work_order_analytics_null_actual_and_reconciled_totals():
     print("PASS work-order analytics: NULL actual -> 0, totals reconcile (650 target / 360 actual / 55%)")
 
 
-def test_work_order_analytics_empty_table_is_zero_not_a_crash():
+def test_work_order_analytics_empty_table_is_unmeasured_not_zero():
     db = _fresh_session()
     out = analytics_routes.get_work_order_analytics(db=db, current_user={})
     assert out["total_work_orders"] == 0
     assert out["total_target"] == 0 and out["total_actual"] == 0
-    # zero denominator -> 0, not a ZeroDivisionError
-    assert out["achievement"] == 0
-    print("PASS work-order analytics: empty table -> zeros, no divide-by-zero")
+    # COUNTS of nothing are 0. A RATE over nothing is not: "0% achieved" is a
+    # real, damning reading of a book with no target on it at all.
+    assert out["achievement"] is None, out
+    assert out["achievement_measured"] is False, out
+    print("PASS work-order analytics: empty table -> counts 0, achievement not measured")
 
 
 def test_work_order_analytics_folds_in_progress_into_running_and_reconciles():
@@ -288,13 +290,14 @@ def test_production_plan_analytics_null_actual_and_reconciled_totals():
     print("PASS production-plan analytics: NULL actual -> 0, totals reconcile (400 planned / 180 actual / 45%)")
 
 
-def test_production_plan_analytics_empty_table_is_zero_not_a_crash():
+def test_production_plan_analytics_empty_table_is_unmeasured_not_zero():
     db = _fresh_session()
     out = analytics_routes.get_production_plan_analytics(db=db, current_user={})
     assert out["total_plans"] == 0
     assert out["planned_quantity"] == 0 and out["actual_quantity"] == 0
-    assert out["achievement"] == 0
-    print("PASS production-plan analytics: empty table -> zeros, no divide-by-zero")
+    assert out["achievement"] is None, out
+    assert out["achievement_measured"] is False, out
+    print("PASS production-plan analytics: empty table -> counts 0, achievement not measured")
 
 
 def test_production_plan_analytics_folds_in_progress_into_running_and_reconciles():
@@ -447,18 +450,38 @@ def test_analytics_summary_null_utilization_averages_only_readings():
     print("PASS analytics-summary averages only machines with a utilization reading (NULL-safe, 55%; OEE unmeasured)")
 
 
-def test_analytics_summary_all_null_utilization_is_zero_not_a_crash():
+def test_analytics_summary_all_null_utilization_is_unmeasured_not_zero():
     db = _fresh_session()
     db.add(models.Machine(id=1, name="A", status="Running", utilization=0))
     db.add(models.Machine(id=2, name="B", status="Idle", utilization=0))
     db.commit()
     _null_utilization(db, 1, 2)
     out = analytics_routes.analytics_summary(db=db, current_user={})
-    # no readings at all -> 0, not a divide-by-zero and not a None-sum crash.
-    assert out["avg_utilization"] == 0, out["avg_utilization"]
+    # No machine has a reading, so there is no average. 0% is the WORST reading
+    # on this scale and it was what an unreported plant published — the same
+    # survivorship problem oee_contract.coverage exists for, one figure to the left.
+    assert out["avg_utilization"] is None, out["avg_utilization"]
+    assert out["utilization_measured"] is False, out
+    assert out["utilization_machines"] == 0, out
     assert out["avg_oee"] == 0, out["avg_oee"]
     assert not any(a["type"] == "Low Utilization" for a in out["alerts"]), out["alerts"]
-    print("PASS analytics-summary: all-NULL utilization -> 0, no crash, no fabricated alert")
+    print("PASS analytics-summary: all-NULL utilization -> not measured, no crash, no fabricated alert")
+
+
+def test_analytics_summary_utilization_says_how_many_machines_it_covers():
+    # Two machines, one reporting. The average is the reporting one's reading,
+    # and the payload says it covers 1 of 2 — otherwise a single machine's 90%
+    # reads as the whole plant's.
+    db = _fresh_session()
+    db.add(models.Machine(id=1, name="A", status="Running", utilization=90))
+    db.add(models.Machine(id=2, name="B", status="Idle", utilization=0))
+    db.commit()
+    _null_utilization(db, 2)
+    out = analytics_routes.analytics_summary(db=db, current_user={})
+    assert out["avg_utilization"] == 90, out["avg_utilization"]
+    assert out["utilization_measured"] is True, out
+    assert out["utilization_machines"] == 1 and out["machines"] == 2, out
+    print("PASS analytics-summary: utilization says it covers 1 of 2 machines")
 
 
 def test_analytics_summary_shift_efficiency_is_pooled_not_mean_of_ratios():
@@ -698,18 +721,22 @@ def test_final_executive_summary_null_columns_are_zero_not_a_crash():
           "(quality 53% / dispatch 20% / 2 low-stock / £1000)")
 
 
-def test_final_executive_summary_empty_tables_are_zero_not_a_crash():
+def test_final_executive_summary_empty_tables_are_unmeasured_not_zero():
     db = _fresh_session()
     out = analytics_routes.get_final_executive_summary(db=db, current_user={})
     assert out["machine_count"] == 0 and out["running_machines"] == 0
     assert out["work_orders"] == 0 and out["production_plans"] == 0
-    # zero denominators -> 0, not ZeroDivisionError
-    assert out["quality_rate"] == 0, out
-    assert out["dispatch_rate"] == 0, out
+    # Rates over nothing are not measured...
+    assert out["quality_rate"] is None, out
+    assert out["quality_measured"] is False, out
+    assert out["dispatch_rate"] is None, out
+    assert out["dispatch_measured"] is False, out
+    # ...but a COUNT and a SUM over nothing really are zero. Money not spent is
+    # zero money; the rule is about an empty DENOMINATOR, not an empty table.
     assert out["low_stock_items"] == 0, out
     assert out["customer_orders"] == 0 and out["purchase_orders"] == 0
     assert out["total_cost"] == 0, out
-    print("PASS final-executive-summary: empty tables -> zeros, no divide-by-zero")
+    print("PASS final-executive-summary: rates not measured, counts and sums still 0")
 
 
 def test_final_executive_summary_does_not_hydrate_whole_tables():
@@ -812,15 +839,17 @@ def test_operator_terminal_analytics_null_counts_and_reconciled_totals():
           "(160 good / 15 rejected / 91%)")
 
 
-def test_operator_terminal_analytics_empty_table_is_zero_not_a_crash():
+def test_operator_terminal_analytics_empty_table_is_unmeasured_not_zero():
     db = _fresh_session()
     out = analytics_routes.get_operator_terminal_analytics(db=db, current_user={})
     assert out["total_jobs"] == 0, out
     assert out["good_count"] == 0 and out["rejected_count"] == 0, out
     assert out["started"] == 0 and out["paused"] == 0 and out["completed"] == 0, out
-    # zero denominator -> 0, not a ZeroDivisionError; SUM over no rows -> 0, not None
-    assert out["quality_rate"] == 0, out
-    print("PASS operator-terminal analytics: empty table -> zeros, no divide-by-zero, no None-sum crash")
+    # SUM over no rows -> 0 (a count of nothing IS zero); the RATE over no units
+    # is not measured. "Quality 0%" said every part the crew made was scrap.
+    assert out["quality_rate"] is None, out
+    assert out["quality_measured"] is False, out
+    print("PASS operator-terminal analytics: empty table -> counts 0, quality rate not measured")
 
 
 def _inventory_item(**kw):
@@ -1875,15 +1904,16 @@ if __name__ == "__main__":
     test_executive_oee_no_production_is_zero_not_fabricated()
     test_downtime_reason_empty_renders_unknown_not_blank()
     test_work_order_analytics_null_actual_and_reconciled_totals()
-    test_work_order_analytics_empty_table_is_zero_not_a_crash()
+    test_work_order_analytics_empty_table_is_unmeasured_not_zero()
     test_work_order_analytics_folds_in_progress_into_running_and_reconciles()
     test_production_plan_analytics_null_actual_and_reconciled_totals()
-    test_production_plan_analytics_empty_table_is_zero_not_a_crash()
+    test_production_plan_analytics_empty_table_is_unmeasured_not_zero()
     test_production_plan_analytics_folds_in_progress_into_running_and_reconciles()
     test_production_schedule_analytics_folds_in_progress_into_running_and_reconciles()
     test_production_schedule_analytics_empty_table_is_zero_not_a_crash()
     test_analytics_summary_null_utilization_averages_only_readings()
-    test_analytics_summary_all_null_utilization_is_zero_not_a_crash()
+    test_analytics_summary_all_null_utilization_is_unmeasured_not_zero()
+    test_analytics_summary_utilization_says_how_many_machines_it_covers()
     test_analytics_summary_shift_efficiency_is_pooled_not_mean_of_ratios()
     test_analytics_summary_shift_efficiency_all_zero_target_is_zero_not_a_crash()
     test_analytics_summary_shift_efficiency_is_pooled_in_sql_not_a_whole_table_scan()
@@ -1892,11 +1922,11 @@ if __name__ == "__main__":
     test_analytics_summary_plant_oee_empty_production_is_unmeasured_not_a_crash()
     test_executive_oee_null_utilization_fallback_is_zero_not_a_crash()
     test_final_executive_summary_null_columns_are_zero_not_a_crash()
-    test_final_executive_summary_empty_tables_are_zero_not_a_crash()
+    test_final_executive_summary_empty_tables_are_unmeasured_not_zero()
     test_final_executive_summary_does_not_hydrate_whole_tables()
     test_final_executive_summary_counts_are_tenant_scoped()
     test_operator_terminal_analytics_null_counts_and_reconciled_totals()
-    test_operator_terminal_analytics_empty_table_is_zero_not_a_crash()
+    test_operator_terminal_analytics_empty_table_is_unmeasured_not_zero()
     test_inventory_analytics_null_stock_and_bounded_transaction_count()
     test_inventory_analytics_empty_tables_are_zero_not_a_crash()
     test_inventory_analytics_transaction_count_is_tenant_scoped()

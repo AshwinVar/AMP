@@ -21,5 +21,7 @@ export type WorkOrderAnalytics = {
   delayed: number;
   total_target: number;
   total_actual: number;
-  achievement: number;
+  /** Null when the denominator was empty — never 0, which is a real reading on this scale. */
+  achievement: number | null;
+  achievement_measured?: boolean;
 };

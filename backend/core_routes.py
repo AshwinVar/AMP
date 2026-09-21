@@ -246,6 +246,18 @@ def daily_summary_report(db: Session = Depends(_get_db), current_user: dict = De
     shift_line = (f"Shift Efficiency, {shift_span}: {summary['avg_shift_efficiency']}%"
                   if summary.get("shift_efficiency_measured")
                   else f"Shift Efficiency, {shift_span}: not measured (no shift in this window has a target)")
+    # No machine has a utilization reading: the average is not measured, not 0%
+    # — and when only some report, the line says how many, exactly as the plant
+    # OEE above states its coverage.
+    if summary.get("utilization_measured"):
+        covered = summary.get("utilization_machines")
+        total_machines = summary.get("machines")
+        util_line = (f"Avg Utilization: {summary['avg_utilization']}%"
+                     + (f" (from {covered} of {total_machines} machines)"
+                        if covered is not None and total_machines and covered != total_machines
+                        else ""))
+    else:
+        util_line = "Avg Utilization: not measured (no machine has reported a utilization)"
     report = f"""
 AMP Daily Factory Summary
 Generated: {datetime.utcnow().isoformat()} UTC
@@ -253,7 +265,7 @@ Generated: {datetime.utcnow().isoformat()} UTC
 Machines: {summary["machines"]}
 Running: {summary["running"]}
 Breakdowns: {summary["breakdown"]}
-Avg Utilization: {summary["avg_utilization"]}%
+{util_line}
 {oee_lines}
 Downtime Events, last {days} days: {summary["downtime_events"]}
 Total Downtime, last {days} days: {summary["total_downtime_minutes"]} minutes

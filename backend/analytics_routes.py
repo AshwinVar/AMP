@@ -111,8 +111,13 @@ def analytics_summary(db: Session = Depends(_get_db), current_user: dict = Depen
     # utilization is a nullable Integer (Column(Integer, default=0)); average only
     # the machines that actually have a reading so a single NULL row can't 500 the
     # summary (None in sum()) and an unset machine doesn't drag the mean toward 0.
+    # ...and a plant where NO machine has a reading has no average utilization.
+    # 0% is the worst reading on this scale, and it was what an unreported plant
+    # published — the survivorship problem oee_contract.coverage exists for,
+    # one figure to the left. `utilization_machines` of `machines` says how much
+    # of the plant the average actually covers.
     util_values = [m.utilization for m in machines if m.utilization is not None]
-    avg_utilization = round(sum(util_values) / len(util_values)) if util_values else 0
+    avg_utilization = round(sum(util_values) / len(util_values)) if util_values else None
     total_downtime_minutes = downtime["total_minutes"]
 
     # Plant OEE pooled across records (ratio of sums), consistent with every other
@@ -212,6 +217,8 @@ def analytics_summary(db: Session = Depends(_get_db), current_user: dict = Depen
         "maintenance": maintenance,
         "offline": offline,
         "avg_utilization": avg_utilization,
+        "utilization_measured": bool(util_values),
+        "utilization_machines": len(util_values),
         "avg_oee": avg_oee,
         "avg_availability": avg_availability,
         "avg_performance": avg_performance,
@@ -492,9 +499,14 @@ def get_work_order_analytics(db: Session = Depends(_get_db), current_user: dict 
     ).one()
     total_target = int(total_target)
     total_actual = int(total_actual)
-    achievement = round((total_actual / total_target) * 100) if total_target else 0
+    # A RATE OVER NOTHING IS NOT ZERO. 0% is a real reading on this scale, and
+    # publishing it for an empty denominator is the defect #697 (health), #698
+    # (shift attainment) and #699 (quality) each closed on their own figure.
+    # None, with a `achievement_measured` flag beside it so a screen can say which.
+    achievement = round((total_actual / total_target) * 100) if total_target else None
     return {
         "total_work_orders": total_work_orders,
+        "achievement_measured": total_target > 0,
         "planned": status_counts.get("Planned", 0),
         # "Running" and "In Progress" are two spellings of the SAME state (a work
         # order actively being worked) written by two code paths in this app: the
@@ -537,9 +549,14 @@ def get_production_plan_analytics(db: Session = Depends(_get_db), current_user: 
     ).one()
     planned_quantity = int(planned_quantity)
     actual_quantity = int(actual_quantity)
-    achievement = round((actual_quantity / planned_quantity) * 100) if planned_quantity else 0
+    # A RATE OVER NOTHING IS NOT ZERO. 0% is a real reading on this scale, and
+    # publishing it for an empty denominator is the defect #697 (health), #698
+    # (shift attainment) and #699 (quality) each closed on their own figure.
+    # None, with a `achievement_measured` flag beside it so a screen can say which.
+    achievement = round((actual_quantity / planned_quantity) * 100) if planned_quantity else None
     return {
         "total_plans": total_plans,
+        "achievement_measured": planned_quantity > 0,
         "planned_quantity": planned_quantity,
         "actual_quantity": actual_quantity,
         "achievement": achievement,
@@ -1373,7 +1390,10 @@ def get_maintenance_analytics(
         .filter(models.MaintenanceTask.status == "Completed")
         .scalar() or 0
     )
-    avg_repair = round(completed_downtime / completed) if completed else 0
+    # An AVERAGE over nothing is not zero either: "0 minutes to repair" is the
+    # best possible maintenance record, and it was what a plant with no
+    # completed task published. `avg_repair_measured` says which.
+    avg_repair = round(completed_downtime / completed) if completed else None
 
     # Per-machine task counts: one GROUP BY on machine_id, then a single name
     # lookup (tenant-scoped like the aggregate itself) — never a per-task Machine
@@ -1407,6 +1427,7 @@ def get_maintenance_analytics(
         "breakdown": breakdown,
         "total_downtime_minutes": total_downtime,
         "avg_repair_minutes": avg_repair,
+        "avg_repair_measured": completed > 0,
         "machine_counts": machine_counts,
     }
 
@@ -1648,10 +1669,15 @@ def get_operator_terminal_analytics(db: Session = Depends(_get_db), current_user
     good = int(good)
     rejected = int(rejected)
     total = good + rejected
-    quality_rate = round((good / total) * 100) if total else 0
+    # A RATE OVER NOTHING IS NOT ZERO. 0% is a real reading on this scale, and
+    # publishing it for an empty denominator is the defect #697 (health), #698
+    # (shift attainment) and #699 (quality) each closed on their own figure.
+    # None, with a `quality_measured` flag beside it so a screen can say which.
+    quality_rate = round((good / total) * 100) if total else None
 
     return {
         "total_jobs": total_jobs,
+        "quality_measured": total > 0,
         "started": buckets["started"],
         "paused": buckets["paused"],
         "completed": buckets["completed"],
@@ -1755,15 +1781,27 @@ def get_final_executive_summary(db: Session = Depends(_get_db), current_user: di
     customer_orders = db.query(func.count(models.CustomerOrder.id)).scalar() or 0
     purchase_orders = db.query(func.count(models.PurchaseOrder.id)).scalar() or 0
 
+    # THE first-pass yield, from the one contract every other quality surface
+    # reads (#699). This was a FOURTH copy of `passed / inspected`, pooled over
+    # the entire inspection register, so an executive page could contradict the
+    # Quality view and the digital twin beside it. It now reads the canonical
+    # window and says so.
+    quality = quality_contract.plant_quality(
+        db, request_tenant(current_user),
+        oee_contract.OeeWindow(oee_contract.DEFAULT_WINDOW_DAYS))
+    inspected = quality["inspected"]
+    passed = quality["passed"]
+    quality_rate = quality["first_pass_yield"]
+
     # int() so a DB that returns Decimal for SUM (Postgres) matches the plain-int
     # payload the frontend type expects and divides cleanly.
-    inspected = int(db.query(func.coalesce(func.sum(models.QualityInspection.inspected_quantity), 0)).scalar() or 0)
-    passed = int(db.query(func.coalesce(func.sum(models.QualityInspection.passed_quantity), 0)).scalar() or 0)
-    quality_rate = round((passed / inspected) * 100) if inspected else 0
-
     order_qty = int(db.query(func.coalesce(func.sum(models.CustomerOrder.order_quantity), 0)).scalar() or 0)
     dispatched_qty = int(db.query(func.coalesce(func.sum(models.CustomerOrder.dispatched_quantity), 0)).scalar() or 0)
-    dispatch_rate = round((dispatched_qty / order_qty) * 100) if order_qty else 0
+    # A RATE OVER NOTHING IS NOT ZERO. 0% is a real reading on this scale, and
+    # publishing it for an empty denominator is the defect #697 (health), #698
+    # (shift attainment) and #699 (quality) each closed on their own figure.
+    # None, with a `dispatch_measured` flag beside it so a screen can say which.
+    dispatch_rate = round((dispatched_qty / order_qty) * 100) if order_qty else None
 
     # Low stock = COALESCE(current_stock,0) <= COALESCE(reorder_level,0), counted in
     # SQL (a NULL on either side collapses to 0, matching the old Python predicate).
@@ -1772,6 +1810,9 @@ def get_final_executive_summary(db: Session = Depends(_get_db), current_user: di
         <= func.coalesce(models.InventoryItem.reorder_level, 0)
     ).scalar() or 0
 
+    # NOT in the "a rate over nothing" family, deliberately. This is a SUM, not
+    # a ratio: money not spent really is zero money, and 0 is the honest reading
+    # of an empty cost register. The rule is about an empty DENOMINATOR.
     total_cost = int(db.query(func.coalesce(func.sum(models.CostRecord.amount), 0)).scalar() or 0)
 
     return {
@@ -1780,9 +1821,12 @@ def get_final_executive_summary(db: Session = Depends(_get_db), current_user: di
         "work_orders": work_orders,
         "production_plans": production_plans,
         "quality_rate": quality_rate,
+        "quality_measured": quality["measured"],
+        "quality_window": quality["window"],
         "low_stock_items": low_stock_items,
         "customer_orders": customer_orders,
         "dispatch_rate": dispatch_rate,
+        "dispatch_measured": order_qty > 0,
         "purchase_orders": purchase_orders,
         "total_cost": total_cost,
     }

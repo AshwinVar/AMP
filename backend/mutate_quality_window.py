@@ -64,9 +64,11 @@ MUTATIONS = [
     ("the Pareto under the headline is measured over a different span", ROUTES,
      "        return q.filter(QI.created_at >= window.start, QI.created_at < window.end)",
      "        return q"),
+    # The executive summary now reads the same contract the same way, so this
+    # anchor carries the line that FOLLOWS the call to name one site.
     ("the twin's tile goes back to the whole register", ROUTES,
-     "    quality = quality_contract.plant_quality(\n        db, request_tenant(current_user),\n        oee_contract.OeeWindow(oee_contract.DEFAULT_WINDOW_DAYS))",
-     "    quality = quality_contract.plant_quality(\n        db, request_tenant(current_user),\n        oee_contract.OeeWindow(None))"),
+     "        oee_contract.OeeWindow(oee_contract.DEFAULT_WINDOW_DAYS))\n    quality_fail_rate = quality[\"fail_rate\"]",
+     "        oee_contract.OeeWindow(None))\n    quality_fail_rate = quality[\"fail_rate\"]"),
     ("the read-model keeps its own week", QUALITY,
      "WINDOW_DAYS = oee_contract.DEFAULT_WINDOW_DAYS",
      "WINDOW_DAYS = 30"),

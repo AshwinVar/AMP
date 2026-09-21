@@ -69,5 +69,7 @@ export type OperatorAnalytics = {
   other: number;
   good_count: number;
   rejected_count: number;
-  quality_rate: number;
+  /** Null when the denominator was empty — never 0, which is a real reading on this scale. */
+  quality_rate: number | null;
+  quality_measured?: boolean;
 };

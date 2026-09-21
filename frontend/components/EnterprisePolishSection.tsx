@@ -22,8 +22,11 @@ export default function EnterprisePolishSection({ auditLogs, reports, health, su
         <Kpi title="DB" value={health?.database_status ?? "-"} />
         <Kpi title="Machines" value={summary?.machine_count ?? 0} />
         <Kpi title="Running" value={summary?.running_machines ?? 0} />
-        <Kpi title="Quality" value={`${summary?.quality_rate ?? 0}%`} />
-        <Kpi title="Dispatch" value={`${summary?.dispatch_rate ?? 0}%`} />
+        <Kpi
+          title={"Quality · " + (summary?.quality_window ?? "last 7 days")}
+          value={summary?.quality_rate == null ? "—" : summary.quality_rate + "%"}
+        />
+        <Kpi title="Dispatch" value={summary?.dispatch_rate == null ? "—" : summary.dispatch_rate + "%"} />
         <Kpi title="Low Stock" value={summary?.low_stock_items ?? 0} />
         <Kpi title="Cost" value={money(summary?.total_cost ?? 0)} />
       </div>

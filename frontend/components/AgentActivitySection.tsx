@@ -22,7 +22,10 @@ type Impact = {
   approved: number;
   rejected: number;
   auto_approved: number;
-  auto_rate: number;
+  /** Over every decision ever made. Null when none has been. */
+  auto_rate: number | null;
+  auto_measured?: boolean;
+  window?: string;
   pending_backlog: number;
   outputs: { maintenance_tasks: number; purchase_orders: number; escalations: number };
   last_7_days: { total: number; proposed: number; approved: number; rejected: number };
@@ -157,7 +160,11 @@ export default function AgentActivitySection() {
             <Metric label="Tasks opened" value={impact.outputs.maintenance_tasks} />
             <Metric label="POs drafted" value={impact.outputs.purchase_orders} />
             <Metric label="Escalations" value={impact.outputs.escalations} />
-            <Metric label="Autonomy" value={`${impact.auto_rate}%`} sub="of decisions" />
+            <Metric
+              label="Autonomy"
+              value={impact.auto_rate == null ? "—" : impact.auto_rate + "%"}
+              sub={impact.auto_rate == null ? "nothing decided yet" : "of decisions, " + (impact.window ?? "all time")}
+            />
             <Metric label="Awaiting you" value={impact.pending_backlog} highlight={impact.pending_backlog > 0} />
           </div>
         </div>

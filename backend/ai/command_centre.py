@@ -86,7 +86,7 @@ def _problem(key, title, detail, module, view, units, unit_value, facts, why=Non
             "state": state, "facts": facts, "why": why or []}
 
 
-def _position(db, tenant, oee, plan, prod, machines):
+def _position(db, tenant, oee, plan, prod, machines, health):
     running = sum(1 for m in machines if (m.status or "") == RUNNING)
     down = sorted(m.name for m in machines if (m.status or "") in DOWN_STATUSES)
     facts = [
@@ -95,6 +95,31 @@ def _position(db, tenant, oee, plan, prod, machines):
         _fact("machines.down", "Down now", len(down), M, "machines", "machines", "now",
               detail=", ".join(down)),
     ]
+    # MACHINE HEALTH, which this card did not show at all. The 0-100 score, its
+    # band and the eleven-rule explanation behind it already existed on
+    # /machine-health; the owner's home screen counted running-vs-total and
+    # nothing else, so somebody who had seen the Machine Health page would ask
+    # why the main screen had forgotten it. Same figure, one definition
+    # (twin.fleet_health) — a second average is how two screens start
+    # disagreeing about one plant.
+    if health is None:
+        pass                      # the caller did not ask for it (with_health=False)
+    elif health["avg_health"] is not None:
+        facts.append(_fact("health.fleet", "Fleet health", health["avg_health"], R, "/100",
+                           "rule-based risk points (predictive_engine)", "now",
+                           detail=(f"averaged over the {health['measured']} of {health['machines']} "
+                                   f"machines whose score read something; a machine with nothing "
+                                   f"recorded scores 100 by absence and is left out")))
+    else:
+        facts.append(_fact("health.fleet", "Fleet health", None, U, "/100",
+                           "rule-based risk points (predictive_engine)", "now",
+                           detail="no machine has a reading in the risk window, so there is no "
+                                  "fleet average (not 0 — 0 is the worst score there is)"))
+    if health and health["worst"] and health["worst"]["health_measured"]:
+        facts.append(_fact("health.worst", "Lowest health", health["worst"]["name"], M,
+                           source="machines", window="now",
+                           detail=f"{health['worst']['health_score']}/100 "
+                                  f"({health['worst']['health_band']})"))
     coverage = oee["coverage"]
     if oee["plant"]["has_data"]:
         facts.append(_fact("oee.plant", "Plant OEE", oee["plant"]["oee"], D, "%", "production_records",
@@ -130,6 +155,7 @@ def _position(db, tenant, oee, plan, prod, machines):
         "machines": {"total": len(machines), "running": running, "down": len(down), "down_names": down,
                      "maintenance": sum(1 for m in machines if (m.status or "") == "Maintenance"),
                      "idle": sum(1 for m in machines if (m.status or "") == "Idle")},
+        "health": health,
         "output": {"good": prod["good"], "total": prod["total"], "good_rate": prod["good_rate"],
                    "runs": prod["runs"], "days": prod["days"]},
         "plan": {"state": plan_state, "planned_units": plan["planned_units"], "actual_units": plan["actual_units"],
@@ -379,9 +405,18 @@ def _actions(db, tenant, problems, cost):
     return out
 
 
-def build_command_centre(db, tenant: str, now=None) -> dict:
+def build_command_centre(db, tenant: str, now=None, with_health=True) -> dict:
     """The owner's five answers, composed from the read-models. Tenant-scoped by
-    the ORM hook (ADR-0002); agent actions are filtered explicitly."""
+    the ORM hook (ADR-0002); agent actions are filtered explicitly.
+
+    `with_health=False` skips the fleet-health block and the fleet queries
+    behind it. ONE caller passes it: `ai.brief`, which composes this card for
+    its PROBLEMS and never reads `position.health` — it was paying six queries
+    for a block it does not render. The brief's own recorded query budget is
+    what caught that, exactly as its comment says it should ("a change that
+    adds a query per machine should be seen in review"), and the honest answer
+    to the review is that one surface should not pay for another's feature.
+    """
     oee = build_oee_summary(db, tenant)
     plan = build_schedule_adherence(db, tenant)
     prod = build_production_summary(db, tenant)
@@ -398,7 +433,13 @@ def build_command_centre(db, tenant: str, now=None) -> dict:
     machines = db.query(models.Machine).filter(models.Machine.tenant_code == tenant).all()
     unit_value = cost["unit_value_gbp"] if cost["priced"] else None
 
-    position = _position(db, tenant, oee, plan, prod, machines)
+    # One definition of the fleet figure, shared with ai/pulse (twin.fleet_health).
+    if with_health:
+        from ai.twin import build_twins, fleet_health   # lazy: twin composes the pillars
+        health = fleet_health(build_twins(db, tenant))
+    else:
+        health = None
+    position = _position(db, tenant, oee, plan, prod, machines, health)
     problems = _rank([p for p in (
         [_machines_down_problem(machines), _work_order_problem(flow, unit_value)]
         + _downtime_problems(downtime, cost, unit_value)

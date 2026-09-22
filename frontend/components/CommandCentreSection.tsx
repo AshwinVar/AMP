@@ -20,6 +20,16 @@ type Centre = {
     machines: { total: number; running: number; down: number; down_names: string[]; maintenance: number; idle: number };
     output: { good: number; total: number; good_rate: number; runs: number; days: number };
     plan: { state: string; planned_units: number; actual_units: number; attainment_rate: number | null; behind: number; missed: number };
+    // The same fleet figure the pulse header shows (ai/twin.fleet_health).
+    // `avg_health` is null — never 0 — when no machine has a reading, because
+    // 0 is the worst score there is and a real reading on that scale.
+    // Optional so a payload from a server that predates this block renders
+    // rather than throwing — during a rolling deploy the browser can hold the
+    // new bundle and still be answered by the old backend.
+    health?: {
+      machines: number; measured: number; avg_health: number | null; needs_attention: number;
+      worst: { machine_id: number; name: string; health_score: number; health_band: string; health_measured: boolean } | null;
+    } | null;
     facts: Fact[];
   };
   problems: Problem[];
@@ -100,7 +110,7 @@ export default function CommandCentreSection({ onOpen }: { onOpen?: (viewKey: st
       </div>
       {notice && <p role="status" className="text-amber-300/90 text-xs mt-2">{c.state} · {notice}</p>}
 
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mt-4">
+      <div className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-5 gap-3 mt-4">
         <div className="rounded-xl bg-slate-950/60 border border-slate-800 p-3">
           <p className="text-[11px] text-slate-500">Plant OEE</p>
           <p className="text-lg font-semibold tabular-nums">{p.oee == null ? "not measured" : `${p.oee}%`}</p>
@@ -122,6 +132,36 @@ export default function CommandCentreSection({ onOpen }: { onOpen?: (viewKey: st
           <p className="text-lg font-semibold tabular-nums">{p.machines.running}/{p.machines.total} running</p>
           {p.machines.down > 0 && <p className="text-[11px] text-red-400">{p.machines.down_names.join(", ")} down</p>}
         </div>
+        {/* Machine health, which this card did not show at all: the score, the
+            band and the eleven-rule explanation existed on /machine-health while
+            the owner's home screen counted running-vs-total and nothing else.
+            "not measured" rather than a 0, and the coverage is stated whenever
+            it is partial, because a machine with nothing recorded scores 100 by
+            absence and is deliberately left out of the average. */}
+        {p.health && (
+          <div className="rounded-xl bg-slate-950/60 border border-slate-800 p-3">
+            <p className="text-[11px] text-slate-500">Machine health</p>
+            <p className="text-lg font-semibold tabular-nums">
+              {p.health.avg_health == null ? "not measured" : `${p.health.avg_health}/100`}
+            </p>
+            {p.health.avg_health == null ? (
+              <p className="text-[11px] text-amber-300/80">no machine has a reading yet</p>
+            ) : (
+              <>
+                {p.health.measured < p.health.machines && (
+                  <p className="text-[11px] text-amber-300/80">
+                    from {p.health.measured} of {p.health.machines} machines
+                  </p>
+                )}
+                {p.health.worst && p.health.worst.health_measured && (
+                  <p className="text-[11px] text-slate-500">
+                    lowest {p.health.worst.name} {p.health.worst.health_score}/100
+                  </p>
+                )}
+              </>
+            )}
+          </div>
+        )}
         <div className="rounded-xl bg-slate-950/60 border border-slate-800 p-3">
           <p className="text-[11px] text-slate-500">Cost of losses</p>
           <p className="text-lg font-semibold tabular-nums">

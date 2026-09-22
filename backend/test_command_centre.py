@@ -240,6 +240,88 @@ def main():
     print(f"  (the card costs {n} queries)")
     check(f"the card stays within its recorded budget of {QUERY_BUDGET} queries", n <= QUERY_BUDGET, str(n))
 
+    # ── 8. machine health reaches the owner's home screen ──────────
+    #
+    # The 0-100 score, its band and the eleven-rule explanation already existed
+    # on /machine-health. This card counted running-vs-total and nothing else,
+    # so somebody who had seen the Machine Health page would ask why the main
+    # screen had forgotten it. And it must be the SAME figure ai/pulse shows:
+    # two averages are how two screens start disagreeing about one plant.
+    print()
+    print("=" * 74)
+    print("8. MACHINE HEALTH, AND IT IS THE SAME FIGURE THE PULSE SHOWS")
+    print("=" * 74)
+    from ai import pulse as pulse_mod
+    for t, card in (("FACTORY_A", a), ("FACTORY_B", b)):
+        h = card["position"]["health"]
+        check(f"{t}: the card carries a fleet health block", isinstance(h, dict) and "avg_health" in h, str(h))
+        db2 = Session()
+        tok2 = tenancy.set_current_tenant(t)
+        try:
+            pulse_fleet = pulse_mod.build_pulse(db2, t)["fleet"]
+        finally:
+            tenancy.reset_current_tenant(tok2)
+            db2.close()
+        check(f"{t}: it is the SAME average the pulse header shows",
+              h["avg_health"] == pulse_fleet["avg_health"]
+              and h["measured"] == pulse_fleet["measured"], f"{h} vs {pulse_fleet}")
+        check(f"{t}: the fact says what it averaged over",
+              any(f["key"] == "health.fleet" for f in card["position"]["facts"]),
+              str([f["key"] for f in card["position"]["facts"]]))
+
+    # ADR-0027 (#697): a machine with nothing recorded scores 100 by ABSENCE.
+    # Averaging it in makes a fleet look healthier the less it reports, and the
+    # average is None -- never 0 -- when nothing could be measured, because 0 is
+    # the worst score there is and a real reading on that scale.
+    from ai.twin import fleet_health
+    unmeasured = fleet_health([
+        {"machine_id": 1, "name": "GHOST", "health_score": 100, "health_band": "Healthy",
+         "health_measured": False},
+    ])
+    check("a fleet nobody has reported on has NO average, not 0",
+          unmeasured["avg_health"] is None and unmeasured["measured"] == 0, str(unmeasured))
+    mixed = fleet_health([
+        {"machine_id": 1, "name": "BAD", "health_score": 40, "health_band": "At risk", "health_measured": True},
+        {"machine_id": 2, "name": "GHOST", "health_score": 100, "health_band": "Healthy", "health_measured": False},
+    ])
+    check("an unrecorded machine does not drag the average UP",
+          mixed["avg_health"] == 40 and mixed["measured"] == 1, str(mixed))
+    check("...and the worst machine is still named", mixed["worst"]["name"] == "BAD", str(mixed["worst"]))
+
+    # A COMPOSING CALLER DOES NOT PAY FOR A BLOCK IT DOES NOT READ. ai.brief
+    # composes this card for its PROBLEMS and never touches position.health; it
+    # was paying ten queries for it, which the brief's OWN recorded budget
+    # caught (test_daily_brief.py section 10, "a change that adds a query per
+    # machine should be seen in review"). The flag is the answer to that review.
+    db3 = Session()
+    tok3 = tenancy.set_current_tenant(F.A)
+    try:
+        engine3 = db3.get_bind()
+        seen = []
+
+        @event.listens_for(engine3, "before_cursor_execute")
+        def _count3(conn, cur, statement, params, context, many):
+            seen.append(statement)
+
+        build_command_centre(db3, F.A)                       # warm
+        seen.clear()
+        build_command_centre(db3, F.A)
+        with_h = len(seen)
+        seen.clear()
+        lean = build_command_centre(db3, F.A, with_health=False)
+        without_h = len(seen)
+        event.remove(engine3, "before_cursor_execute", _count3)
+    finally:
+        tenancy.reset_current_tenant(tok3)
+        db3.close()
+    check("with_health=False costs strictly fewer queries", without_h < with_h,
+          f"{without_h} vs {with_h}")
+    check("...and the block is simply absent, not a fabricated empty one",
+          lean["position"]["health"] is None, str(lean["position"]["health"]))
+    check("...while everything the brief DOES read is still there",
+          lean["problems"] and lean["position"]["oee"] == a["position"]["oee"],
+          str(lean["position"]["oee"]))
+
     if failures:
         print(f"\n{len(failures)} FAILED")
         for f in failures:

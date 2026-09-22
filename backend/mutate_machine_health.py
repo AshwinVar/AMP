@@ -142,7 +142,12 @@ MUTATIONS = [
     ("the twin calls every scored machine measured", TWIN,
      '    measured = bool(risk) and (bool(risk.get("has_recorded_input", True)) or score > 0)',
      '    measured = bool(risk)'),
-    ("the fleet average takes the unmeasured 100s at full weight", PULSE,
+    # The fleet average moved out of ai/pulse and into twin.fleet_health when the
+    # Command Centre began showing the same figure -- one definition, because two
+    # copies are how two screens start disagreeing about one plant. The mutation
+    # is unchanged: count the unmeasured 100s at full weight, which makes a fleet
+    # look healthier the less it reports.
+    ("the fleet average takes the unmeasured 100s at full weight", TWIN,
      '    measured = [t for t in twins if t.get("health_measured", True)]',
      '    measured = list(twins)'),
 ]

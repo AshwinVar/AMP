@@ -259,7 +259,11 @@ def build_daily_brief(db, tenant: str, now=None) -> dict:
     """The whole plant in one page of sentences, composed from the engines that
     already answer each question. Computes no figure of its own."""
     at = now or datetime.utcnow()
-    cc = build_command_centre(db, tenant, now=at)
+    # The brief composes this card for its PROBLEMS and never reads
+    # `position.health`, so it does not pay the fleet queries behind that
+    # block. The brief's recorded query budget is what caught it paying
+    # for them (test_daily_brief.py section 10).
+    cc = build_command_centre(db, tenant, now=at, with_health=False)
     rc = explain_production_gap(db, tenant, now=at)
     radar = build_risk_radar(db, tenant, now=at)
     shift = build_shift_summary(db, tenant)

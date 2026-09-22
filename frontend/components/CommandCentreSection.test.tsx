@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const apiGet = vi.fn();
@@ -22,6 +22,9 @@ function card(over: Record<string, unknown> = {}) {
       machines: { total: 3, running: 1, down: 1, down_names: ["CNC-01"], maintenance: 1, idle: 0 },
       output: { good: 2800, total: 3050, good_rate: 92, runs: 11, days: 7 },
       plan: { state: "OK", planned_units: 2500, actual_units: 1300, attainment_rate: 52, behind: 2, missed: 1 },
+      health: { machines: 3, measured: 3, avg_health: 61, needs_attention: 1,
+                worst: { machine_id: 1, name: "CNC-01", health_score: 22, health_band: "Critical",
+                         health_measured: true } },
       facts: [],
     },
     problems: [
@@ -144,5 +147,53 @@ describe("impactLabel", () => {
     expect(impactLabel({ impact_money: 7200, impact_units: 600 })).toBe(`${CURRENCY}${(7200).toLocaleString()}`);
     expect(impactLabel({ impact_money: null, impact_units: 600 })).toBe("600 good units");
     expect(impactLabel({ impact_money: null, impact_units: null })).toBe("not measured");
+  });
+
+  // MACHINE HEALTH. The 0-100 score, its band and the eleven-rule explanation
+  // already existed on /machine-health; this card counted running-vs-total and
+  // nothing else, so an owner who had seen that page would ask why the main
+  // screen had forgotten it.
+  it("shows fleet health and names the machine dragging it down", async () => {
+    apiGet.mockResolvedValue(card());
+    render(<CommandCentreSection />);
+    expect(await screen.findByText("Machine health")).toBeTruthy();
+    expect(screen.getByText("61/100")).toBeTruthy();
+    expect(screen.getByText(/lowest CNC-01 22\/100/)).toBeTruthy();
+  });
+
+  it("says not measured rather than 0 when no machine has a reading", async () => {
+    // ADR-0027 (#697): a machine with nothing recorded scores 100 by absence,
+    // so it is left out of the average — and 0 is the worst score there is, not
+    // a stand-in for "we did not look".
+    apiGet.mockResolvedValue(card({
+      position: { ...card().position,
+        health: { machines: 2, measured: 0, avg_health: null, needs_attention: 0, worst: null } },
+    }));
+    render(<CommandCentreSection />);
+    // Scoped to the health tile: "not measured" is also what the cost tile says
+    // when no unit value is set, and an unscoped query matches both.
+    const tile = (await screen.findByText("Machine health")).parentElement as HTMLElement;
+    expect(within(tile).getByText("not measured")).toBeTruthy();
+    expect(within(tile).getByText("no machine has a reading yet")).toBeTruthy();
+    expect(screen.queryByText("0/100")).toBeNull();
+  });
+
+  it("states the coverage when only some machines could be scored", async () => {
+    apiGet.mockResolvedValue(card({
+      position: { ...card().position,
+        health: { machines: 8, measured: 5, avg_health: 74, needs_attention: 2, worst: null } },
+    }));
+    render(<CommandCentreSection />);
+    expect(await screen.findByText("from 5 of 8 machines")).toBeTruthy();
+  });
+
+  it("renders a payload with no health block at all, rather than throwing", async () => {
+    // A rolling deploy can leave the new bundle talking to the old backend.
+    const c = card();
+    delete (c.position as Record<string, unknown>).health;
+    apiGet.mockResolvedValue(c);
+    render(<CommandCentreSection />);
+    expect(await screen.findByText("Plant OEE")).toBeTruthy();
+    expect(screen.queryByText("Machine health")).toBeNull();
   });
 });

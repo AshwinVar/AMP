@@ -68,12 +68,13 @@ slices rather than cleanup.
 | Gap | Where |
 |---|---|
 | The Root-Cause Explorer cannot say *when* — a 7-day aggregate with no timeline | `ai/root_cause.py:280-303` |
-| `AIRecommendation` is a dead-end queue: no task, no approval gate, no outcome | `recommendations_routes.py`, `AIInsightsSection.tsx` |
 | The Daily Brief has no "what went well" section and no money section (the collapse defect is fixed) | `ai/brief.py:268-276` |
 | Outcome tracking covers 3 of 5 agents (`maintenance_task`, `escalation`, `purchase_order`) | `ai/outcomes.py:63-67` |
 | No "connect your data" screen: nothing prints the broker host or the topic | `mqtt_service`, `mqtt_identity.topic_filters` |
 | `Machine.site` is unreachable — not in `MachineCreate`, no route, no form | `schemas.py:84-92` |
 | `reset_machines.py` mutates **every** machine in the database at import time, with no `__main__` guard and no tenant binding | `reset_machines.py:24-56` |
+
+**Closed 2026-09-22** (the recommendations slice): every `AIRecommendation` ends in an action, and a maintenance one that names a machine can be raised through the ADR-0039 gate. Still a dead end for OUTCOME tracking: a raised recommendation becomes an AgentAction, which is tracked, but the recommendation row itself is not linked to it.
 
 **Closed 2026-09-22** (machine health on the home screen): `twin.fleet_health` is the one definition, shared by the Command Centre and the pulse header.
 

@@ -17,6 +17,7 @@ from sqlalchemy.orm import sessionmaker
 import main
 import models
 import recommendations_routes
+import recommendations_routes as rr
 from database import Base
 
 EXPECTED = {
@@ -322,6 +323,61 @@ def test_dedupe_reopens_after_the_previous_one_is_closed():
     print("PASS a Closed rec still lets the same finding be raised again")
 
 
+def test_every_recommendation_says_what_to_do_and_only_maintenance_is_proposable():
+    """The queue was a dead end (ADR-0039).
+
+    A recommendation's only futures were Acknowledged and Closed: it created no
+    task, entered no approval gate and tracked no outcome, while the
+    AgentAction path beside it did all three — and this is the surface the UI
+    labels "AI Predictive Intelligence", so the weaker one carried the stronger
+    name.
+
+    The restraint is as important as the capability. A maintenance task on a
+    machine is the ONLY entry in ev.PROPOSABLE_KINDS, so it is the only kind
+    that may offer a button; ordering stock and rebalancing a schedule get a
+    sentence, because a control for something AMP cannot do is a promise it
+    cannot keep.
+    """
+    from ai import evidence as ev
+
+    rows = [
+        models.AIRecommendation(id=1, recommendation_type="Predictive Maintenance", severity="High",
+                                title="t", message="m", related_machine_id=7, confidence=86, status="Open"),
+        models.AIRecommendation(id=2, recommendation_type="Inventory Forecast", severity="Medium",
+                                title="t", message="m", related_machine_id=None, confidence=82, status="Open"),
+        models.AIRecommendation(id=3, recommendation_type="Utilization Optimization", severity="Medium",
+                                title="t", message="m", related_machine_id=7, confidence=74, status="Open"),
+        models.AIRecommendation(id=4, recommendation_type="Production Delay Prediction", severity="High",
+                                title="t", message="m", related_machine_id=7, confidence=80, status="Open"),
+        models.AIRecommendation(id=5, recommendation_type="Quality Prediction", severity="High",
+                                title="t", message="m", related_machine_id=None, confidence=84, status="Open"),
+    ]
+    out = [rr._recommendation_dict(r) for r in rows]
+
+    assert all(d["action"] for d in out), [d["recommendation_type"] for d in out if not d["action"]]
+
+    proposable = [d for d in out if d["propose"]]
+    assert [d["recommendation_type"] for d in proposable] == ["Predictive Maintenance"],         [d["recommendation_type"] for d in proposable]
+    assert proposable[0]["propose"] == {"kind": "maintenance_task", "machine_id": 7}
+    assert proposable[0]["propose"]["kind"] in ev.PROPOSABLE_KINDS
+
+    # A maintenance recommendation that names NO machine offers nothing: the
+    # write route would have no id to resolve, and a button that 400s is worse
+    # than no button.
+    orphan = models.AIRecommendation(id=6, recommendation_type="Predictive Maintenance", severity="High",
+                                     title="t", message="m", related_machine_id=None, confidence=86,
+                                     status="Open")
+    assert rr._recommendation_dict(orphan)["propose"] is None
+
+    # A kind nobody has written advice for yet is reported as-is, not crashed on
+    # and not given an invented sentence.
+    unknown = models.AIRecommendation(id=7, recommendation_type="Something New", severity="Low",
+                                      title="t", message="m", related_machine_id=None, confidence=50,
+                                      status="Open")
+    d = rr._recommendation_dict(unknown)
+    assert d["action"] is None and d["propose"] is None, str(d)
+
+
 if __name__ == "__main__":
     test_recommendations_paths_owned_by_module()
     test_generator_is_bounded_to_the_recent_window_in_sql()
@@ -335,4 +391,5 @@ if __name__ == "__main__":
     test_generator_survives_null_utilization_stock_and_quality_columns()
     test_dedupe_blocks_against_a_null_status_open_recommendation()
     test_dedupe_reopens_after_the_previous_one_is_closed()
+    test_every_recommendation_says_what_to_do_and_only_maintenance_is_proposable()
     print("ALL RECOMMENDATION ROUTE TESTS PASSED")

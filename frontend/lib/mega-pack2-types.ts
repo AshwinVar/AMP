@@ -35,6 +35,14 @@ export type AIRecommendation = {
   confidence: number;
   status: string;
   created_at?: string;
+  // ADR-0039. What to do about it, always a sentence — this queue's only
+  // futures were Acknowledged and Closed, so "AI Predictive Intelligence"
+  // suggested things and offered no way to act on any of them. `propose` is
+  // the stricter thing: a draft AMP can actually carry out. Most
+  // recommendations have none, because ordering stock and rebalancing a
+  // schedule are not AMP's to do.
+  action?: string | null;
+  propose?: { kind: "maintenance_task"; machine_id: number } | null;
 };
 
 export type AIInsights = {

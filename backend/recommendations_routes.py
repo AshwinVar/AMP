@@ -47,10 +47,57 @@ router = APIRouter(prefix="/ai", tags=["AI Recommendations"])
 RECOMMENDATION_WINDOW_DAYS = 30
 
 
+# WHAT TO DO ABOUT EACH KIND, and whether AMP can carry it out (ADR-0039).
+#
+# This queue was a dead end. A recommendation's only futures were Acknowledged
+# and Closed: it created no task, entered no approval gate and tracked no
+# outcome, while the AgentAction path beside it did all three — and this is the
+# surface the UI labels "AI Predictive Intelligence", so the weaker one carried
+# the stronger name.
+#
+# Only ONE kind is proposable, and the restraint is the point. A maintenance
+# task on a machine is the single entry in ev.PROPOSABLE_KINDS, so a predictive
+# maintenance recommendation that names a machine can become a real proposal.
+# Reordering stock, rebalancing a schedule and running a root-cause analysis are
+# not AMP's to do; they get a sentence, not a button, exactly as the Risk Radar
+# does.
+_ADVICE = {
+    "Predictive Maintenance": "Get maintenance to it before it stops.",
+    "Utilization Optimization": "Rebalance the schedule, or find the work this machine should be doing.",
+    "Inventory Forecast": "Order it now — the lead time has to beat what is left on the shelf.",
+    "Production Delay Prediction": "Review the capacity and the materials behind this plan, and re-commit a date.",
+    "Quality Prediction": "Find what changed on the machines that moved, before the next batch runs.",
+}
+_PROPOSABLE_TYPES = ("Predictive Maintenance",)
+
+
+def _recommendation_dict(row):
+    """One recommendation, with what to do about it.
+
+    Computed on READ rather than stored: no migration, and a recommendation
+    raised last week is judged against what AMP can do today. A `propose` is
+    offered only when the kind is one AMP has a path for AND the row names a
+    machine — a draft naming no machine would hand the write route nothing to
+    resolve.
+    """
+    kind = (row.recommendation_type or "").strip()
+    propose = None
+    if kind in _PROPOSABLE_TYPES and row.related_machine_id is not None:
+        propose = {"kind": "maintenance_task", "machine_id": row.related_machine_id}
+    return {
+        "id": row.id, "recommendation_type": row.recommendation_type, "severity": row.severity,
+        "title": row.title, "message": row.message, "related_machine_id": row.related_machine_id,
+        "confidence": row.confidence, "status": row.status, "created_at": row.created_at,
+        "action": _ADVICE.get(kind), "propose": propose,
+    }
+
+
 @router.get("/recommendations", response_model=List[schemas.AIRecommendationResponse])
 def get_ai_recommendations(response: Response = None, limit: Optional[int] = None, offset: int = 0,
                            db: Session = Depends(_get_db), current_user: dict = Depends(get_current_user)):
-    return paging.page(response, db.query(models.AIRecommendation).order_by(models.AIRecommendation.id.desc()), 300, limit, offset)
+    rows = paging.page(response, db.query(models.AIRecommendation).order_by(models.AIRecommendation.id.desc()),
+                       300, limit, offset)
+    return [_recommendation_dict(r) for r in rows]
 
 
 @router.patch("/recommendations/{recommendation_id}", response_model=schemas.AIRecommendationResponse)

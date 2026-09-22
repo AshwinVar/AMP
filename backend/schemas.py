@@ -1060,6 +1060,18 @@ class AIRecommendationResponse(BaseModel):
     confidence: int
     status: str
     created_at: Optional[datetime] = None
+    # WHAT TO DO ABOUT IT, and whether AMP can carry it out (ADR-0039).
+    #
+    # Computed on read, not stored: no migration, and a recommendation raised
+    # last week is judged against what AMP can do TODAY. `action` is always a
+    # sentence. `propose` is the stricter thing — a draft from
+    # ev.PROPOSABLE_KINDS that a person raises through
+    # POST /agent-actions/propose and the approval gate executes. Most
+    # recommendations have none: reordering stock and rebalancing a schedule
+    # are not AMP's to do, and a button for them would be a promise it cannot
+    # keep.
+    action: Optional[str] = None
+    propose: Optional[dict] = None
 
     class Config:
         from_attributes = True

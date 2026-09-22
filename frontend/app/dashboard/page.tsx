@@ -3040,7 +3040,7 @@ export default function DashboardPage() {
             <PlatformStatusCard />
           </div>
           <PageNotice shown={aiRecommendations.length} total={listTotals["/ai/recommendations"]} noun="recommendations" more={moreFor({ totals: listTotals, pages: listPages }, "/ai/recommendations", aiRecommendations.length)} onMore={() => showMore("/ai/recommendations", aiRecommendations.length)} />
-          <AIInsightsSection recommendations={aiRecommendations} insights={aiInsights} generateRecommendations={isAdminOrSupervisor ? generateAiRecommendations : async () => {}} updateRecommendation={updateAiRecommendation} />
+          <AIInsightsSection recommendations={aiRecommendations} insights={aiInsights} generateRecommendations={isAdminOrSupervisor ? generateAiRecommendations : async () => {}} updateRecommendation={updateAiRecommendation} onOpen={setActiveView} />
         </>
       ))}
 

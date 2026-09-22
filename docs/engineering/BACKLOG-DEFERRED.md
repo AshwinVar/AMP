@@ -78,7 +78,6 @@ slices rather than cleanup.
 | No UI to enter a production record, so a manual-entry SME cannot produce an OEE at all | `POST /production-records` has no frontend caller |
 | No "connect your data" screen: nothing prints the broker host or the topic | `mqtt_service`, `mqtt_identity.topic_filters` |
 | `Machine.site` is unreachable — not in `MachineCreate`, no route, no form | `schemas.py:84-92` |
-| **The sales-demo factory is not reproducible**: `reset_factory.py` imports `random` and never seeds it, so production, downtime, quality, order dates and WO progress redraw every reset | `reset_factory.py:18`, `:160-164`, `:192-195`, `:206-211` |
-| The demo factory can plant only 1 of the 7 problems the Command Centre can discover: no inventory rows, no production plans, no late orders, no overdue maintenance | `reset_factory.py` |
-| `unit_value_gbp` is NULL in every seed path, so the demo's money story is off by default | no seeder sets it |
 | `reset_machines.py` mutates **every** machine in the database at import time, with no `__main__` guard and no tenant binding | `reset_machines.py:24-56` |
+
+**Closed 2026-09-22** (the demo-factory slice): the seed is now deterministic (`reset_factory.DEMO_SEED`), all seven Command Centre problem kinds are planted and discovered, and `unit_value_gbp` is configured so the demo reads in money. `docs/sales/FACTORY-DEMO-RUNBOOK.md`.

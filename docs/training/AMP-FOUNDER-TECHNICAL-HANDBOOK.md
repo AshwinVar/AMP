@@ -1713,6 +1713,24 @@ Exactly how your code becomes `app.marx8.com`, and the env vars and safety nets 
 | `MQTT_LEGACY_TENANT` / `MQTT_LEGACY_SITE` | who owns `{prefix}/machines`, for pre-multi-tenant deployments only |
 | `GMATS_ADMIN_USERNAME` / `_PASSWORD`, `RESEED_FACTORY`, `TRIAL_DAYS`, `SENTRY_DSN` | seeding, trials, error monitoring |
 
+**The sales-demo factory is reproducible, and plants what AMP should find.**
+`reset_factory.py` rebuilds DEFAULT as the SMT → IC instrument-cluster plant.
+It seeds its RNG once from `DEMO_SEED`, so two resets produce the same plant
+and a rehearsed demo matches the one on screen — it used to import `random`
+and never seed it, so every figure was redrawn each run. It deliberately
+plants all seven problem kinds `ai/command_centre` can discover (a machine
+down, one dominant downtime reason, two short plans, a quality outlier, three
+items under reorder level, a past-due order, an overdue maintenance task) and
+sets `unit_value_gbp`, so the demo ranks losses in money rather than units.
+Nothing announces any of this to the intelligence layer — the seed writes
+ordinary rows and the engines find them by their own rules, which is what
+`test_reset_factory.py::test_every_planted_problem_is_discoverable` pins.
+Where to change it: the seed and the planted constants at the top of
+`reset_factory.py`; the figures are quoted in
+`docs/sales/FACTORY-DEMO-RUNBOOK.md`, which goes stale if you change them.
+On production it runs via `RESEED_FACTORY` set to a value never used before —
+single-shot, because a forgotten flag once wiped production on every deploy.
+
 ### Health, backup, restore, retention
 - **`/health`** = liveness (`SELECT 1` + schema verdict; 200/503; reports the git SHA). **`/readiness`** = correctness (200 only when the schema is at the required revision). The distinction is the `is_active` lesson (Chapter 6).
 - **Backup** (`backup.yml`, daily 02:17 UTC): `pg_dump` → gzip → 30-day artifact, with assertions that it's a *real* dump (min size, ≥40 `CREATE TABLE`), then a **restore-drill job** restores it into a throwaway Postgres — *"a backup you've never restored is not a backup."*

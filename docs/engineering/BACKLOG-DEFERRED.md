@@ -74,10 +74,10 @@ slices rather than cleanup.
 | `AIRecommendation` is a dead-end queue: no task, no approval gate, no outcome | `recommendations_routes.py`, `AIInsightsSection.tsx` |
 | The Daily Brief has no "what went well" and no money section; every section renders collapsed | `ai/brief.py:268-276`, `DailyBriefSection.tsx:111` |
 | Outcome tracking covers 3 of 5 agents (`maintenance_task`, `escalation`, `purchase_order`) | `ai/outcomes.py:63-67` |
-| **No onboarding wizard or first-run experience anywhere** | 0 hits for `wizard` across the repo |
-| No UI to enter a production record, so a manual-entry SME cannot produce an OEE at all | `POST /production-records` has no frontend caller |
 | No "connect your data" screen: nothing prints the broker host or the topic | `mqtt_service`, `mqtt_identity.topic_filters` |
 | `Machine.site` is unreachable — not in `MachineCreate`, no route, no form | `schemas.py:84-92` |
 | `reset_machines.py` mutates **every** machine in the database at import time, with no `__main__` guard and no tenant binding | `reset_machines.py:24-56` |
+
+**Closed 2026-09-22** (the onboarding slice): `POST /production-records` finally has a screen (`ProductionEntryForm.tsx`), so a factory with no gateway can give AMP the rows OEE is measured from; and `SetupChecklist.tsx` is the first-run guidance the app never had. Still open below: the "connect your data" screen and `Machine.site`.
 
 **Closed 2026-09-22** (the demo-factory slice): the seed is now deterministic (`reset_factory.DEMO_SEED`), all seven Command Centre problem kinds are planted and discovered, and `unit_value_gbp` is configured so the demo reads in money. `docs/sales/FACTORY-DEMO-RUNBOOK.md`.

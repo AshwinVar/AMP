@@ -229,6 +229,40 @@ def build_twins(db, tenant: str):
     return twins
 
 
+def fleet_health(twins) -> dict:
+    """The fleet's health, from twins that actually read something.
+
+    ONE definition, because two surfaces now show this figure. `ai/pulse` had
+    the arithmetic inline and the Command Centre needed the same number; a
+    second copy is how the owner's home screen and the pulse header start
+    disagreeing about the same plant.
+
+    THE RULE IS ADR-0027's (#697). A machine with nothing recorded in the risk
+    window scores 100 by ABSENCE, so averaging it in makes a fleet look
+    healthier the less it reports. Only measured twins count toward the
+    average, `measured` says how many that was, and the average is None — never
+    0 — when none could be measured, because 0 is the worst score there is and
+    a real reading on that scale.
+    """
+    twins = list(twins or [])
+    measured = [t for t in twins if t.get("health_measured", True)]
+    worst = twins[0] if twins else None       # build_twins sorts worst-health first
+    return {
+        "machines": len(twins),
+        "measured": len(measured),
+        "avg_health": (round(sum(t["health_score"] for t in measured) / len(measured))
+                       if measured else None),
+        "needs_attention": sum(1 for t in twins if t["health_band"] in ("At risk", "Critical")),
+        "worst": None if not worst else {
+            "machine_id": worst["machine_id"],
+            "name": worst["name"],
+            "health_score": worst["health_score"],
+            "health_band": worst["health_band"],
+            "health_measured": worst.get("health_measured", True),
+        },
+    }
+
+
 def build_twin_overlay(db, tenant: str) -> dict:
     """Per-machine metrics for painting the digital-twin floor map — OEE and the
     week's cost of losses, keyed by machine so the map can heat by either. Composes

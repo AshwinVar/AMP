@@ -44,29 +44,14 @@ def build_pulse(db, tenant: str, now=None) -> dict:
     twins = twin.build_twins(db, tenant)
     imp = impact.build_impact(db, tenant, now=now)
 
-    machines = len(twins)
-    # Only the twins whose score read something (twin.health_measured): a
-    # machine with nothing recorded scores 100 by absence, and averaging it in
-    # made a fleet look healthier the less it reported. None, not 0, when no
-    # machine could be measured — 0 is the worst score there is.
-    measured = [t for t in twins if t.get("health_measured", True)]
-    avg_health = round(sum(t["health_score"] for t in measured) / len(measured)) if measured else None
-    needs_attention = sum(1 for t in twins if t["health_band"] in ("At risk", "Critical"))
-    worst = twins[0] if twins else None
+    # The fleet figure is twin.fleet_health's, not a second copy of the
+    # arithmetic: the Command Centre shows the same number, and two definitions
+    # are how the owner's home screen and this header start disagreeing about
+    # one plant. The measured-only rule and the None-not-zero rule live there.
+    fleet = twin.fleet_health(twins)
 
     return {
-        "fleet": {
-            "machines": machines,
-            "measured": len(measured),
-            "avg_health": avg_health,
-            "needs_attention": needs_attention,
-            "worst": None if not worst else {
-                "machine_id": worst["machine_id"],
-                "name": worst["name"],
-                "health_score": worst["health_score"],
-                "health_band": worst["health_band"],
-            },
-        },
+        "fleet": fleet,
         "agents": {
             "agents_active": len(imp["agents_active"]),
             "actions_7d": imp["last_7_days"]["total"],
@@ -81,6 +66,6 @@ def build_pulse(db, tenant: str, now=None) -> dict:
             "auto_window": imp["last_7_days"]["window"],
             "awaiting_you": imp["pending_backlog"],
         },
-        "headline": _headline(avg_health, len(measured), machines, needs_attention,
-                              imp["pending_backlog"]),
+        "headline": _headline(fleet["avg_health"], fleet["measured"], fleet["machines"],
+                              fleet["needs_attention"], imp["pending_backlog"]),
     }

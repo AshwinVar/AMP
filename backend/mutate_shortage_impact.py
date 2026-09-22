@@ -62,8 +62,8 @@ MUTATIONS = [
 
     # --- the radar ----------------------------------------------------------
     ("the radar sizes a stock-out that has no recipe", RADAR,
-     '            units=impact.get(item["item_code"]), unit_value=unit_value))',
-     '            units=impact.get(item["item_code"], 1), unit_value=unit_value))'),
+     '            units=impact.get(item["item_code"]), unit_value=unit_value,',
+     '            units=impact.get(item["item_code"], 1), unit_value=unit_value,'),
 
     # --- the tool -----------------------------------------------------------
     ("the tool hides how many items it could not size", TOOLS,

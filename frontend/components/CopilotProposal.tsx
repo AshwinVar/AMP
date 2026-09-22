@@ -1,7 +1,6 @@
 "use client";
-import { useState } from "react";
-import { apiPost, errorDetail } from "../lib/api";
 import type { Proposal } from "../lib/evidence";
+import ProposeActionButton from "./ProposeActionButton";
 
 const PRIORITY_TONE: Record<string, string> = {
   Critical: "text-red-300 border-red-500/40",
@@ -19,6 +18,8 @@ const PRIORITY_TONE: Record<string, string> = {
 // those things out loud, before and after, because a card that looks like a
 // confirmation is how a person comes to believe a job was booked that was not.
 //
+// The button itself is ProposeActionButton, shared with the Risk Radar, because
+// two surfaces offering a draft must not each carry their own copy of the write.
 // Only `kind` and `machine_id` are sent. The server re-derives the priority, the
 // task type and the wording from the machine itself, so what is drawn here can
 // never become what is written (test_copilot_actions.py section 8).
@@ -29,31 +30,8 @@ export default function CopilotProposal({
   proposal?: Proposal | null;
   onOpen?: (viewKey: string) => void;
 }) {
-  const [raising, setRaising] = useState(false);
-  const [raised, setRaised] = useState<{ id: number; summary: string } | null>(null);
-  const [err, setErr] = useState("");
-
   if (!proposal) return null;
   const tone = PRIORITY_TONE[proposal.priority] || "text-slate-400 border-slate-600";
-
-  async function raise() {
-    if (!proposal || raising || raised) return;
-    setRaising(true);
-    setErr("");
-    try {
-      const res = await apiPost<{ id: number; summary: string }>("/agent-actions/propose", {
-        kind: proposal.kind,
-        machine_id: proposal.machine_id,
-      });
-      setRaised({ id: res.id, summary: res.summary });
-    } catch (e) {
-      // The server's own sentence: a duplicate proposal, a machine that is not
-      // this workspace's, a role that may not raise one. A generic "that failed"
-      // would hide a refusal the person can act on.
-      setErr(errorDetail(e));
-    }
-    setRaising(false);
-  }
 
   return (
     <div
@@ -73,47 +51,11 @@ export default function CopilotProposal({
       </div>
       <p className="text-slate-400 text-xs mt-2 leading-relaxed">{proposal.reason}</p>
 
-      {!raised && (
-        <>
-          <div className="flex items-center gap-3 mt-3 flex-wrap">
-            <button
-              type="button"
-              onClick={raise}
-              disabled={raising}
-              className="rounded-lg bg-indigo-500 text-white text-xs font-semibold px-4 py-2 hover:bg-indigo-400 disabled:opacity-50"
-            >
-              {raising ? "Proposing…" : "Propose this action"}
-            </button>
-            <span className="text-slate-500 text-[11px]">
-              Nothing exists yet. Proposing sends it for approval — it only takes effect once
-              somebody approves it.
-            </span>
-          </div>
-          {err && (
-            <p role="alert" className="text-red-400 text-xs mt-2">
-              {err}
-            </p>
-          )}
-        </>
-      )}
-
-      {raised && (
-        <div className="mt-3">
-          <p role="status" className="text-emerald-300 text-xs">
-            Proposed — waiting for approval. Nothing has been carried out yet.
-          </p>
-          <p className="text-slate-500 text-[11px] mt-1">{raised.summary}</p>
-          {onOpen && (
-            <button
-              type="button"
-              onClick={() => onOpen("inbox")}
-              className="mt-2 text-xs text-indigo-300 border border-indigo-500/40 rounded-lg px-3 py-1 hover:bg-indigo-500/10"
-            >
-              Open Approvals →
-            </button>
-          )}
-        </div>
-      )}
+      <ProposeActionButton
+        kind={proposal.kind}
+        machineId={proposal.machine_id}
+        onOpen={onOpen}
+      />
     </div>
   );
 }

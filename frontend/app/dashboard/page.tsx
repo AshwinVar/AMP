@@ -107,6 +107,8 @@ import CostingSection from "../../components/CostingSection";
 import OperatorTerminalSection from "../../components/OperatorTerminalSection";
 import NotificationsSection from "../../components/NotificationsSection";
 import PageNotice from "../../components/PageNotice";
+import ProductionEntryForm from "../../components/ProductionEntryForm";
+import SetupChecklist from "../../components/SetupChecklist";
 import { askForMore, emptyListState, moreFor, pagedList as fetchPagedList, type ListState } from "../../lib/paged-list";
 import ApprovalsInbox from "../../components/ApprovalsInbox";
 import TrendsSection from "../../components/TrendsSection";
@@ -160,6 +162,11 @@ type TenantBranding = {
   brand_name: string;
   brand_color: string | null;
   brand_logo_url: string | null;
+  // GET /tenant-config has always returned this (platform_routes._config_dict);
+  // this type simply never declared it. NULL means no rate is set, which is why
+  // every loss reads in units until an Admin sets one — AMP does not invent a
+  // price. SetupChecklist reads it to say so.
+  unit_value_gbp?: number | null;
 };
 
 type Machine = {
@@ -2382,6 +2389,35 @@ export default function DashboardPage() {
               Add Machine
             </button>
           </form>
+          )}
+
+          {/* The input OEE is computed from, which no screen ever offered:
+              POST /production-records had no frontend caller at all, so a
+              factory without an MQTT gateway could not give AMP the rows its
+              headline number needs. Every role may record production
+              (machines_routes.create_production_record admits Admin,
+              Supervisor and Operator), so this is not role-gated. Machines
+              view only — it is a setup and shop-floor task, not something the
+              landing page should carry. */}
+          {activeView === "machines" && (
+            <>
+              {/* The first-run experience there had never been one of. It
+                  disappears on its own once every step is done. */}
+              <SetupChecklist
+                state={{
+                  machines: machines.length,
+                  production: executiveOee?.machine_ranking?.length ?? 0,
+                  shifts: shifts.length,
+                  workOrders: workOrders.length,
+                  inventoryItems: inventoryItems.length,
+                  unitValueSet: tenantCfg?.unit_value_gbp != null,
+                }}
+                onOpen={setActiveView}
+              />
+              <div className="mb-8">
+                <ProductionEntryForm machines={machines} onSaved={fetchAll} />
+              </div>
+            </>
           )}
 
           <section className="mb-10">

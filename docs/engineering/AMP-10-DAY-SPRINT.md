@@ -76,7 +76,7 @@ because neither was in this table at all:
 |---|---|
 | **Closed-loop actions reachable from a conversation** | SHIPPED #702 `2fa89a3` (ADR-0039). A tool DRAFTS, a person raises through `POST /agent-actions/propose`, the ADR-0005 gate executes, ADR-0029 freezes the baseline. No tool writes, so a language model is on none of the three steps |
 | **Sales-demo factory** | SHIPPED. `reset_factory.py` is deterministic (`DEMO_SEED`) and plants all seven problem kinds the Command Centre can discover — it previously drew fresh random data every reset and could plant exactly one. `docs/sales/FACTORY-DEMO-RUNBOOK.md` |
-| **Fast factory onboarding** | NOT STARTED. There is no wizard, no first-run experience, no UI to enter a production record (so a manual-entry SME cannot produce an OEE), and no screen that tells a customer the broker host or topic. Recorded in `BACKLOG-DEFERRED.md` |
+| **Fast factory onboarding** | STARTED. The blocker is closed: `POST /production-records` has a screen at last (`ProductionEntryForm.tsx`), so a factory with no edge agent can give AMP the rows OEE is measured from — it had none, and the headline number was uncomputable by hand. `SetupChecklist.tsx` is the first-run guidance the app never had, listing only steps AMP can carry out. STILL OPEN: no screen tells a customer the broker host or topic, and `Machine.site` is reachable from no form and no route |
 
 ## Differentiators
 

@@ -59,6 +59,25 @@ Until then:
 - no claim is made about any real model;
 - local inference does **not** become the default until a real model passes the evaluation gate: zero unauthorized disclosures, zero ungrounded answers shown, and tool selection at least equal to AMP's own engine.
 
+## After the sprint — BUILD-FIRST, from 2026-09-22
+
+The founder changed engineering strategy: build in vertical slices, test at
+checkpoints, ship coherent feature PRs, and move lower-severity metric cleanup
+to `BACKLOG-DEFERRED.md`. Immediate strong testing (mutation harness included)
+stays mandatory for auth, authorization, tenant isolation, OEM consent, secrets,
+migrations, destructive writes, financial transactions, **AI write/action
+authorization** and production deployment safety. The full directive is at the
+top of `CHIEF-ENGINEER-STATE.md`.
+
+Two differentiators the original sixteen never covered were named as priorities,
+because neither was in this table at all:
+
+| Slice | Status |
+|---|---|
+| **Closed-loop actions reachable from a conversation** | SHIPPED #702 `2fa89a3` (ADR-0039). A tool DRAFTS, a person raises through `POST /agent-actions/propose`, the ADR-0005 gate executes, ADR-0029 freezes the baseline. No tool writes, so a language model is on none of the three steps |
+| **Sales-demo factory** | SHIPPED. `reset_factory.py` is deterministic (`DEMO_SEED`) and plants all seven problem kinds the Command Centre can discover — it previously drew fresh random data every reset and could plant exactly one. `docs/sales/FACTORY-DEMO-RUNBOOK.md` |
+| **Fast factory onboarding** | NOT STARTED. There is no wizard, no first-run experience, no UI to enter a production record (so a manual-entry SME cannot produce an OEE), and no screen that tells a customer the broker host or topic. Recorded in `BACKLOG-DEFERRED.md` |
+
 ## Differentiators
 
 | # | Differentiator | Status | Evidence |

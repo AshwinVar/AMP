@@ -371,7 +371,15 @@ def _help(db, tenant):
         "downtime, quality, maintenance, compliance documents, inventory, machines "
         "(ask by name too), production, WIP, shifts, and week-on-week trends — from "
         "your live data. Say \"find <anything>\" to locate an order, part, task or "
-        "document, or \"give me the rundown\" for the whole picture at once.",
+        "document, or \"give me the rundown\" for the whole picture at once. "
+        # ADR-0039. This list used to say only what AMP can TELL you, so the one
+        # thing it can now DO was undiscoverable: a person had to guess the
+        # phrasing to find out it existed. The sentence also states the limit,
+        # because "I can raise a task" without "you approve it" would promise
+        # more than AMP does.
+        "I can also draft a maintenance task on a machine — say \"raise a "
+        "maintenance task on <machine>\" — for you to propose and someone to "
+        "approve. I never create or change anything on my own.",
         "overview",
     )
 

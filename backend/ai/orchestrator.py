@@ -148,6 +148,37 @@ _SHORTAGE_PHRASES = ("what will the shortage", "shortage stop", "stock-out stopp
                      "what does the shortage")
 _SHORTAGE_PILLARS = ("inventory", "briefing")
 
+# ── Asking AMP to DO something (ADR-0039) ───────────────────────────
+#
+# Everything above routes a QUESTION to a read. These route a REQUEST: "raise a
+# maintenance task on CNC-01" is not a question about CNC-01. Before this, such
+# a request matched no pillar, fell through to the briefing tool and came back
+# as a plant summary — AMP quietly did not do the thing, and did not say it had
+# not done it. The phrases are command shapes, deliberately, so the many
+# questions that merely CONTAIN "maintenance" keep the answers they have: "what
+# maintenance is due?" matches none of these.
+_ACTION_PHRASES = (
+    "create a maintenance", "raise a maintenance", "open a maintenance", "book a maintenance",
+    "add a maintenance", "log a maintenance", "schedule maintenance", "schedule a maintenance",
+    "maintenance task for", "maintenance task on", "create a task", "raise a task",
+    "open a task", "create a job", "raise a job", "book a job", "raise an inspection",
+    "create an inspection", "book an inspection", "schedule an inspection", "book a service",
+    "schedule a service", "get someone to look at", "send someone to look at", "book it in",
+)
+# The one kind AMP can carry out end to end today. A request that asks for some
+# OTHER action is answered by saying so rather than by a read that looks like
+# compliance -- a promise AMP cannot keep is worse than a plain no.
+_ACTION_MATCHED = "draft_action"
+_ACTION_NEEDS_MACHINE = "action_needs_machine"
+_ACTION_NEEDS_MACHINE_TEXT = (
+    "I can draft a maintenance task for one machine, for you to raise and approve — but I need to "
+    "know which machine. Try \"raise a maintenance task on CNC-01\". I don't create anything on my "
+    "own: you raise the draft, and somebody approves it before it takes effect.")
+
+
+def _asks_for_an_action(question) -> bool:
+    return any(p in f" {(question or '').lower()} " for p in _ACTION_PHRASES)
+
 
 def clean_thread(thread) -> list:
     """The client's conversation, reduced to what a follow-up may use: the last
@@ -212,7 +243,17 @@ def plan_rules(db, question, proposer=None, thread=None) -> Plan:
     name can only be one from this tenant's own machine list, and the plan
     says what it resolved."""
     resolved = None
-    if thread and _refers_to_a_machine(question) and assistant._machine_named(db, question) is None:
+    # A REQUEST with no machine in it takes the conversation's machine too
+    # (ADR-0039), not only a question with a pronoun in it. "Create a
+    # maintenance task." after "what happened to M4?" names nothing at all, so
+    # the only machine it can mean is the one being discussed — where a
+    # QUESTION that names nothing ("what about the plant OEE?") genuinely is
+    # about something else, which is why that path still demands a pronoun.
+    # Inferring wrongly here is cheap and visible: AMP says which machine it
+    # drafted for, creates nothing, and a person has to raise it.
+    wants_action = _asks_for_an_action(question)
+    if (thread and (wants_action or _refers_to_a_machine(question))
+            and assistant._machine_named(db, question) is None):
         machine = _referent(db, thread)
         if machine is not None:
             question = f"{question} ({machine.name})"
@@ -225,6 +266,14 @@ def plan_rules(db, question, proposer=None, thread=None) -> Plan:
 def _plan_rules(db, question, proposer=None) -> Plan:
     """AMP's own plan: the rule copilot's routing, mapped onto typed tools."""
     r = assistant.route(db, question, proposer=proposer)
+    # A request to DO something is decided before any read (ADR-0039): "raise a
+    # maintenance task on CNC-01" names a machine, so the router would otherwise
+    # send it to that machine's history and answer a question nobody asked.
+    if _asks_for_an_action(question):
+        if r.kind == "machine":
+            return Plan([("draft_maintenance_task", {"machine": r.machine.name})],
+                        _ACTION_MATCHED, r.labels)
+        return Plan([], _ACTION_NEEDS_MACHINE, r.labels)
     if r.kind == "machine":
         return Plan([("get_machine_history", {"machine": r.machine.name})], r.matched, r.labels)
     if r.kind == "find":
@@ -286,6 +335,12 @@ def _plan_with_llm(llm, question, principal, thread=None):
 
 def _compose(results, plan) -> tuple:
     """AMP's deterministic answer from the tool results: their sentences, in order."""
+    # A request AMP understood but cannot act on without a machine gets that
+    # answer, not the help text (ADR-0039). The help text lists what AMP can
+    # tell you, which reads as a refusal to a person who just asked it to do
+    # something, and never says the task was not created.
+    if plan.matched == _ACTION_NEEDS_MACHINE:
+        return _ACTION_NEEDS_MACHINE_TEXT, "machines"
     if not plan.calls:
         return assistant._help(None, None)
     texts = [r.summary for r in results if r.summary]
@@ -334,7 +389,7 @@ def _ask(db, principal, question, proposer, llm, thread=None) -> dict:
         return {"question": q[:200], "answer": f"That question is too long for the Copilot; keep it under "
                 f"{MAX_QUESTION:,} characters.", "view": None, "matched": "too_long", "engine": "rules",
                 "state": ev.INVALID_ARGUMENTS, "plan": {"planner": "rules", "calls": []},
-                "tools": [], "evidence": [], "grounding": None, "notes": [],
+                "tools": [], "evidence": [], "grounding": None, "notes": [], "proposal": None,
                 "thread": {"turns": 0, "resolved": None},
                 "elapsed_ms": round((time.perf_counter() - started) * 1000)}
 
@@ -402,7 +457,17 @@ def _ask(db, principal, question, proposer, llm, thread=None) -> dict:
         elif gate is None:
             gate = {"passed": False, "numbers_checked": 0, "reasons": ["the model returned no text"]}
 
+    # The action AMP would propose, if a tool drafted one (ADR-0039). It is
+    # AMP's own — read off the ToolResult, never off the model's text — and it
+    # is inert: POST /agent-actions/propose re-derives all of it from the
+    # machine id before anything is written.
+    # No `not r.refused` guard here, deliberately: ev.ToolResult refuses to be
+    # BUILT with both a refusal state and a draft, so a refusal carrying an
+    # action cannot reach this line. Testing that invariant where it lives beats
+    # a second filter here that no test could ever make fire.
+    proposal = next((dict(r.action) for r in results if getattr(r, "action", None)), None)
     out = {"question": q, "answer": answer, "view": view, "matched": plan.matched, **plan.labels,
+           "proposal": proposal,
            "engine": engine, "model": model, "state": _overall_state(results),
            "plan": {"planner": plan.planner,
                     "calls": [{"tool": str(n)[:80], "arguments": _shown_args(plan, a, q)} for n, a in plan.calls]},

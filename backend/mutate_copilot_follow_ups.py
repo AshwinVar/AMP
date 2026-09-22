@@ -60,9 +60,14 @@ MUTATIONS = [
     ("every follow-up is treated as pointing at a machine", O,
      "    return any(f\" {w} \" in q for w in _REFERENT_WORDS)",
      "    return True"),
+    # ADR-0039 moved this condition onto three lines when a REQUEST with no
+    # machine in it began taking the conversation's machine too. The mutation is
+    # the same one: drop the "names none itself" clause, so a follow-up that
+    # DOES name a machine is overridden by the conversation's.
     ("a machine named in the follow-up itself no longer wins", O,
-     "    if thread and _refers_to_a_machine(question) and assistant._machine_named(db, question) is None:",
-     "    if thread and _refers_to_a_machine(question):"),
+     "    if (thread and (wants_action or _refers_to_a_machine(question))\n"
+     "            and assistant._machine_named(db, question) is None):",
+     "    if thread and (wants_action or _refers_to_a_machine(question)):"),
     ("the referent is read from calls only, never from a prior question", O,
      "        m = assistant._machine_named(db, turn[\"question\"]) if turn[\"question\"] else None\n"
      "        if m is not None:\n            return m\n    return None",

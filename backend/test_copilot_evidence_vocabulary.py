@@ -37,7 +37,12 @@ def main():
     source = open(TS, encoding="utf-8").read()
     for name, py in (("PROVENANCE", ev.PROVENANCE), ("DATA_STATES", ev.DATA_STATES),
                      ("REFUSALS", ev.REFUSALS), ("CAUSE_LABELS", ev.CAUSE_LABELS),
-                     ("LIKELIHOOD", ev.LIKELIHOOD)):
+                     ("LIKELIHOOD", ev.LIKELIHOOD),
+                     # ADR-0039: what a Copilot answer may offer to propose. The
+                     # screen decides what button to draw from this set, so a kind
+                     # added on one side only would render a button for something
+                     # AMP cannot carry out, or hide one it can.
+                     ("PROPOSABLE_KINDS", ev.PROPOSABLE_KINDS)):
         ts = ts_list(source, name)
         check(f"frontend {name} is present", ts is not None)
         check(f"frontend {name} == backend {name}, in order", ts == list(py), f"ts={ts} py={list(py)}")

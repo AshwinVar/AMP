@@ -40,6 +40,13 @@ export const CAUSE_LABELS = [
   "INSUFFICIENT EVIDENCE",
 ] as const;
 
+// What a Copilot answer may offer to PROPOSE (ADR-0039). A closed set, because
+// each kind names a path AMP can actually carry out — a draft AMP cannot
+// execute is a promise it cannot keep. Nothing here is a write: raising the
+// draft is a separate authenticated call, and approving it is another.
+export const PROPOSABLE_KINDS = ["maintenance_task"] as const;
+export type ProposableKind = (typeof PROPOSABLE_KINDS)[number];
+
 export type Fact = {
   id: string;
   key: string;
@@ -61,6 +68,25 @@ export type ToolRun = {
 };
 
 export type Grounding = { passed: boolean; numbers_checked: number; reasons: string[] } | null;
+
+/**
+ * An action a Copilot answer drafted, ready for a person to raise (ADR-0039).
+ *
+ * It is a description, not a record: nothing exists in AMP when this arrives.
+ * Raising it sends only `kind` and `machine_id` — the server re-derives the
+ * priority, the task type and the wording from the machine itself, so a field
+ * edited here can never become what is written.
+ */
+export type Proposal = {
+  kind: ProposableKind;
+  machine_id: number;
+  machine: string;
+  priority: string;
+  task_type: string;
+  summary: string;
+  reason: string;
+  label: string;
+};
 
 /** What each provenance means, in one line a plant manager can read. */
 export const PROVENANCE_MEANING: Record<Provenance, string> = {

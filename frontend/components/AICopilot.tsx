@@ -2,9 +2,10 @@
 import { useEffect, useState } from "react";
 import { apiGet, apiPost } from "../lib/api";
 import { copilotBadge } from "../lib/aiModels";
-import type { Fact, Grounding, ToolRun } from "../lib/evidence";
+import type { Fact, Grounding, Proposal, ToolRun } from "../lib/evidence";
 import { viewLabel } from "../lib/modules";
 import CopilotEvidence from "./CopilotEvidence";
+import CopilotProposal from "./CopilotProposal";
 
 type Turn = {
   q: string;
@@ -27,6 +28,9 @@ type Turn = {
   // machine a pronoun in THIS question resolved to, when one did.
   calls?: { tool: string; arguments: Record<string, unknown> }[];
   resolved?: { machine?: string } | null;
+  // ADR-0039: an action this answer drafted. Nothing has been created; the card
+  // below it is what raises the draft, and approval is a separate step again.
+  proposal?: Proposal | null;
 };
 type AiStatus = {
   enabled: boolean;
@@ -53,6 +57,8 @@ type RulesAnswer = {
   state?: string;
   grounding?: Grounding;
   engine?: string;
+  // ADR-0039: the action AMP would propose, when the question asked for one.
+  proposal?: Proposal | null;
 };
 
 // A /copilot/ask answer as a thread turn, evidence included (ADR-0022).
@@ -62,6 +68,7 @@ function rulesTurn(q: string, res: RulesAnswer): Turn {
     confidence: res.confidence, evidence: res.evidence, tools: res.tools, state: res.state,
     grounding: res.grounding, engine: res.engine,
     calls: res.plan?.calls, resolved: res.thread?.resolved ?? null,
+    proposal: res.proposal ?? null,
   };
 }
 
@@ -224,6 +231,9 @@ export default function AICopilot({ onOpen }: { onOpen?: (viewKey: string) => vo
             {t.note && <p className="text-amber-300/80 text-xs mt-2">{t.note}</p>}
             <CopilotEvidence facts={t.evidence} tools={t.tools} state={t.state}
               grounding={t.grounding} engine={t.engine} />
+            {/* ADR-0039: the answer drafted an action. The card raises it; it
+                still needs an approval after that, and it says so. */}
+            <CopilotProposal proposal={t.proposal} onOpen={onOpen} />
             {t.view && onOpen && viewLabel(t.view) && (
               <button
                 onClick={() => onOpen(t.view!)}

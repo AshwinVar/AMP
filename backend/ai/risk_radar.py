@@ -35,6 +35,7 @@ import models
 from ai import evidence as ev
 from ai.coverage import build_coverage_summary
 from ai.delivery import build_delivery_summary
+from ai.flow import build_wip_aging
 from ai.maintenance import build_maintenance_forecast
 from ai.prediction import assess_from_db
 from ai.production import build_production_summary
@@ -213,6 +214,53 @@ def _stock_risks(coverage, impact, unit_value):
     return out
 
 
+def _work_order_risks(flow, unit_value):
+    """Open work orders that have already blown their planned end date.
+
+    WORK ORDERS REACHED NO OWNER SURFACE. This module read customer orders
+    (`_order_risks`) and production plans through the Command Centre, and never
+    `models.WorkOrder` — so "which jobs are late?", the question a job shop asks
+    first, was answerable only by opening the Work Orders tab and reading a
+    list. A customer order can be late because the JOB is late, and an owner
+    looking at the radar could see the first and not the second.
+
+    Not a forecast. A planned end that has passed is a fact, and the rule says
+    so rather than dressing it up as a likelihood — the same treatment
+    `_order_risks` gives an order already past its date.
+    """
+    out = []
+    late = [w for w in (flow.get("chase") or []) if w.get("late")][:3]
+    for w in late:
+        remaining = max(0, (w.get("target_quantity") or 0) - (w.get("actual_quantity") or 0))
+        facts = [_fact(f"wo.{w['work_order_no']}.age", f"{w['work_order_no']}: days open",
+                       w.get("age_days"), D, "days", "work_orders", "now"),
+                 _fact(f"wo.{w['work_order_no']}.planned_end", f"{w['work_order_no']}: planned end",
+                       w.get("planned_end") or "not set", M, source="work_orders", window="now")]
+        if w.get("target_quantity"):
+            facts.append(_fact(f"wo.{w['work_order_no']}.remaining", f"{w['work_order_no']}: units still to make",
+                               remaining, D, "units", "work_orders", "now"))
+        out.append(_risk(
+            f"workorder.{w['work_order_no']}",
+            f"{w['work_order_no']} is past its planned end",
+            (f"{remaining:,} of {w['target_quantity']:,} units still to make" if w.get("target_quantity")
+             else "no target quantity on this order, so AMP cannot size what is left")
+            + (f"; {w['part_number']}" if w.get("part_number") else ""),
+            ev.LIKELY, "the planned end date has passed and the order is still open",
+            "now", "operations", "workorders", facts,
+            units=remaining or None, unit_value=unit_value,
+            # The sentence leads on the DATE, not the age. `age_days` comes from
+            # created_at and can legitimately be 0 on an order raised today
+            # against a back-dated plan — real plants do that — and "open 0 days
+            # and its date has gone" reads as nonsense even though both halves
+            # are true. The age is added only when it is a number that supports
+            # the point.
+            action=(f"Finish or re-plan {w['work_order_no']} — its planned end has passed, so "
+                    f"anything promised on it is promised on a date that no longer holds."
+                    + (f" It has been open {w['age_days']} day{'' if w['age_days'] == 1 else 's'}."
+                       if (w.get("age_days") or 0) > 0 else ""))))
+    return out
+
+
 def _machine_risks(db):
     out = []
     for row in sorted(assess_from_db(db), key=lambda r: -r["risk_score"])[:5]:
@@ -330,7 +378,13 @@ def build_risk_radar(db, tenant: str, now=None) -> dict:
                     for s in build_shortage_impact(db, tenant, now=now)["shortages"]
                     if s["units_at_risk"]}
 
+    # Work orders reached no owner surface at all before this: a customer order
+    # can be late BECAUSE the job is late, and the radar could see the first and
+    # not the second.
+    flow = build_wip_aging(db, tenant)
+
     risks = (_order_risks(delivery, daily_rate, unit_value, today)
+             + _work_order_risks(flow, unit_value)
              + _stock_risks(coverage, stock_impact, unit_value)
              + _machine_risks(db)
              + _maintenance_risks(forecast))

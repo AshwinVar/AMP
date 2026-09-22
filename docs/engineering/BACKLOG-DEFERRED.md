@@ -68,7 +68,6 @@ slices rather than cleanup.
 | Gap | Where |
 |---|---|
 | Machine health is missing from the Command Centre (status counts only) | `ai/command_centre.py:129-131` |
-| Work orders reach no owner surface: neither the Command Centre nor the Risk Radar reads `models.WorkOrder` for risk | `ai/command_centre.py`, `ai/risk_radar.py` |
 | The Root-Cause Explorer cannot say *when* — a 7-day aggregate with no timeline | `ai/root_cause.py:280-303` |
 | `AIRecommendation` is a dead-end queue: no task, no approval gate, no outcome | `recommendations_routes.py`, `AIInsightsSection.tsx` |
 | The Daily Brief has no "what went well" and no money section; every section renders collapsed | `ai/brief.py:268-276`, `DailyBriefSection.tsx:111` |
@@ -76,6 +75,8 @@ slices rather than cleanup.
 | No "connect your data" screen: nothing prints the broker host or the topic | `mqtt_service`, `mqtt_identity.topic_filters` |
 | `Machine.site` is unreachable — not in `MachineCreate`, no route, no form | `schemas.py:84-92` |
 | `reset_machines.py` mutates **every** machine in the database at import time, with no `__main__` guard and no tenant binding | `reset_machines.py:24-56` |
+
+**Closed 2026-09-22** (the owner-intelligence slice): work orders now reach both the Command Centre and the Risk Radar, and the demo plants a late one that explains its late customer order.
 
 **Closed 2026-09-22** (the risk-actions slice): every Risk Radar risk now ends in an `action`, and a machine likely to stop carries a proposable ADR-0039 draft. The frontend write lives in one shared `ProposeActionButton.tsx`.
 

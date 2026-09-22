@@ -102,7 +102,9 @@ def _position(db, tenant, oee, plan, prod, machines, health):
     # why the main screen had forgotten it. Same figure, one definition
     # (twin.fleet_health) — a second average is how two screens start
     # disagreeing about one plant.
-    if health["avg_health"] is not None:
+    if health is None:
+        pass                      # the caller did not ask for it (with_health=False)
+    elif health["avg_health"] is not None:
         facts.append(_fact("health.fleet", "Fleet health", health["avg_health"], R, "/100",
                            "rule-based risk points (predictive_engine)", "now",
                            detail=(f"averaged over the {health['measured']} of {health['machines']} "
@@ -113,7 +115,7 @@ def _position(db, tenant, oee, plan, prod, machines, health):
                            "rule-based risk points (predictive_engine)", "now",
                            detail="no machine has a reading in the risk window, so there is no "
                                   "fleet average (not 0 — 0 is the worst score there is)"))
-    if health["worst"] and health["worst"]["health_measured"]:
+    if health and health["worst"] and health["worst"]["health_measured"]:
         facts.append(_fact("health.worst", "Lowest health", health["worst"]["name"], M,
                            source="machines", window="now",
                            detail=f"{health['worst']['health_score']}/100 "
@@ -403,9 +405,18 @@ def _actions(db, tenant, problems, cost):
     return out
 
 
-def build_command_centre(db, tenant: str, now=None) -> dict:
+def build_command_centre(db, tenant: str, now=None, with_health=True) -> dict:
     """The owner's five answers, composed from the read-models. Tenant-scoped by
-    the ORM hook (ADR-0002); agent actions are filtered explicitly."""
+    the ORM hook (ADR-0002); agent actions are filtered explicitly.
+
+    `with_health=False` skips the fleet-health block and the fleet queries
+    behind it. ONE caller passes it: `ai.brief`, which composes this card for
+    its PROBLEMS and never reads `position.health` — it was paying six queries
+    for a block it does not render. The brief's own recorded query budget is
+    what caught that, exactly as its comment says it should ("a change that
+    adds a query per machine should be seen in review"), and the honest answer
+    to the review is that one surface should not pay for another's feature.
+    """
     oee = build_oee_summary(db, tenant)
     plan = build_schedule_adherence(db, tenant)
     prod = build_production_summary(db, tenant)
@@ -423,8 +434,11 @@ def build_command_centre(db, tenant: str, now=None) -> dict:
     unit_value = cost["unit_value_gbp"] if cost["priced"] else None
 
     # One definition of the fleet figure, shared with ai/pulse (twin.fleet_health).
-    from ai.twin import build_twins, fleet_health   # lazy: twin composes the pillars
-    health = fleet_health(build_twins(db, tenant))
+    if with_health:
+        from ai.twin import build_twins, fleet_health   # lazy: twin composes the pillars
+        health = fleet_health(build_twins(db, tenant))
+    else:
+        health = None
     position = _position(db, tenant, oee, plan, prod, machines, health)
     problems = _rank([p for p in (
         [_machines_down_problem(machines), _work_order_problem(flow, unit_value)]

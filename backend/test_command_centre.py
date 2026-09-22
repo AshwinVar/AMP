@@ -288,6 +288,40 @@ def main():
           mixed["avg_health"] == 40 and mixed["measured"] == 1, str(mixed))
     check("...and the worst machine is still named", mixed["worst"]["name"] == "BAD", str(mixed["worst"]))
 
+    # A COMPOSING CALLER DOES NOT PAY FOR A BLOCK IT DOES NOT READ. ai.brief
+    # composes this card for its PROBLEMS and never touches position.health; it
+    # was paying ten queries for it, which the brief's OWN recorded budget
+    # caught (test_daily_brief.py section 10, "a change that adds a query per
+    # machine should be seen in review"). The flag is the answer to that review.
+    db3 = Session()
+    tok3 = tenancy.set_current_tenant(F.A)
+    try:
+        engine3 = db3.get_bind()
+        seen = []
+
+        @event.listens_for(engine3, "before_cursor_execute")
+        def _count3(conn, cur, statement, params, context, many):
+            seen.append(statement)
+
+        build_command_centre(db3, F.A)                       # warm
+        seen.clear()
+        build_command_centre(db3, F.A)
+        with_h = len(seen)
+        seen.clear()
+        lean = build_command_centre(db3, F.A, with_health=False)
+        without_h = len(seen)
+        event.remove(engine3, "before_cursor_execute", _count3)
+    finally:
+        tenancy.reset_current_tenant(tok3)
+        db3.close()
+    check("with_health=False costs strictly fewer queries", without_h < with_h,
+          f"{without_h} vs {with_h}")
+    check("...and the block is simply absent, not a fabricated empty one",
+          lean["position"]["health"] is None, str(lean["position"]["health"]))
+    check("...while everything the brief DOES read is still there",
+          lean["problems"] and lean["position"]["oee"] == a["position"]["oee"],
+          str(lean["position"]["oee"]))
+
     if failures:
         print(f"\n{len(failures)} FAILED")
         for f in failures:

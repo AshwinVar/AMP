@@ -65,12 +65,30 @@ def _fact(key, label, value, prov, unit="", source="", window=W7, detail=""):
 
 
 def _risk(key, title, detail, likelihood, rule, horizon, module, view, facts,
-          units=None, unit_value=None):
+          units=None, unit_value=None, action=None, propose=None):
+    """One risk: what, how likely, on what rule, sized where AMP can size it —
+    and, since ADR-0039, WHAT TO DO ABOUT IT.
+
+    Every risk here used to end in a deep link. A radar that says eight things
+    are about to go wrong and offers no remedy reads as an alarm panel, not an
+    advisor, and it was the one AMP surface that did not end in a next step.
+
+    `action` is always a sentence. `propose` is the stricter thing: a draft AMP
+    can actually carry out, `{"kind", "machine_id"}` from
+    `ev.PROPOSABLE_KINDS`, raised by the person through
+    POST /agent-actions/propose and executed only by the approval gate. Most
+    risks have no `propose` and that is correct — "chase the customer" and
+    "call the supplier" are not AMP's to do, and offering a button for them
+    would be a promise it cannot keep.
+    """
+    if propose is not None and propose.get("kind") not in ev.PROPOSABLE_KINDS:
+        raise ValueError(f"{key}: {propose.get('kind')!r} is not a proposable action")
     return {"key": key, "title": title, "detail": detail, "likelihood": likelihood, "rule": rule,
             "horizon": horizon, "module": module, "view": view, "facts": facts,
             "impact_units": units,
             "impact_money": (round(units * unit_value) if units is not None and unit_value is not None else None),
-            "currency": CURRENCY if unit_value is not None else None}
+            "currency": CURRENCY if unit_value is not None else None,
+            "action": action, "propose": propose}
 
 
 def _order_risks(delivery, daily_rate, unit_value, today):
@@ -95,14 +113,17 @@ def _order_risks(delivery, daily_rate, unit_value, today):
                 f"{remaining:,} units still to ship"
                 + (f" for {o['customer']}" if o.get("customer") else ""),
                 ev.LIKELY, "the due date has passed and units are still unshipped",
-                "now", "orders", "orders", facts, units=remaining, unit_value=unit_value))
+                "now", "orders", "orders", facts, units=remaining, unit_value=unit_value,
+                action=(f"Tell {o.get('customer') or 'the customer'} a new date, and decide whether "
+                        f"the remaining {remaining:,} units move ahead of other work.")))
             continue
         if daily_rate is None or days_left is None:
             out.append(_risk(
                 f"order.{o['order_no']}", f"{o['order_no']} may miss its date",
                 f"{remaining:,} units still to ship for {o.get('customer') or 'the customer'}",
                 ev.WATCH, "no measured output rate yet, so AMP cannot say whether the date is reachable",
-                "unknown", "orders", "orders", facts, units=remaining, unit_value=unit_value))
+                "unknown", "orders", "orders", facts, units=remaining, unit_value=unit_value,
+                action="Record production against a machine so AMP can measure a rate and judge this date."))
             continue
         required = remaining / max(1, days_left)
         facts.append(_fact(f"order.{o['order_no']}.required_rate", f"{o['order_no']}: units a day needed",
@@ -126,7 +147,14 @@ def _order_risks(delivery, daily_rate, unit_value, today):
             f"{remaining:,} units still to ship in {days_left} day{'' if days_left == 1 else 's'}"
             + (f" for {o['customer']}" if o.get("customer") else ""),
             likelihood, rule, f"{max(0, days_left)} days", "orders", "orders", facts,
-            units=remaining, unit_value=unit_value))
+            units=remaining, unit_value=unit_value,
+            action=(f"Put {remaining:,} units of capacity behind it, or agree a new date now — "
+                    f"it needs {required:.1f} a day and the plant has been making {daily_rate:.1f}."
+                    if likelihood == ev.LIKELY else
+                    f"Protect it: it needs {required:.1f} units a day and any stoppage puts the date "
+                    f"out of reach."
+                    if likelihood == ev.POSSIBLE else
+                    "Nothing to do while the plant holds its rate; watch it if anything stops.")))
     return out
 
 
@@ -173,7 +201,15 @@ def _stock_risks(coverage, impact, unit_value):
              f"{COVER_LIKELY_DAYS if likelihood == ev.LIKELY else COVER_POSSIBLE_DAYS}-day threshold, "
              "at the item's own measured use"),
             "now" if empty else f"{cover} days", "inventory", "inventory", facts,
-            units=impact.get(item["item_code"]), unit_value=unit_value))
+            units=impact.get(item["item_code"]), unit_value=unit_value,
+            # Ordering is not AMP's to do: the Reorder agent drafts a purchase
+            # order on its own trigger, and `purchase_order` is not a proposable
+            # kind here. So this is a sentence, not a button.
+            action=(f"Order {item['item_name']} now"
+                    + (f" from {item['supplier']}" if item.get("supplier") else "")
+                    + ("; there is none on hand, so anything that needs it is already stopped."
+                       if empty else
+                       f"; lead time has to beat {cover} day{'' if cover == 1 else 's'} of cover."))))
     return out
 
 
@@ -201,7 +237,17 @@ def _machine_risks(db):
             likelihood,
             f"the rule score is {score}, at or above the {MACHINE_LIKELY_SCORE if likelihood == ev.LIKELY else MACHINE_POSSIBLE_SCORE} "
             "threshold; this is a hand-weighted rule, not a trained model",
-            "now", "machines", "machinehealth", facts))
+            "now", "machines", "machinehealth", facts,
+            action=(f"Get maintenance to {row['machine_name']} before it stops"
+                    if likelihood == ev.LIKELY else
+                    f"Book {row['machine_name']} in while it is still running"),
+            # THE ONE RISK AMP CAN ACT ON (ADR-0039). A maintenance task on a
+            # machine is the only kind in ev.PROPOSABLE_KINDS, and this is a
+            # machine. Nothing is created by returning this: the person raises
+            # the draft through POST /agent-actions/propose, which re-derives
+            # the priority and the wording from the machine itself, and the
+            # approval gate is what executes it.
+            propose={"kind": "maintenance_task", "machine_id": row["machine_id"]}))
     return out
 
 
@@ -214,7 +260,12 @@ def _maintenance_risks(forecast):
             (f"oldest: {first.get('task_type')} on {first.get('machine')}" if first else ""),
             ev.LIKELY, "a task past its planned date stays past it until someone does it",
             "now", "cmms", "cmms",
-            [_fact("maint.overdue", "Overdue tasks", forecast["overdue"], D, "tasks", "maintenance_tasks", "now")]))
+            [_fact("maint.overdue", "Overdue tasks", forecast["overdue"], D, "tasks", "maintenance_tasks", "now")],
+            # No `propose` here on purpose: the task already EXISTS. Raising a
+            # second one for the same job is how a maintenance backlog becomes a
+            # maintenance queue nobody trusts.
+            action="Assign or reschedule the tasks that are already past their date — they exist, "
+                   "nobody has done them."))
     if (forecast.get("due_next_7") or 0) >= MAINTENANCE_WATCH_COUNT:
         out.append(_risk(
             "maintenance.crunch", f"{forecast['due_next_7']} maintenance tasks fall due this week",
@@ -222,7 +273,10 @@ def _maintenance_risks(forecast):
             ev.WATCH, f"{MAINTENANCE_WATCH_COUNT} or more tasks due inside seven days is a crew-capacity watch",
             "7 days", "cmms", "cmms",
             [_fact("maint.due_next_7", "Tasks due this week", forecast["due_next_7"], M, "tasks",
-                   "maintenance_tasks", "next 7 days")]))
+                   "maintenance_tasks", "next 7 days")],
+            action=(f"Spread the week's {forecast['due_next_7']} tasks, or add crew on "
+                    f"{forecast.get('peak', {}).get('date', 'the peak day')} — they all fall due inside "
+                    f"seven days.")))
     return out
 
 
@@ -242,7 +296,11 @@ def _quality_risk(trend):
         ev.WATCH if thin else ev.POSSIBLE,
         (f"the week-on-week move is beyond the {trend.get('drift_threshold_pts')}-point drift threshold"
          + (" on a thin sample, so it may be noise" if thin else "")),
-        "7 days", "quality", "quality", facts)
+        "7 days", "quality", "quality", facts,
+        action=("Confirm it is real before acting — the sample is thin, so this may be noise."
+                if thin else
+                f"Look at the {trend.get('drifting_count', 0)} machine(s) that moved, and what changed "
+                f"on them this week."))
 
 
 def build_risk_radar(db, tenant: str, now=None) -> dict:

@@ -67,7 +67,6 @@ slices rather than cleanup.
 
 | Gap | Where |
 |---|---|
-| The Risk Radar states WHY / IMPACT / EVIDENCE but no RECOMMENDED ACTION | `ai/risk_radar.py:69-73`, `RiskRadarSection.tsx` |
 | Machine health is missing from the Command Centre (status counts only) | `ai/command_centre.py:129-131` |
 | Work orders reach no owner surface: neither the Command Centre nor the Risk Radar reads `models.WorkOrder` for risk | `ai/command_centre.py`, `ai/risk_radar.py` |
 | The Root-Cause Explorer cannot say *when* — a 7-day aggregate with no timeline | `ai/root_cause.py:280-303` |
@@ -77,6 +76,8 @@ slices rather than cleanup.
 | No "connect your data" screen: nothing prints the broker host or the topic | `mqtt_service`, `mqtt_identity.topic_filters` |
 | `Machine.site` is unreachable — not in `MachineCreate`, no route, no form | `schemas.py:84-92` |
 | `reset_machines.py` mutates **every** machine in the database at import time, with no `__main__` guard and no tenant binding | `reset_machines.py:24-56` |
+
+**Closed 2026-09-22** (the risk-actions slice): every Risk Radar risk now ends in an `action`, and a machine likely to stop carries a proposable ADR-0039 draft. The frontend write lives in one shared `ProposeActionButton.tsx`.
 
 **Closed 2026-09-22** (the onboarding slice): `POST /production-records` finally has a screen (`ProductionEntryForm.tsx`), so a factory with no gateway can give AMP the rows OEE is measured from; and `SetupChecklist.tsx` is the first-run guidance the app never had. Still open below: the "connect your data" screen and `Machine.site`.
 

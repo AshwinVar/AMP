@@ -2,14 +2,22 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { apiGet } from "../lib/api";
-import { formatFactValue, provenanceTone, stateNotice, type Fact } from "../lib/evidence";
+import { formatFactValue, provenanceTone, stateNotice, type Fact, type ProposableKind } from "../lib/evidence";
 import { money } from "../lib/money";
+import ProposeActionButton from "./ProposeActionButton";
 
 // Mirrors ai/risk_radar.py (ADR-0026).
 type Risk = {
   key: string; title: string; detail: string; likelihood: string; rule: string; horizon: string;
   module: string; view: string; facts: Fact[];
   impact_units: number | null; impact_money: number | null; currency: string | null;
+  // ADR-0039. `action` is what to do about it, always a sentence — this card
+  // used to end in a deep link, which made a list of eight things about to go
+  // wrong read as an alarm panel rather than an advisor. `propose` is the
+  // stricter thing: a draft AMP can actually carry out. Most risks have none,
+  // and that is correct — "chase the customer" is not AMP's to do.
+  action?: string | null;
+  propose?: { kind: ProposableKind; machine_id: number } | null;
 };
 type Radar = {
   generated_at: string; state: string; headline: string;
@@ -96,6 +104,21 @@ export default function RiskRadarSection({ onOpen }: { onOpen?: (viewKey: string
                 <p className="text-[10px] text-slate-500">{risk.horizon}</p>
               </div>
             </div>
+            {risk.action && (
+              <p className="text-sm text-slate-200 mt-2">
+                <span className="text-[10px] uppercase tracking-wide text-indigo-300/80 mr-2">Do</span>
+                {risk.action}
+              </p>
+            )}
+            {risk.propose && (
+              <ProposeActionButton
+                kind={risk.propose.kind}
+                machineId={risk.propose.machine_id}
+                label="Propose a maintenance task"
+                onOpen={onOpen}
+                compact
+              />
+            )}
             <div className="flex gap-3 mt-2">
               {risk.facts.length > 0 && (
                 <button

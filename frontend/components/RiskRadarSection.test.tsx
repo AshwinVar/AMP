@@ -23,6 +23,8 @@ function radar(over: Record<string, unknown> = {}) {
         detail: "400 units still to ship for Borealis Motors", likelihood: "LIKELY",
         rule: "the due date has passed and units are still unshipped", horizon: "now",
         module: "orders", view: "orders", impact_units: 400, impact_money: null, currency: null,
+        action: "Tell Borealis Motors a new date, and decide whether the remaining 400 units move ahead of other work.",
+        propose: null,
         facts: [{ id: "f1", key: "order.remaining", label: "ORD-B-9: units still to ship", value: 400,
                   unit: "units", provenance: "DERIVED METRIC", source: "customer_orders", window: "now",
                   detail: "" }] },
@@ -98,6 +100,52 @@ describe("RiskRadarSection", () => {
     render(<RiskRadarSection />);
     expect((await screen.findByRole("status")).textContent).toMatch(/INSUFFICIENT HISTORY/);
     expect(screen.getByText("Nothing on the radar right now.")).toBeTruthy();
+  });
+});
+
+describe("RiskRadarSection: every risk ends in something to do (ADR-0039)", () => {
+  // This card used to end in a deep link. Eight things about to go wrong with no
+  // remedy reads as an alarm panel, not an advisor — it was the one AMP surface
+  // that did not end in a next step.
+  it("shows what to do about a risk, not just that it exists", async () => {
+    apiGet.mockResolvedValue(radar());
+    render(<RiskRadarSection />);
+    expect(await screen.findByText(/Tell Borealis Motors a new date/)).toBeTruthy();
+  });
+
+  it("offers a proposal ONLY where AMP can actually carry it out", async () => {
+    apiGet.mockResolvedValue(radar({
+      risks: [
+        { key: "machine.3", title: "SMT-Reflow-01 is likely to stop", detail: "in breakdown",
+          likelihood: "LIKELY", rule: "the rule score is 80", horizon: "now",
+          module: "machines", view: "machinehealth", impact_units: null, impact_money: null,
+          currency: null, action: "Get maintenance to SMT-Reflow-01 before it stops",
+          propose: { kind: "maintenance_task", machine_id: 3 }, facts: [] },
+        { key: "stock.RM-PASTE-01", title: "Solder Paste runs out in 2 days", detail: "at the measured rate",
+          likelihood: "LIKELY", rule: "days of cover (2) is at or below the 3-day threshold", horizon: "2 days",
+          module: "inventory", view: "inventory", impact_units: null, impact_money: null,
+          currency: null, action: "Order Solder Paste now from Nordson Components",
+          propose: null, facts: [] },
+      ],
+    }));
+    render(<RiskRadarSection />);
+    // The machine risk can be acted on; ordering stock is not AMP's to do, and a
+    // button for it would be a promise it cannot keep.
+    expect(await screen.findByText("Propose a maintenance task")).toBeTruthy();
+    expect(screen.getAllByText("Propose a maintenance task").length).toBe(1);
+    expect(screen.getByText(/Order Solder Paste now/)).toBeTruthy();
+  });
+
+  it("renders a risk that carries no action at all, rather than breaking", async () => {
+    apiGet.mockResolvedValue(radar({
+      risks: [
+        { key: "q", title: "The fail rate is drifting up", detail: "", likelihood: "WATCH",
+          rule: "beyond the drift threshold", horizon: "7 days", module: "quality", view: "quality",
+          impact_units: null, impact_money: null, currency: null, facts: [] },
+      ],
+    }));
+    render(<RiskRadarSection />);
+    expect(await screen.findByText("The fail rate is drifting up")).toBeTruthy();
   });
 });
 

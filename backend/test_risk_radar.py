@@ -17,6 +17,8 @@ Run against the three-factory environment. What is pinned:
   5. LIKELIHOOD WORDS ARE THE SHARED VOCABULARY, and the ordering puts LIKELY
      first.
   6. MONEY only where a unit value is set; TENANT ISOLATION across all three.
+  7. EVERY RISK ENDS IN SOMETHING TO DO (ADR-0039), and a PROPOSAL only where
+     AMP can actually carry it out. This card used to end in a deep link.
 
 Run: DATABASE_URL="sqlite:///./ci.db" python backend/test_risk_radar.py
 """
@@ -235,6 +237,52 @@ def main():
     check("the card is stamped with the instant it was judged at",
           after["generated_at"].startswith("2030-01-11") and before["generated_at"].startswith("2030-01-09"),
           f"{after['generated_at']} / {before['generated_at']}")
+
+    # ── 7. every risk ends in something to do (ADR-0039) ───────────
+    print()
+    print("=" * 74)
+    print("7. EVERY RISK ENDS IN SOMETHING TO DO, AND A PROPOSAL ONLY WHERE AMP CAN ACT")
+    print("=" * 74)
+    every = [r for t in F.TENANTS for r in out[t]["risks"]]
+    check("there are risks to check", len(every) >= 3, str(len(every)))
+    without = [r["key"] for r in every if not (r.get("action") or "").strip()]
+    check("every risk says what to do about it", not without, str(without))
+
+    # A proposal is the stricter thing: it must name a kind AMP can execute, and
+    # a machine. "Chase the customer" and "call the supplier" are not AMP's to
+    # do, and a button for them would be a promise it cannot keep.
+    proposals = [(r["key"], r["propose"]) for r in every if r.get("propose")]
+    check("something is proposable", bool(proposals), "no risk offered a proposal")
+    bad_kind = [k for k, pr in proposals if pr.get("kind") not in ev.PROPOSABLE_KINDS]
+    check("every proposal names a kind AMP can carry out", not bad_kind, str(bad_kind))
+    bad_machine = [k for k, pr in proposals if not isinstance(pr.get("machine_id"), int)]
+    check("every proposal names a machine by id", not bad_machine, str(bad_machine))
+    check("only MACHINE risks are proposable - the rest are advice, not buttons",
+          all(k.startswith("machine.") for k, _ in proposals), str([k for k, _ in proposals]))
+
+    # The machine id is the tenant's own. A proposal carrying another factory's
+    # machine would hand the write route an id it must refuse -- the radar
+    # should never offer it in the first place.
+    for t in F.TENANTS:
+        db = Session()
+        tok = tenancy.set_current_tenant(None)
+        own = {m.id for m in db.query(models.Machine).filter(models.Machine.tenant_code == t).all()}
+        tenancy.reset_current_tenant(tok)
+        db.close()
+        offered = {r["propose"]["machine_id"] for r in out[t]["risks"] if r.get("propose")}
+        check(f"{t}: every proposed machine is its own", offered <= own, f"{offered} vs {own}")
+
+    # A kind outside the closed set is refused at construction, so a future risk
+    # family cannot invent one.
+    from ai import risk_radar as rr
+    refused = False
+    try:
+        rr._risk("k", "t", "d", ev.WATCH, "r", "now", "m", "v", [],
+                 propose={"kind": "send_email", "machine_id": 1})
+    except ValueError:
+        refused = True
+    check("a risk cannot propose a kind AMP has no path for", refused,
+          "send_email was accepted as a proposable action")
 
     if failures:
         print(f"\n{len(failures)} FAILED")

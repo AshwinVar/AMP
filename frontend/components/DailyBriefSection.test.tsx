@@ -22,6 +22,7 @@ const brief = (over: Record<string, unknown> = {}) => ({
   sections: [
     { key: "position", title: "Where we are", lines: ["Plant OEE is 53% from 2 of 3 machines."], state: "PARTIAL DATA", view: "overview" },
     { key: "actions", title: "What to do next", lines: ["Nothing is waiting for a decision."], state: "OK", view: "agents" },
+    { key: "shifts", title: "How the shifts did", lines: ["Day shift made 1,040 of 1,200."], state: "OK", view: "shifts" },
   ],
   blind_spots: [
     { key: "coverage", state: "PARTIAL DATA", text: "2 of 3 machines reported production. The rest are not zero, they are unmeasured." },
@@ -49,12 +50,42 @@ describe("DailyBriefSection", () => {
     expect(screen.getByText(/What AMP could not see \(2\)/)).toBeTruthy();
   });
 
-  it("keeps the section bodies one click away, with their own state", async () => {
+  // A BRIEF OPENS ON ITS ANSWER. Every section used to render collapsed, and
+  // `open` was a single key, so opening one closed another. Measured on the demo
+  // plant: 32 lines across seven sections, and an owner saw none of them — seven
+  // closed headers and the amber caveat box. That box is right to be always
+  // visible; the defect was that it was the ONLY thing visible, so the one thing
+  // a morning brief always showed was its own disclaimer.
+  it("opens on where we are, what is wrong and what to do", async () => {
+    render(<DailyBriefSection />);
+    expect(await screen.findByText(/Plant OEE is 53%/)).toBeTruthy();
+    expect(screen.getByText(/Nothing is waiting for a decision/)).toBeTruthy();
+  });
+
+  it("leaves the supporting sections one tap away", async () => {
+    render(<DailyBriefSection />);
+    await screen.findByRole("button", { name: /How the shifts did/ });
+    expect(screen.queryByText(/Day shift made 1,040/)).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: /How the shifts did/ }));
+    expect(screen.getByText(/Day shift made 1,040/)).toBeTruthy();
+  });
+
+  it("opening one section does not close another", async () => {
+    // `open` was a single key, so reading the shifts cost you the problems.
+    render(<DailyBriefSection />);
+    await screen.findByText(/Plant OEE is 53%/);
+    fireEvent.click(screen.getByRole("button", { name: /How the shifts did/ }));
+    expect(screen.getByText(/Day shift made 1,040/)).toBeTruthy();
+    expect(screen.getByText(/Plant OEE is 53%/)).toBeTruthy();
+  });
+
+  it("an opened section can be closed again", async () => {
     render(<DailyBriefSection />);
     const toggle = await screen.findByRole("button", { name: /Where we are/ });
-    expect(screen.queryByText(/Plant OEE is 53%/)).toBeNull();
+    expect(toggle.getAttribute("aria-expanded")).toBe("true");
     fireEvent.click(toggle);
-    expect(screen.getByText(/Plant OEE is 53%/)).toBeTruthy();
+    expect(toggle.getAttribute("aria-expanded")).toBe("false");
+    expect(screen.queryByText(/Plant OEE is 53%/)).toBeNull();
   });
 
   it("carries the brief's own data state as a notice", async () => {

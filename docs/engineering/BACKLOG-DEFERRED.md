@@ -69,7 +69,7 @@ slices rather than cleanup.
 |---|---|
 | The Root-Cause Explorer cannot say *when* — a 7-day aggregate with no timeline | `ai/root_cause.py:280-303` |
 | `AIRecommendation` is a dead-end queue: no task, no approval gate, no outcome | `recommendations_routes.py`, `AIInsightsSection.tsx` |
-| The Daily Brief has no "what went well" and no money section; every section renders collapsed | `ai/brief.py:268-276`, `DailyBriefSection.tsx:111` |
+| The Daily Brief has no "what went well" section and no money section (the collapse defect is fixed) | `ai/brief.py:268-276` |
 | Outcome tracking covers 3 of 5 agents (`maintenance_task`, `escalation`, `purchase_order`) | `ai/outcomes.py:63-67` |
 | No "connect your data" screen: nothing prints the broker host or the topic | `mqtt_service`, `mqtt_identity.topic_filters` |
 | `Machine.site` is unreachable — not in `MachineCreate`, no route, no form | `schemas.py:84-92` |

@@ -42,9 +42,24 @@ export function briefText(b: Brief): string {
  *
  * It is a once-or-twice-a-day read, so it loads on demand rather than polling.
  */
+// The sections that ARE the brief: where we are, what is wrong, what to do.
+// They open on load; the supporting four (what changed, why, what is likely,
+// how the shifts did) stay one tap away.
+//
+// Every section used to render collapsed, and `open` was a single key, so
+// opening one closed another. Measured on the demo plant: 32 lines of content
+// across seven sections, and an owner opening their morning brief saw NONE of
+// it — seven closed headers and the amber "what AMP could not see" box. That
+// box is right to be always visible; it is what stops the rest being read as
+// the whole picture. The defect was that it was the only thing on screen, so
+// the one thing a brief always showed was its own disclaimer.
+const OPEN_BY_DEFAULT = ["position", "problems", "actions"];
+
 export default function DailyBriefSection() {
   const [b, setB] = useState<Brief | null>(null);
-  const [open, setOpen] = useState<string | null>(null);
+  // A set, not one key: several sections are open at once, and closing one
+  // must not be the price of reading another.
+  const [open, setOpen] = useState<Set<string>>(() => new Set(OPEN_BY_DEFAULT));
   const [copied, setCopied] = useState(false);
 
   const load = useCallback(async () => {
@@ -99,8 +114,14 @@ export default function DailyBriefSection() {
           <div key={s.key} className="rounded-xl bg-slate-950/60 border border-slate-800">
             <button
               type="button"
-              aria-expanded={open === s.key}
-              onClick={() => setOpen(open === s.key ? null : s.key)}
+              aria-expanded={open.has(s.key)}
+              onClick={() =>
+                setOpen((cur) => {
+                  const next = new Set(cur);
+                  if (!next.delete(s.key)) next.add(s.key);
+                  return next;
+                })
+              }
               className="w-full text-left p-3 flex items-center justify-between gap-2"
             >
               <span className="text-sm font-semibold text-slate-200">{s.title}</span>
@@ -108,7 +129,7 @@ export default function DailyBriefSection() {
                 {s.state === "OK" ? "" : s.state}
               </span>
             </button>
-            {open === s.key && (
+            {open.has(s.key) && (
               <ul className="px-3 pb-3 space-y-1">
                 {s.lines.map((line, i) => (
                   <li key={i} className="text-xs text-slate-400">{line}</li>

@@ -461,6 +461,15 @@ const DAILY_BRIEF = {
       state: "OK",
       view: "agents",
     },
+    // A SUPPORTING section, so the spec can tell "opens on load" from "renders
+    // everything": this one must still be behind a click.
+    {
+      key: "shifts",
+      title: "How the shifts did",
+      lines: ["Day shift made 1,040 of 1,200 planned."],
+      state: "OK",
+      view: "shifts",
+    },
   ],
   blind_spots: [
     {

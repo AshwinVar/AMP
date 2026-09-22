@@ -93,10 +93,27 @@ test.describe("dashboard shell", () => {
     await expect(page.getByText(/1 of 2 machines reported production/)).toBeVisible();
     await expect(page.getByText(/No unit value is set for this workspace/)).toBeVisible();
 
-    // A section body IS behind a click, and carries its own data state.
-    const section = page.getByRole("button", { name: /Where we are/ });
-    await expect(page.getByText("Plant OEE is 48% from 1 of 2 machines.")).toBeHidden();
-    await section.click();
+    // THE BRIEF OPENS ON ITS ANSWER. Every section used to render collapsed, so
+    // the only thing a morning brief showed was the amber "what AMP could not
+    // see" box — its own disclaimer. The three that carry the answer (where we
+    // are, what is wrong, what to do) are open on load.
     await expect(page.getByText("Plant OEE is 48% from 1 of 2 machines.")).toBeVisible();
+    await expect(
+      page.getByText("Nothing here runs by itself: each one waits for a person to approve it."),
+    ).toBeVisible();
+
+    // ...and a SUPPORTING section is still one click away, so "open by default"
+    // is a choice about which sections matter, not "render everything".
+    await expect(page.getByText("Day shift made 1,040 of 1,200 planned.")).toBeHidden();
+    await page.getByRole("button", { name: /How the shifts did/ }).click();
+    await expect(page.getByText("Day shift made 1,040 of 1,200 planned.")).toBeVisible();
+
+    // Opening it did not close what was already open: `open` was a single key,
+    // so reading the shifts used to cost you the position.
+    await expect(page.getByText("Plant OEE is 48% from 1 of 2 machines.")).toBeVisible();
+
+    // An opened section still closes.
+    await page.getByRole("button", { name: /Where we are/ }).click();
+    await expect(page.getByText("Plant OEE is 48% from 1 of 2 machines.")).toBeHidden();
   });
 });

@@ -64,7 +64,7 @@ units and AMP would say so rather than invent a price.
 
 ---
 
-## THE SEVEN PLANTED PROBLEMS
+## THE EIGHT PLANTED PROBLEMS
 
 Each one is an ordinary row in an ordinary table. Nothing tells AMP where to
 look; every surface below finds them by its own rules.
@@ -78,6 +78,7 @@ look; every surface below finds them by its own rules.
 | 5 | Three stock items at or below reorder level | Inventory: **3 at risk**; the Copilot names the nozzle first |
 | 6 | CO-5002 (Bugatti) two days past its date | Risk Radar: **LIKELY — CO-5002 is already past its date** |
 | 7 | MT-9001 planned three days ago, still open | Risk Radar: **LIKELY — 1 maintenance task already overdue** |
+| 8 | WO-1002's planned end three days ago | Risk Radar: **LIKELY — WO-1002 is past its planned end**, 91 of 238 units still to make. It is *why* CO-5002 is late — click through from the order and you find the job |
 
 The Command Centre shows the top five, ranked by measured impact. Items 5–7 sit
 below that cut *because AMP cannot size them in units* — it says so rather than

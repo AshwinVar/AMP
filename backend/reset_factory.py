@@ -59,6 +59,7 @@ DEMO_UNIT_VALUE_GBP = 12.50
 #   material shortage     three items at or below reorder level (_seed_inventory)
 #   plan behind target    two plans that came due short (_seed_plans)
 #   late customer order   CO-5002 past its due date, undispatched
+#   late work order       WO-1002, its planned end three days ago
 #
 # docs/sales/FACTORY-DEMO-RUNBOOK.md quotes the figures these produce.
 PROBLEM_MACHINE = "SMT-Reflow-01"        # the breakdown, and the downtime story
@@ -206,21 +207,35 @@ def _seed_orders(db, machines):
                 actual, status = int(target * random.uniform(0.4, 0.8)), "In Progress"
             else:
                 actual, status = 0, "Planned"
+            # ONE ORDER IS LATE, on purpose (see the customer order below).
+            late = company == COMPANIES[0] and i == 1
+            started = datetime.utcnow() - timedelta(days=random.randint(1, 8))
             wo = models.WorkOrder(
                 tenant_code=TENANT, work_order_no=f"WO-{wo_seq}",
                 part_number=f"{part['code']}-{tag}", batch_number=f"{tag}-B{i + 1:02d}",
                 machine_id=machine.id, target_quantity=target, actual_quantity=actual,
                 status=status, material_state=state,
-                planned_start=datetime.utcnow() - timedelta(days=random.randint(1, 8)),
-                planned_end=datetime.utcnow() + timedelta(days=random.randint(1, 10)))
+                # created_at matters: ai.flow ages an open order from it, and
+                # leaving it to default to NOW while planned_start sits days in
+                # the past produced "open 0 days and its date has gone" on the
+                # radar — both halves true, the sentence nonsense. The order was
+                # raised when it was planned to start.
+                created_at=started,
+                planned_start=started,
+                # The late order's WORK ORDER is late too, which is WHY the order
+                # is: an owner who clicks through from "CO-5002 is past its date"
+                # should find the job that caused it, not two unrelated problems
+                # that happen to share a customer. Every other planned_end is in
+                # the future, so this is the only work order AMP can judge late.
+                planned_end=(datetime.utcnow() - timedelta(days=3) if late
+                             else datetime.utcnow() + timedelta(days=random.randint(1, 10))))
             db.add(wo)
             db.flush()
             co_status = "Dispatched" if state == "FIN" else "In Production" if state == "SEMI" else "Pending"
-            # ONE ORDER IS LATE, on purpose. Every due date used to be
-            # `today + 3..20`, so no order could ever be overdue and the Command
-            # Centre's delivery problem was unreachable on the demo plant. The
-            # second Bugatti part is in production and its date has passed.
-            late = company == COMPANIES[0] and i == 1
+            # Every due date used to be `today + 3..20`, so no order could ever be
+            # overdue and the Command Centre's delivery problem was unreachable on
+            # the demo plant. The second Bugatti part is in production, its work
+            # order has blown its planned end, and its date has passed.
             due = (date.today() - timedelta(days=2) if late
                    else date.today() + timedelta(days=random.randint(3, 20)))
             db.add(models.CustomerOrder(

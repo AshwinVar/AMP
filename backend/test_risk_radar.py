@@ -284,6 +284,47 @@ def main():
     check("a risk cannot propose a kind AMP has no path for", refused,
           "send_email was accepted as a proposable action")
 
+    # ── 8. work orders reach the radar at all (ADR-0039 era) ───────
+    #
+    # This module read customer orders and production plans and NEVER
+    # models.WorkOrder, so "which jobs are late?" -- the question a job shop asks
+    # first -- was answerable only by opening the Work Orders tab. A customer
+    # order can be late BECAUSE the job is, and the radar could see the first
+    # and not the second.
+    print()
+    print("=" * 74)
+    print("8. WORK ORDERS REACH THE RADAR")
+    print("=" * 74)
+    from ai import risk_radar as rr2
+    flow = {"chase": [
+        {"work_order_no": "WO-LATE", "part_number": "P-1", "age_days": 1, "late": True,
+         "planned_end": "2026-09-19T00:00:00", "target_quantity": 200, "actual_quantity": 60},
+        {"work_order_no": "WO-NEW", "part_number": "P-2", "age_days": 0, "late": True,
+         "planned_end": "2026-09-19T00:00:00", "target_quantity": 0, "actual_quantity": 0},
+        {"work_order_no": "WO-FINE", "part_number": "P-3", "age_days": 4, "late": False,
+         "planned_end": "2026-10-30T00:00:00", "target_quantity": 50, "actual_quantity": 10},
+    ], "undated": 2}
+    wo = rr2._work_order_risks(flow, 10.0)
+    check("only the LATE orders become risks", [r["key"] for r in wo] ==
+          ["workorder.WO-LATE", "workorder.WO-NEW"], str([r["key"] for r in wo]))
+    check("a late order is sized in the units still to make",
+          wo[0]["impact_units"] == 140 and wo[0]["impact_money"] == 1400, str(wo[0]))
+    check("...and one with no target quantity says so rather than claiming zero",
+          wo[1]["impact_units"] is None and "cannot size" in wo[1]["detail"], str(wo[1]))
+    check("a passed date is stated as a fact, not dressed up as a forecast",
+          all(r["likelihood"] == ev.LIKELY and "has passed" in r["rule"] for r in wo),
+          str([(r["likelihood"], r["rule"]) for r in wo]))
+    check("every work-order risk ends in something to do",
+          all((r.get("action") or "").strip() for r in wo), str([r.get("action") for r in wo]))
+    # created_at can legitimately be today on an order raised against a
+    # back-dated plan, and "open 0 days and its date has gone" reads as nonsense
+    # even though both halves are true.
+    check("an age of zero is left out rather than narrated",
+          "0 day" not in wo[1]["action"], wo[1]["action"])
+    check("...and an age of one is not '1 days'", "1 days" not in wo[0]["action"], wo[0]["action"])
+    check("finishing the job is the advice; AMP cannot do it, so no button",
+          all(r.get("propose") is None for r in wo), str([r.get("propose") for r in wo]))
+
     if failures:
         print(f"\n{len(failures)} FAILED")
         for f in failures:

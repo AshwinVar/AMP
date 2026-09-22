@@ -44,6 +44,7 @@ from ai import evidence as ev
 from ai.cost import build_cost_summary
 from ai.delivery import build_delivery_summary
 from ai.downtime import build_downtime_summary
+from ai.flow import build_wip_aging
 from ai.inventory import build_inventory_summary
 from ai.maintenance import build_maintenance_summary
 from ai.oee import build_oee_summary
@@ -270,6 +271,55 @@ def _maintenance_problem(maint):
         module="cmms", view="cmms", units=None, unit_value=None, facts=facts, state=ev.NOT_MEASURED)
 
 
+def _work_order_problem(flow, unit_value):
+    """Open work orders that have blown their planned end date.
+
+    WORK ORDERS REACHED NO OWNER SURFACE AT ALL. Neither this card nor the Risk
+    Radar read `models.WorkOrder`: the plan rows come from ProductionPlan and
+    the delivery rows from CustomerOrder, so "which jobs are late?" — the
+    question a job shop asks first — was answerable only by opening the Work
+    Orders tab and reading the list.
+
+    Sized in the units still to make on those orders, which is the same
+    good-units currency every other problem on this card is ranked in. An order
+    with no target quantity contributes nothing to the size rather than a
+    guess, and if none of them carry one the problem is reported UNSIZED rather
+    than as zero — `_rank` then puts it in the unsized tail, which is the
+    honest place for it.
+    """
+    late = [w for w in (flow.get("chase") or []) if w.get("late")]
+    if not late:
+        return None
+    remaining = sum(max(0, (w.get("target_quantity") or 0) - (w.get("actual_quantity") or 0))
+                    for w in late if w.get("target_quantity"))
+    oldest = max(late, key=lambda w: w.get("age_days") or 0)
+    facts = [
+        _fact("flow.late_orders", "Open work orders past their planned end", len(late), D, "orders",
+              "work_orders", "now"),
+        _fact("flow.oldest_late", "Oldest of them", oldest["work_order_no"], M, source="work_orders",
+              window="now", detail=f"{oldest.get('age_days')} days open"),
+    ]
+    if remaining:
+        facts.append(_fact("flow.late_units", "Units still to make on them", remaining, D, "units",
+                           "work_orders", "now"))
+    # `undated` is stated because it changes what the count MEANS: an order with
+    # no planned_end is not on time, it is unjudgeable, and saying "3 late" while
+    # silently ignoring 9 undated ones would be a different claim.
+    undated = flow.get("undated") or 0
+    if undated:
+        facts.append(_fact("flow.undated", "Open orders with no planned end date", undated, M, "orders",
+                           "work_orders", "now",
+                           detail="these cannot be judged late either way"))
+    return _problem(
+        key="flow.late",
+        title=f"{len(late)} work order{'' if len(late) == 1 else 's'} past its planned end",
+        detail=(f"oldest {oldest['work_order_no']}, open {oldest.get('age_days')} days"
+                + (f"; {remaining:,} units still to make" if remaining else "")),
+        module="operations", view="workorders",
+        units=remaining or None, unit_value=unit_value, facts=facts,
+        state=ev.OK if remaining else ev.NOT_MEASURED)
+
+
 def _machines_down_problem(machines):
     down = sorted(m.name for m in machines if (m.status or "") in DOWN_STATUSES)
     if not down:
@@ -341,12 +391,16 @@ def build_command_centre(db, tenant: str, now=None) -> dict:
     stock = build_inventory_summary(db, tenant)
     delivery = build_delivery_summary(db, tenant)
     maint = build_maintenance_summary(db, tenant)
+    # Work orders reached NO owner surface before this: neither this card nor
+    # the Risk Radar read models.WorkOrder, so "which jobs are late?" was
+    # answerable only by opening the Work Orders tab.
+    flow = build_wip_aging(db, tenant)
     machines = db.query(models.Machine).filter(models.Machine.tenant_code == tenant).all()
     unit_value = cost["unit_value_gbp"] if cost["priced"] else None
 
     position = _position(db, tenant, oee, plan, prod, machines)
     problems = _rank([p for p in (
-        [_machines_down_problem(machines)]
+        [_machines_down_problem(machines), _work_order_problem(flow, unit_value)]
         + _downtime_problems(downtime, cost, unit_value)
         + _plan_problems(plan, downtime, unit_value)
         + [_quality_problem(quality, unit_value), _stock_problem(stock),

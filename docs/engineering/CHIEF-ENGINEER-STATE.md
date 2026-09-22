@@ -22,6 +22,15 @@ write/action authorization**, production deployment safety. Mutation testing
 stays mandatory for exactly these, plus critical recommendation rules and
 financial calculations.
 
+**THE FRONTEND GATES ARE FOUR, NOT THREE.** `npx vitest run`, `npx tsc
+--noEmit`, `npx eslint .` (baseline exactly 132) — and **`npx playwright test`**,
+which is the only one that exercises the rendered page in a browser. It was
+skipped before #708 and CI caught what the other three could not: the Daily
+Brief's collapsed-by-default behaviour was pinned in THREE places (a unit test,
+an e2e spec, and the component), and running vitest alone found two of them. A
+change to what a screen shows on load is exactly the kind e2e exists for. Run
+all four before pushing frontend work; the full run takes about a minute.
+
 **Lower-severity metric cleanup goes to `BACKLOG-DEFERRED.md`, not into a PR.**
 Only high-severity correctness is still fixed on sight: a wrong HIGH/CRITICAL
 recommendation, a cross-tenant or cross-OEM leak, an incorrect financial value,

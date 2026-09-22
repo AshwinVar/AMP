@@ -206,6 +206,64 @@ def agent_action_trend(db: Session = Depends(_get_db), current_user: dict = Depe
     return ai.trends.build_agent_trend(db, request_tenant(current_user))
 
 
+@router.post("/agent-actions/propose")
+def propose_agent_action(payload: dict, db: Session = Depends(_get_db),
+                         current_user: dict = Depends(require_roles(["Admin", "Supervisor"]))):
+    """Raise an action a person drafted in the Copilot (ADR-0039).
+
+    THIS IS THE ONLY WRITE ON THE COPILOT'S ACTION PATH, and a language model is
+    not on it. `ai/tools/actions.py` only reads; the draft it returns is inert
+    text in an answer. A person clicking Propose sends nothing but a kind and a
+    machine id, on their own authenticated request, and everything that ends up
+    in the database is re-derived HERE:
+
+      * the tenant is this request's, never the payload's;
+      * the machine is looked up inside that tenant, so an id from another
+        workspace is simply not found;
+      * the priority, the task type and the wording come from
+        `draft_for_machine` reading the machine again at this instant — the
+        client's copy of the draft is never read back, so a Medium draft cannot
+        be returned as a Critical one;
+      * `agents.propose_requested_task` files it exactly like the five agents'
+        own proposals: a MaintenanceTask "Proposed" plus an AgentAction
+        "Proposed", which holds the task until somebody decides it.
+
+    Nothing executes. `agent="copilot"` can never auto-approve
+    (agents.should_auto_approve), so this always waits for a human at
+    POST /agent-actions/{id}/approve, where approvals.authorise governs it and
+    approval freezes the outcome baseline (ADR-0029).
+    """
+    from ai import agents as ai_agents          # lazy: pulls in the event bus
+    from ai import evidence as ev               # lazy: pulls in the tool layer
+    from ai.tools import actions as ai_actions
+
+    tenant = request_tenant(current_user)
+    kind = payload.get("kind") if isinstance(payload, dict) else None
+    machine_id = payload.get("machine_id") if isinstance(payload, dict) else None
+    if kind not in ev.PROPOSABLE_KINDS:
+        raise HTTPException(status_code=400, detail="AMP cannot propose that kind of action.")
+    if not isinstance(machine_id, int) or isinstance(machine_id, bool):
+        raise HTTPException(status_code=400, detail="A proposal names a machine by id.")
+    machine = db.query(models.Machine).filter(
+        models.Machine.id == machine_id, models.Machine.tenant_code == tenant).first()
+    if machine is None:
+        raise HTTPException(status_code=404, detail="Machine not found")
+    if ai_agents._open_auto_task_exists(db, machine.id, ai_actions.COPILOT_TASK_TYPE):
+        raise HTTPException(
+            status_code=409,
+            detail=(f"{machine.name} already has an open maintenance task raised from the Copilot. "
+                    f"Decide that one first."))
+
+    draft = ai_actions.draft_for_machine(db, tenant, machine)
+    if draft.refused or not draft.action:
+        raise HTTPException(status_code=400, detail=draft.summary)
+    action = ai_agents.propose_requested_task(
+        db, tenant, machine, draft.action, requested_by=str(current_user.get("sub") or ""))
+    db.commit()
+    db.refresh(action)
+    return _agent_action_dict(action)
+
+
 @router.post("/agent-actions/{action_id}/approve")
 def approve_agent_action(action_id: int, db: Session = Depends(_get_db), current_user: dict = Depends(require_roles(["Admin", "Supervisor"]))):
     return _decide_agent_action(action_id, "approve", db, current_user)

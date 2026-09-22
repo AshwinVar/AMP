@@ -71,6 +71,17 @@ POSSIBLE = "POSSIBLE"
 WATCH = "WATCH"
 LIKELIHOOD = (LIKELY, POSSIBLE, WATCH)
 
+# ── Proposable actions: what a tool may DRAFT for a person to raise ──
+#
+# A draft is not a write. A tool that returns one has read the plant and
+# written down what it would propose; nothing exists in the database until a
+# person raises it through POST /agent-actions/propose, and nothing takes
+# effect until a person approves it through the gate that already governs
+# every agent proposal (approvals.authorise). The kinds are a closed set
+# because each one names an ai.agents path that can actually carry it out —
+# a draft AMP cannot execute is a promise it cannot keep.
+PROPOSABLE_KINDS = ("maintenance_task",)
+
 # ── Root-cause labels (the Root-Cause Explorer) ─────────────────────
 CAUSE_CONFIRMED = "CAUSE CONFIRMED"
 LIKELY_CONTRIBUTOR = "LIKELY CONTRIBUTOR"
@@ -127,10 +138,28 @@ class ToolResult:
     view: str = None
     notes: list = field(default_factory=list)
     elapsed_ms: int = None
+    # An action AMP would PROPOSE, drafted from the facts above. Optional, and
+    # never a write: see PROPOSABLE_KINDS. `machine_id` is AMP's own — the tool
+    # resolved it inside the bound tenant — and the route that raises the draft
+    # resolves it again rather than trusting what comes back.
+    action: dict = None
 
     def __post_init__(self):
         if self.state not in DATA_STATES and self.state not in REFUSALS:
             raise ValueError(f"{self.tool}: unknown state {self.state!r}")
+        if self.action is not None:
+            # A REFUSAL MAY NOT CARRY A DRAFT. This is an invariant rather than a
+            # filter further downstream: a result that both says "you may not see
+            # this" and offers a button is the one shape that could turn a
+            # refusal into an action, so it cannot be built at all.
+            if self.refused:
+                raise ValueError(f"{self.tool}: a refusal ({self.state}) cannot draft an action")
+            if not isinstance(self.action, dict):
+                raise ValueError(f"{self.tool}: a drafted action is an object")
+            if self.action.get("kind") not in PROPOSABLE_KINDS:
+                raise ValueError(f"{self.tool}: {self.action.get('kind')!r} is not a proposable action")
+            if not isinstance(self.action.get("machine_id"), int) or isinstance(self.action.get("machine_id"), bool):
+                raise ValueError(f"{self.tool}: a drafted action names a machine by id")
 
     @property
     def refused(self) -> bool:
@@ -139,6 +168,7 @@ class ToolResult:
     def to_dict(self, first_id: int = 1) -> dict:
         return {"tool": self.tool, "state": self.state, "summary": self.summary,
                 "view": self.view, "notes": list(self.notes), "elapsed_ms": self.elapsed_ms,
+                "action": dict(self.action) if self.action else None,
                 "facts": [f.to_dict(f"F{first_id + i}") for i, f in enumerate(self.facts)]}
 
 

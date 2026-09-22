@@ -208,7 +208,11 @@ def main():
     print("=" * 74)
     print("6. EVERY TOOL, EVERY FACTORY")
     print("=" * 74)
-    args_for = {"get_machine_history": {"machine": "CNC-01"}, "find_record": {"query": "WO-001"}}
+    args_for = {"get_machine_history": {"machine": "CNC-01"}, "find_record": {"query": "WO-001"},
+                # A draft is a read like any other here: every factory has a CNC-01,
+                # and this loop checks it leaks nothing and invents no provenance.
+                # That it writes nothing is test_copilot_actions.py section 1.
+                "draft_maintenance_task": {"machine": "CNC-01"}}
     for name in sorted(REGISTRY):
         for tenant in F.TENANTS:
             p = Principal(tenant=tenant, role="Admin")

@@ -40,6 +40,10 @@ ESCALATION_WINDOW_DAYS = 30
 YIELD_TASK_TYPE = "Yield (auto)"
 YIELD_MIN_RATE = 85
 YIELD_MIN_UNITS = 50
+# Not an agent on the roster: the key an action carries when a PERSON asked for
+# it in the Copilot rather than an event triggering it (propose_requested_task).
+# should_auto_approve refuses it outright.
+COPILOT_AGENT = "copilot"
 
 
 # ── Oversight: propose, policy, decide ─────────────────────────────
@@ -78,7 +82,18 @@ def should_auto_approve(action, db=None) -> bool:
     """Trusted low-risk actions skip the human gate. Trust is per-tenant (a saved
     policy, set by an Admin in the UI) and falls back to the AUTO_APPROVE_AGENTS
     env default ('reorder' — reversible drafts). Maintenance and quality stay
-    gated unless explicitly trusted."""
+    gated unless explicitly trusted.
+
+    NEVER the Copilot. An action a person asked the Copilot for is the one kind
+    that must always be decided by a human, because the request arrived through
+    a conversation: the text of a question is the one input to AMP that anybody
+    who can type into the plant's own data can influence. `set_agent_policy`
+    already drops any key that is not a roster agent, so no tenant can trust
+    `copilot` through the UI — this closes the env var (AUTO_APPROVE_AGENTS)
+    as well, which is not validated against the roster.
+    """
+    if getattr(action, "agent", None) == COPILOT_AGENT:
+        return False
     return action.agent in trusted_agents(db, getattr(action, "tenant_code", None))
 
 
@@ -154,9 +169,11 @@ def apply_decision(db, action, decision, decided_by=None, actor=None,
 
 
 def _propose(db, tenant, agent, action_type, summary, ref_kind, ref_id,
-             severity="Medium", machine_id=None) -> None:
+             severity="Medium", machine_id=None):
     """Record a proposed action; auto-approve it if policy allows, otherwise
-    notify a human that it awaits approval."""
+    notify a human that it awaits approval. Returns the AgentAction, so a caller
+    that needs to answer with it (the Copilot's propose route) does not have to
+    go looking for the row it just created."""
     action = models.AgentAction(
         tenant_code=tenant, agent=agent, action_type=action_type, summary=summary,
         ref_kind=ref_kind, ref_id=ref_id, severity=severity,
@@ -180,6 +197,7 @@ def _propose(db, tenant, agent, action_type, summary, ref_kind, ref_id,
             message=f"The {agent} agent proposed an action awaiting approval in Agent Activity.",
             status="Unread",
         ))
+    return action
 
 
 # ── Maintenance & Quality agents (both propose a task) ─────────────
@@ -208,8 +226,38 @@ def _propose_task(db, tenant, agent, task_no, machine_id, task_type, priority, s
     )
     db.add(task)
     db.flush()
-    _propose(db, tenant, agent, "open_task", summary, "maintenance_task", task.id,
-             severity=severity, machine_id=machine_id)
+    return _propose(db, tenant, agent, "open_task", summary, "maintenance_task", task.id,
+                    severity=severity, machine_id=machine_id)
+
+
+# ── Asked for, not observed: a person's own proposal ────────────────
+#
+# The five agents above propose because an EVENT fired. This one proposes
+# because a person asked the Copilot to, and it exists so that request travels
+# the identical path: the same Proposed task, the same AgentAction, the same
+# approval gate, the same frozen outcome baseline on approve (ADR-0029). The
+# Copilot itself never calls it — `ai/tools/actions.py` only DRAFTS, and this
+# runs behind POST /agent-actions/propose, from an authenticated request whose
+# role has already been checked. COPILOT_AGENT records who asked for it, so the
+# activity log never presents a person's request as something AMP noticed.
+
+
+def propose_requested_task(db, tenant, machine, draft, requested_by=""):
+    """Raise a person's drafted maintenance task. Returns the AgentAction.
+
+    `draft` is AMP's own, re-derived from the machine at this instant by
+    ai.tools.actions.draft_for_machine — never the client's copy of it, so the
+    priority and the wording cannot be edited on the way back in.
+    """
+    who = f" Requested by {requested_by}." if requested_by else ""
+    return _propose_task(
+        db, tenant, COPILOT_AGENT,
+        task_no=f"COPILOT-{machine.id}-{int(datetime.utcnow().timestamp())}",
+        machine_id=machine.id, task_type=draft["task_type"], priority=draft["priority"],
+        summary=draft["summary"],
+        notes=f"Asked for in the AMP Copilot.{who} {draft['reason']}".strip(),
+        severity=draft["priority"],
+    )
 
 
 def act_on_machine_event(event, db) -> None:

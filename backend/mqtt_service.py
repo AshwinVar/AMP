@@ -13,6 +13,7 @@ load_dotenv()
 from sqlalchemy.exc import IntegrityError
 
 from database import SessionLocal
+import gateway_auth
 import models
 import mqtt_identity
 from events import event_bus, DowntimeStarted
@@ -217,6 +218,87 @@ def adopt_candidate(db, route, name: str):
             f"a machine named {name!r} already exists at another site in {route.tenant}, and one "
             f"with no site also exists; AMP will not guess which this packet is from")
     return siteless[0]
+
+
+def authenticate_gateway(db, route, payload):
+    """Is this publisher allowed to speak for this topic? Returns the credential, or None.
+
+    TWO MODES, AND THE MIGRATION BETWEEN THEM IS THE POINT.
+
+    A workspace with NO credential registered keeps exactly the behaviour it has
+    always had: unsigned packets are accepted, and the broker's ACLs are the
+    only control. That is not a good place to stay, but it IS where every
+    existing deployment is, and a change that silently required signatures would
+    take every current customer's telemetry offline the moment it shipped.
+
+    The moment an operator registers ONE credential for a workspace, that
+    workspace is closed: every packet for it must then be signed by a
+    registered, active gateway whose workspace and site match the topic. There
+    is no per-message opt-in, because an attacker would simply not opt in.
+
+    The lookup is by gateway_id, which is unique installation-wide — the id
+    arrives in the payload before AMP knows whose it is, so it has to resolve to
+    exactly one credential rather than one per tenant.
+    """
+    # ALL credentials, active or not. Counting only ACTIVE ones would mean that
+    # revoking a workspace's last gateway RE-OPENS it to unsigned packets --
+    # the exact opposite of what an operator revoking a gateway intends, and a
+    # fail-open. Once a workspace has ever registered a gateway it stays closed;
+    # `is_active` is then checked per credential, in authorise().
+    tenant_has_credentials = db.query(models.GatewayCredential).filter(
+        models.GatewayCredential.tenant_code == route.tenant).count()
+    if not tenant_has_credentials:
+        return None
+
+    claimed = gateway_auth.claimed_gateway_id(payload)
+    if claimed is None:
+        raise gateway_auth.GatewayRejected(
+            f"{route.tenant} requires gateway signatures and this message carries no usable "
+            f"gateway_id")
+
+    # Deliberately NOT filtered by tenant: filtering would make a credential
+    # belonging to another workspace look unregistered, and "unregistered" is a
+    # different problem for an operator to chase than "registered elsewhere".
+    credential = db.query(models.GatewayCredential).filter(
+        models.GatewayCredential.gateway_id == claimed).first()
+    gateway_auth.authorise(route, payload, credential)
+
+    try:
+        credential.last_seen_at = datetime.utcnow()
+        db.commit()
+    except Exception:            # noqa: BLE001 - never let bookkeeping drop a good packet
+        db.rollback()
+    return credential
+
+
+def _record_gateway_refusal(db, route, why: str):
+    """Put a refused gateway where a human will see it, once.
+
+    A refusal is either a misconfigured gateway or an attempt to publish into
+    somebody else's workspace, and NEITHER should be discoverable only by
+    reading a log on a server. Deduplicated on the title for the same reason the
+    identity conflict is: a gateway publishing every second would otherwise
+    raise this 86,400 times a day and the feed would be useless.
+    """
+    title = f"Gateway rejected at {route.site or 'this site'}"
+    existing = db.query(models.Notification).filter(
+        models.Notification.tenant_code == route.tenant,
+        models.Notification.title == title,
+        models.Notification.status != "Read").first()
+    if existing is not None:
+        return
+    try:
+        db.add(models.Notification(
+            tenant_code=route.tenant, notification_type="gateway_auth",
+            severity="High", title=title, status="Unread",
+            message=(f"{why}. The reading was dropped. If you have just installed a gateway, "
+                     f"check it is using the id and key AMP issued for this site. If you have "
+                     f"not, someone is publishing to your workspace's topic and failing to "
+                     f"authenticate.")))
+        db.commit()
+    except Exception:            # noqa: BLE001 - never let the record break the listener
+        db.rollback()
+        log.info("could not record the gateway refusal for %s", route.tenant)
 
 
 def _record_identity_conflict(db, route, name: str, why: str):
@@ -492,6 +574,22 @@ def on_message(client, userdata, msg):
                 "deployment (topic=%s)", route.tenant, msg.topic)
             return
 
+        # ---- AND THEN: IS THIS GATEWAY ALLOWED TO SAY THAT? ---------------
+        # The topic is a claim the BROKER has checked -- if, and only if, its
+        # per-gateway ACLs are configured. Every pilot gateway holds valid
+        # broker credentials by definition, so on a broker whose ACL is wrong,
+        # absent, or simply `#`, one customer publishes into another's factory
+        # by editing a string in their own config file. A signed packet binds
+        # the publisher to the workspace AMP issued its key for.
+        try:
+            credential = authenticate_gateway(db, route, payload)
+        except gateway_auth.GatewayRejected as refusal:
+            log.warning("MQTT message REJECTED (gateway): %s/%s: %s",
+                        route.tenant, route.site, refusal)
+            db.rollback()
+            _record_gateway_refusal(db, route, str(refusal))
+            return
+
         # Bind the thread to the resolved tenant for the rest of the handler so
         # the ADR-0002 scoping hook filters any read taken below, not just the
         # ones written with an explicit predicate. Defence in depth: the
@@ -591,18 +689,54 @@ def on_message(client, userdata, msg):
 
         if (production_valid and total_count > 0
                 and good_count + rejected_count == total_count):
-            production = models.ProductionRecord(
-                machine_id=machine.id,
-                tenant_code=machine.tenant_code,
-                planned_minutes=planned_minutes,
-                runtime_minutes=runtime_minutes,
-                ideal_cycle_time_seconds=ideal_cycle_time_seconds,
-                total_count=total_count,
-                good_count=good_count,
-                rejected_count=rejected_count,
-            )
+            # IDEMPOTENCY. A gateway deletes a record from its local queue only
+            # once the broker has acknowledged it, so delivery is at-least-once:
+            # a publish that timed out may or may not have arrived, and
+            # re-sending is the only safe response to not knowing. Without this,
+            # the retry writes a SECOND production record and the shift's output
+            # doubles -- silently, and in the direction that flatters the
+            # customer, which is the worst direction for a number they act on.
+            #
+            # Validated through claimed_gateway_id because it is the same shape
+            # rule and the same unbounded-string-into-a-WHERE-clause concern.
+            record_id = gateway_auth.claimed_gateway_id(
+                {"gateway_id": payload.get("record_id")})
 
-            db.add(production)
+            duplicate = False
+            if record_id is not None:
+                duplicate = db.query(models.ProductionRecord).filter(
+                    models.ProductionRecord.tenant_code == machine.tenant_code,
+                    models.ProductionRecord.source_record_id == record_id
+                ).first() is not None
+
+            if duplicate:
+                log.info("production record %s already written for %s; the gateway re-sent it",
+                         record_id, machine.tenant_code)
+            else:
+                production = models.ProductionRecord(
+                    machine_id=machine.id,
+                    tenant_code=machine.tenant_code,
+                    planned_minutes=planned_minutes,
+                    runtime_minutes=runtime_minutes,
+                    ideal_cycle_time_seconds=ideal_cycle_time_seconds,
+                    total_count=total_count,
+                    good_count=good_count,
+                    rejected_count=rejected_count,
+                    source_record_id=record_id,
+                )
+                # A SAVEPOINT, because the query above loses a race: two copies
+                # of the same message in flight both see "not written yet" and
+                # both insert. uq_production_source_record is what actually
+                # holds, and without the savepoint its IntegrityError would
+                # abort the WHOLE packet -- losing the machine's status update
+                # as collateral for a production record AMP already has.
+                try:
+                    with db.begin_nested():
+                        db.add(production)
+                        db.flush()
+                except IntegrityError:
+                    log.info("production record %s raced another copy of itself for %s; "
+                             "the first one stands", record_id, machine.tenant_code)
 
         # One DowntimeLog per breakdown EVENT — only on the transition INTO
         # Breakdown, not on every message while the machine stays down. A PLC

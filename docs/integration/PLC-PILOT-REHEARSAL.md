@@ -51,7 +51,7 @@ python -m compileall -q edge && for f in edge/test_*.py; do python "$f" || echo 
 |---|---|---|---|
 | 19 | PLC clock an hour ahead | Reading refused; message names the PLC clock | `test_edge_pipeline.py` §3 |
 | 20 | Reading arrives older than the last one for that signal | Refused — a stale value must not overwrite a newer one | `test_edge_pipeline.py` §3 |
-| 21 | Same reading delivered twice (replay) | Each record carries a distinct `record_id`; see the gap in §F | `test_edge_pipeline.py` §6 |
+| 21 | Same reading delivered twice (replay) | Each record carries a `record_id`, and AMP writes it once | `test_edge_pipeline.py` §6, `test_gateway_ingest_authentication.py` §6 |
 
 ## D. The network and the queue
 
@@ -73,18 +73,23 @@ python -m compileall -q edge && for f in edge/test_*.py; do python "$f" || echo 
 | 30 | Two machines of one name, one sited and one not | Refused; conflict recorded once for a human; **no** row created | `test_machine_identity_adoption.py` §3–4 |
 | 31 | Gateway reconnects repeatedly | Still exactly one machine | `test_machine_identity_adoption.py` §1, §7 |
 | 32 | A packet's payload claims a different tenant than its topic | Rejected | `mqtt_identity.check_payload_agrees`, `test_mqtt_tenant_identity.py` |
-| 33 | Gateway config edited to another customer's tenant | Signature no longer matches that tenant's key — **see the gap below** | `test_edge_security.py` §1–2 |
+| 33 | Gateway config edited to another customer's tenant | Refused: the signature proves which gateway it is, and the credential proves which workspace that gateway may speak for | `test_edge_security.py` §1–2, `test_gateway_ingest_authentication.py` §3 |
+| 33b | The same attack against the same SITE NAME in another workspace | Refused — and this is the case that isolates the workspace check from the site check | `test_gateway_ingest_authentication.py` §3 |
+| 33c | Revoking the last gateway | The workspace stays CLOSED. Revocation must never hand it back to unsigned traffic | `test_gateway_ingest_authentication.py` §2 |
 | 34 | Adoption attempted across workspaces | Never crosses; each workspace resolves its own | `test_machine_identity_adoption.py` §5 |
 
 ## F. Not covered — the honest half
 
-These are the drills that do **not** yet have evidence. They are the pilot's
-real risk list.
+The pilot's real risk list. Rows struck through were open earlier in this
+document's life and are kept, closed, rather than deleted — so that anyone who
+read the earlier version can see what changed rather than wonder whether they
+misremembered.
 
 | # | Drill | Why it matters | Status |
 |---|---|---|---|
-| 35 | **A gateway publishes into another tenant by editing its topic** | The gateway signs every message, but **AMP does not verify signatures yet**, so the broker's ACLs are the only control. Drill 33 proves the gateway half only. | **OPEN — top priority** |
-| 36 | **The same production record delivered twice** | Delivery is at-least-once and AMP does not deduplicate on `record_id`, so a retried publish can double-count a window. The wire contract calls this release-blocking. | **OPEN** |
+| 35 | ~~A gateway publishes into another tenant by editing its topic~~ | **CLOSED** (ADR-0041). Covered end to end by `test_gateway_ingest_authentication.py` §3, including the same-site case. The residual exposure is the key being a shared secret at rest in AMP's database. | **CLOSED** |
+| 36 | ~~The same production record delivered twice~~ | **CLOSED** (migration 0013). Three deliveries write one record; `test_gateway_ingest_authentication.py` §6. | **CLOSED** |
+| 35b | **A gateway host whose clock is wrong** | More than five minutes of skew and nothing authenticates. Deliberate, but it makes NTP a prerequisite rather than a nicety, and nothing tests what a commissioning engineer actually sees when it happens. | **OPEN** |
 | 37 | Process telemetry (temperature, pressure) on an ordinary machine | Published correctly and **dropped by AMP**: `readings` is interpreted only for an OEM installation with a telemetry profile. | **OPEN — do not promise a chart** |
 | 38 | Anything at all against a **physical PLC** | Every protocol row in the support matrix says SIMULATOR VERIFIED. Software servers do not run out of sessions, do not have a CPU watchdog, and share our clock. | **OPEN by design — this is what the first visit is for** |
 | 39 | MQTT over TLS to a production broker | `tls_set()` is called; never exercised against a real TLS endpoint. | **OPEN** |

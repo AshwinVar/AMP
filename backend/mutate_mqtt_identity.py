@@ -34,10 +34,13 @@ MUTATIONS = [
     ("new machine created with no tenant (falls back to the column default)",
      "mqtt_service.py", "        tenant_code=route.tenant,\n        site=route.site,\n",
      "        site=route.site,\n"),
+    # Re-indented by one level when the production insert moved inside the
+    # idempotency check (ADR-0041). The DowntimeLog anchor below did not move,
+    # which is why only this one needed repointing.
     ("ProductionRecord written without a tenant", "mqtt_service.py",
-     "                machine_id=machine.id,\n                tenant_code=machine.tenant_code,\n"
-     "                planned_minutes=planned_minutes,",
-     "                machine_id=machine.id,\n                planned_minutes=planned_minutes,"),
+     "                    machine_id=machine.id,\n                    tenant_code=machine.tenant_code,\n"
+     "                    planned_minutes=planned_minutes,",
+     "                    machine_id=machine.id,\n                    planned_minutes=planned_minutes,"),
     ("DowntimeLog written without a tenant", "mqtt_service.py",
      '                machine_id=machine.id,\n                tenant_code=machine.tenant_code,\n'
      '                reason="Breakdown",',

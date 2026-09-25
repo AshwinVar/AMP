@@ -60,11 +60,35 @@ Copy [`examples/.env.example`](examples/.env.example) to `.env` and fill it in.
 The config file names the variables; it never holds the values, and the gateway
 refuses to start if it finds a password written into it.
 
-- `AMP_GATEWAY_KEY`, `AMP_MQTT_USERNAME`, `AMP_MQTT_PASSWORD` — issued by AMP
+- `AMP_GATEWAY_KEY` — issued by AMP, see below
+- `AMP_MQTT_USERNAME`, `AMP_MQTT_PASSWORD` — the broker credentials AMP issued
 - `PLC_PASSWORD` — the controller's own, from the customer's controls engineer
 
 Keep these separate. The plant's controls password should never be the thing
 that also opens their AMP workspace.
+
+**Getting the gateway key.** An Admin in the workspace issues one:
+
+```
+POST /gateways   { "gateway_id": "gw-acme-plant1-01", "site": "plant-1" }
+```
+
+The response carries the key **once** — AMP keeps no way to show it again — plus
+the exact topic to put in the config. Put the key straight into `.env`.
+
+Two things worth knowing before you do it:
+
+- **The first gateway a workspace registers CLOSES that workspace.** From then
+  on every MQTT message for it must be signed by a registered, active gateway.
+  That is the point, but do not issue one an hour before you are ready to
+  configure the gateway.
+- **The id is unique across all of AMP**, not just this customer, because a
+  message names it before AMP knows whose it is. Prefix it with the workspace
+  and site: `gw-acme-plant1-01`.
+
+If the key is lost, issue a new gateway and revoke the old one
+(`POST /gateways/{id}/revoke`). Revoking does not re-open the workspace, and it
+takes effect on the gateway's very next packet.
 
 ## 4. Check the config before touching the network
 
@@ -182,6 +206,11 @@ python -m ampedge run gateway.yaml --health-every 10
 **"The machine shows Idle in AMP but it is running."** Check `preview`: if
 `running` reads `false`, the PLC is saying so — usually the wrong tag, or a run
 bit that means "in auto mode" rather than "producing".
+
+**"Everything says connected and AMP shows nothing at all."** Check the
+gateway's clock. A signature more than five minutes old or five minutes in the
+future is refused, so a host whose time is wrong cannot authenticate at all.
+AMP raises a notification in the workspace saying so.
 
 **"AMP shows no production."** If only `part_count` is mapped and there is no
 reject counter, AMP records **no production rather than claiming 100% quality**.

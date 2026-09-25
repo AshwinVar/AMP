@@ -73,6 +73,7 @@ import reports_routes
 import analytics_routes
 import recommendations_routes
 import bom_routes
+import gateway_routes
 import core_routes
 import industrial_adapters
 from events import event_bus, ProductionCompleted, DowntimeStarted, InventoryLow, QualityInspectionFailed
@@ -253,6 +254,19 @@ _ensure_column("tenant_configs", "unit_value_gbp", "ALTER TABLE tenant_configs A
 # Copilot request while a hosted key is configured; a missing column would be a
 # 500 on /ai/ask, not a degraded feature.
 _ensure_column("ai_learning_consents", "scope", "ALTER TABLE ai_learning_consents ADD COLUMN scope VARCHAR")
+# The gateway's own id for a production message (alembic 0013, ADR-0041). Added
+# at boot as well because the MQTT handler SELECTS this column before every
+# production insert: on a deployment that starts before its migrate step has
+# run, a missing column would not be a degraded feature, it would be an ingest
+# path that raises on every packet carrying production.
+#
+# The UNIQUE constraint is deliberately NOT added here. create_all cannot add
+# one to an existing table and neither can a bare ALTER on SQLite; the migration
+# owns it. Without it the boot-repaired database still DEDUPLICATES -- the
+# handler queries first -- it simply loses the backstop against two copies
+# racing, until alembic runs. Degraded, and honest about which half is missing.
+_ensure_column("production_records", "source_record_id",
+               "ALTER TABLE production_records ADD COLUMN source_record_id VARCHAR(64)")
 # THE APPROVAL GATE'S REVOCATION FLAG (alembic 0005) — and the reason the block
 # below exists at all.
 #
@@ -434,6 +448,7 @@ app.include_router(reports_routes.router)
 app.include_router(analytics_routes.router)
 app.include_router(recommendations_routes.router)
 app.include_router(bom_routes.router)
+app.include_router(gateway_routes.router)
 app.include_router(core_routes.router)
 
 # Register the OEM portal (ADR-0017) — the machine manufacturer's view of its

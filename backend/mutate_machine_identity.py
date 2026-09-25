@@ -68,9 +68,14 @@ MUTATIONS = [
     ("a refused packet is dropped with no record at all", MQTT,
      "            _record_identity_conflict(db, route, machine_name, str(clash))",
      "            pass"),
+    # Anchored on the notification_type below it: _record_gateway_refusal
+    # (ADR-0041) deduplicates exactly the same way, so the bare guard now
+    # matches in two places.
     ("the conflict is recorded again for every packet, flooding the feed", MQTT,
-     "    if existing is not None:\n        return",
-     "    if False:\n        return"),
+     "    if existing is not None:\n        return\n    try:\n        db.add(models.Notification(\n"
+     "            tenant_code=route.tenant, notification_type=\"machine_identity\",",
+     "    if False:\n        return\n    try:\n        db.add(models.Notification(\n"
+     "            tenant_code=route.tenant, notification_type=\"machine_identity\","),
     ("a conflict already read is treated as still open, so it never re-raises", MQTT,
      "        models.Notification.status != \"Read\",",
      "        models.Notification.status == \"Read\","),

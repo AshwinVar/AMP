@@ -474,6 +474,15 @@ jobs:
       - name: The AI-consent table (0009) on PostgreSQL
         working-directory: backend
         run: python verify_pg_native_ai.py 5432
+      # A UNIQUE constraint over a NULLABLE column, added to a table that is
+      # already full. SQLite cannot judge either half: it has no ALTER TABLE ADD
+      # CONSTRAINT (the migration uses a batch rebuild), and whether NULL is
+      # distinct from NULL for a unique index is exactly the kind of thing that
+      # must be proven on the engine production actually runs.
+      - name: Gateway credentials and production idempotency (0013) on PostgreSQL
+        working-directory: backend
+        run: python verify_pg_gateway_credentials.py 5432
+
       - name: Exactly one factory wins a raced claim code
         working-directory: backend
         run: python verify_pg_claim.py 5432

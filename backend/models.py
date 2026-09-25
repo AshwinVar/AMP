@@ -74,8 +74,26 @@ class ShiftData(Base):
 
 class ProductionRecord(Base):
     __tablename__ = "production_records"
+    __table_args__ = (
+        # IDEMPOTENCY. A gateway deletes a record from its local queue only once
+        # the broker has acknowledged it, which makes delivery at-least-once: a
+        # publish that times out may or may not have arrived, and re-sending is
+        # the only safe response. Without this constraint the retry writes a
+        # SECOND production record and the shift's output doubles -- silently,
+        # and in the direction that flatters the customer, which is the worst
+        # direction for a number they will act on.
+        #
+        # NULL is distinct from NULL in both SQLite and PostgreSQL, so every
+        # record written by the older paths (CSV import, the HTTP ingest, a
+        # human typing production in) carries NULL here and is unaffected.
+        UniqueConstraint("tenant_code", "source_record_id",
+                         name="uq_production_source_record"),
+    )
 
     id = Column(Integer, primary_key=True, index=True)
+    # The gateway's own id for this message. NULL for everything not published
+    # by a gateway, which is most of what exists today.
+    source_record_id = Column(String(64), nullable=True, index=True)
     tenant_code = Column(String, index=True, nullable=False, default="DEFAULT")
     machine_id = Column(Integer, ForeignKey("machines.id"))
     planned_minutes = Column(Integer, nullable=False)
@@ -1688,3 +1706,53 @@ class ActionOutcome(Base):
     # BETTER | NO CHANGE | WORSE | NOT MEASURABLE, and NULL until measured.
     verdict = Column(String(16), nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow, index=True)
+
+
+class GatewayCredential(Base):
+    """The key that proves a gateway is the gateway it claims to be.
+
+    WHY THIS TABLE EXISTS. AMP takes tenant and site from the MQTT topic, and
+    mqtt_identity is right that the topic is the only part a BROKER can enforce.
+    But that enforcement is the broker's, and it depends entirely on per-gateway
+    ACLs being configured correctly. Every pilot gateway holds valid broker
+    credentials by definition, so on a broker whose ACL is wrong, absent, or
+    simply `#`, a customer publishes as any other customer by editing one string
+    in a config file they own. Not an exploit -- the protocol working as
+    designed.
+
+    A row here binds a gateway id to EXACTLY ONE workspace and ONE site. The
+    gateway signs what it sends with `secret`; AMP verifies the signature to
+    learn WHO is speaking, then compares this row against the topic to learn
+    whether they may. Re-signing a stolen packet with your own key passes the
+    first check and fails the second, which is the whole design.
+
+    `secret` IS A SECRET AT REST, and that is a deliberate trade. HMAC needs the
+    same key on both sides, so a hash cannot be stored in its place. The
+    alternative -- asymmetric signing, where AMP holds only a public key -- is
+    better on this one axis and costs a crypto dependency on every plant PC,
+    including ones where installing a wheel with native code is a ticket. This
+    is the shape webhook signing secrets already take everywhere. It is issued
+    by AMP, shown once, never returned by any route, and revocable by setting
+    `is_active` false, which takes effect on the very next packet.
+    """
+
+    __tablename__ = "gateway_credentials"
+    __table_args__ = (
+        UniqueConstraint("gateway_id", name="uq_gateway_credential_id"),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    tenant_code = Column(String, index=True, nullable=False)
+    # NOT NULL with an empty-string default, for the same reason Machine.site is:
+    # in PostgreSQL NULL != NULL, so a nullable column cannot be compared for
+    # equality reliably, and "" is how a single-plant customer spells "no site"
+    # (mqtt_identity maps the wire token "-" to it).
+    site = Column(String, nullable=False, default="", server_default="")
+    gateway_id = Column(String(64), nullable=False, index=True)
+    secret = Column(String, nullable=False)
+    label = Column(String, nullable=True)
+    is_active = Column(Boolean, nullable=False, default=True, server_default=sa_true())
+    created_at = Column(DateTime, default=datetime.utcnow, index=True)
+    # Written on every accepted packet: the one question an operator asks about
+    # a gateway is "is it still talking to us".
+    last_seen_at = Column(DateTime, nullable=True)

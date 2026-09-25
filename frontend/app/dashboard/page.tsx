@@ -275,6 +275,14 @@ export default function DashboardPage() {
   const [status, setStatus] = useState("Running");
   const [utilization, setUtilization] = useState(0);
   const [downtime, setDowntime] = useState("0 min");
+  // PART OF THE MACHINE'S IDENTITY, and until now reachable from no form:
+  // `Machine` is UNIQUE(tenant_code, site, name) and `site` was written only by
+  // the MQTT path, from the topic. So every machine added here carried an empty
+  // site, and the first gateway message published under a real site did not
+  // match it. The backend now adopts rather than duplicating, but a plant with
+  // two sites still needs to say which one a machine is at, and this is the
+  // only place a person can.
+  const [site, setSite] = useState("");
 
   const [selectedMachineId, setSelectedMachineId] = useState("");
   const [reason, setReason] = useState("Material Shortage");
@@ -911,12 +919,16 @@ export default function DashboardPage() {
         status,
         utilization,
         downtime,
+        site,
       });
 
       setName("");
       setStatus("Running");
       setUtilization(0);
       setDowntime("0 min");
+      // The site is deliberately NOT cleared: machines are added a few at a
+      // time and they are nearly always at the same site, so clearing it would
+      // make the common case the one that needs retyping.
 
       fetchAll();
     } catch (error) {
@@ -2342,7 +2354,7 @@ export default function DashboardPage() {
           {isAdmin && (
           <form
             onSubmit={addMachine}
-            className="mb-8 rounded-2xl bg-slate-900 border border-slate-800 p-5 grid grid-cols-1 md:grid-cols-5 gap-4"
+            className="mb-8 rounded-2xl bg-slate-900 border border-slate-800 p-5 grid grid-cols-1 md:grid-cols-6 gap-4"
           >
             <input
               className="bg-slate-950 border border-slate-700 rounded-xl px-4 py-3"
@@ -2380,6 +2392,17 @@ export default function DashboardPage() {
               value={downtime}
               onChange={(e) => setDowntime(e.target.value)}
               required
+            />
+
+            {/* Optional, and left empty by a single-site plant. Validated by
+                the API as an MQTT topic segment, because that is what it
+                becomes: {prefix}/{tenant}/{site}/machines. */}
+            <input
+              className="bg-slate-950 border border-slate-700 rounded-xl px-4 py-3"
+              placeholder="Site (optional)"
+              title="The plant or site this machine is at. It becomes part of the MQTT topic a gateway publishes to, so it may contain only letters, numbers, dot, dash or underscore. Leave empty if you have one site."
+              value={site}
+              onChange={(e) => setSite(e.target.value)}
             />
 
             <button

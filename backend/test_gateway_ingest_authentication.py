@@ -146,8 +146,24 @@ def test_gateway_ingest_authentication():
     # Bound HERE, not at import: on_message opens its own session from
     # mqtt_service.SessionLocal, and other MQTT suites point that at their own
     # engines when they RUN.
+    #
+    # AND RESTORED AFTERWARDS, which the other MQTT suites do not bother with.
+    # They get away with it: every one of them sorts AFTER
+    # test_live_broadcast_bridge, which calls the real safe_broadcast and
+    # asserts what it does. This file sorts BEFORE it ("ga" < "li"), so leaving
+    # a no-op behind made that suite fail in the single-process coverage job
+    # while passing in the per-file backend job -- a difference that is
+    # miserable to debug from a red tick.
+    original = (mqtt_service.SessionLocal, mqtt_service.safe_broadcast)
     mqtt_service.SessionLocal = SessionLocal
     mqtt_service.safe_broadcast = lambda event: None
+    try:
+        _run_sections()
+    finally:
+        mqtt_service.SessionLocal, mqtt_service.safe_broadcast = original
+
+
+def _run_sections():
 
     # ── 1. no credential: nothing changes ───────────────────────────
     section("1. A WORKSPACE WITH NO CREDENTIAL KEEPS THE BEHAVIOUR IT HAS")

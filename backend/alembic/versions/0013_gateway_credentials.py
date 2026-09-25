@@ -99,39 +99,50 @@ def upgrade():
         op.create_index("ix_gateway_credentials_created_at", "gateway_credentials",
                         ["created_at"])
 
+    # THE TABLE MAY NOT EXIST. get_columns() RAISES on a missing table rather
+    # than returning empty, and `production_records` is created by boot's
+    # create_all rather than by any migration -- so a database built from
+    # migrations alone does not have it. That is not hypothetical: it is exactly
+    # the shape verify_pg_migration.py builds to prove the identity migration
+    # survives an old deployment, and it is the shape a long-lived deployment
+    # can genuinely be in. Unguarded, this revision took the whole upgrade down
+    # with NoSuchTableError.
     inspector = _inspector()
-    columns = {c["name"] for c in inspector.get_columns("production_records")}
-    if "source_record_id" not in columns:
-        op.add_column("production_records",
-                      sa.Column("source_record_id", sa.String(length=64), nullable=True))
-        op.create_index("ix_production_records_source_record_id", "production_records",
-                        ["source_record_id"])
+    if "production_records" in inspector.get_table_names():
+        columns = {c["name"] for c in inspector.get_columns("production_records")}
+        if "source_record_id" not in columns:
+            op.add_column("production_records",
+                          sa.Column("source_record_id", sa.String(length=64), nullable=True))
+            op.create_index("ix_production_records_source_record_id", "production_records",
+                            ["source_record_id"])
 
-    existing = {c["name"] for c in _inspector().get_unique_constraints("production_records")}
-    if "uq_production_source_record" not in existing:
-        # SQLite cannot ALTER TABLE ADD CONSTRAINT, so it needs a batch
-        # operation (which rebuilds the table). PostgreSQL takes it directly.
-        # Guarded rather than assumed: this project's own deployments run both.
-        with op.batch_alter_table("production_records") as batch:
-            batch.create_unique_constraint("uq_production_source_record",
-                                           ["tenant_code", "source_record_id"])
+        existing = {c["name"] for c in _inspector().get_unique_constraints("production_records")}
+        if "uq_production_source_record" not in existing:
+            # SQLite cannot ALTER TABLE ADD CONSTRAINT, so it needs a batch
+            # operation (which rebuilds the table). PostgreSQL takes it
+            # directly. Guarded rather than assumed: this project runs both.
+            with op.batch_alter_table("production_records") as batch:
+                batch.create_unique_constraint("uq_production_source_record",
+                                               ["tenant_code", "source_record_id"])
 
 
 def downgrade():
     inspector = _inspector()
 
-    existing = {c["name"] for c in inspector.get_unique_constraints("production_records")}
-    if "uq_production_source_record" in existing:
-        with op.batch_alter_table("production_records") as batch:
-            batch.drop_constraint("uq_production_source_record", type_="unique")
+    # Same guard as the upgrade side, for the same reason.
+    if "production_records" in inspector.get_table_names():
+        existing = {c["name"] for c in inspector.get_unique_constraints("production_records")}
+        if "uq_production_source_record" in existing:
+            with op.batch_alter_table("production_records") as batch:
+                batch.drop_constraint("uq_production_source_record", type_="unique")
 
-    columns = {c["name"] for c in _inspector().get_columns("production_records")}
-    if "source_record_id" in columns:
-        indexes = {i["name"] for i in _inspector().get_indexes("production_records")}
-        if "ix_production_records_source_record_id" in indexes:
-            op.drop_index("ix_production_records_source_record_id",
-                          table_name="production_records")
-        op.drop_column("production_records", "source_record_id")
+        columns = {c["name"] for c in _inspector().get_columns("production_records")}
+        if "source_record_id" in columns:
+            indexes = {i["name"] for i in _inspector().get_indexes("production_records")}
+            if "ix_production_records_source_record_id" in indexes:
+                op.drop_index("ix_production_records_source_record_id",
+                              table_name="production_records")
+            op.drop_column("production_records", "source_record_id")
 
     if "gateway_credentials" in _inspector().get_table_names():
         # Dropping this table DESTROYS every issued gateway key, and there is no

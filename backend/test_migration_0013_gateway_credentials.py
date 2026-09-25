@@ -5,8 +5,8 @@ and it is the half that matters for the unique-constraint-over-a-nullable-column
 question. This half is the one that can run on every developer's machine and in
 the ordinary backend job:
 
-  1. THE CHAIN      0013 is the single head, it follows 0012, and its upgrade
-                    side adds without destroying;
+  1. THE CHAIN      the tree has ONE head, 0013 is reachable from it and
+                    follows 0012, and its upgrade side adds without destroying;
   2. THE SHAPE      gateway_credentials binds to one workspace and one site;
                     `site` is NOT NULL (NULL != NULL defeats a comparison);
                     `secret` is NOT NULL; `gateway_id` is unique INSTALLATION
@@ -91,7 +91,7 @@ def _previous_revision():
 # --------------------------------------------------------------------------
 # 1. the chain
 # --------------------------------------------------------------------------
-def test_the_revision_is_the_single_head_after_0012():
+def test_the_revision_is_in_the_chain_after_0012():
     src = _migration_source()
     m = re.search(r'^revision = "([^"]+)"', src, re.M)
     assert m and m.group(1) == REVISION, m and m.group(1)
@@ -100,7 +100,12 @@ def test_the_revision_is_the_single_head_after_0012():
     script = ScriptDirectory.from_config(migrate._config())
     heads = script.get_heads()
     assert len(heads) == 1, f"the migration tree has {len(heads)} heads: {heads}"
-    assert heads[0] == REVISION, f"{REVISION} is not the head: {heads}"
+    # In the chain, NOT at the head -- 0012's copy of this check asserted
+    # `heads[0] == REVISION` and broke the moment this revision was written,
+    # for the one reason that is not a defect. One head and reachable from it
+    # are the invariants worth keeping.
+    chain = {rev.revision for rev in script.walk_revisions("base", heads[0])}
+    assert REVISION in chain, f"{REVISION} is not in the chain leading to {heads[0]}"
     assert _previous_revision() == "0012_consent_scope", _previous_revision()
 
     upgrade_side = src.split("def downgrade")[0]
@@ -114,7 +119,7 @@ def test_the_revision_is_the_single_head_after_0012():
         "the create_table is not guarded against a boot-made table"
     assert 'if "source_record_id" not in columns' in upgrade_side, \
         "the add_column is not guarded against a boot-made column"
-    print(f"PASS {REVISION} is the single head after 0012 and only adds, guarded")
+    print(f"PASS {REVISION} is in the chain after 0012 and only adds, guarded")
 
 
 # --------------------------------------------------------------------------
@@ -328,7 +333,7 @@ def test_downgrade_keeps_the_production_records():
 
 
 if __name__ == "__main__":
-    test_the_revision_is_the_single_head_after_0012()
+    test_the_revision_is_in_the_chain_after_0012()
     test_a_credential_binds_to_one_workspace_and_one_site()
     test_the_idempotency_column_invents_nothing()
     test_upgrading_a_populated_database_keeps_every_row()

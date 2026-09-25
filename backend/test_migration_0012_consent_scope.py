@@ -97,7 +97,14 @@ def test_the_revision_is_in_the_chain_and_only_adds_a_column():
     script = ScriptDirectory.from_config(migrate._config())
     heads = script.get_heads()
     assert len(heads) == 1, f"the migration tree has {len(heads)} heads: {heads}"
-    assert heads[0] == REVISION, f"{REVISION} is not the head: {heads}"
+    # IN THE CHAIN, not AT THE HEAD. This asserted `heads[0] == REVISION`, which
+    # was true until the next migration was written and then failed for the one
+    # reason that is not a defect -- somebody added a revision after it. The
+    # durable invariants are that the tree has ONE head (no branching) and that
+    # this revision is reachable from it; both still catch a migration wired in
+    # wrongly, which is what the check is for.
+    chain = {rev.revision for rev in script.walk_revisions("base", heads[0])}
+    assert REVISION in chain, f"{REVISION} is not in the chain leading to {heads[0]}"
     assert _previous_revision() == "0011_action_outcomes", _previous_revision()
     upgrade_side = src.split("def downgrade")[0]
     for forbidden in ("create_table", "drop_table", "drop_column", "execute(", "alter_column", "UPDATE"):

@@ -1,0 +1,80 @@
+# AMP Edge — OPC UA example. Copy, change the addresses, run `validate`.
+#
+# NOTHING IN THIS FILE IS A SECRET, and the loader enforces that: passwords and
+# keys are named here and read from the environment. See .env.example.
+
+amp:
+  host: broker.amp.example.com     # the AMP broker AMP gave you
+  port: 8883
+  tls: true
+  topic_prefix: flowmes
+  tenant: ACME                     # your workspace code, from AMP
+  site: plant-1                    # THIS site. It becomes part of the topic.
+  username_env: AMP_MQTT_USERNAME
+  password_env: AMP_MQTT_PASSWORD
+
+gateway:
+  id: gw-acme-plant1-01            # issued by AMP with its key
+  key_env: AMP_GATEWAY_KEY
+
+buffer:
+  path: ./amp-edge-queue.db        # survives a restart; keep it on local disk
+  max_records: 200000
+
+machines:
+  # The name MUST match the machine already in AMP, exactly. If it does not,
+  # AMP registers a new one and your history splits in two.
+  - name: CNC-01
+    protocol: opcua
+    poll_interval: 2.0
+    connection:
+      url: opc.tcp://192.168.10.21:4840
+      username: amp-readonly
+      password_env: PLC_PASSWORD
+      timeout: 8
+    tags:
+      - tag: run
+        address: "ns=3;s=Machine.Running"
+        signal: running
+        datatype: bool
+        # A PLC's idea of true is not Python's. List both sets explicitly if the
+        # tag is not already a boolean: anything in neither set is REFUSED, not
+        # quietly treated as stopped.
+        true_values: [true, 1, "RUN"]
+        false_values: [false, 0, "STOP"]
+
+      - tag: parts
+        address: "ns=3;s=Machine.PartCounter"
+        signal: part_count
+        datatype: int
+        # REQUIRED on every counter, and there is no default:
+        #   cumulative  counts up forever          (most PLCs)
+        #   resets      restarts at zero           (shift counters)
+        #   per_cycle   holds the last cycle only
+        counter_mode: cumulative
+        # Set this if the counter is 16-bit and wraps. Without it, a wrap is
+        # counted as ZERO rather than guessed at.
+        counter_max: 4294967295
+
+      - tag: rejects
+        address: "ns=3;s=Machine.RejectCounter"
+        signal: reject_count
+        datatype: int
+        counter_mode: cumulative
+
+      - tag: fault
+        address: "ns=3;s=Machine.Alarm"
+        signal: fault_active
+        datatype: bool
+
+      - tag: mode
+        address: "ns=3;s=Machine.Mode"
+        signal: machine_mode
+        datatype: int
+        enum: {1: Manual, 2: Auto, 3: Setup}
+
+      - tag: spindle_temp
+        address: "ns=3;s=Machine.SpindleTemp"
+        signal: temperature
+        datatype: float
+        unit: degC

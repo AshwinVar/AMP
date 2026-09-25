@@ -1,0 +1,9 @@
+test_*.py
+examples/
+README.md
+INSTALL.md
+*.db
+*.db-wal
+*.db-shm
+.env
+__pycache__/

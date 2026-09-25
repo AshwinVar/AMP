@@ -115,6 +115,68 @@ jobs:
           DATABASE_URL: "sqlite:///./audit_three_factory_simulation.db"
         run: python audit_three_factory_simulation.py
 
+  # AMP EDGE — the gateway that runs inside a customer's factory.
+  #
+  # Its own job, not part of `backend`, for two reasons. It has DIFFERENT
+  # dependencies (an OPC UA stack, a Modbus stack, an MQTT client) that a
+  # Railway deploy must never pull in; and its tests stand up real servers on
+  # real sockets, so a port clash should fail the gateway, not the whole API.
+  #
+  # The end-to-end suites DO import the AMP backend, deliberately: proving the
+  # gateway produces a payload is worthless if that payload does not land on the
+  # right machine. That is the one direction the boundary allows — a test may
+  # cross it; the shipped gateway may not.
+  edge:
+    runs-on: ubuntu-latest
+    env:
+      DATABASE_URL: "sqlite:///./ci_edge.db"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install backend dependencies (the last hop is the real AMP handler)
+        run: pip install -r backend/requirements.txt
+      - name: Install gateway dependencies
+        run: pip install -r edge/requirements.txt
+      - name: Compile-check the gateway
+        run: python -m compileall -q edge
+      - name: The gateway imports nothing from AMP
+        # THE ARCHITECTURAL BOUNDARY, ENFORCED. `ampedge` must be installable on
+        # a plant PC that has never heard of FastAPI. An accidental `import
+        # models` would work fine in this repo and fail on every customer's
+        # machine, so it is checked rather than trusted.
+        run: |
+          cd edge
+          if grep -rnE "^[[:space:]]*(from|import) (models|main|database|schemas|tenancy|mqtt_service|crud)([. ]|$)" ampedge/; then
+            echo "::error::ampedge imports the AMP backend — the gateway must stand alone"
+            exit 1
+          fi
+          echo "ampedge is self-contained."
+      - name: Run gateway test suites
+        run: |
+          failed=""
+          for f in edge/test_*.py; do
+            echo "::group::$f"
+            if python "$f"; then echo "PASS $f"; else echo "FAIL $f"; failed="$failed $f"; fi
+            echo "::endgroup::"
+          done
+          if [ -n "$failed" ]; then
+            echo "::error::Failing gateway suites:$failed"
+            exit 1
+          fi
+          echo "All $(ls edge/test_*.py | wc -l) gateway suites passed."
+      - name: The example configs are valid
+        # A broken example is worse than no example: it is the first thing a
+        # pilot engineer copies.
+        env:
+          AMP_GATEWAY_KEY: ci-not-a-real-key
+          PLC_PASSWORD: ci-not-a-real-password
+        run: |
+          cd edge
+          python -m ampedge validate examples/opcua-gateway.yaml
+          python -m ampedge validate examples/modbus-gateway.yaml
+
   # THE MIGRATION GATE (ADR-0018). A separate job because it needs a real
   # PostgreSQL server, and because its answer is a different question from "do
   # the tests pass".
@@ -412,6 +474,15 @@ jobs:
       - name: The AI-consent table (0009) on PostgreSQL
         working-directory: backend
         run: python verify_pg_native_ai.py 5432
+      # A UNIQUE constraint over a NULLABLE column, added to a table that is
+      # already full. SQLite cannot judge either half: it has no ALTER TABLE ADD
+      # CONSTRAINT (the migration uses a batch rebuild), and whether NULL is
+      # distinct from NULL for a unique index is exactly the kind of thing that
+      # must be proven on the engine production actually runs.
+      - name: Gateway credentials and production idempotency (0013) on PostgreSQL
+        working-directory: backend
+        run: python verify_pg_gateway_credentials.py 5432
+
       - name: Exactly one factory wins a raced claim code
         working-directory: backend
         run: python verify_pg_claim.py 5432

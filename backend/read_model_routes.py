@@ -488,6 +488,18 @@ def get_weekly_report(db: Session = Depends(_get_db), current_user: dict = Depen
     # cost, delivery and briefing read-models, ready to copy or download.
     return ai.report.build_weekly_report(db, request_tenant(current_user))
 
+
+@router.get("/ingest-guide")
+def get_ingest_guide(db: Session = Depends(_get_db), current_user: dict = Depends(get_current_user)):
+    # How this workspace gets data into AMP. `mqtt_service` is a real ingest
+    # path and nothing ever told a customer the topic to publish to, so an SME
+    # with a gateway had no way in. Read-only: it hands out no credential (there
+    # is one deployment-wide pair, not a per-tenant one, and saying the operator
+    # issues them beats implying a self-serve flow that does not exist) and it
+    # claims no connection AMP does not make.
+    from ai.ingest_guide import build_ingest_guide
+    return build_ingest_guide(db, request_tenant(current_user))
+
 # Rule-first copilot (ADR-0003) — pure reads over the read-models
 
 

@@ -63,6 +63,18 @@ MANUALLY_SCOPED = {
         "every grant a factory had actually made. The UNIQUE (oem_code, "
         "tenant_code) constraint makes a wrong pair a miss, not a silent "
         "cross-customer grant. Factory-side handlers filter tenant_code by hand",
+    "GatewayCredential":
+        "the key a gateway authenticates with (ADR-0041). Looked up by its "
+        "globally-unique gateway_id BEFORE AMP can trust which tenant the "
+        "message belongs to -- the id arrives in the payload, and deciding "
+        "whose it is IS the question being answered. Riding the hook would "
+        "filter the lookup to the tenant the TOPIC claims, so another "
+        "workspace's gateway would come back 'not registered' and "
+        "gateway_auth.authorise's workspace comparison -- the thing that "
+        "actually refuses the attack -- would never run. That comparison is "
+        "the boundary, and mutate_gateway_auth.py fails if it is removed. "
+        "Every operator-facing route (gateway_routes) filters tenant_code by "
+        "hand",
     "EventLog":
         "append-only event history; every consumer filters by tenant_code, and the "
         "startup RESEED_FACTORY flag check is a global operator concern",

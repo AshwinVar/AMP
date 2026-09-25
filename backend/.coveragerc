@@ -67,9 +67,15 @@ omit =
     # None is importable by the app (grep: nothing in main.py's closure imports
     # them), and counting them would let adding verification LOWER the number
     # that describes how well the application is tested.
-    verify_pg_migration.py
-    verify_pg_docnumbers.py
-    verify_pg_bom.py
+    # verify_pg_*.py is a GLOB for the same reason mutate_*.py is, and after
+    # the same mistake: this was eight hand-listed entries, a new one
+    # (verify_pg_gateway_credentials) was simply never added, and its 164
+    # uncovered statements took the total under the floor with no
+    # application code changed. That is precisely the perverse incentive
+    # the block above was written to prevent, so the list is gone.
+    # Nothing in the application is named verify_pg_*:
+    #   grep -rn 'import verify_pg' --include=*.py   matches nothing.
+    verify_pg_*.py
     mutate_*.py
     pg_scratch.py
     # Same category again, added closing the customer-readiness blockers. Left
@@ -83,7 +89,6 @@ omit =
     #   audit_adversarial_final  37 attacks on the six shipped fixes
     #   loadtest              starts its own uvicorn and hammers it
     #   restore_drill         pg_dump -> restore -> migrate -> boot -> log in
-    verify_pg_approvals.py
     audit_three_customers.py
     audit_adversarial_final.py
     loadtest.py
@@ -101,7 +106,6 @@ omit =
     #                          invented confidence)
     #   audit_oem_adversarial  two OEMs against three factories, 60 checks
     #   oem_perf               builds a 10,000-machine fleet and counts SQL
-    verify_pg_oem.py
     #   mutate_oem_lifecycle   12 mutations of the OEM WRITE path and the
     #                          tenant an event is filed under
     #   mutate_oem_provisioning  16 mutations of the manufacturer's front door,
@@ -110,7 +114,6 @@ omit =
     #                          factory's authority, and the two conditional
     #                          UPDATEs that decide a race
     #   verify_pg_claim        25 real two-thread races on PostgreSQL 18.3
-    verify_pg_claim.py
     audit_oem_adversarial.py
     #   audit_oem_specialist  attacks the ASSUMPTIONS the OEM boundary rests on
     #                         (AST scans of the route handlers, a live sentinel
@@ -133,10 +136,8 @@ omit =
     # database, so almost none of its lines execute in the measuring process
     # even while it is doing its job. The behaviour it proves IS measured — via
     # schema_guard.py, which is application code and stays in the total.
-    verify_pg_deploy.py
     # AMP-native AI (ADR-0020): migration 0009 and the atomic consent write
     # against a disposable PostgreSQL database. Same category, same rule.
-    verify_pg_native_ai.py
     # Alembic migration scripts: exercised by running a migration, not by the
     # unit suites, and each version file is dead the moment it has been applied.
     alembic/*

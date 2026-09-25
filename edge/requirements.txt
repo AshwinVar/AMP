@@ -1,0 +1,9 @@
+# AMP Edge Gateway — what a plant PC needs.
+#
+# Deliberately four packages. This runs on a machine somebody else owns, often
+# without internet beyond the broker, and every dependency is a thing that can
+# fail an install on a locked-down Windows box six months from now.
+asyncua>=1.1,<3          # OPC UA client
+pymodbus>=3.6,<4         # Modbus TCP client
+paho-mqtt>=2.0,<3        # the one outbound connection
+PyYAML>=6.0,<7           # so a config can be YAML instead of JSON

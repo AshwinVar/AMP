@@ -182,9 +182,12 @@ def validate(specs) -> list:
             # running signal".
             problems.append(
                 f"{where}: {m.signal!r} is not an AMP signal. Canonical signals are "
-                f"{', '.join(signals.CANONICAL)}. If this is process telemetry, one of "
-                f"{', '.join(signals.KNOWN_TELEMETRY)} is charted; anything else is stored "
-                f"but drives nothing.")
+                f"{', '.join(signals.CANONICAL)}. Process telemetry (e.g. "
+                f"{', '.join(signals.KNOWN_TELEMETRY[:5])}) is published under `readings`, but "
+                f"BE AWARE: AMP currently interprets `readings` only for a machine registered as "
+                f"an OEM installation with a telemetry profile. On an ordinary machine they are "
+                f"delivered and then ignored. Map it if you want it on the wire; do not promise "
+                f"a customer a chart of it yet.")
         if m.datatype not in DATATYPES:
             problems.append(f"{where}: datatype {m.datatype!r} is not one of {', '.join(DATATYPES)}")
         if m.signal in seen:

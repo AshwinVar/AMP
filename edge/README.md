@@ -29,6 +29,11 @@ pip install -r edge/requirements.txt
 
 Python 3.9 or newer. No database, no server, no inbound ports.
 
+**[INSTALL.md](INSTALL.md)** is the version written for the person standing in
+front of the machine: what the plant PC needs, running it as a service, and a
+troubleshooting table that starts from *which side is broken* rather than from a
+stack trace.
+
 ## Commissioning, in the order you actually do it
 
 ```bash
@@ -85,11 +90,11 @@ one, because config files get emailed and pasted into tickets. See
 
 ## Running it as a service
 
-The gateway is a single foreground process; use whatever the plant PC already
-has — `systemd` on Linux, NSSM or Task Scheduler on Windows. It needs:
+One ordinary foreground process — `systemd`, NSSM, Task Scheduler or Docker; see
+[INSTALL.md](INSTALL.md) for a unit file and the Windows equivalents. It needs:
 
 - outbound TCP to the AMP broker (8883 with TLS)
 - access to the PLC's subnet
-- a writable directory for the queue file
+- a writable **local** directory for the queue file
 
 Nothing else, and nothing inbound.

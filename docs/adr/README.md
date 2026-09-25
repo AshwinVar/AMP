@@ -45,6 +45,7 @@ Guiding principles: incremental (strangler) evolution, never a rewrite; backward
 | [0037](0037-external-model-consent.md) | A company's data leaves AMP only with that company's consent: `external_model` on the ADR-0020 gate, checked where the Copilot builds a request's model | Accepted |
 | [0038](0038-consent-names-its-provider.md) | A consent names the provider it was given for: `ai_learning_consents.scope`, honoured for that provider only, no advance consent (migration 0012) | Accepted |
 | [0039](0039-copilot-proposes-never-writes.md) | The Copilot proposes an action and a model is on none of the write path: a tool DRAFTS, a person raises, the ADR-0005 gate executes | Accepted |
+| [0040](0040-the-edge-gateway-is-not-amp.md) | The edge gateway is not AMP: it runs in the factory, dials out, imports nothing from the backend, and never substitutes a value for a reading it did not get | Accepted |
 
 **Recommended order:** 0001 first (smaller, proves the pattern; events carry `tenant_code`), then 0002.
 

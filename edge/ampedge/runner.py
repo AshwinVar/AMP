@@ -233,7 +233,7 @@ class Gateway:
             started_at=self.started_at,
             adapters={w.name: w.adapter for w in self.workers},
             publisher=self.publisher,
-            buffers={w.name: self.buffer for w in self.workers},
+            buffer=self.buffer,
             normalizers={w.name: w.normalizer for w in self.workers},
             now=now)
 

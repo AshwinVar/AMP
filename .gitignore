@@ -78,3 +78,10 @@ edge/*.db-wal
 edge/*.db-shm
 edge/.env
 edge/amp-edge-diagnostics.json
+
+# Scratch databases from running the edge suites at the repo root.
+ci_edge.db
+ci_edge.db-wal
+ci_edge.db-shm
+ci_audit.db
+ci_sweep.db

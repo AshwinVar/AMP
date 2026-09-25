@@ -34,6 +34,11 @@ to a customer.
 | **Machine identity / no duplicates** | **VERIFIED** | A gateway packet adopts a hand-created machine rather than registering a second one; ambiguity is refused and recorded for a human. Mutation-tested (12/12 caught). |
 | **Gateway message signing (gateway side)** | **VERIFIED** | HMAC-SHA256 over the whole payload including tenant and site, with a timestamp window and a nonce. Tampering with any field breaks it. |
 | **Gateway signature verification (AMP side)** | **NOT IMPLEMENTED** | **AMP does not yet check signatures.** Until it does, the MQTT topic is still an unverified assertion and the broker's own ACLs are the only thing separating tenants. This is the top remaining item. |
+| **Process telemetry on an ordinary machine (temperature, pressure, speed...)** | **NOT IMPLEMENTED** | The gateway maps, scales and publishes it correctly under `readings`, and AMP **drops it**: `mqtt_service` interprets `readings` only for a machine registered as an OEM installation with a telemetry profile (`mqtt_service.py:418`). A pilot mapping a spindle temperature will see nothing and be told nothing. Do not promise a chart of it. |
+| **Reconnect after a PLC drop** | **VERIFIED** | The session is dropped rather than reused, a new one is opened, and backoff is bounded and jittered so a cell of gateways does not retry in lockstep against a controller with a session limit. |
+| **Reading continues while AMP is unreachable** | **VERIFIED** | The poll loop and the publish loop are independent: with no publisher at all the queue grows and reading never stalls. |
+| **Clean shutdown keeps the in-flight window** | **VERIFIED** | Stopping flushes the parts counted since the last publish to disk before disconnecting, so a restart mid-shift does not lose them. |
+| **Connection health tells you which side is broken** | **VERIFIED** | One verdict, in fixing order: PLC → tags → cloud → backlog. A connected-but-silent session is not reported as healthy, and a gateway that has read nothing is STARTING rather than STREAMING. |
 | **Commissioning CLI (validate / browse / preview / run / diagnose)** | **VERIFIED** | `preview` is exercised against the live OPC UA server, printing raw beside canonical. |
 | **Redacted diagnostic export** | **VERIFIED** | Contains the configuration with secrets replaced and the NAMES of relevant environment variables. No values. |
 | **PROFINET, EtherNet/IP, Siemens S7, Mitsubishi, Omron, Beckhoff ADS, CAN, BACnet** | **NOT IMPLEMENTED** | Not started, not planned for this pilot. A PLC datasheet listing these does not mean AMP can read them. |
@@ -64,56 +69,31 @@ nobody reads a green row as "this has run in a factory".
 
 ## Client discovery checklist
 
-Everything below has to be answered before a gateway can be configured. Send it
-ahead of the visit — most of it needs the customer's controls engineer or their
-machine builder, and "we will find out on the day" costs a day.
+**Use [PLC-PILOT-CLIENT-INTAKE.md](PLC-PILOT-CLIENT-INTAKE.md).** This page had
+its own checklist for about an hour; the intake form covers every item it did
+and a dozen more (byte order, deadband, counter retention across power loss,
+expected maximum production rate), and two overlapping checklists in one folder
+is how a commissioning engineer misses the half that was in the other one.
 
-### The controller
+Two things on that form matter more than the rest, because the gateway's
+behaviour depends on them and it will refuse rather than guess:
 
-- [ ] PLC manufacturer and model
-- [ ] CPU / firmware version
-- [ ] Which protocols are **enabled on it right now** (not which it supports)
-- [ ] Is an **OPC UA server** available? Built into the CPU, or a separate
-      gateway/PC? What endpoint URL?
-- [ ] Is **Modbus TCP** available? On which port and unit id? (Many PLCs have it
-      but ship with it turned off.)
-- [ ] If neither: is there an existing SCADA or historian we could read instead?
-
-### The network
-
-- [ ] PLC IP address and subnet
-- [ ] Is there a PC on that subnet we can install the gateway on? OS and version?
-- [ ] Does that PC have internet access? Through a proxy?
-- [ ] Is **outbound TCP 8883** permitted, or does it need a firewall change?
-- [ ] Who approves firewall changes, and how long does that take?
-- [ ] Any segmentation between the PLC VLAN and the office VLAN?
-
-### The tags
-
-- [ ] Tag list or register map, as a file (**this is the long pole — ask first**)
-- [ ] For each: address, datatype, units, and scaling
-- [ ] Which tag is the **running** signal, and what value means running?
-- [ ] Which tag is the **fault** signal, and is there a fault code?
-- [ ] Which tag counts **parts**? Total, good, or both?
-- [ ] Is there a **reject/scrap** counter? *(If not, AMP will not report quality
-      — by design. Agree this in advance rather than on the day.)*
-- [ ] Does any counter **reset**? When — shift change, a button, midnight?
-- [ ] Does any counter **roll over**? At what value (65,535? 4,294,967,295?)
-- [ ] Is there a **cycle** signal, and an ideal cycle time?
-- [ ] How fast does the fastest signal you care about change? (This sets the
-      poll rate, and too fast a poll can load the controller.)
-
-### Security and people
-
-- [ ] Does the PLC require credentials for OPC UA? Who issues them?
-- [ ] Are certificates required?
-- [ ] Any site policy on software installed on plant PCs?
-- [ ] **IT contact** — name, and how to reach them during commissioning
-- [ ] **Controls/PLC engineer** — name, and are they available on the day?
+- **Counter semantics (section 6).** Cumulative, resets, or per-cycle; and the
+  rollover point if it wraps. Without a declared mode the mapping does not load
+  at all; without a declared maximum a backwards step counts zero.
+- **Whether there is a reject counter (section 5).** If there is not, AMP
+  records no production at all for that machine unless the config explicitly
+  says untracked parts may be counted as good. Agree that with the customer in
+  advance, not on the day.
 
 ---
 
 ## Failure behaviour you can quote to a customer
+
+Walk [PLC-PILOT-REHEARSAL.md](PLC-PILOT-REHEARSAL.md) before a commissioning
+visit — 40 drills, each with the evidence that pins it, and a final section
+listing the six that nothing pins yet.
+
 
 | What happens | What AMP does |
 |---|---|
@@ -137,4 +117,6 @@ machine builder, and "we will find out on the day" costs a day.
 | `edge/test_edge_security.py` | Signing, tampering, replay windows, and the refusal to hold a secret in a config file. |
 | `edge/test_publisher_against_broker.py` | A real MQTT 3.1.1 broker, including a withheld PUBACK. |
 | `backend/test_machine_identity_adoption.py` | Gateway adoption of a hand-created machine, ambiguity refusal, and the real message handler. |
+| `edge/test_edge_health.py` | The commissioning verdict, in fixing order, and that the printed report carries no credential. |
+| `edge/test_edge_runner.py` | A PLC that goes away and returns, an AMP outage that does not stop reading, a shutdown that flushes, and a part-way publish failure that preserves order. |
 | `backend/mutate_machine_identity.py` | 12 mutations of the identity path; all caught. |

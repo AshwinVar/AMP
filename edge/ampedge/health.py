@@ -41,12 +41,19 @@ READ_SILENCE_S = 60.0
 BACKLOG_AGE_S = 300.0
 
 
-def report(*, started_at, adapters, publisher, buffers, normalizers=None, now=None) -> dict:
+def report(*, started_at, adapters, publisher, buffer=None, normalizers=None,
+           now=None) -> dict:
     """Assemble the whole picture. Pure — takes state, returns a dict, prints nothing.
 
-    `adapters` and `buffers` are keyed by machine name so the report says WHICH
-    machine is silent. One broken machine in a cell of twelve is the common
-    case, and a single global "PLC: connected" would hide it.
+    `adapters` is keyed by machine name so the report says WHICH machine is
+    silent. One broken machine in a cell of twelve is the common case, and a
+    single global "PLC: connected" would hide it.
+
+    `buffer` is SINGULAR. There is one queue per gateway, not one per machine.
+    This took a dict before, keyed by machine, and summed it -- so three
+    machines sharing one queue of ten records reported thirty, and the number an
+    engineer uses to decide whether a backlog is growing was multiplied by the
+    size of the cell.
     """
     now = time.time() if now is None else now
     normalizers = normalizers or {}
@@ -71,16 +78,11 @@ def report(*, started_at, adapters, publisher, buffers, normalizers=None, now=No
             "counter_notes": list(norm.counter_notes)[-5:] if norm else [],
         }
 
-    queued = 0
-    oldest_age = None
-    dropped = 0
-    for name, buf in (buffers or {}).items():
-        stats = buf.stats(now=now)
-        queued += stats["queued"]
-        dropped += stats["dropped"]
-        if stats["oldest_age_s"] is not None:
-            oldest_age = max(oldest_age or 0, stats["oldest_age_s"])
-        machines.setdefault(name, {})["queued"] = stats["queued"]
+    stats = buffer.stats(now=now) if buffer is not None else {
+        "queued": 0, "dropped": 0, "oldest_age_s": None}
+    queued = stats["queued"]
+    dropped = stats["dropped"]
+    oldest_age = stats["oldest_age_s"]
 
     cloud = publisher.describe() if publisher is not None else {
         "state": base.DISCONNECTED, "broker": "", "topic": "", "signed": False,

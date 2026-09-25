@@ -388,6 +388,69 @@ check("...and still no duplicate", count(fresh, "ACME", "LATHE-09") == before_la
       str(count(fresh, "ACME", "LATHE-09")))
 fresh.close()
 
+# ── 10. the rule applies on the way IN, never on the way OUT ───────
+#
+# THIS SECTION EXISTS BECAUSE I BROKE GET /machines. The site validator was
+# defined on MachineBase, which is also the RESPONSE model -- so it ran against
+# rows the database already held. `site` has no database constraint and never
+# has: seeders, CSV imports and fixtures write it directly, and real rows
+# contain "Plant 1". Every workspace with one got a 500 for its whole machine
+# list. Caught by the PostgreSQL migration gate (audit_oem_adversarial), not by
+# any test here, because nothing here serialised a legacy row through a
+# response model.
+#
+# The rule itself is right: a site being CREATED now becomes part of an MQTT
+# topic. But refusing to DISPLAY a bad one breaks the very screen a customer
+# would use to correct it.
+section("10. A LEGACY SITE IS SHOWN, NOT REFUSED")
+from pydantic import TypeAdapter          # noqa: E402
+
+import schemas as _schemas                # noqa: E402
+
+
+def as_fastapi_would(response_model, rows):
+    """The exact call FastAPI makes on a route's response_model."""
+    try:
+        TypeAdapter(response_model).validate_python(rows, from_attributes=True)
+        return True, ""
+    except Exception as e:                # noqa: BLE001 - reported verbatim
+        return False, str(e).splitlines()[0]
+
+
+class _Row:
+    def __init__(self, **kw):
+        self.id = 1
+        self.name = "CNC-01"
+        self.status = "Idle"
+        self.utilization = 0
+        self.downtime = "0 min"
+        self.line = ""
+        self.site = ""
+        for k, v in kw.items():
+            setattr(self, k, v)
+
+
+for legacy in ("Plant 1", "plant/1", "Plant #2", "", "plant-1"):
+    ok, why = as_fastapi_would(list[_schemas.MachineResponse], [_Row(site=legacy)])
+    check(f"GET /machines serialises a machine whose site is {legacy!r}", ok, why)
+
+ok, why = as_fastapi_would(list[_schemas.MachineResponse], [_Row(site=None)])
+check("...and a NULL site from before the column existed", ok, why)
+
+# The way IN is still strict, which is the whole point of having the rule.
+for bad in ("plant/1", "Plant 1", "+", "#"):
+    refused = None
+    try:
+        _schemas.MachineCreate(name="M", status="Idle", utilization=0, downtime="0 min",
+                               site=bad)
+    except Exception as e:                # noqa: BLE001
+        refused = str(e)
+    check(f"creating a machine at site {bad!r} is still refused", refused is not None,
+          "it was accepted")
+check("...while a legal site is still accepted",
+      _schemas.MachineCreate(name="M", status="Idle", utilization=0, downtime="0 min",
+                             site="plant-1").site == "plant-1")
+
 print()
 print("=" * 74)
 if failures:

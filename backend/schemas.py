@@ -97,17 +97,40 @@ class MachineBase(BaseModel):
     # `{prefix}/{tenant}/{site}/machines`. A site with a slash or a wildcard in
     # it would address a topic nobody meant (mqtt_identity._IDENTIFIER is the
     # same rule the subscriber applies on the way in).
+    #
+    # THE RULE IS ON THE WAY IN ONLY -- see MachineCreate. It is deliberately NOT
+    # here, because this class is also the RESPONSE model, and a validator on a
+    # response is applied to what the database already holds. `site` has no
+    # database constraint and never has: seeders, imports and fixtures write it
+    # directly, and real rows contain values like "Plant 1". Validating on the
+    # way out turned GET /machines into a 500 for every one of those workspaces
+    # -- the whole machine list unreadable because of a rule about new input.
     site: str = ""
     line: Optional[str] = None
 
     @field_validator("site", mode="before")
     @classmethod
+    def _site_is_a_string(cls, v):
+        """Read side: coerce, never refuse. NULL rows predate the column."""
+        return "" if v is None else v
+
+
+class MachineCreate(MachineBase):
+    """What a client may CREATE. Stricter than what AMP will show back.
+
+    A site being written now becomes part of `{prefix}/{tenant}/{site}/machines`
+    the moment a gateway publishes for it, so it must be a segment MQTT can
+    address -- by mqtt_identity's own rule, so a site typed into a form and a
+    site parsed off a topic can never disagree about what is legal.
+
+    Existing rows are left alone. They were written before anything checked, and
+    refusing to DISPLAY them would break the screen that a customer would use to
+    correct them.
+    """
+
+    @field_validator("site", mode="before")
+    @classmethod
     def _site_is_a_topic_segment(cls, v):
-        """Empty is allowed — a plant with one site need not name it, and every
-        machine created before this field existed has one. Anything else must be
-        a segment MQTT can address, by the SUBSCRIBER's own rule, so a site set
-        here and a site published by a gateway can never disagree about what is
-        legal."""
         if v is None or v == "":
             return ""
         import mqtt_identity   # local: schemas is imported very early
@@ -116,10 +139,6 @@ class MachineBase(BaseModel):
                 "site must be letters, numbers, dot, dash or underscore (it becomes part of the "
                 "MQTT topic your gateway publishes to)")
         return v.strip()
-
-
-class MachineCreate(MachineBase):
-    pass
 
 
 class MachineResponse(MachineBase):

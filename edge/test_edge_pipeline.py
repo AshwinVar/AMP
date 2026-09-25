@@ -124,7 +124,8 @@ state = payload_mod.MachineState("M1")
 state.absorb(normalizer_mod.Normalizer(temp_map).absorb(
     [base.Reading(tag="t", value=61.2)]))
 body = payload_mod.build(state, machine_name="M1")
-check("telemetry alone is published", body is not None and "telemetry" in body, str(body))
+check("telemetry alone is published under `readings`, which is the key AMP reads",
+      body is not None and "readings" in body, str(body))
 check("...WITHOUT a status, because nothing said whether it was running",
       "status" not in body, str(body))
 check("...and without a downtime figure either", "downtime" not in body, str(body))

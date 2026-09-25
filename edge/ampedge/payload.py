@@ -206,9 +206,21 @@ def build(state, *, machine_name=None, ideal_cycle_time_seconds=None, now=None):
             if cycle:
                 body["ideal_cycle_time_seconds"] = int(round(float(cycle)))
 
-    if state.telemetry:
-        body["telemetry"] = {k: v["value"] for k, v in state.telemetry.items()}
-        body["telemetry_units"] = {k: v["unit"] for k, v in state.telemetry.items() if v["unit"]}
+    # `readings`, NOT `telemetry`. The name is not cosmetic: the AMP handler
+    # interprets `readings` against an OEM telemetry profile, and anything under
+    # another key is carried nowhere. The edge-to-cloud wire contract pins it.
+    readings = {k: v["value"] for k, v in state.telemetry.items()}
+    # Canonical timing signals belong here too — the contract's own example puts
+    # operating_hours among the readings, and they are measurements rather than
+    # machine state.
+    for timing in (signals.OPERATING_HOURS, signals.CYCLE_TIME):
+        if timing in state.latest:
+            readings[timing] = state.latest[timing]
+    if readings:
+        body["readings"] = readings
+        units = {k: v["unit"] for k, v in state.telemetry.items() if v["unit"]}
+        if units:
+            body["reading_units"] = units
 
     if state.notes:
         # Carried to AMP rather than only logged locally: "why is there no

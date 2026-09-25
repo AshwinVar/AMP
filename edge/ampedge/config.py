@@ -228,8 +228,17 @@ def _refuse_literal_secrets(node, problems, path):
             _refuse_literal_secrets(item, problems, f"{path}[{i}]")
 
 
+#: The wire spelling of "this factory has no site code", from the edge-to-cloud
+#: contract. AMP maps it to the EMPTY site -- which is the same site a machine
+#: typed in by hand has, so a single-site pilot's gateway matches those machines
+#: directly and the duplicate question never arises.
+NO_SITE_TOKEN = "-"
+
+
 def _is_topic_segment(value: str) -> bool:
     """The same shape AMP's own mqtt_identity enforces, kept in step deliberately."""
+    if value == NO_SITE_TOKEN:
+        return True
     if not value or len(value) > 64:
         return False
     if not (value[0].isalnum()):

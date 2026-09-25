@@ -190,6 +190,19 @@ for value in ("plant/1", "plant #1", "+", "#", "../other", "plant 1", ""):
         refused = str(e)
     check(f"site {value!r} is refused", refused is not None, "accepted")
 
+# A single-site factory has no site code, and the wire contract spells that "-".
+# AMP maps it to the empty site, which is the site a hand-created machine already
+# has -- so for a one-plant pilot the gateway matches those machines directly.
+single = json.loads(json.dumps(good))
+single["amp"]["site"] = "-"
+accepted = None
+try:
+    accepted = config_mod.validate(single)
+except config_mod.ConfigError as e:
+    accepted = e
+check("the no-site wire token `-` is accepted", not isinstance(accepted, Exception),
+      str(accepted))
+
 # ── 7. validation names every problem, not the first ────────────────
 section("7. TWELVE PROBLEMS ARE TWELVE LINES, NOT TWELVE RESTARTS")
 messy = {"amp": {}, "machines": [{"name": "A", "protocol": "profinet", "tags": []}]}

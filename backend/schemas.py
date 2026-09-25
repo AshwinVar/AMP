@@ -86,6 +86,36 @@ class MachineBase(BaseModel):
     status: str
     utilization: int
     downtime: str
+    # PART OF THE MACHINE'S IDENTITY, and until now reachable from no form and no
+    # route: `Machine` is UNIQUE(tenant_code, site, name), and `site` was written
+    # ONLY by the MQTT path, from the topic. So every machine added by hand or by
+    # CSV carried an empty site, and the first gateway message published under a
+    # real site did not match it — it registered a SECOND machine of the same
+    # name. Nobody would notice until their machine list doubled.
+    #
+    # Validated as a topic segment because that is what it becomes:
+    # `{prefix}/{tenant}/{site}/machines`. A site with a slash or a wildcard in
+    # it would address a topic nobody meant (mqtt_identity._IDENTIFIER is the
+    # same rule the subscriber applies on the way in).
+    site: str = ""
+    line: Optional[str] = None
+
+    @field_validator("site", mode="before")
+    @classmethod
+    def _site_is_a_topic_segment(cls, v):
+        """Empty is allowed — a plant with one site need not name it, and every
+        machine created before this field existed has one. Anything else must be
+        a segment MQTT can address, by the SUBSCRIBER's own rule, so a site set
+        here and a site published by a gateway can never disagree about what is
+        legal."""
+        if v is None or v == "":
+            return ""
+        import mqtt_identity   # local: schemas is imported very early
+        if not isinstance(v, str) or not mqtt_identity._IDENTIFIER.match(v.strip()):
+            raise ValueError(
+                "site must be letters, numbers, dot, dash or underscore (it becomes part of the "
+                "MQTT topic your gateway publishes to)")
+        return v.strip()
 
 
 class MachineCreate(MachineBase):

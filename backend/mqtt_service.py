@@ -170,6 +170,85 @@ def tenant_is_provisioned(db, tenant: str) -> bool:
         models.Machine.tenant_code == tenant).first())
 
 
+class AmbiguousMachineIdentity(Exception):
+    """A gateway packet that AMP will not resolve without a human.
+
+    Raised when a siteless machine of this name exists AND a machine of the same
+    name already lives at a different site, so adopting one would be a guess
+    about which physical machine the packet is from. Creating a new row instead
+    would be the duplicate this whole path exists to prevent, so the packet is
+    refused and recorded: during commissioning somebody is watching, and a
+    question is better than a wrong answer that nobody sees.
+    """
+
+
+def adopt_candidate(db, route, name: str):
+    """The siteless machine this packet should claim, or None, or a refusal.
+
+    None means "nothing to adopt, create it" — the ordinary case for a machine
+    AMP has genuinely never seen. A row means "this is the same machine, give it
+    a site". AmbiguousMachineIdentity means AMP will not decide.
+    """
+    siteless = db.query(models.Machine).filter(
+        models.Machine.tenant_code == route.tenant,
+        models.Machine.name == name,
+        (models.Machine.site == "") | (models.Machine.site.is_(None)),
+    ).all()
+    if not siteless:
+        return None
+    # UNIQUE(tenant_code, site, name) means there can be at most one row with an
+    # empty site for a given name, so `siteless` is never longer than one. The
+    # list is read rather than `.first()` so that a database WITHOUT the
+    # constraint (a pre-0002 deployment, a restored dump) is refused rather than
+    # silently resolved by whichever row the engine happened to order first —
+    # the exact failure this module's docstring records for name-only lookups.
+    if len(siteless) > 1:
+        raise AmbiguousMachineIdentity(
+            f"{len(siteless)} machines named {name!r} in {route.tenant} have no site; "
+            f"AMP will not choose between them")
+    elsewhere = db.query(models.Machine).filter(
+        models.Machine.tenant_code == route.tenant,
+        models.Machine.name == name,
+        models.Machine.site != "",
+        models.Machine.site.isnot(None),
+    ).count()
+    if elsewhere:
+        raise AmbiguousMachineIdentity(
+            f"a machine named {name!r} already exists at another site in {route.tenant}, and one "
+            f"with no site also exists; AMP will not guess which this packet is from")
+    return siteless[0]
+
+
+def _record_identity_conflict(db, route, name: str, why: str):
+    """Put an unresolved identity conflict where a human will see it.
+
+    A Notification rather than a table of its own, deliberately: the pilot needs
+    this visible today, and a new table is a migration plus its own verification
+    on PostgreSQL. Deduplicated on the title so a gateway publishing every second
+    raises the question once, not 86,400 times a day — an alert that floods is
+    an alert nobody reads.
+    """
+    title = f"Machine identity conflict: {name} at {route.site}"
+    existing = db.query(models.Notification).filter(
+        models.Notification.tenant_code == route.tenant,
+        models.Notification.title == title,
+        models.Notification.status != "Read",
+    ).first()
+    if existing is not None:
+        return
+    try:
+        db.add(models.Notification(
+            tenant_code=route.tenant, notification_type="machine_identity",
+            severity="High", title=title, status="Unread",
+            message=(f"{why}. AMP dropped the reading rather than guess or create a duplicate. "
+                     f"Set the site on the machine you meant, then the gateway's next message "
+                     f"will match it.")))
+        db.commit()
+    except Exception:            # noqa: BLE001 - never let the record break the listener
+        db.rollback()
+        log.info("could not record the identity conflict for %s/%s", route.tenant, name)
+
+
 def get_or_create_machine(db, route, name: str):
     """Resolve a machine WITHIN a tenant and site, never by name alone.
 
@@ -190,6 +269,31 @@ def get_or_create_machine(db, route, name: str):
     machine = find()
     if machine:
         return machine
+
+    # ADOPTION. A machine the customer created BY HAND has no site — `site` was
+    # written only by this path until the create form gained the field — so the
+    # exact match above misses it and the insert below would register a SECOND
+    # machine of the same name. That is the seam a pilot hits on its first
+    # packet: the commissioning engineer watches their machine list double.
+    #
+    # The gateway is the authority on where a machine physically is, so when the
+    # only candidate is unambiguous, claiming it is right: the siteless row IS
+    # this machine, and it now has a site.
+    #
+    # NEVER SILENTLY, and never when it is a guess. `adopt_candidate` returns a
+    # row only when there is exactly one siteless machine of that name AND no
+    # machine of that name already lives at another site; anything else raises
+    # AmbiguousMachineIdentity, which the caller records rather than resolving.
+    adopted = adopt_candidate(db, route, name)
+    if adopted is not None:
+        previous = adopted.site
+        adopted.site = route.site
+        db.commit()
+        db.refresh(adopted)
+        log.info("machine %s/%s adopted by its gateway: site %r -> %r (it was created by hand, "
+                 "so the first packet would otherwise have registered a duplicate)",
+                 route.tenant, name, previous, route.site)
+        return adopted
 
     machine = models.Machine(
         tenant_code=route.tenant,
@@ -396,7 +500,20 @@ def on_message(client, userdata, msg):
 
         downtime_value = payload.get("downtime", "0 min")
 
-        machine = get_or_create_machine(db, route, machine_name)
+        try:
+            machine = get_or_create_machine(db, route, machine_name)
+        except AmbiguousMachineIdentity as clash:
+            # AMP will not decide which physical machine this packet is from, and
+            # it will not create a duplicate to avoid the question. The packet is
+            # dropped — but LOUDLY: a notification puts the conflict in front of
+            # the people commissioning the gateway, because a silently dropped
+            # packet during commissioning is indistinguishable from "the
+            # integration does not work" and would be debugged from the wrong end.
+            log.warning("machine identity conflict for %s/%s/%s: %s",
+                        route.tenant, route.site, machine_name, clash)
+            db.rollback()
+            _record_identity_conflict(db, route, machine_name, str(clash))
+            return
 
         old_status = machine.status
         old_utilization = machine.utilization

@@ -70,3 +70,11 @@ docs/training/*.pdf
 docs/training/handbook.html
 docs/*.pdf
 docs/sales/*.pdf
+
+# AMP Edge gateway: the local queue and any operator .env live on the plant PC,
+# never in the repo.
+edge/*.db
+edge/*.db-wal
+edge/*.db-shm
+edge/.env
+edge/amp-edge-diagnostics.json

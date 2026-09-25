@@ -1,0 +1,66 @@
+# AMP Edge — Modbus TCP example.
+#
+# Modbus tells you NOTHING about itself: a register is a 16-bit number at a
+# number. Everything the protocol cannot say has to be said here, and the two
+# settings that produce wrong numbers rather than errors are `modbus_type` and
+# `word_order`. Always check `preview` against the machine before streaming.
+
+amp:
+  host: broker.amp.example.com
+  port: 8883
+  tls: true
+  tenant: ACME
+  site: plant-1
+  username_env: AMP_MQTT_USERNAME
+  password_env: AMP_MQTT_PASSWORD
+
+gateway:
+  id: gw-acme-plant1-02
+  key_env: AMP_GATEWAY_KEY
+
+machines:
+  - name: PRESS-02
+    protocol: modbus
+    poll_interval: 1.0
+    connection:
+      host: 192.168.10.44
+      port: 502
+      unit_id: 1
+      timeout: 5
+    tags:
+      # Addresses may be written either way. 40001 is holding register 0 in the
+      # standard documentation convention; a plain 0 with register_type means
+      # the same thing. Both are accepted, and `preview` shows which was used.
+      - tag: run
+        address: 0
+        register_type: coil
+        signal: running
+        datatype: bool
+
+      - tag: fault
+        address: 10001            # discrete input 0
+        signal: fault_active
+        datatype: bool
+
+      - tag: parts
+        address: 40001            # holding 0..1, a 32-bit counter
+        signal: part_count
+        datatype: int
+        modbus_type: uint32
+        word_order: big           # THE setting that silently reports 458,752
+        counter_mode: cumulative
+
+      - tag: rejects
+        address: 40003
+        signal: reject_count
+        datatype: int
+        modbus_type: uint16
+        counter_mode: cumulative
+
+      - tag: oil_temp
+        address: 30001            # input register 0, tenths of a degree
+        signal: temperature
+        datatype: float
+        modbus_type: uint16
+        scale: 0.1
+        unit: degC

@@ -119,10 +119,48 @@ class Normalizer:
         self.by_signal = {m.signal: m for m in mappings if m.signal}
         self.stale_after = float(stale_after)
         self._counters = {}
+        # The PLC's OWN timestamp for the last usable reading of each signal.
+        # Used to reject out-of-order readings, where the source clock is the
+        # only clock that can order them.
         self._last_ts = {}
+        # When that reading ARRIVED, by our clock. A different question, and
+        # keeping them apart matters: a controller whose clock runs ten minutes
+        # behind delivers perfectly well, and judging "is data still flowing?"
+        # by its timestamps would report a healthy machine as dead.
+        self._last_arrival = {}
         self._last_value = {}
+        # Per-absorb, for the caller that wants THIS poll's problems (preview).
         self.rejections = []
         self.counter_notes = []
+        # RUNNING, across every poll, for the health report. `rejections` is
+        # cleared on each absorb, so a verdict built from it would go quiet the
+        # moment one poll happened to be clean -- and a tag that is refused
+        # nine times out of ten is exactly as broken as one refused every time.
+        self.refusals = {}
+        # How far ahead of US the PLC's own clock is, in seconds, from the most
+        # recent reading that carried a SOURCE timestamp. None when nothing has
+        # supplied one (Modbus never does; it has no clock to report).
+        #
+        # It is the single most useful number on a first commissioning, because
+        # one wrong clock produces two unrelated-looking failures: readings more
+        # than FUTURE_TOLERANCE_S ahead are refused here, and a gateway host
+        # whose own clock is out by more than five minutes cannot sign anything
+        # AMP will accept. Same cause, two symptoms, neither naming the clock.
+        self.clock_skew = None
+
+    def _refuse(self, tag, signal, reason):
+        """Record a refusal once, in both places. The ONLY way to refuse.
+
+        Two collections with one writer: `rejections` is this poll's list and
+        `refusals` is the running tally the health report reads. Appending to
+        one and forgetting the other is the obvious bug, so there is nowhere to
+        forget it from.
+        """
+        self.rejections.append(Rejection(tag, signal, reason))
+        key = signal or tag
+        count, _ = self.refusals.get(key, (0, ""))
+        self.refusals[key] = (count + 1, reason)
+        return None
 
     # ── the entry point ─────────────────────────────────────────────
     def absorb(self, readings, now=None):
@@ -139,40 +177,41 @@ class Normalizer:
     def _one(self, reading, now):
         spec = self.by_address.get(str(reading.tag)) or self.mappings.get(reading.tag)
         if spec is None:
-            self.rejections.append(Rejection(reading.tag, None, "no mapping for this tag"))
-            return None
+            return self._refuse(reading.tag, None, "no mapping for this tag")
 
         # 1. Absence. The PLC did not give us a usable value, so there is no
         #    sample. NOT a zero, NOT the previous value, NOT False.
         if not reading.is_usable:
-            self.rejections.append(Rejection(
+            return self._refuse(
                 reading.tag, spec.signal,
-                f"{reading.quality.lower()}: {reading.detail or 'no value'}"))
-            return None
+                f"{reading.quality.lower()}: {reading.detail or 'no value'}")
 
         # 2. The clock. Done before conversion because a value with an unusable
         #    timestamp is unusable whatever it converts to.
         ts = float(reading.timestamp)
+        if reading.source_time:
+            # Recorded BEFORE the refusal below, deliberately: the reading that
+            # proves the clock is wrong is exactly the one that gets thrown
+            # away, so measuring only the ones we keep would measure nothing on
+            # the machine that needs it most.
+            self.clock_skew = ts - now
         if ts > now + FUTURE_TOLERANCE_S:
-            self.rejections.append(Rejection(
+            return self._refuse(
                 reading.tag, spec.signal,
-                f"timestamped {int(ts - now)}s in the future; check the PLC clock"))
-            return None
+                f"timestamped {int(ts - now)}s in the future; check the PLC clock")
         previous_ts = self._last_ts.get(spec.signal)
         if previous_ts is not None and ts < previous_ts:
             # Out of order. For a state signal this would show a stale value as
             # current; for a counter it would compute a negative delta.
-            self.rejections.append(Rejection(
+            return self._refuse(
                 reading.tag, spec.signal,
-                f"older than the last sample for {spec.signal} by {previous_ts - ts:.1f}s"))
-            return None
+                f"older than the last sample for {spec.signal} by {previous_ts - ts:.1f}s")
 
         # 3. Conversion. The mapper refuses rather than defaults.
         try:
             value = spec.apply(reading.value)
         except mapping_mod.ValueRefused as e:
-            self.rejections.append(Rejection(reading.tag, spec.signal, str(e)))
-            return None
+            return self._refuse(reading.tag, spec.signal, str(e))
 
         # 4. Type. A `running` that arrives as 1 is a mapping bug, and letting it
         #    through means AMP decides what 1 means.
@@ -181,13 +220,13 @@ class Normalizer:
             if expected is float and isinstance(value, int) and not isinstance(value, bool):
                 value = float(value)
             else:
-                self.rejections.append(Rejection(
+                return self._refuse(
                     reading.tag, spec.signal,
                     f"{spec.signal} must be {getattr(expected, '__name__', expected)}, "
-                    f"got {type(value).__name__}"))
-                return None
+                    f"got {type(value).__name__}")
 
         self._last_ts[spec.signal] = ts
+        self._last_arrival[spec.signal] = now
 
         # 5. Counters become production. Everything else is reported as it is.
         if signals.is_counter(spec.signal):
@@ -269,22 +308,66 @@ class Normalizer:
         self.counter_notes.append(
             f"{spec.signal}: went backwards {previous} -> {raw} and counter_mode is "
             f"{mode!r} with no counter_max that explains it; counted 0 and re-baselined")
-        self.rejections.append(Rejection(
+        # _refuse, not a bare append, so the running tally sees it too — but the
+        # return value is NOT its None: a re-baselined counter still produces a
+        # sample, of zero. That is the one refusal that is also a reading.
+        self._refuse(
             spec.tag, spec.signal,
             f"counter went backwards ({previous} -> {raw}); counted 0 rather than invent "
             f"production. If this counter resets, set counter_mode: resets. If it rolls "
-            f"over, set counter_max."))
+            f"over, set counter_max.")
         return 0, "counter_rebaselined"
 
     # ── what the health screen asks ─────────────────────────────────
-    def freshness(self, now=None):
-        """Per signal: how long since a sample. None means never — not zero."""
+    def not_arriving(self, now=None):
+        """Mapped signals producing nothing, and the last reason. The G1 fix.
+
+        A tag can fail in two completely different places and only one of them
+        was visible. The ADAPTER can fail to read it -- a bad node id, a
+        register the device refuses -- and that shows up as `bad_tags`. Or the
+        adapter can read it perfectly and THIS class can refuse every value:
+        a clock too far ahead, a boolean in neither true-set nor false-set, an
+        int where a bool was declared.
+
+        The second case used to be invisible to the health report, so a gateway
+        whose every reading was being thrown away reported STREAMING. That is
+        the exact dishonesty the report exists to prevent, and it is far more
+        likely against a real controller than against a simulator whose
+        datatypes and clock we chose ourselves.
+
+        A signal counts as arriving once ONE reading has come through mapping
+        and the type check -- `_last_ts` is set there, after every refusal path
+        has returned. That deliberately includes a counter's first reading,
+        which produces a baseline and no sample: the reading arrived, it simply
+        was not production yet.
+        """
         now = time.time() if now is None else now
-        return {signal: (now - ts) for signal, ts in self._last_ts.items()}
+        out = []
+        for signal, spec in self.by_signal.items():
+            last = self._last_ts.get(signal)
+            if last is None:
+                count, reason = self.refusals.get(signal, (0, ""))
+                out.append((signal, reason or "no reading has arrived for it yet", count))
+            elif (now - self._last_arrival.get(signal, last)) > self.stale_after:
+                count, reason = self.refusals.get(signal, (0, ""))
+                waited = int(now - self._last_arrival.get(signal, last))
+                out.append((signal, reason or f"last reading {waited}s ago", count))
+        return out
+
+
+    def freshness(self, now=None):
+        """Per signal: how long since a reading ARRIVED. Absent means never.
+
+        Arrival, not the PLC's own timestamp: a controller ten minutes behind is
+        still delivering, and this answers "is data flowing?" rather than "how
+        old is this value?".
+        """
+        now = time.time() if now is None else now
+        return {signal: (now - at) for signal, at in self._last_arrival.items()}
 
     def is_stale(self, signal, now=None):
         now = time.time() if now is None else now
-        ts = self._last_ts.get(signal)
+        ts = self._last_arrival.get(signal)
         if ts is None:
             return None              # never seen is not stale; it is unknown
         return (now - ts) > self.stale_after

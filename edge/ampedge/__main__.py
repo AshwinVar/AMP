@@ -117,6 +117,32 @@ async def _preview(resolved, args):
                 if canonical in ("REFUSED", "--"):
                     bad += 1
                 print(f"  {str(m.address):<28} {raw:<16} {m.signal:<16} {canonical:<18} {note}")
+            # THE CLOCK, said out loud before anyone starts streaming. One
+            # wrong clock produces two failures that look unrelated: readings
+            # more than a minute ahead are refused by the normalizer, and a
+            # host more than five minutes out cannot sign anything AMP will
+            # accept. Neither error mentions a clock, and both present as
+            # "connected, nothing arriving".
+            if norm.clock_skew is not None:
+                skew = norm.clock_skew
+                if abs(skew) <= 5:
+                    print(f"  clock: the PLC is within {abs(skew):.0f}s of this gateway.")
+                else:
+                    print(f"  CLOCK: the PLC's clock is {abs(skew):.0f}s "
+                          f"{'AHEAD OF' if skew > 0 else 'BEHIND'} this gateway's.")
+                    if skew > normalizer_mod.FUTURE_TOLERANCE_S:
+                        bad += 1
+                        print(f"         More than {int(normalizer_mod.FUTURE_TOLERANCE_S)}s "
+                              f"ahead: every reading will be REFUSED as a future timestamp. "
+                              f"Fix the clock on the PLC or on this PC before streaming.")
+                    else:
+                        print("         Not fatal on its own, but check NTP on both: a "
+                              "gateway more than 5 minutes out cannot sign messages AMP "
+                              "will accept, and that fault looks nothing like this one.")
+            else:
+                print("  clock: this protocol reports no timestamp of its own, so the "
+                      "readings are stamped by THIS PC. Check its clock is right — a "
+                      "gateway more than 5 minutes out cannot authenticate to AMP.")
         finally:
             await adapter.disconnect()
     print()

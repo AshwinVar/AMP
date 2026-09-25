@@ -30,6 +30,7 @@ python -m compileall -q edge && for f in edge/test_*.py; do python "$f" || echo 
 | 7 | Modbus register outside the mapped range | Device exception surfaced as a refusal — **never** the zero the wire offers | `test_modbus_end_to_end.py` §4 |
 | 8 | Value will not fit its declared datatype | Refused, tag named. No default substituted | `test_edge_pipeline.py` §2, `mapping.py` (`ValueRefused`) |
 | 9 | Boolean raw value in neither true- nor false-set | Refused. Not silently "stopped" | `test_edge_pipeline.py` §2 |
+| 10b | **Tag reads perfectly, every value unusable** (int declared bool, run bit in neither true- nor false-set, clock ahead) | `READINGS_REFUSED`, naming the signal and the reason. NOT `STREAMING` — the adapter succeeding is not the same as the data being usable | `test_edge_health.py` §9, `test_edge_pipeline.py` §7 |
 | 10 | **PLC offline ≠ machine value zero** | No sample at all; AMP keeps the last known state with its age; verdict says `PLC_UNREACHABLE` | `test_edge_pipeline.py` §2, `test_edge_health.py` §1–2 |
 
 ## B. Counters and production
@@ -89,7 +90,7 @@ misremembered.
 |---|---|---|---|
 | 35 | ~~A gateway publishes into another tenant by editing its topic~~ | **CLOSED** (ADR-0041). Covered end to end by `test_gateway_ingest_authentication.py` §3, including the same-site case. The residual exposure is the key being a shared secret at rest in AMP's database. | **CLOSED** |
 | 36 | ~~The same production record delivered twice~~ | **CLOSED** (migration 0013). Three deliveries write one record; `test_gateway_ingest_authentication.py` §6. | **CLOSED** |
-| 35b | **A gateway host whose clock is wrong** | More than five minutes of skew and nothing authenticates. Deliberate, but it makes NTP a prerequisite rather than a nicety, and nothing tests what a commissioning engineer actually sees when it happens. | **OPEN** |
+| 35b | A PLC or gateway whose clock is wrong | `preview` reports the skew before you stream; a PLC more than 60s ahead is called out as fatal with the reason. While streaming, the health verdict says `READINGS_REFUSED` and NAMES the clock — including that the same clock breaks signing, which presents as a different fault. | `test_edge_pipeline.py` §8, `test_edge_health.py` §9, `test_opcua_end_to_end.py` §4b |
 | 37 | Process telemetry (temperature, pressure) on an ordinary machine | Published correctly and **dropped by AMP**: `readings` is interpreted only for an OEM installation with a telemetry profile. | **OPEN — do not promise a chart** |
 | 38 | Anything at all against a **physical PLC** | Every protocol row in the support matrix says SIMULATOR VERIFIED. Software servers do not run out of sessions, do not have a CPU watchdog, and share our clock. | **OPEN by design — this is what the first visit is for** |
 | 39 | MQTT over TLS to a production broker | `tls_set()` is called; never exercised against a real TLS endpoint. | **OPEN** |

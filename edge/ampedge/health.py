@@ -11,12 +11,22 @@ There are exactly five places it can be broken, and this report separates them:
     EDGE     is the gateway process even running
     PLC      can it reach the controller at all
     TAGS     can it read the addresses it was given
+    VALUES   can it USE what those addresses return
     CLOUD    can it reach AMP
     BUFFER   is it holding data it has not managed to send
 
 `verdict` names the first one that is broken, in that order, because that is the
 order they must be fixed in: a tag list cannot be debugged through a PLC that is
 unreachable, and an empty AMP dashboard means nothing while the queue is full.
+
+VALUES was added after the first read-through of what this would say on real
+hardware. A controller that reads perfectly and returns a value the mapping
+cannot use -- an int where a bool was declared, a clock more than a minute
+ahead -- reported STREAMING, because the verdict only ever looked at whether
+the ADAPTER succeeded. Against a simulator whose datatypes and clock we chose
+ourselves that never happened. Against a real PLC it is one of the likeliest
+first-contact failures, and "STREAMING" is the worst possible thing to say
+about it.
 
 WHAT IT REFUSES TO SAY. "Healthy" when it has never read anything. A gateway
 that started two seconds ago and has read nothing is STARTING, not GOOD — the
@@ -30,6 +40,11 @@ from .adapters import base
 # Verdicts, most-broken first. The order IS the diagnosis.
 NO_PLC = "PLC_UNREACHABLE"
 BAD_TAGS = "TAGS_FAILING"
+# The adapter reads a tag perfectly and the normalizer refuses every value:
+# a clock too far ahead, a boolean in neither set, an int declared as a bool.
+# Distinct from TAGS_FAILING because the fix is different -- the address is
+# right and the MAPPING is wrong -- and because this used to report STREAMING.
+REFUSED = "READINGS_REFUSED"
 NO_CLOUD = "AMP_UNREACHABLE"
 BACKLOG = "BACKLOG_GROWING"
 STARTING = "STARTING"
@@ -76,6 +91,12 @@ def report(*, started_at, adapters, publisher, buffer=None, normalizers=None,
             "last_error": described.get("last_error") or "",
             "signals_seen": sorted(norm.freshness(now).keys()) if norm else [],
             "counter_notes": list(norm.counter_notes)[-5:] if norm else [],
+            # (signal, why, how many times) for every mapped signal producing
+            # nothing. Empty when no normalizer was supplied.
+            "not_arriving": norm.not_arriving(now) if norm else [],
+            # Seconds the PLC's clock is ahead of ours, or None when nothing
+            # has supplied a source timestamp (Modbus never does).
+            "clock_skew_s": round(norm.clock_skew, 1) if norm and norm.clock_skew is not None else None,
         }
 
     stats = buffer.stats(now=now) if buffer is not None else {
@@ -130,6 +151,29 @@ def _verdict(state, now):
             f"({', '.join(tags[:3])}{'...' if len(tags) > 3 else ''}). The network is fine; the "
             f"addresses are wrong. Browse the server and correct them in the config.")
 
+    refusing = {n: m["not_arriving"] for n, m in machines.items() if m.get("not_arriving")}
+    if refusing:
+        name = next(iter(refusing))
+        stuck = refusing[name]
+        signal, why, count = stuck[0]
+        skew = machines[name].get("clock_skew_s")
+        clock = ""
+        if skew is not None and abs(skew) > 60:
+            # Named explicitly because ONE wrong clock produces two symptoms
+            # that look unrelated: readings refused here, and signatures AMP
+            # will not accept. Neither error says "clock" on its own.
+            clock = (f" The PLC's clock is {abs(skew):.0f}s "
+                     f"{'ahead of' if skew > 0 else 'behind'} this gateway's, which is almost "
+                     f"certainly the cause -- and a gateway clock that far out cannot sign "
+                     f"messages AMP will accept either.")
+        return REFUSED, (
+            f"{name} is being read, and {len(stuck)} mapped signal(s) produce nothing: "
+            f"{signal} -- {why}"
+            + (f" ({count} times)" if count > 1 else "")
+            + f".{clock} The address is right and the mapping or the data is not, so nothing "
+              f"is reaching AMP for it. Run `preview` to see the raw value beside the "
+              f"canonical one.")
+
     silent = [n for n, m in machines.items()
               if m.get("since_last_read_s") is None or m["since_last_read_s"] > READ_SILENCE_S]
     if silent and (state["edge"].get("uptime_s") or 0) > READ_SILENCE_S:
@@ -182,6 +226,13 @@ def lines(state) -> list:
                    + (f"{since:.0f}s ago" if since is not None else "never"))
         if m.get("bad_tags"):
             out.append(f"           BAD TAGS: {', '.join(m['bad_tags'])}")
+        for signal, why, count in (m.get("not_arriving") or []):
+            out.append(f"           NO VALUE: {signal} -- {why}"
+                       + (f" ({count}x)" if count > 1 else ""))
+        skew = m.get("clock_skew_s")
+        if skew is not None and abs(skew) > 5:
+            out.append(f"           CLOCK:    the PLC is {abs(skew):.0f}s "
+                       f"{'ahead of' if skew > 0 else 'behind'} this gateway")
     cloud = state["cloud"]
     out.append(f"  AMP      {cloud.get('state')} -> {cloud.get('broker')} "
                f"topic {cloud.get('topic')}")

@@ -243,6 +243,13 @@ async def run_checks(running, parts, rejects, temperature, mode):
           "plausible wrong number" in printed, printed[-300:])
     check("preview prints no credential", "sentinel-key-do-not-print" not in printed,
           "the gateway key appeared in preview output")
+    # THE CLOCK, before anyone streams. A real server shares our clock, so this
+    # is the in-sync case; the skewed cases are driven directly in
+    # test_edge_pipeline.py §8 and test_edge_health.py §9.
+    check("...and reports the PLC's clock against this gateway's",
+          "clock:" in printed.lower(), printed[-500:])
+    check("...saying it is in step when it is, rather than staying silent",
+          "within" in printed, printed[-500:])
 
     # ── 5. the last hop: into AMP itself ────────────────────────────
     section("5. INTO THE REAL AMP HANDLER, ONTO THE MACHINE THAT ALREADY EXISTED")

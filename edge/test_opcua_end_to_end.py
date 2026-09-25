@@ -282,6 +282,42 @@ async def run_checks(running, parts, rejects, temperature, mode):
         models.ProductionRecord.tenant_code == "PILOT").all()
     tenancy.reset_current_tenant(tok)
 
+    # ── 5b. the same message again, through the queue ───────────────
+    #
+    # THE JOIN BETWEEN THE TWO HALVES. edge/test_edge_pipeline.py proves the
+    # buffer gives every record an id; backend/test_gateway_ingest_authentication
+    # proves AMP writes one record per id. Neither proves they are the SAME id,
+    # and a mismatch would look exactly like working software until a flaky link
+    # doubled somebody's shift.
+    #
+    # Delivery is at-least-once by design: a publish that timed out may or may
+    # not have arrived, so the gateway re-sends. That is what is simulated here.
+    import tempfile                              # noqa: E402
+
+    from ampedge import buffer as buffer_mod     # noqa: E402
+
+    queue = buffer_mod.Buffer(os.path.join(tempfile.mkdtemp(), "q.db"))
+    queue.put(body)
+    row_id, record_id, queued_at, queued_body = queue.peek(1)[0]
+    check("the queue gave the record an id", bool(record_id), "no record_id assigned")
+
+    for _ in range(3):
+        mqtt_service.on_message(None, None, Msg(
+            topic, buffer_mod.stamp_for_publish(queued_body, queued_at)))
+    queue.close()
+
+    db.expire_all()
+    tok = tenancy.set_current_tenant(None)
+    replayed = db.query(models.ProductionRecord).filter(
+        models.ProductionRecord.tenant_code == "PILOT").all()
+    tenancy.reset_current_tenant(tok)
+    check("re-delivering the queued message three times adds ONE record, not three",
+          len(replayed) == len(records) + 1,
+          f"{len(records)} -> {len(replayed)}")
+    check("...and AMP stored the gateway's own id for it",
+          any(r.source_record_id == record_id for r in replayed),
+          str([r.source_record_id for r in replayed]))
+
     check("EXACTLY ONE CNC-01 exists — no duplicate was registered",
           len(rows) == 1, str([(m.id, m.site) for m in rows]))
     check("...and it is the SAME machine the customer created",

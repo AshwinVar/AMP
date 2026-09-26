@@ -17,7 +17,7 @@ infrastructure AMP talks to, in the same category as Postgres.
 | Edge gateway → broker, from outside Railway | **NOT AVAILABLE.** No TLS listener and no TCP proxy — see [The external path is not open yet](#the-external-path-is-not-open-yet) |
 | ACL: one gateway writes exactly one tenant/site topic | **VERIFIED BY TEST** (`test_mosquitto_config.py`, 11/11 mutants caught) — against the rendered file, *not* against a running broker |
 | mosquitto enforces that file as written | **UNVERIFIED HERE.** No broker and no Docker in CI. Verify it during commissioning, step 6 below |
-| Messages queued while AMP restarts | **NOT WORKING.** See [The queue is not armed yet](#the-queue-is-not-armed-yet) |
+| Messages queued while AMP restarts | **AMP ASKS FOR IT CORRECTLY** (persistent session + QoS 1); that mosquitto honours it is unverified until step 6 |
 
 Nothing on this page has been tested against a physical PLC.
 
@@ -124,26 +124,34 @@ Both ways to close the gap are real work, not configuration:
 Until one of them is done, the honest description of this broker is: **AMP can
 ingest over MQTT within Railway; nothing outside Railway can publish to it.**
 
-## The queue is not armed yet
+## The queue, and the one thing that would silently disarm it
 
 `mosquitto.conf` sets `persistence`, `max_queued_messages` and
 `persistent_client_expiration` so the broker holds messages for a subscriber
-that is temporarily gone. None of it does anything yet, because
-`backend/mqtt_service.py:_build_client` constructs a bare `mqtt.Client()` —
-paho's defaults are a **random client id** and **`clean_session=True`**. The
-broker therefore has no session to queue against, and anything published while
-AMP is restarting is dropped.
+that is temporarily gone. AMP asks it to: `_build_client` connects with a
+stable client id (`MQTT_CLIENT_ID`, default `amp-ingest`) and
+`clean_session=False`, and `on_connect` subscribes at **QoS 1**.
 
-The gateway will have been PUBACKed for those messages and will have deleted
-them from its local buffer, so this is silent data loss on every deploy, not a
-visible outage. The edge buffer does not cover it: it protects the
-gateway→broker hop, and this is the broker→AMP hop.
+**Both halves are load-bearing.** A broker queues nothing for an offline
+subscriber whose subscription is QoS 0 — `queue_qos0_messages` is false above,
+and false by default — so a persistent session that subscribed at paho's
+default of 0 would queue exactly nothing while looking entirely correct. If you
+ever change one, change the other.
 
-The fix is a fixed `client_id` plus `clean_session=False`, and it needs care
-about what happens if the service ever runs more than one replica (two
-subscribers sharing a client id disconnect each other in a loop; MQTT v5 shared
-subscriptions are the real answer). It is deliberately not in this change: it is
-untestable without a broker, and now there is one.
+**One ingest process per broker.** Two subscribers sharing a client id take the
+session from each other on every connect and flap forever, losing more than the
+session saves. Railway runs one replica by default; a second environment
+pointed at this broker must set `MQTT_CLIENT_ID` to something else. (Giving
+them different ids means each gets its OWN copy of every message — correct for
+a staging environment reading production traffic, wrong as a way to scale
+ingest. MQTT v5 shared subscriptions are the answer to that, and AMP does not
+use them.)
+
+**How to tell whether it worked.** AMP logs the CONNACK's session-present flag
+on every connect. `resumed its existing broker session` means the broker held
+the backlog. A `FRESH broker session` warning is expected exactly once — on the
+first connect after configuring MQTT — and at any other time means the session
+was gone and whatever was published while AMP was away was never queued.
 
 ---
 

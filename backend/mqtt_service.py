@@ -40,6 +40,20 @@ MQTT_BROKER = os.environ.get("MQTT_BROKER", "127.0.0.1")
 MQTT_PORT = int(os.environ.get("MQTT_PORT", "1883"))
 
 DEFAULT_TOPIC_PREFIX = "flowmes"
+
+# The name the broker files AMP's subscription under. It must be STABLE across
+# restarts -- that is the entire point -- so it is a constant and not anything
+# derived from a hostname, pid or container id, all of which change on exactly
+# the event this is meant to survive.
+DEFAULT_CLIENT_ID = "amp-ingest"
+
+# The QoS AMP subscribes at, and it is load-bearing rather than a tuning knob.
+# A broker queues nothing for an offline subscriber whose subscription is QoS 0
+# -- mosquitto's `queue_qos0_messages` defaults to false and our own
+# infra/mosquitto/mosquitto.conf leaves it false -- so subscribing at 0 would
+# leave the persistent session below doing nothing at all. The two changes only
+# work together, which is why they are commented together.
+SUBSCRIBE_QOS = 1
 _LEGACY_TOPIC_SUFFIX = "/machines"
 
 
@@ -446,9 +460,33 @@ def on_connect(client, userdata, flags, rc):
     log.info(f"FastAPI MQTT connected with code: {rc}")
 
     if rc == 0:
+        # DID THE BROKER STILL HAVE US? The CONNACK's session-present flag is
+        # the only place that question is ever answered, and the answer is the
+        # difference between "we were away and the broker held our telemetry"
+        # and "we were away and it is gone". A gateway cannot tell us: it was
+        # acknowledged either way. Logged at WARNING on a fresh session because
+        # on a deployment that has been running, a fresh session means loss --
+        # the broker expired it, was restarted without persistence, or somebody
+        # else connected with our client id and took it.
+        try:
+            resumed = bool(flags.get("session present"))
+        except AttributeError:          # a fake client in a test, or paho v5 flags
+            resumed = bool(getattr(flags, "session_present", False))
+        if resumed:
+            log.info("FastAPI MQTT resumed its existing broker session; "
+                     "anything published while it was away is being delivered now")
+        else:
+            log.warning("FastAPI MQTT got a FRESH broker session (no session present). "
+                        "Expected on first connect after configuring MQTT. At any "
+                        "other time it means the broker was not holding our "
+                        "subscription, so telemetry published while this process "
+                        "was disconnected was NOT queued and is gone.")
+
         for topic_filter in mqtt_identity.topic_filters(TOPIC_PREFIX, LEGACY_TENANT):
-            client.subscribe(topic_filter)
-            log.info("FastAPI MQTT subscribed to %s", topic_filter)
+            # qos=SUBSCRIBE_QOS, not paho's default of 0: see SUBSCRIBE_QOS.
+            client.subscribe(topic_filter, qos=SUBSCRIBE_QOS)
+            log.info("FastAPI MQTT subscribed to %s at QoS %d",
+                     topic_filter, SUBSCRIBE_QOS)
     else:
         log.info("FastAPI MQTT connection failed")
 
@@ -857,8 +895,31 @@ def _build_client():
     they all require auth. docker-compose.yml says as much in its own comment:
     "never point a production deployment at an anonymous broker". The anonymous
     path still works unchanged for local development.
+
+    A NAMED CLIENT WITH A SESSION THE BROKER KEEPS.
+    `mqtt.Client()` also took paho's defaults for the two arguments that decide
+    what happens to telemetry published while AMP is not listening: a RANDOM
+    client id and clean_session=True. Together they mean the broker throws our
+    subscription away the moment we disconnect and has nothing to queue
+    against, so every redeploy -- and AMP redeploys on every merge -- is a hole
+    in the data.
+
+    It is a SILENT hole, which is why it outlived the edge buffer built to
+    prevent exactly this. The gateway deletes a record from its local queue
+    once the BROKER acknowledges it; the broker acknowledges it whether or not
+    anyone is subscribed. So the gateway's buffer is empty, its health report
+    says STREAMING, and the minute of production is gone. The buffer protects
+    the gateway->broker hop. This protects broker->AMP.
+
+    MQTT_CLIENT_ID exists because the id must be unique per SUBSCRIBER, not per
+    deployment: two processes sharing one id take the session from each other
+    on every connect, and the resulting flap loses more than it saves. One
+    ingest process per broker is the supported arrangement -- see
+    infra/mosquitto/README.md -- and a second environment pointed at the same
+    broker must set this.
     """
-    client = mqtt.Client()
+    client_id = (os.environ.get("MQTT_CLIENT_ID") or "").strip() or DEFAULT_CLIENT_ID
+    client = mqtt.Client(client_id=client_id, clean_session=False)
     client.on_connect = on_connect
     client.on_message = on_message
     username = (os.environ.get("MQTT_USERNAME") or "").strip()

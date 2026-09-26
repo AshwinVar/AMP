@@ -137,7 +137,9 @@ class _RecordingClient:
     def __init__(self):
         self.subscribed = []
 
-    def subscribe(self, topic):
+    def subscribe(self, topic, qos=0):
+        # qos is accepted but not asserted on here; test_mqtt_persistent_session.py
+        # owns that, and duplicating it would mean two places to update.
         self.subscribed.append(topic)
 
 
@@ -147,11 +149,18 @@ def test_reconnect_restores_the_subscription():
     """Pins: after a drop, the re-fired on_connect subscribes AGAIN.
 
     Failure this catches: a subscription that is only established once. Paho's
-    loop_forever reconnects on its own and re-invokes on_connect, but the broker
-    does NOT remember the old subscription for a clean session — if on_connect
+    loop_forever reconnects on its own and re-invokes on_connect — if on_connect
     stopped subscribing on a later call (e.g. behind a 'first run' guard), the
     client would sit connected and silent, and the shop floor would go dark with
     no error anywhere.
+
+    AMP now connects with clean_session=False, so a broker that still holds the
+    session restores the subscription by itself and the re-subscribe is a
+    no-op. That is not a reason to stop doing it: the session is exactly what
+    is NOT there after the broker expires it, restarts without persistence, or
+    someone else connects with our client id — the three cases where going
+    silent would be permanent. Re-subscribing unconditionally is what makes
+    those recoverable.
     """
     client = _RecordingClient()
     with redirect_stdout(io.StringIO()):

@@ -1,6 +1,6 @@
 # ADR-0029: Did it help? — measured, and never claimed as a cause
 
-**Status:** accepted · **Date:** 2026-09-20 · **Extends** [ADR-0005](0005-autonomous-agents.md) (agents propose, humans decide), [ADR-0014](0014-oee-contract.md) (null is not zero), [ADR-0022](0022-copilot-typed-tools-evidence-and-grounding.md) (evidence and provenance) · **Closes a gap named in** [ADR-0026](0026-production-risk-radar.md) and [ADR-0027](0027-machine-health-explained.md)
+**Status:** accepted · **Date:** 2026-09-20 · **Extends** [ADR-0005](0005-agent-oversight.md) (agents propose, humans decide), [ADR-0014](0014-canonical-oee-contract.md) (null is not zero), [ADR-0022](0022-copilot-typed-tools-evidence-and-grounding.md) (evidence and provenance) · **Closes a gap named in** [ADR-0026](0026-production-risk-radar.md) and [ADR-0027](0027-machine-health-explained.md)
 
 ---
 

@@ -1,6 +1,6 @@
 # ADR-0033: An aggregate can disclose what a field could not, so every cross-customer figure has a floor
 
-**Status:** accepted · **Date:** 2026-09-20 · **Extends** [ADR-0017](0017-oem-boundary.md) (an OEM relationship is not access to a factory), [ADR-0014](0014-oee-contract.md) (null is not zero)
+**Status:** accepted · **Date:** 2026-09-20 · **Extends** [ADR-0017](0017-oem-fleet-and-cross-tenant-equipment.md) (an OEM relationship is not access to a factory), [ADR-0014](0014-canonical-oee-contract.md) (null is not zero)
 
 ---
 

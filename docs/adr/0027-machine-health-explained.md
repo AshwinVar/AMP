@@ -1,6 +1,6 @@
 # ADR-0027: Every health score shows its arithmetic, and the trained model is shown as a model
 
-**Status:** accepted · **Date:** 2026-09-20 · **Extends** [ADR-0006](0006-ai-native-shell.md) (the machine twin), [ADR-0020](0020-amp-native-ai.md) (measure before claiming), [ADR-0022](0022-copilot-typed-tools-evidence-and-grounding.md) (evidence and provenance), [ADR-0026](0026-production-risk-radar.md) (a rule, never a probability)
+**Status:** accepted · **Date:** 2026-09-20 · **Extends** [ADR-0006](0006-machine-health-twin.md) (the machine twin), [ADR-0020](0020-amp-native-ai.md) (measure before claiming), [ADR-0022](0022-copilot-typed-tools-evidence-and-grounding.md) (evidence and provenance), [ADR-0026](0026-production-risk-radar.md) (a rule, never a probability)
 
 ---
 

@@ -19,10 +19,19 @@
 # broker whose ACL semantics might have changed between two deploys.
 FROM eclipse-mosquitto:2.0.22
 
-# The base image is alpine and runs as root; mosquitto drops to the `mosquitto`
-# user itself once it has read its config. entrypoint.sh depends on both facts.
+# The base image sets no USER, so this container runs as root, and mosquitto
+# drops to the `mosquitto` user itself once it has read its config.
+# entrypoint.sh depends on both facts; they were read out of the image's own
+# config in the registry rather than assumed.
 USER root
 
+# THIS DOES NOT COVER /mosquitto/data, AND THAT IS NOT A MISTAKE.
+# The base image declares /mosquitto/data and /mosquitto/log as VOLUMEs, and
+# Docker discards what a later build step writes into an inherited volume path.
+# So this chown sticks for /mosquitto/config and is thrown away for the other
+# two. entrypoint.sh chowns them again at RUNTIME, which is the only moment
+# that works — and is also the only moment that can fix the volume Railway
+# mounts over /mosquitto/data, which arrives owned by root.
 RUN mkdir -p /mosquitto/config /mosquitto/data /mosquitto/log \
  && chown -R mosquitto:mosquitto /mosquitto
 

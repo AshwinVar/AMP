@@ -228,4 +228,8 @@ if [ "$(id -u)" = "0" ]; then
     chown -R mosquitto:mosquitto /mosquitto/data /mosquitto/log 2>/dev/null || true
 fi
 
-exec mosquitto -c "$CONFIG_DIR/mosquitto.conf"
+# Absolute path, copied from the base image's own CMD rather than assumed.
+# /usr/sbin is on PATH in that image today, so a bare `mosquitto` resolves --
+# but this script's whole job is to be the thing that does not depend on an
+# environment nobody here can run.
+exec /usr/sbin/mosquitto -c "$CONFIG_DIR/mosquitto.conf"

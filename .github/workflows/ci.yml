@@ -153,13 +153,32 @@ jobs:
             exit 1
           fi
           echo "ampedge is self-contained."
+      # A FAILING SUITE REPEATS ITS OUTPUT OUTSIDE THE GROUP.
+      #
+      # ::group:: collapses a suite's output, which is right for the ones that
+      # passed and exactly wrong for the one that did not: the annotation gives
+      # a filename, and reading the detail means expanding a collapsed group in
+      # a web UI. Two rounds of this branch went on guessing at a failure whose
+      # text was sitting in the log the whole time.
+      #
+      # `python -u` so the ordering is real rather than whatever the buffer
+      # happened to flush, and the status is taken from python rather than from
+      # the last command of a pipeline.
       - name: Run gateway test suites
         run: |
           failed=""
           for f in edge/test_*.py; do
+            out="/tmp/$(basename "$f").out"
             echo "::group::$f"
-            if python "$f"; then echo "PASS $f"; else echo "FAIL $f"; failed="$failed $f"; fi
+            if python -u "$f" > "$out" 2>&1; then ok=1; else ok=0; fi
+            cat "$out"
             echo "::endgroup::"
+            if [ "$ok" = "0" ]; then
+              failed="$failed $f"
+              echo "----- $f FAILED; its output, repeated outside the group -----"
+              grep -nE "FAIL |FAILED|Error|Traceback|assert" -A 4 "$out" | tail -60 || true
+              echo "----- end $f -----"
+            fi
           done
           if [ -n "$failed" ]; then
             echo "::error::Failing gateway suites:$failed"

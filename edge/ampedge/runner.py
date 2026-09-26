@@ -193,7 +193,22 @@ class Gateway:
                 if self.publisher.state != base.CONNECTED:
                     attempt += 1
                     try:
-                        self.publisher.connect()
+                        # IN A THREAD. Publisher.connect() blocks on a
+                        # threading.Event for up to 15s, and publish() blocks on
+                        # wait_for_publish for up to 10s. Called directly from
+                        # this coroutine they block the EVENT LOOP -- which is
+                        # every machine's poll loop too, because they share it.
+                        #
+                        # This file's own docstring says reading and sending are
+                        # independent and neither may block the other. Until the
+                        # assembled Gateway was finally driven end to end, that
+                        # was simply untrue: a broker that stopped acknowledging
+                        # stalled every PLC read on the gateway for ten seconds
+                        # per message, and one that stopped answering stalled
+                        # them for fifteen per reconnect. The separation that
+                        # makes an AMP outage a delay rather than a hole in the
+                        # plant's history did not exist.
+                        await asyncio.to_thread(self.publisher.connect)
                         attempt = 0
                         log.info("connected to AMP at %s, publishing to %s",
                                  self.publisher.host, self.publisher.topic())
@@ -210,7 +225,7 @@ class Gateway:
                 sent = []
                 for row_id, record_id, queued_at, body in batch:
                     stamped = buffer_mod.stamp_for_publish(body, queued_at)
-                    if not self.publisher.publish(stamped):
+                    if not await asyncio.to_thread(self.publisher.publish, stamped):
                         # Stop at the first failure and keep the rest queued, in
                         # order. Skipping ahead would deliver a later reading
                         # before an earlier one, and AMP's machine state is

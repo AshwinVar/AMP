@@ -78,9 +78,10 @@ def make_buffer(records=0, age=None):
     return buf
 
 
-def report(adapters, publisher=None, buffer=None, started=NOW - 3600):
+def report(adapters, publisher=None, buffer=None, started=NOW - 3600, normalizers=None):
     return health.report(started_at=started, adapters=adapters,
-                         publisher=publisher or FakePublisher(), buffer=buffer, now=NOW)
+                         publisher=publisher or FakePublisher(), buffer=buffer,
+                         normalizers=normalizers, now=NOW)
 
 
 # ── 1. the order of the diagnosis ───────────────────────────────────
@@ -183,6 +184,93 @@ unsigned = health.lines(report({"CNC-01": FakeAdapter()},
                                publisher=FakePublisher(signed=False), buffer=make_buffer()))
 check("an UNSIGNED gateway is visible in the report",
       "signed: NO" in chr(10).join(unsigned), chr(10).join(unsigned))
+
+# ── 9. the adapter reads and the values are unusable ────────────────
+section("9. READ PERFECTLY, REFUSED ENTIRELY — THE ONE THAT SAID 'STREAMING'")
+# A REAL normalizer, not a fake: the point is that the refusal paths and the
+# health report agree, and a fake would only prove they agree with the fake.
+from ampedge import mapping as mapping_mod        # noqa: E402
+from ampedge import normalizer as normalizer_mod  # noqa: E402
+
+SPECS = [
+    {"tag": "run", "address": "run", "signal": "running", "datatype": "bool"},
+    {"tag": "temp", "address": "temp", "signal": "temperature", "datatype": "float",
+     "unit": "degC"},
+]
+
+
+# A run bit that is neither in true_values nor false_values: the adapter read it
+# without complaint, and the mapping cannot turn it into a boolean.
+norm = normalizer_mod.Normalizer(mapping_mod.validate(SPECS))
+norm.absorb([base.Reading(tag="run", value="SPINNING", timestamp=NOW),
+             base.Reading(tag="temp", value="warm-ish", timestamp=NOW)], now=NOW)
+r = report({"CNC-01": FakeAdapter()}, normalizers={"CNC-01": norm})
+check("a machine read fine whose every value is refused is NOT 'streaming'",
+      r["verdict"] != health.GOOD, r["verdict"])
+check("...it is reported as REFUSED", r["verdict"] == health.REFUSED, r["verdict"])
+check("...naming a signal that is producing nothing", "running" in r["say"], r["say"])
+check("...and saying the address is right and the mapping is not",
+      "address is right" in r["say"], r["say"])
+check("...and pointing at preview, which shows raw beside canonical",
+      "preview" in r["say"], r["say"])
+
+# THE CLOCK. One wrong clock, two unrelated-looking symptoms; the report has to
+# name the cause rather than leave an engineer to infer it from two of them.
+skewed = normalizer_mod.Normalizer(mapping_mod.validate(SPECS))
+skewed.absorb([base.Reading(tag="run", value=True, timestamp=NOW + 4000, source_time=True),
+               base.Reading(tag="temp", value=48.2, timestamp=NOW + 4000, source_time=True)],
+              now=NOW)
+r = report({"CNC-01": FakeAdapter()}, normalizers={"CNC-01": skewed})
+check("a PLC clock an hour ahead refuses every reading", r["verdict"] == health.REFUSED,
+      r["verdict"])
+check("...and the report NAMES the clock rather than leaving it to be inferred",
+      "clock" in r["say"].lower(), r["say"])
+check("...saying which way it is out", "ahead of" in r["say"], r["say"])
+check("...and that the same clock breaks signing, which looks like a different fault",
+      "sign" in r["say"], r["say"])
+check("the skew is reported as a number", r["machines"]["CNC-01"]["clock_skew_s"] > 3900,
+      str(r["machines"]["CNC-01"]["clock_skew_s"]))
+
+# ORDER. A tag that cannot be READ outranks one that reads and is refused: the
+# address has to be right before the mapping can be judged at all.
+both = normalizer_mod.Normalizer(mapping_mod.validate(SPECS))
+both.absorb([base.Reading(tag="run", value="SPINNING", timestamp=NOW)], now=NOW)
+r = report({"CNC-01": FakeAdapter(state=base.DEGRADED, bad_tags=["ns=2;i=9"])},
+           normalizers={"CNC-01": both})
+check("an unreadable address outranks an unusable value", r["verdict"] == health.BAD_TAGS,
+      r["verdict"])
+
+# And refusals outrank the cloud, because the cloud message promises "nothing is
+# being lost" — which is FALSE when readings are refused: a refused reading
+# never reaches the queue at all.
+r = report({"CNC-01": FakeAdapter()},
+           publisher=FakePublisher(state=base.DISCONNECTED),
+           buffer=make_buffer(records=3), normalizers={"CNC-01": norm})
+check("refused readings outrank an AMP outage", r["verdict"] == health.REFUSED, r["verdict"])
+check("...so the report never promises 'nothing is being lost' while it is",
+      "nothing is being lost" not in r["say"], r["say"])
+
+# A counter's FIRST reading produces a baseline and no sample. That is a reading
+# arriving, not a signal failing, and calling it 'not arriving' would make every
+# gateway report REFUSED for its first poll.
+counter_specs = [{"tag": "parts", "address": "parts", "signal": "part_count",
+                  "datatype": "int", "counter_mode": "cumulative"}]
+counting = normalizer_mod.Normalizer(mapping_mod.validate(counter_specs))
+# timestamp=NOW explicitly: Reading defaults it to the REAL clock, and this
+# suite runs against a fixed fake one, so an unpinned reading looks months
+# stale and a good baseline reads as a dead signal.
+counting.absorb([base.Reading(tag="parts", value=1000, timestamp=NOW)], now=NOW)
+r = report({"CNC-01": FakeAdapter()}, normalizers={"CNC-01": counting})
+check("a counter's baseline is a reading ARRIVING, not a signal failing",
+      r["verdict"] == health.GOOD, f"{r['verdict']}: {r['say']}")
+
+# The printed form carries it too — the verdict sentence names one signal, the
+# lines name all of them.
+lines = health.lines(report({"CNC-01": FakeAdapter()}, buffer=make_buffer(),
+                            normalizers={"CNC-01": skewed}))
+text = chr(10).join(lines)
+check("the printed report shows the signals with no value", "NO VALUE" in text, text)
+check("...and the clock skew", "CLOCK:" in text, text)
 
 print()
 print("=" * 74)

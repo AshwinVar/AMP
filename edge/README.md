@@ -40,17 +40,21 @@ stack trace.
 # 1. Is the config coherent? Connects to nothing.
 python -m ampedge validate gateway.yaml
 
-# 2. What does this PLC actually have? (OPC UA only — Modbus cannot say.)
+# 2. Is AMP reachable at all? DNS, TCP, MQTT and publish permission,
+#    reported separately so you know which one to fix.
+python -m ampedge check-amp gateway.yaml
+
+# 3. What does this PLC actually have? (OPC UA only — Modbus cannot say.)
 python -m ampedge browse gateway.yaml
 
-# 3. THE IMPORTANT ONE. Read every mapped tag once and print the raw value
+# 4. THE IMPORTANT ONE. Read every mapped tag once and print the raw value
 #    beside the canonical value. Check it against the machine in front of you.
 python -m ampedge preview gateway.yaml
 
-# 4. Stream.
+# 5. Stream.
 python -m ampedge run gateway.yaml
 
-# 5. It is not working and you need help. Writes a REDACTED bundle.
+# 6. It is not working and you need help. Writes a REDACTED bundle.
 python -m ampedge diagnose gateway.yaml
 ```
 

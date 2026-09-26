@@ -102,7 +102,38 @@ restart.
 **Worked when:** it prints `OK`, the workspace and site you expect, and your tag
 list.
 
-## 5. Find out what the PLC actually has (OPC UA only)
+## 5. Check AMP is reachable, before you touch the PLC
+
+```bash
+python -m ampedge check-amp gateway.yaml
+```
+
+Four questions, answered in the order they fail — because a single "connection
+failed" is worth almost nothing on a plant network:
+
+| | |
+|---|---|
+| **DNS** | does the broker's name resolve at all (many plant networks have no DNS) |
+| **TCP** | is anything listening, or is a firewall silently dropping it |
+| **MQTT** | does the broker accept this client and these credentials |
+| **ACL** | may this gateway actually *publish* to its own topic |
+
+The last one matters more than it sounds: a broker can accept a connection and
+then refuse the publish, which looks exactly like a working gateway sending into
+a void.
+
+It publishes one **routing probe** — a message with no machine name, which AMP
+parses, refuses as unroutable and writes nothing for. You will see one
+`REJECTED (unroutable)` line in AMP's log. That is this command working, not a
+fault. Use `--no-publish` if the broker's ACL permits nothing but live
+telemetry.
+
+**What it does not prove:** that AMP *accepted* the message. A signature is
+checked by AMP, not by the broker, so a wrong or revoked gateway key looks
+exactly like success here. AMP raises a notification in the workspace when it
+refuses a gateway — if readings do not appear after `run`, look there first.
+
+## 6. Find out what the PLC actually has (OPC UA only)
 
 ```bash
 python -m ampedge browse gateway.yaml
@@ -114,7 +145,7 @@ Tag lists are wrong the first three times — `Machine.PartCount` turns out to b
 Modbus cannot do this. A register is a number with no name, so you need the
 register map from the machine builder; there is no way around it.
 
-## 6. **The important step.** Read the live values
+## 7. **The important step.** Read the live values
 
 ```bash
 python -m ampedge preview gateway.yaml
@@ -134,7 +165,7 @@ catch that, and by the time somebody notices, a month of history is wrong.
 > the first reading establishes where the counter started. Run `preview` again
 > after a part is made and you will see the increment.
 
-## 7. Stream
+## 8. Stream
 
 ```bash
 python -m ampedge run gateway.yaml

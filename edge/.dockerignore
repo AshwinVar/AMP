@@ -7,3 +7,4 @@ INSTALL.md
 *.db-shm
 .env
 __pycache__/
+broker_stub.py

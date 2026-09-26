@@ -243,6 +243,13 @@ async def run_checks(running, parts, rejects, temperature, mode):
           "plausible wrong number" in printed, printed[-300:])
     check("preview prints no credential", "sentinel-key-do-not-print" not in printed,
           "the gateway key appeared in preview output")
+    # THE CLOCK, before anyone streams. A real server shares our clock, so this
+    # is the in-sync case; the skewed cases are driven directly in
+    # test_edge_pipeline.py §8 and test_edge_health.py §9.
+    check("...and reports the PLC's clock against this gateway's",
+          "clock:" in printed.lower(), printed[-500:])
+    check("...saying it is in step when it is, rather than staying silent",
+          "within" in printed, printed[-500:])
 
     # ── 5. the last hop: into AMP itself ────────────────────────────
     section("5. INTO THE REAL AMP HANDLER, ONTO THE MACHINE THAT ALREADY EXISTED")
@@ -333,6 +340,37 @@ async def run_checks(running, parts, rejects, temperature, mode):
           records and records[0].rejected_count == 1,
           str(records[0].rejected_count) if records else "none")
     db.close()
+
+
+    # ── 7. the check-amp probe is inert against the REAL handler ────
+    section("7. `check-amp`'s PROBE REACHES AMP AND WRITES NOTHING")
+    # check-amp publishes to the workspace's REAL topic, because proving the
+    # broker will accept a publish to any OTHER topic proves nothing about the
+    # one that matters. That is only safe while the probe stays unroutable, and
+    # "stays" is the word that needs a test: the day somebody makes the handler
+    # tolerate a nameless payload, this command starts creating junk machines on
+    # customers' sites and nothing else would notice.
+    from ampedge.__main__ import selftest_probe   # noqa: E402
+
+    tok = tenancy.set_current_tenant(None)
+    before = {m.__name__: db.query(m).count() for m in
+              (models.Machine, models.ProductionRecord, models.MachineEvent,
+               models.DowntimeLog, models.Notification)}
+    tenancy.reset_current_tenant(tok)
+
+    mqtt_service.on_message(None, None, Msg(topic, selftest_probe()))
+
+    db.expire_all()
+    tok = tenancy.set_current_tenant(None)
+    after = {m.__name__: db.query(m).count() for m in
+             (models.Machine, models.ProductionRecord, models.MachineEvent,
+              models.DowntimeLog, models.Notification)}
+    tenancy.reset_current_tenant(tok)
+    check("the probe writes NOTHING to any table", after == before, f"{before} -> {after}")
+    check("...in particular it does not register a machine",
+          after["Machine"] == before["Machine"], f"{before['Machine']} -> {after['Machine']}")
+    check("...and carries no machine name, which is WHY it is inert",
+          "machine" not in selftest_probe(), str(selftest_probe()))
 
 
 if __name__ == "__main__":

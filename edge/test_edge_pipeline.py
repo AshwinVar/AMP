@@ -233,6 +233,82 @@ ids = [b[3]["record_id"] for b in buf.peek(10)]
 check("...and they are distinct", len(set(ids)) == len(ids), str(ids))
 buf.close()
 
+# ── 7. a refusal is COUNTED, not just listed ────────────────────────
+section("7. WHAT IS REFUSED STAYS VISIBLE AFTER THE POLL THAT REFUSED IT")
+# `rejections` is cleared on every absorb, so a health report built from it
+# would go quiet the moment one poll happened to be clean -- and a tag refused
+# nine polls in ten is exactly as broken as one refused every poll.
+norm = normalizer_mod.Normalizer(run_map)
+for _ in range(3):
+    norm.absorb([base.Reading(tag="r", value="SPINNING")])
+check("this poll's list holds one", len(norm.rejections) == 1, str(len(norm.rejections)))
+check("...while the running tally holds all three",
+      norm.refusals.get("running", (0, ""))[0] == 3, str(norm.refusals))
+check("...with the reason kept", "true_values" in norm.refusals["running"][1],
+      norm.refusals["running"][1])
+
+check("a signal that has never produced a reading is reported as not arriving",
+      [sig for sig, _, _ in norm.not_arriving()] == ["running"], str(norm.not_arriving()))
+check("...with the refusal as the reason, not a generic 'nothing yet'",
+      "true_values" in norm.not_arriving()[0][1], str(norm.not_arriving()))
+
+# The distinction the whole fix rests on: a reading that ARRIVED and produced no
+# sample is not a failure. A counter's first reading is exactly that.
+counter_map = mapping_mod.validate([{"tag": "c", "address": "c", "signal": "part_count",
+                                     "datatype": "int", "counter_mode": "cumulative"}])
+baseline = normalizer_mod.Normalizer(counter_map)
+samples = baseline.absorb([base.Reading(tag="c", value=1000)])
+check("a counter baseline emits no sample", samples == [], str(samples))
+check("...and is NOT reported as not arriving — the reading did arrive",
+      baseline.not_arriving() == [], str(baseline.not_arriving()))
+
+# A signal that arrived once and then stopped is not arriving either.
+stale = normalizer_mod.Normalizer(run_map)
+old_now = time.time() - 10_000
+stale.absorb([base.Reading(tag="r", value=True, timestamp=old_now)], now=old_now)
+check("a signal that stopped hours ago is reported as not arriving",
+      [sig for sig, _, _ in stale.not_arriving()] == ["running"], str(stale.not_arriving()))
+
+# ── 8. the clock is measured, including on the reading it refuses ───
+section("8. THE PLC'S CLOCK IS MEASURED FROM THE READING IT SPOILS")
+norm = normalizer_mod.Normalizer(run_map)
+now = time.time()
+norm.absorb([base.Reading(tag="r", value=True, timestamp=now + 4000, source_time=True)],
+            now=now)
+check("the reading was refused", norm.not_arriving() != [], str(norm.not_arriving()))
+# Measured BEFORE the refusal: the reading that proves the clock is wrong is the
+# one thrown away, so measuring only what survives measures nothing on the
+# machine that needs it most.
+check("...and the skew was still measured from it", norm.clock_skew is not None,
+      str(norm.clock_skew))
+check("...as roughly the real offset", 3900 < norm.clock_skew < 4100, str(norm.clock_skew))
+
+behind = normalizer_mod.Normalizer(run_map)
+behind.absorb([base.Reading(tag="r", value=True, timestamp=now - 600, source_time=True)],
+              now=now)
+check("a PLC running BEHIND is measured as negative", behind.clock_skew < -500,
+      str(behind.clock_skew))
+# THIS FOUND A REAL DEFECT. Staleness was judged on the PLC's own timestamp, so
+# a controller whose clock runs ten minutes behind -- delivering perfectly, just
+# mislabelled -- had every reading counted as stale and the machine reported as
+# not arriving. Arrival and source time are different questions and are now
+# tracked separately.
+check("...and a lagging clock does NOT make a delivering machine look dead",
+      behind.not_arriving() == [], str(behind.not_arriving()))
+check("...because freshness answers 'is data flowing', by OUR clock",
+      behind.freshness(now)["running"] < 1, str(behind.freshness(now)))
+check("...while the out-of-order guard still uses the PLC's own clock",
+      behind.absorb([base.Reading(tag="r", value=False, timestamp=now - 900,
+                                  source_time=True)], now=now) == [],
+      "an older source timestamp was accepted as current")
+
+# Modbus has no clock to report, so there is nothing to measure and nothing to
+# claim: None, never 0, which would read as "perfectly synchronised".
+no_clock = normalizer_mod.Normalizer(run_map)
+no_clock.absorb([base.Reading(tag="r", value=True)])
+check("a protocol with no clock reports None, not a confident zero",
+      no_clock.clock_skew is None, str(no_clock.clock_skew))
+
 print()
 print("=" * 74)
 if failures:

@@ -405,6 +405,182 @@ if backend_prefix and script_prefix:
           f"backend={backend_prefix.group(1)} script={script_prefix.group(1)}")
 
 
+# ── 9. TLS: the certificate a gateway will pin its trust to ────────────
+section("9. The private CA, and the SAN that must not be forgeable")
+
+OPENSSL = shutil.which("openssl")
+
+
+def render_tls(env, workdir=None, expect_ok=True):
+    """Run the entrypoint with TLS enabled, in a throwaway config + TLS dir.
+
+    Returns (rc, tls_conf_text, workdir, stdout, stderr). Pass a previous
+    workdir back in to simulate a redeploy against the same volume.
+    """
+    workdir = workdir or tempfile.mkdtemp(prefix="amp-tls-")
+    conf = os.path.join(workdir, "config")
+    tls = os.path.join(workdir, "tls")
+    os.makedirs(conf, exist_ok=True)
+    fake = os.path.join(workdir, "fake_mosquitto_passwd")
+    if not os.path.exists(fake):
+        with open(fake, "w", newline="\n") as fh:
+            fh.write(FAKE_PASSWD)
+        os.chmod(fake, 0o755)
+
+    full = dict(os.environ)
+    for key in list(full):
+        if key.startswith(("GATEWAY_", "AMP_BACKEND_", "MQTT_")):
+            del full[key]
+    full.update({
+        "AMP_MQTT_CONFIG_DIR": conf,
+        "AMP_MQTT_TLS_DIR": tls,
+        "MOSQUITTO_PASSWD_BIN": fake,
+        "MOSQUITTO_PASSWD_LOG": os.path.join(workdir, "passwd.log"),
+        "AMP_BACKEND_PASSWORD": "fixture-value-only",
+    })
+    full.update({k: str(v) for k, v in env.items()})
+
+    proc = subprocess.run([SH, ENTRYPOINT, "--render-only"],
+                          env=full, capture_output=True, text=True, timeout=180)
+    tls_conf = ""
+    path = os.path.join(conf, "conf.d", "tls.conf")
+    if os.path.exists(path):
+        with open(path) as fh:
+            tls_conf = fh.read()
+    if expect_ok and proc.returncode != 0:
+        print("    (render failed unexpectedly)", proc.stderr.strip()[:300])
+    return proc.returncode, tls_conf, workdir, proc.stdout, proc.stderr
+
+
+def cert_text(path):
+    return subprocess.run([OPENSSL, "x509", "-in", path, "-noout", "-text"],
+                          capture_output=True, text=True, timeout=60).stdout
+
+
+# The default has to be "no TLS listener", not "a listener with a certificate
+# nobody chose". A broker that invents its own hostname would present a
+# certificate that fails verification everywhere, which looks like a broken
+# gateway rather than a missing setting.
+rc_off, conf_off, _, out_off, _ = render_tls({})
+check("with no MQTT_TLS_SAN there is no TLS listener at all",
+      rc_off == 0 and conf_off == "", conf_off[:200])
+check("...and it says so, with the reason",
+      "no gateway outside Railway can connect" in out_off, out_off[:200])
+
+if OPENSSL is None:
+    check("openssl is available to exercise certificate generation", False,
+          "install openssl; these checks cannot be faked")
+else:
+    rc1, conf1, wd1, out1, _ = render_tls({"MQTT_TLS_SAN": "broker.example.net"})
+    check("a valid SAN produces a TLS listener", rc1 == 0 and conf1 != "", conf1[:200])
+    check("...on 8883", "listener 8883" in conf1, conf1)
+    check("...serving the generated certificate and key",
+          "certfile" in conf1 and "keyfile" in conf1, conf1)
+    # Client certificates are NOT required: the gateway proves itself with a
+    # username the ACL is keyed to, plus AMP's own HMAC signature.
+    check("...and does not demand a client certificate",
+          "require_certificate false" in conf1, conf1)
+
+    ca = os.path.join(wd1, "tls", "ca.crt")
+    server = os.path.join(wd1, "tls", "server.crt")
+    check("a CA certificate was generated", os.path.exists(ca))
+    check("a server certificate was generated", os.path.exists(server))
+
+    ca_text, server_text = cert_text(ca), cert_text(server)
+    check("the CA is marked as a CA", "CA:TRUE" in ca_text, ca_text[:200])
+    check("the server certificate is NOT a CA (it cannot mint others)",
+          "CA:TRUE" not in server_text, server_text[:300])
+    check("the server certificate carries the requested SAN",
+          "DNS:broker.example.net" in server_text, server_text[:400])
+    check("...and is usable as a server, not a client",
+          "TLS Web Server Authentication" in server_text, server_text[:400])
+
+    def fingerprint(path):
+        return subprocess.run([OPENSSL, "x509", "-in", path, "-noout",
+                               "-fingerprint", "-sha256"],
+                              capture_output=True, text=True, timeout=60).stdout.strip()
+
+    ca_fp_first = fingerprint(ca)
+
+    # THE PROPERTY THAT MATTERS MOST ON A REDEPLOY. Every commissioned gateway
+    # pins this CA. If a redeploy minted a new one, the whole fleet would stop
+    # connecting at once and each site would need a visit to install the new
+    # ca.crt.
+    rc2, conf2, _, out2, _ = render_tls({"MQTT_TLS_SAN": "broker.example.net"}, workdir=wd1)
+    check("a redeploy against the same volume REUSES the CA",
+          rc2 == 0 and fingerprint(ca) == ca_fp_first,
+          "a new CA would silently disconnect every gateway in the field")
+    check("...and does not claim to be generating one",
+          "generating a new private CA" not in out2, out2[:200])
+
+    # A new TCP proxy means a new hostname. The server cert must follow it, and
+    # the CA must not, so no gateway has to be touched.
+    rc3, conf3, _, out3, _ = render_tls({"MQTT_TLS_SAN": "other.proxy.rlwy.net"}, workdir=wd1)
+    check("a changed SAN reissues the SERVER certificate", rc3 == 0
+          and "DNS:other.proxy.rlwy.net" in cert_text(server), cert_text(server)[:300])
+    check("...while keeping the SAME CA",
+          fingerprint(ca) == ca_fp_first, "the fleet must not need re-visiting")
+
+    # Several names, for a proxy hostname plus a friendly CNAME.
+    rc4, _, wd4, _, _ = render_tls({"MQTT_TLS_SAN": "a.example.net, b.example.net"})
+    multi = cert_text(os.path.join(wd4, "tls", "server.crt"))
+    check("a comma-separated SAN list yields both names",
+          "DNS:a.example.net" in multi and "DNS:b.example.net" in multi, multi[:400])
+
+    # The CA certificate is public and has to be copied to every gateway, so it
+    # is printed. The CA KEY is the one thing that must never be.
+    check("the CA certificate is printed for distribution",
+          "BEGIN CERTIFICATE" in out1 and "copy the block below" in out1, out1[:200])
+    check("the CA PRIVATE KEY is never printed",
+          "PRIVATE KEY" not in out1 and "PRIVATE KEY" not in out2, "a printed CA key is a forged broker")
+
+    if os.name == "posix":
+        check("the CA key is not world-readable",
+              (os.stat(os.path.join(wd1, "tls", "ca.key")).st_mode & 0o077) == 0)
+
+# ── 10. a SAN is written into an OpenSSL config, so it is an injection point ──
+section("10. A forged SAN would be trusted by every gateway")
+
+SAN_ATTACKS = [
+    ("evil.net,DNS:*.anything", "a second name smuggled past the separator"),
+    ("a.net\nbasicConstraints=CA:TRUE", "a newline rewriting the extensions"),
+    ("a.net\n[req]\nx=1", "a whole new OpenSSL config section"),
+    ("../../etc/passwd", "a path, not a name"),
+    ("a b.net", "a space splits the config line"),
+    ("=leading", "not a hostname at all"),
+    ("a..net", "an empty label"),
+    ("a.net.", "a trailing dot"),
+    ("x" * 254, "over the DNS length limit"),
+]
+for value, why in SAN_ATTACKS:
+    rc_a, conf_a, wd_a, _, err_a = render_tls({"MQTT_TLS_SAN": value}, expect_ok=False)
+    check(f"MQTT_TLS_SAN={value[:28]!r} is refused  ({why})",
+          rc_a != 0 and "REFUSING TO START" in err_a, f"rc={rc_a}")
+    check(f"...and no TLS listener was written for {value[:20]!r}",
+          conf_a == "", conf_a[:160])
+
+# An EMPTY value is not an attack and is not refused: it means the same as
+# unset, which is "this deployment has no TLS listener". Pinned because the
+# obvious reading is that empty should be an error, and it must not become one
+# -- clearing a variable is how you turn the listener off.
+rc_e, conf_e, _, out_e, _ = render_tls({"MQTT_TLS_SAN": ""})
+check("an EMPTY MQTT_TLS_SAN means 'no TLS', not an error",
+      rc_e == 0 and conf_e == "", f"rc={rc_e} conf={conf_e[:120]}")
+
+# The hostname rule is exercised directly, both ways, so "refused" above is not
+# just "something went wrong".
+if SH:
+    def host_ok(value):
+        env = dict(os.environ, AMP_CHECK_VALUE=value)
+        return subprocess.run([SH, ENTRYPOINT, "--check-hostname"],
+                              env=env, capture_output=True, timeout=60).returncode == 0
+
+    for good in ("a.net", "broker.example.net", "x.proxy.rlwy.net", "host", "a-b.c-d.net"):
+        check(f"{good!r} is accepted as a hostname", host_ok(good), good)
+    for bad in ("a_b.net", "a net", "a/b", "*.net", "-lead.net", "a..b", "a.b."):
+        check(f"{bad!r} is rejected as a hostname", not host_ok(bad), bad)
+
+
 print()
 print("=" * 74)
 if failures:

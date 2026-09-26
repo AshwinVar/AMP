@@ -32,7 +32,12 @@ USER root
 # two. entrypoint.sh chowns them again at RUNTIME, which is the only moment
 # that works — and is also the only moment that can fix the volume Railway
 # mounts over /mosquitto/data, which arrives owned by root.
-RUN mkdir -p /mosquitto/config /mosquitto/data /mosquitto/log \
+# openssl's CLI, for the private CA entrypoint.sh generates on the volume. The
+# image already links libssl, but the `openssl` COMMAND is a separate package
+# and is not in the base image.
+RUN apk add --no-cache openssl
+
+RUN mkdir -p /mosquitto/config/conf.d /mosquitto/data /mosquitto/log \
  && chown -R mosquitto:mosquitto /mosquitto
 
 COPY mosquitto.conf /mosquitto/config/mosquitto.conf

@@ -7,6 +7,11 @@ amp:
   host: broker.amp.example.com     # the AMP broker AMP gave you
   port: 8883
   tls: true
+  # The CA certificate AMP's broker is signed by. Copy it from the broker's
+  # startup log (the block marked "copy the block below to each gateway").
+  # Without it every connection is refused: AMP runs its own CA, so the
+  # system trust store does not know this broker.
+  ca_cert: /etc/amp/ca.crt
   topic_prefix: flowmes
   tenant: ACME                     # your workspace code, from AMP
   site: plant-1                    # THIS site. It becomes part of the topic.

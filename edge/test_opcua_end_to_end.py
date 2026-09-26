@@ -342,6 +342,37 @@ async def run_checks(running, parts, rejects, temperature, mode):
     db.close()
 
 
+    # ── 7. the check-amp probe is inert against the REAL handler ────
+    section("7. `check-amp`'s PROBE REACHES AMP AND WRITES NOTHING")
+    # check-amp publishes to the workspace's REAL topic, because proving the
+    # broker will accept a publish to any OTHER topic proves nothing about the
+    # one that matters. That is only safe while the probe stays unroutable, and
+    # "stays" is the word that needs a test: the day somebody makes the handler
+    # tolerate a nameless payload, this command starts creating junk machines on
+    # customers' sites and nothing else would notice.
+    from ampedge.__main__ import selftest_probe   # noqa: E402
+
+    tok = tenancy.set_current_tenant(None)
+    before = {m.__name__: db.query(m).count() for m in
+              (models.Machine, models.ProductionRecord, models.MachineEvent,
+               models.DowntimeLog, models.Notification)}
+    tenancy.reset_current_tenant(tok)
+
+    mqtt_service.on_message(None, None, Msg(topic, selftest_probe()))
+
+    db.expire_all()
+    tok = tenancy.set_current_tenant(None)
+    after = {m.__name__: db.query(m).count() for m in
+             (models.Machine, models.ProductionRecord, models.MachineEvent,
+              models.DowntimeLog, models.Notification)}
+    tenancy.reset_current_tenant(tok)
+    check("the probe writes NOTHING to any table", after == before, f"{before} -> {after}")
+    check("...in particular it does not register a machine",
+          after["Machine"] == before["Machine"], f"{before['Machine']} -> {after['Machine']}")
+    check("...and carries no machine name, which is WHY it is inert",
+          "machine" not in selftest_probe(), str(selftest_probe()))
+
+
 if __name__ == "__main__":
     asyncio.run(main())
     print()

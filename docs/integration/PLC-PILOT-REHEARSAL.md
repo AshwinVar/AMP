@@ -58,7 +58,9 @@ python -m compileall -q edge && for f in edge/test_*.py; do python "$f" || echo 
 
 | # | Drill | Expected | Evidence |
 |---|---|---|---|
-| 22 | Internet drops mid-shift | Reading **continues**; queue grows; verdict says `AMP_UNREACHABLE` and *"nothing is being lost"* | `test_edge_runner.py` §3, `test_edge_health.py` §4 |
+| 22 | Internet drops mid-shift | Reading **continues**; queue grows; verdict says `AMP_UNREACHABLE` and *"nothing is being lost"*. The publish path runs off the event loop, so a broker that stops answering cannot stall the PLC polling — it could, until the assembled Gateway was driven end to end | `test_edge_runner.py` §3 and §6, `test_edge_health.py` §4 |
+| 22b | **The whole gateway, as `run` builds it** | Reads, queues, publishes, acks its own queue, reports STREAMING, and stops cleanly — against a real MQTT broker | `test_edge_runner.py` §6 |
+| 22c | **Wrong broker host, closed port, bad credentials, or an ACL that forbids publishing** | `check-amp` names WHICH of the four failed — DNS, TCP, MQTT or ACL — before the PLC is touched at all | `test_edge_runner.py` §7 |
 | 23 | Broker rejects the credentials | Reported as a credentials problem, not as "AMP is offline" | `test_publisher_against_broker.py` §3 |
 | 24 | Broker accepts the publish but never sends PUBACK | Publish reports failure; the record **stays on disk** | `test_publisher_against_broker.py` §2 |
 | 25 | Connection returns after an outage | Buffered records sent with their **original** timestamps, flagged `buffered` so they become history, not a false "now" | `test_edge_pipeline.py` §6 |

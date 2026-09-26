@@ -30,6 +30,14 @@ set -eu
 LC_ALL=C
 export LC_ALL
 
+# Everything this script creates is readable only by its owner. Set as a UMASK
+# rather than chmod-after-the-fact because the gap matters: mosquitto_passwd
+# creates the password file itself, and between its creation and our chmod the
+# credentials sat world-readable. The first deploy proved it — mosquitto logged
+# "File /mosquitto/config/passwd.tmp has world readable permissions" before we
+# ever got to fix it.
+umask 077
+
 CONFIG_DIR="${AMP_MQTT_CONFIG_DIR:-/mosquitto/config}"
 PASSWD_FILE="$CONFIG_DIR/passwd"
 ACL_FILE="$CONFIG_DIR/acl"
@@ -200,7 +208,12 @@ fi
 
 mv "$PASSWD_FILE.tmp" "$PASSWD_FILE"
 chmod 0600 "$PASSWD_FILE"
-chmod 0644 "$ACL_FILE"
+# 0600, NOT 0644. mosquitto 2.0.22 logs "File /mosquitto/config/acl has world
+# readable permissions. Future versions will refuse to load this file" — so the
+# permissive mode is not a style question, it is a broker that stops starting
+# on some later image bump. The ACL is also not public information: it lists
+# every tenant and site this broker carries.
+chmod 0600 "$ACL_FILE"
 
 # Counts and usernames only. A password has never been printed by this script
 # and must not start being: these lines go to Railway's log viewer, which is

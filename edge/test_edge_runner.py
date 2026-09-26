@@ -141,11 +141,13 @@ async def scenarios():
     check("...and the worker did not die", not task.done(), "the poll loop exited")
 
     PLC.update(down=False, parts=1010)
-    # backoff is at least RECONNECT_MIN_S/2, so give it room to come back
-    await asyncio.sleep(runner_mod.RECONNECT_MIN_S + 0.4)
-    check("it reconnected with a NEW session", len(ScriptedAdapter.instances) >= 2,
+    # Waited for, not slept through: backoff is jittered, so any fixed duration
+    # is a coin flip on a loaded machine. Section 6 lost that coin flip in CI.
+    check("it reconnected with a NEW session",
+          await until(lambda: len(ScriptedAdapter.instances) >= 2),
           str(len(ScriptedAdapter.instances)))
-    check("...and is reading again", ScriptedAdapter.instances[-1].reads > 0,
+    check("...and is reading again",
+          await until(lambda: ScriptedAdapter.instances[-1].reads > 0),
           str(ScriptedAdapter.instances[-1].reads))
 
     # A counter re-baselines across the gap rather than counting 10 parts it
@@ -165,9 +167,9 @@ async def scenarios():
     for n in range(2001, 2006):
         PLC["parts"] = n
         await asyncio.sleep(0.03)
-    depth = buf.depth()
     check("with no publisher at all, the queue GROWS rather than the loop stalling",
-          depth >= 3, str(depth))
+          await until(lambda: buf.depth() >= 3), str(buf.depth()))
+    depth = buf.depth()
     check("...and the poll loop is still alive", not task.done(), "it stopped when AMP was down")
     await w.stop()
     task.cancel()
@@ -229,6 +231,25 @@ async def scenarios():
     buf3.close()
 
 
+async def until(predicate, timeout=20.0, step=0.05):
+    """Wait for a condition instead of guessing a duration.
+
+    Section 6 first used fixed sleeps and passed locally and failed in CI: the
+    drain loop sleeps DRAIN_IDLE_S (1s) whenever it finds an empty queue, so the
+    first publish cannot happen before t=1.0, and the checks ran at t=0.9. The
+    margin was invisible on a fast machine and gone on a loaded runner.
+
+    Waiting on the thing itself removes the whole class, and makes the suite
+    faster in the normal case rather than slower.
+    """
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if predicate():
+            return True
+        await asyncio.sleep(step)
+    return False
+
+
 async def assembled_gateway():
     """THE WHOLE THING, as `python -m ampedge run` builds it.
 
@@ -266,28 +287,31 @@ async def assembled_gateway():
         w.publish_window = 0.0
 
     task = asyncio.create_task(gateway.run())
-    await asyncio.sleep(0.3)
-    PLC["parts"] = 5009
-    await asyncio.sleep(0.6)
 
     check("the gateway is reading its machine",
-          ScriptedAdapter.instances and ScriptedAdapter.instances[0].reads > 0,
+          await until(lambda: ScriptedAdapter.instances and ScriptedAdapter.instances[0].reads > 0),
           str(len(ScriptedAdapter.instances)))
     check("...and it connected to the broker on its own",
-          gateway.publisher.state == base.CONNECTED, gateway.publisher.state)
-    check("...and delivered something", gateway.publisher.published > 0,
-          str(gateway.publisher.published))
+          await until(lambda: gateway.publisher.state == base.CONNECTED),
+          gateway.publisher.state)
+    check("...and delivered something",
+          await until(lambda: gateway.publisher.published > 0), str(gateway.publisher.published))
     check("the broker received it on the workspace's own topic",
           broker.published and broker.published[0][0] == "flowmes/ACME/plant-1/machines",
           str(broker.published[:1])[:120])
 
-    delivered = [json.loads(raw) for _, raw in broker.published]
+    def delivered():
+        return [json.loads(raw) for _, raw in list(broker.published)]
+
     check("...carrying the machine the config named",
-          any(b.get("machine") == "CNC-01" for b in delivered),
-          str([b.get("machine") for b in delivered])[:120])
+          await until(lambda: any(b.get("machine") == "CNC-01" for b in delivered())),
+          str([b.get("machine") for b in delivered()])[:120])
+
+    # 9 parts made DURING the run, against a counter already reading 5009.
+    PLC["parts"] = 5009
     check("...and the 9 parts made during the run, not the counter's 5009",
-          any(b.get("total_count") == 9 for b in delivered),
-          str([b.get("total_count") for b in delivered]))
+          await until(lambda: any(b.get("total_count") == 9 for b in delivered())),
+          str([b.get("total_count") for b in delivered()]))
 
     # THE DRAIN LOOP DID ITS JOB: delivered records are removed from disk, and
     # only on delivery. A gateway that publishes and never acks its own queue
@@ -300,12 +324,9 @@ async def assembled_gateway():
     backlog = gateway.buffer.depth()
     for w in gateway.workers:
         w.stopping = True
-    for _ in range(40):
-        await asyncio.sleep(0.1)
-        if gateway.buffer.depth() == 0:
-            break
+    drained = await until(lambda: gateway.buffer.depth() == 0)
     check("the queue empties once the machines stop producing",
-          gateway.buffer.depth() == 0, f"{backlog} -> {gateway.buffer.depth()}")
+          drained, f"{backlog} -> {gateway.buffer.depth()}")
     check("...having actually had a backlog to clear, so that proves something",
           backlog > 0, str(backlog))
 

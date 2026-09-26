@@ -67,6 +67,30 @@ die() {
 # because "gw" passes. A value that reaches an ACL line must be validated whole
 # or the validation is decorative — and the injected line in that example is a
 # grant to every tenant. `case` globs the entire string, newlines included.
+# A DNS name, for the TLS certificate's subjectAltName. Looser than an
+# identifier (dots are the point) and validated for the same reason: the value
+# is written into an OpenSSL config file, so an unvalidated one could add
+# `subjectAltName=DNS:anything-it-likes` or a whole new section, and the
+# resulting certificate would be trusted by every gateway holding our CA.
+valid_hostname() {
+    _h="${1:-}"
+    [ -n "$_h" ] || return 1
+    [ "${#_h}" -le 253 ] || return 1
+    case "$_h" in
+        [A-Za-z0-9]*) ;;
+        *) return 1 ;;
+    esac
+    case "$_h" in
+        *[!A-Za-z0-9.-]*) return 1 ;;
+    esac
+    # No empty labels: "a..b" and a trailing dot are both rejected rather than
+    # normalised, because a certificate is not the place to guess what was meant.
+    case "$_h" in
+        *..*|*.) return 1 ;;
+    esac
+    return 0
+}
+
 valid_identifier() {
     _v="${1:-}"
     [ -n "$_v" ] || return 1
@@ -93,6 +117,9 @@ valid_identifier() {
 # arrive in production.
 if [ "${1:-}" = "--check-identifier" ]; then
     if valid_identifier "${AMP_CHECK_VALUE:-}"; then exit 0; else exit 1; fi
+fi
+if [ "${1:-}" = "--check-hostname" ]; then
+    if valid_hostname "${AMP_CHECK_VALUE:-}"; then exit 0; else exit 1; fi
 fi
 
 # Read an environment variable whose NAME is computed. `eval` is the usual way
@@ -214,6 +241,158 @@ chmod 0600 "$PASSWD_FILE"
 # on some later image bump. The ACL is also not public information: it lists
 # every tenant and site this broker carries.
 chmod 0600 "$ACL_FILE"
+
+# ── TLS, so a gateway outside Railway can reach us at all ──────────────
+# WHY OUR OWN CA AND NOT A PUBLIC ONE. Railway's TCP proxy is a raw
+# passthrough on a generated `*.proxy.rlwy.net` hostname, and no public CA will
+# issue for a domain we do not own. The alternatives were a certificate for a
+# domain we DO own (a DNS record plus a renewal every 90 days, forever) or
+# this: one CA, generated here, trusted by the gateways we hand it to. Pinning
+# a private CA is normal practice for industrial fleets and it has no expiry
+# treadmill.
+#
+# THE KEY NEVER LEAVES THIS CONTAINER. It is generated on the volume at
+# /mosquitto/data/tls and re-used across deploys; nothing is pasted into
+# Railway, nothing is committed, and the only thing anybody copies out is
+# ca.crt, which is a public certificate.
+TLS_DIR="${AMP_MQTT_TLS_DIR:-/mosquitto/data/tls}"
+TLS_CONF_DIR="$CONFIG_DIR/conf.d"
+TLS_SAN="$(getenv MQTT_TLS_SAN)"
+OPENSSL_BIN="${OPENSSL_BIN:-openssl}"
+
+mkdir -p "$TLS_CONF_DIR"
+rm -f "$TLS_CONF_DIR/tls.conf"
+
+if [ -n "$TLS_SAN" ]; then
+    mkdir -p "$TLS_DIR"
+
+    # Validate BEFORE anything reaches the OpenSSL config, and validate every
+    # entry: one bad name in a list of three is still a bad certificate.
+    san_line=""
+    remaining="$TLS_SAN"
+    while [ -n "$remaining" ]; do
+        case "$remaining" in
+            *,*) one="${remaining%%,*}"; remaining="${remaining#*,}" ;;
+            *)   one="$remaining";        remaining="" ;;
+        esac
+        # Trim the ends only, so "a.net, b.net" works. NOT `tr -d ' '`, which
+        # deletes spaces in the MIDDLE too and quietly turned "a b.net" into
+        # the perfectly valid "ab.net" -- a certificate for a hostname nobody
+        # asked for, issued without a word. A space inside a name is a typo,
+        # and a typo in a certificate should stop the broker, not be corrected.
+        while :; do case "$one" in " "*) one="${one# }" ;; *) break ;; esac; done
+        while :; do case "$one" in *" ") one="${one% }" ;; *) break ;; esac; done
+        [ -n "$one" ] || continue
+        valid_hostname "$one" \
+            || die "MQTT_TLS_SAN contains $(printf '%s' "$one" | head -c 60), which is not a DNS name. It would be written into the certificate this broker presents to every gateway, so it is refused rather than escaped."
+        if [ -z "$san_line" ]; then
+            san_line="DNS:$one"
+        else
+            san_line="$san_line,DNS:$one"
+        fi
+    done
+    [ -n "$san_line" ] || die "MQTT_TLS_SAN is set but contains no usable hostname"
+
+    command -v "$OPENSSL_BIN" >/dev/null 2>&1 \
+        || die "MQTT_TLS_SAN is set but $OPENSSL_BIN is not installed in this image"
+
+    # The CA is generated ONCE and then left alone. Regenerating it would
+    # invalidate the ca.crt every already-commissioned gateway is pinning, and
+    # a fleet that has to be re-visited to trust a new CA is a fleet that stops
+    # reporting until somebody drives to it.
+    # EVERY openssl call below passes -config and pins OPENSSL_CONF to the file
+    # it was given. Neither the subject nor the extensions may come from
+    # whatever openssl.cnf the base image happens to ship, because that file is
+    # not ours, can change with an image bump, and decides whether the CA we
+    # mint is actually a CA. (It also makes this runnable anywhere: the machine
+    # this was written on has OPENSSL_CONF pointing at a path that does not
+    # exist, which failed every generation until it was pinned.)
+    cat > "$TLS_DIR/ca.cnf" <<'EOF'
+[req]
+distinguished_name = dn
+x509_extensions    = ca_ext
+prompt             = no
+[dn]
+CN = AMP Edge CA
+O  = AMP
+[ca_ext]
+basicConstraints     = critical,CA:TRUE
+keyUsage             = critical,keyCertSign,cRLSign
+subjectKeyIdentifier = hash
+EOF
+
+    if [ ! -f "$TLS_DIR/ca.key" ] || [ ! -f "$TLS_DIR/ca.crt" ]; then
+        echo "amp-mosquitto: generating a new private CA (first run)"
+        OPENSSL_CONF="$TLS_DIR/ca.cnf" "$OPENSSL_BIN" req -x509 \
+            -newkey rsa:4096 -sha256 -nodes -days 3650 \
+            -keyout "$TLS_DIR/ca.key" -out "$TLS_DIR/ca.crt" \
+            -config "$TLS_DIR/ca.cnf" -extensions ca_ext >/dev/null 2>&1 \
+            || die "could not generate the CA"
+    fi
+
+    # The SERVER certificate is reissued whenever the SAN changes, which is
+    # what happens when the TCP proxy is recreated and Railway hands out a new
+    # hostname. Same CA, so no gateway needs touching.
+    want="$san_line"
+    have=""
+    [ -f "$TLS_DIR/server.san" ] && have="$(cat "$TLS_DIR/server.san")"
+    if [ "$want" != "$have" ] || [ ! -f "$TLS_DIR/server.crt" ]; then
+        echo "amp-mosquitto: issuing a server certificate for $san_line"
+        cat > "$TLS_DIR/server.cnf" <<EOF
+[req]
+distinguished_name = dn
+req_extensions     = ext
+prompt             = no
+[dn]
+CN = AMP MQTT broker
+[ext]
+subjectAltName   = $san_line
+basicConstraints = critical,CA:FALSE
+keyUsage         = critical,digitalSignature,keyEncipherment
+extendedKeyUsage = serverAuth
+EOF
+        OPENSSL_CONF="$TLS_DIR/server.cnf" "$OPENSSL_BIN" req -new \
+            -newkey rsa:2048 -sha256 -nodes \
+            -keyout "$TLS_DIR/server.key" -out "$TLS_DIR/server.csr" \
+            -config "$TLS_DIR/server.cnf" >/dev/null 2>&1 \
+            || die "could not generate the server key"
+        OPENSSL_CONF="$TLS_DIR/server.cnf" "$OPENSSL_BIN" x509 -req \
+            -in "$TLS_DIR/server.csr" -sha256 -days 1825 \
+            -CA "$TLS_DIR/ca.crt" -CAkey "$TLS_DIR/ca.key" -CAcreateserial \
+            -out "$TLS_DIR/server.crt" \
+            -extfile "$TLS_DIR/server.cnf" -extensions ext >/dev/null 2>&1 \
+            || die "could not sign the server certificate"
+        printf '%s' "$want" > "$TLS_DIR/server.san"
+        rm -f "$TLS_DIR/server.csr"
+    fi
+
+    chmod 0600 "$TLS_DIR/ca.key" "$TLS_DIR/server.key"
+    chmod 0644 "$TLS_DIR/ca.crt" "$TLS_DIR/server.crt"
+
+    # No `cafile` and no `require_certificate`: the gateway proves itself with a
+    # username and password that the ACL is keyed to, and separately with the
+    # HMAC signature AMP checks (ADR-0041). TLS here is about the gateway
+    # verifying US, and about nobody on the path reading the credential.
+    cat > "$TLS_CONF_DIR/tls.conf" <<EOF
+# GENERATED AT BOOT by entrypoint.sh. Edit MQTT_TLS_SAN, not this file.
+listener 8883
+protocol mqtt
+certfile $TLS_DIR/server.crt
+keyfile $TLS_DIR/server.key
+require_certificate false
+EOF
+
+    echo "amp-mosquitto: TLS listener on 8883 for $san_line"
+    echo "amp-mosquitto: CA fingerprint $(OPENSSL_CONF="$TLS_DIR/ca.cnf" "$OPENSSL_BIN" x509 -in "$TLS_DIR/ca.crt" -noout -fingerprint -sha256 2>/dev/null | cut -d= -f2)"
+    # The CA CERTIFICATE is public — it is the thing every gateway must carry,
+    # and the log is the only way out of a container with no shell access. The
+    # CA KEY is not printed here and must never be.
+    echo "amp-mosquitto: ---- copy the block below to each gateway as ca.crt ----"
+    cat "$TLS_DIR/ca.crt"
+    echo "amp-mosquitto: ---- end ca.crt ----"
+else
+    echo "amp-mosquitto: MQTT_TLS_SAN is not set, so there is no TLS listener and no gateway outside Railway can connect. This is the safe default: exposing 1883 through a TCP proxy would put every gateway credential on the public internet in clear text."
+fi
 
 # Counts and usernames only. A password has never been printed by this script
 # and must not start being: these lines go to Railway's log viewer, which is

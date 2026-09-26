@@ -20,6 +20,7 @@ CREDENTIALS NEVER REACH A LOG. Not in an error, not in a repr, not in the
 diagnostic export. `describe()` is the only thing that prints, and it prints a
 host and a port.
 """
+import os
 import threading
 import time
 
@@ -94,7 +95,30 @@ class Publisher:
         if username:
             client.username_pw_set(str(username), self.settings.get("password") or None)
         if self.tls:
-            client.tls_set()
+            # `tls_set()` with no arguments trusts the SYSTEM CA store, which is
+            # the right answer for a broker holding a publicly-issued
+            # certificate and useless for AMP's, which is signed by a CA we run
+            # ourselves (infra/mosquitto). `ca_cert` points at that CA's
+            # certificate, shipped with the gateway.
+            #
+            # Note what is NOT offered: there is no `tls_insecure` setting. The
+            # one thing a commissioning engineer reaches for when a certificate
+            # does not verify is the switch that stops it verifying, and a
+            # gateway that skips verification is a gateway whose credentials can
+            # be collected by anything that can get in the path. If the name
+            # does not match, fix the name.
+            ca_cert = self.settings.get("ca_cert")
+            if ca_cert:
+                ca_cert = str(ca_cert)
+                if not os.path.isfile(ca_cert):
+                    raise base.AdapterError(
+                        f"amp.ca_cert points at {ca_cert}, which does not exist. "
+                        f"That file is the CA certificate this gateway uses to "
+                        f"recognise AMP's broker; without it every connection is "
+                        f"refused. Copy it from the broker's startup log.")
+                client.tls_set(ca_certs=ca_cert)
+            else:
+                client.tls_set()
         client.on_connect = self._on_connect
         client.on_disconnect = self._on_disconnect
         self._connected.clear()
@@ -217,6 +241,11 @@ class Publisher:
             "state": self.state,
             "broker": f"{self.host}:{self.port}",
             "tls": self.tls,
+            # A PATH, never the file. "tls: true" alone does not distinguish a
+            # gateway verifying AMP's CA from one trusting the system store and
+            # about to be refused, and that is the first question when a
+            # connection will not come up.
+            "ca_cert": str(self.settings.get("ca_cert") or "") or None,
             "topic": self.topic(),
             "signed": bool(self.gateway_id and self._key),
             "gateway_id": self.gateway_id or None,

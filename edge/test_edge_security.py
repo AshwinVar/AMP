@@ -231,6 +231,118 @@ except config_mod.ConfigError as e:
     missing_file = str(e)
 check("a missing config is a clear refusal", missing_file is not None, "it loaded nothing")
 
+# ── 9. the gateway must verify the broker, not just itself ──────────
+section("9. TLS PINS AMP'S CA, AND CANNOT BE TOLD NOT TO")
+
+# AMP's broker presents a certificate signed by a CA we run (infra/mosquitto),
+# because Railway's TCP proxy hands out a *.proxy.rlwy.net hostname no public
+# CA will issue for. `tls_set()` with no arguments trusts only the SYSTEM store,
+# so without ca_cert every connection to AMP is refused -- and the failure looks
+# like a broken broker rather than a missing file.
+import ssl  # noqa: E402
+
+from ampedge import publisher as publisher_mod  # noqa: E402
+
+
+class _FakeMQTT:
+    """Records what the publisher asks of paho, without opening a socket."""
+
+    def __init__(self, *a, **kw):
+        self.tls_calls = []
+        self.username_pw = None
+
+    def username_pw_set(self, u, p=None):
+        self.username_pw = (u, p)
+
+    def tls_set(self, *a, **kw):
+        self.tls_calls.append((a, kw))
+
+    def connect(self, *a, **kw):
+        raise RuntimeError("stop here: the TLS decision has already been made")
+
+    def loop_start(self):
+        pass
+
+    def loop_stop(self):
+        pass
+
+    def disconnect(self):
+        pass
+
+
+def _tls_call_for(settings, swallow=True):
+    """Build a publisher, start connecting, and report the tls_set arguments.
+
+    `swallow=False` lets the refusal out, for the cases where the REFUSAL is
+    the thing under test rather than the tls_set arguments.
+    """
+    made = {}
+
+    def factory(*a, **kw):
+        c = _FakeMQTT()
+        made["client"] = c
+        return c
+
+    real = publisher_mod.mqtt.Client
+    publisher_mod.mqtt.Client = factory
+    try:
+        pub = publisher_mod.Publisher(settings)
+        try:
+            pub.connect(timeout=0.1)
+        except Exception:
+            if not swallow:
+                raise
+            # else: connect() is stubbed to raise once TLS has been decided
+    finally:
+        publisher_mod.mqtt.Client = real
+    return made.get("client")
+
+
+CA = os.path.join(os.path.dirname(os.path.abspath(__file__)), "_ca_fixture.crt")
+with open(CA, "w") as fh:
+    fh.write("-----BEGIN CERTIFICATE-----\nnot a real certificate\n-----END CERTIFICATE-----\n")
+try:
+    base_settings = {"host": "b.example.net", "tenant": "ACME", "site": "PLANT1",
+                     "gateway_id": "gw1", "gateway_key": "k" * 32}
+
+    c = _tls_call_for(dict(base_settings, tls=True, ca_cert=CA))
+    check("ca_cert reaches paho as the CA to verify against",
+          c is not None and c.tls_calls and c.tls_calls[0][1].get("ca_certs") == CA,
+          str(c.tls_calls if c else None))
+
+    c = _tls_call_for(dict(base_settings, tls=True))
+    check("without ca_cert it falls back to the system store",
+          c is not None and c.tls_calls == [((), {})], str(c.tls_calls if c else None))
+
+    c = _tls_call_for(dict(base_settings, tls=False))
+    check("tls: false asks for no TLS at all",
+          c is not None and c.tls_calls == [], str(c.tls_calls if c else None))
+
+    # A path that is not there must be named, not discovered as a handshake
+    # failure three layers down at a customer site.
+    missing = None
+    try:
+        _tls_call_for(dict(base_settings, tls=True, ca_cert=CA + ".nope"),
+                      swallow=False)
+    except Exception as e:                                  # noqa: BLE001
+        missing = str(e)
+    check("a ca_cert path that does not exist is refused by name",
+          missing is not None and "does not exist" in missing, str(missing))
+
+    # THE SWITCH THAT MUST NOT EXIST. Every commissioning engineer meeting a
+    # certificate error reaches for "just turn off verification", and a gateway
+    # that skips it hands its credentials to anything in the path.
+    src = open(os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                            "ampedge", "publisher.py")).read()
+    check("there is no tls_insecure escape hatch",
+          "tls_insecure" not in src.replace("tls_insecure` setting", ""),
+          "an off switch for verification is an off switch for the whole point")
+    check("...and CERT_NONE is never selected",
+          "CERT_NONE" not in src and ssl.CERT_NONE is not None, src[:0])
+finally:
+    os.path.exists(CA) and os.remove(CA)
+
+
 print()
 print("=" * 74)
 if failures:

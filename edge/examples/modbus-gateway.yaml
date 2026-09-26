@@ -9,6 +9,9 @@ amp:
   host: broker.amp.example.com
   port: 8883
   tls: true
+  # AMP's broker runs its own CA, so the system trust store does not know it.
+  # Copy this file from the broker's startup log; without it, refused.
+  ca_cert: /etc/amp/ca.crt
   tenant: ACME
   site: plant-1
   username_env: AMP_MQTT_USERNAME

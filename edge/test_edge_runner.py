@@ -327,8 +327,19 @@ async def assembled_gateway():
     drained = await until(lambda: gateway.buffer.depth() == 0)
     check("the queue empties once the machines stop producing",
           drained, f"{backlog} -> {gateway.buffer.depth()}")
-    check("...having actually had a backlog to clear, so that proves something",
-          backlog > 0, str(backlog))
+    # NOT `backlog > 0`. That sampled depth() at one instant to prove the
+    # "empties" check above was not vacuous, and it is a race it lost on CI: a
+    # drain that happens to have just caught up reads 0 while having done its
+    # job perfectly. Non-vacuity does not need a backlog to exist at any
+    # particular moment -- it needs records to have PASSED THROUGH the queue.
+    #
+    # They demonstrably have: buffer.put() at runner.py:148 is the only way in,
+    # and the drain is peek -> publish -> ack, so every message the broker
+    # holds was enqueued and then deleted. Delivered > 0 with depth == 0 says
+    # exactly that, and says it the same way on a fast runner and a slow one.
+    check("...having actually moved records through the queue, so that proves something",
+          len(broker.published) > 0 and gateway.buffer.depth() == 0,
+          f"delivered={len(broker.published)} depth={gateway.buffer.depth()} (peak seen: {backlog})")
 
     verdict = gateway.health()
     check("the assembled gateway reports itself STREAMING",

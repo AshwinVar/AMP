@@ -196,6 +196,13 @@ jobs:
           python -m ampedge validate examples/opcua-gateway.yaml
           python -m ampedge validate examples/modbus-gateway.yaml
 
+      - name: The broker's ACL grants one tenant and no more
+        # infra/mosquitto renders the ACL that backend/mqtt_identity.py's
+        # entire tenant-isolation argument rests on ("a claim the BROKER has
+        # already checked"). It lives in the edge job because, like the
+        # gateway, it is not AMP: it imports nothing and ships separately.
+        run: python infra/mosquitto/test_mosquitto_config.py
+
   # THE MIGRATION GATE (ADR-0018). A separate job because it needs a real
   # PostgreSQL server, and because its answer is a different question from "do
   # the tests pass".

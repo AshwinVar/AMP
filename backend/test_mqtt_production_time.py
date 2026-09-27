@@ -47,6 +47,15 @@ import models
 import mqtt_service
 from database import Base
 
+# CAPTURED AT IMPORT, RESTORED IN main()'s finally. pytest IMPORTS every
+# test module during collection, before it runs anything, so a module that
+# stubs a shared global and walks away has already broken every suite that
+# runs afterwards -- whatever the alphabetical order suggests. Leaving
+# safe_broadcast stubbed here took out test_live_broadcast_bridge and two
+# cases in test_mqtt_resilience, which assert the broadcast is NOT a no-op.
+_REAL_SAFE_BROADCAST = mqtt_service.safe_broadcast
+_REAL_SESSION_LOCAL = mqtt_service.SessionLocal
+
 _TENANT = "TIME_TEST"
 _TOPIC = f"flowmes/{_TENANT}/-/machines"
 
@@ -109,94 +118,113 @@ def _record(session, record_id):
         db.close()
 
 
-# ── 1. a queued record keeps the time it happened ──────────────────────
-section("1. A RECORD DELIVERED LATE IS FILED WHEN IT HAPPENED")
+def main():
+    failures.clear()
+    try:
+        # ── 1. a queued record keeps the time it happened ──────────────────────
+        section("1. A RECORD DELIVERED LATE IS FILED WHEN IT HAPPENED")
 
-Session = _setup()
-three_hours_ago = time.time() - 3 * 3600
-_send(Session, "LATE-1", ts=three_hours_ago)
-row = _record(Session, "LATE-1")
-check("the late record was written at all", row is not None)
-if row is not None:
-    drift = abs((row.created_at - datetime.utcfromtimestamp(three_hours_ago)).total_seconds())
-    check("...stamped when it HAPPENED, not when it was replayed",
-          drift < 5,
-          f"created_at={row.created_at} is {drift:.0f}s from the reading time "
-          f"-- a three-hour outage would land in the recovery minute")
+        Session = _setup()
+        three_hours_ago = time.time() - 3 * 3600
+        _send(Session, "LATE-1", ts=three_hours_ago)
+        row = _record(Session, "LATE-1")
+        check("the late record was written at all", row is not None)
+        if row is not None:
+            drift = abs((row.created_at - datetime.utcfromtimestamp(three_hours_ago)).total_seconds())
+            check("...stamped when it HAPPENED, not when it was replayed",
+                  drift < 5,
+                  f"created_at={row.created_at} is {drift:.0f}s from the reading time "
+                  f"-- a three-hour outage would land in the recovery minute")
 
-# The spread between two real events must survive the replay. This is the part
-# the production evidence showed collapsing: 7 seconds became 63 milliseconds.
-_send(Session, "LATE-2", ts=three_hours_ago + 60)
-a, b = _record(Session, "LATE-1"), _record(Session, "LATE-2")
-if a is not None and b is not None:
-    gap = abs((b.created_at - a.created_at).total_seconds())
-    check("two readings a minute apart are still a minute apart after replay",
-          55 <= gap <= 65, f"gap={gap:.1f}s")
-
-
-# ── 2. absent or unusable ts falls back to now ─────────────────────────
-section("2. NO USABLE ts IS THE OLD BEHAVIOUR, NOT A NEW FAILURE")
-
-now = datetime.utcnow()
-_send(Session, "NOTS-1", ts=None)
-row = _record(Session, "NOTS-1")
-check("a payload with no ts is still written",
-      row is not None and abs((row.created_at - now).total_seconds()) < 60,
-      str(row.created_at if row else None))
-
-for label, bad in (("a string", "yesterday"), ("null", None), ("a list", [1]),
-                   ("not a number", float("nan"))):
-    rid = f"BAD-{label.replace(' ', '-')}"
-    body_ts = bad if label != "null" else "null-marker"
-    _send(Session, rid, ts=(bad if label != "null" else None))
-    row = _record(Session, rid)
-    check(f"ts that is {label} falls back to now rather than refusing the record",
-          row is not None and abs((row.created_at - datetime.utcnow()).total_seconds()) < 60,
-          str(row.created_at if row else None))
+        # The spread between two real events must survive the replay. This is the part
+        # the production evidence showed collapsing: 7 seconds became 63 milliseconds.
+        _send(Session, "LATE-2", ts=three_hours_ago + 60)
+        a, b = _record(Session, "LATE-1"), _record(Session, "LATE-2")
+        if a is not None and b is not None:
+            gap = abs((b.created_at - a.created_at).total_seconds())
+            check("two readings a minute apart are still a minute apart after replay",
+                  55 <= gap <= 65, f"gap={gap:.1f}s")
 
 
-# ── 3. the clock cannot be used to rewrite history ─────────────────────
-section("3. A BAD OR HOSTILE CLOCK CANNOT BACKDATE PRODUCTION")
+        # ── 2. absent or unusable ts falls back to now ─────────────────────────
+        section("2. NO USABLE ts IS THE OLD BEHAVIOUR, NOT A NEW FAILURE")
 
-future = time.time() + 3 * 3600
-_send(Session, "FUTURE-1", ts=future)
-row = _record(Session, "FUTURE-1")
-check("a ts in the FUTURE is refused and falls back to now",
-      row is not None and row.created_at <= datetime.utcnow() + timedelta(seconds=60),
-      f"created_at={row.created_at if row else None} -- production must not appear "
-      f"in a window that has not happened")
+        now = datetime.utcnow()
+        _send(Session, "NOTS-1", ts=None)
+        row = _record(Session, "NOTS-1")
+        check("a payload with no ts is still written",
+              row is not None and abs((row.created_at - now).total_seconds()) < 60,
+              str(row.created_at if row else None))
 
-ancient = time.time() - 400 * 24 * 3600
-_send(Session, "ANCIENT-1", ts=ancient)
-row = _record(Session, "ANCIENT-1")
-check("a ts a year old is refused and falls back to now",
-      row is not None and (datetime.utcnow() - row.created_at).total_seconds() < 3600,
-      f"created_at={row.created_at if row else None} -- an unbounded backdate "
-      f"rewrites historical OEE")
-
-
-# ── 4. replay still does not double count ──────────────────────────────
-section("4. THE IDEMPOTENCY THE FIX MUST NOT BREAK")
-
-before = _record(Session, "LATE-1")
-_send(Session, "LATE-1", ts=three_hours_ago)
-_send(Session, "LATE-1", ts=time.time())      # re-sent later, same record
-after = _record(Session, "LATE-1")
-db = Session()
-count = (db.query(models.ProductionRecord)
-           .filter(models.ProductionRecord.source_record_id == "LATE-1").count())
-db.close()
-check("a re-sent record is still written exactly once", count == 1, f"count={count}")
-check("...and its original timestamp is not rewritten by the re-send",
-      before is not None and after is not None and before.created_at == after.created_at,
-      f"{before.created_at if before else None} -> {after.created_at if after else None}")
+        for label, bad in (("a string", "yesterday"), ("null", None), ("a list", [1]),
+                           ("not a number", float("nan"))):
+            rid = f"BAD-{label.replace(' ', '-')}"
+            body_ts = bad if label != "null" else "null-marker"
+            _send(Session, rid, ts=(bad if label != "null" else None))
+            row = _record(Session, rid)
+            check(f"ts that is {label} falls back to now rather than refusing the record",
+                  row is not None and abs((row.created_at - datetime.utcnow()).total_seconds()) < 60,
+                  str(row.created_at if row else None))
 
 
-print()
-print("=" * 74)
-if failures:
-    print(f"FAILED ({len(failures)})")
-    for f in failures:
-        print("  -", f)
-    sys.exit(1)
-print("ALL CHECKS PASSED")
+        # ── 3. the clock cannot be used to rewrite history ─────────────────────
+        section("3. A BAD OR HOSTILE CLOCK CANNOT BACKDATE PRODUCTION")
+
+        future = time.time() + 3 * 3600
+        _send(Session, "FUTURE-1", ts=future)
+        row = _record(Session, "FUTURE-1")
+        check("a ts in the FUTURE is refused and falls back to now",
+              row is not None and row.created_at <= datetime.utcnow() + timedelta(seconds=60),
+              f"created_at={row.created_at if row else None} -- production must not appear "
+              f"in a window that has not happened")
+
+        ancient = time.time() - 400 * 24 * 3600
+        _send(Session, "ANCIENT-1", ts=ancient)
+        row = _record(Session, "ANCIENT-1")
+        check("a ts a year old is refused and falls back to now",
+              row is not None and (datetime.utcnow() - row.created_at).total_seconds() < 3600,
+              f"created_at={row.created_at if row else None} -- an unbounded backdate "
+              f"rewrites historical OEE")
+
+
+        # ── 4. replay still does not double count ──────────────────────────────
+        section("4. THE IDEMPOTENCY THE FIX MUST NOT BREAK")
+
+        before = _record(Session, "LATE-1")
+        _send(Session, "LATE-1", ts=three_hours_ago)
+        _send(Session, "LATE-1", ts=time.time())      # re-sent later, same record
+        after = _record(Session, "LATE-1")
+        db = Session()
+        count = (db.query(models.ProductionRecord)
+                   .filter(models.ProductionRecord.source_record_id == "LATE-1").count())
+        db.close()
+        check("a re-sent record is still written exactly once", count == 1, f"count={count}")
+        check("...and its original timestamp is not rewritten by the re-send",
+              before is not None and after is not None and before.created_at == after.created_at,
+              f"{before.created_at if before else None} -> {after.created_at if after else None}")
+
+
+
+    finally:
+        mqtt_service.safe_broadcast = _REAL_SAFE_BROADCAST
+        mqtt_service.SessionLocal = _REAL_SESSION_LOCAL
+
+    print()
+    print("=" * 74)
+    if failures:
+        print(f"FAILED ({len(failures)})")
+        for f in failures:
+            print("  -", f)
+        return 1
+    print("ALL CHECKS PASSED")
+    return 0
+
+
+def test_mqtt_production_time():
+    """The pytest entry point, per CONVENTIONS: the coverage job runs pytest,
+    which collects module-level ``test_*`` functions and nothing else."""
+    assert main() == 0, "see the FAIL lines above"
+
+
+if __name__ == "__main__":
+    sys.exit(main())

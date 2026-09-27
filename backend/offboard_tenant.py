@@ -215,7 +215,25 @@ def _close_service_contracts(db, code: str, now=None) -> dict:
     import oem_auth
     import platform_routes
 
-    now = canonical.utc_seconds(now or datetime.utcnow())
+    # ONE OFFBOARDING, ONE CLOCK. This used to read datetime.utcnow() directly
+    # while the coverage stamp it sets up -- contract_linkage.end_coverage,
+    # fired by the unlink below -- read contract_linkage.utcnow(). Two notions
+    # of "now" for the two halves of one operation, and they disagree in
+    # exactly the case that matters.
+    #
+    # The termination boundary computed here becomes the contract's effective
+    # end, and end_coverage deliberately leaves coverage OPEN once now is at or
+    # past that end ("no period after the stamp exists for them to change").
+    # So an offboarding that runs across a period boundary picks the boundary
+    # at T from this clock, then stamps at T+e from the other -- and the
+    # coverage row is silently left open forever on a terminated contract.
+    #
+    # In production the two instants are milliseconds apart, so it takes a
+    # boundary landing inside that gap; the window is small but it is real, and
+    # it is not a thing that should depend on scheduling luck. Reading the same
+    # clock as the listener closes it, and changes nothing else: outside that
+    # instant both calls already returned the same time.
+    now = canonical.utc_seconds(now or contract_linkage.utcnow())
     SC, TV = models.ServiceContract, models.ServiceContractTermVersion
     CS, CAR, CD = (models.ContractStatement, models.ContractAttributionRecord,
                    models.ContractDispute)

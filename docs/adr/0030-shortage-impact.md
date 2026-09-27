@@ -1,6 +1,6 @@
 # ADR-0030: A shortage is sized from the tenant's own recipe, or not sized at all
 
-**Status:** accepted · **Date:** 2026-09-20 · **Extends** [ADR-0013](0013-bill-of-materials.md) (each tenant's own recipe), [ADR-0007](0007-read-models.md) (read-models compose) · **Supplies the link [ADR-0026](0026-production-risk-radar.md) said was missing**
+**Status:** accepted · **Date:** 2026-09-20 · **Extends** [ADR-0013](0013-per-tenant-bill-of-materials.md) (each tenant's own recipe), [ADR-0007](0007-read-models-projections.md) (read-models compose) · **Supplies the link [ADR-0026](0026-production-risk-radar.md) said was missing**
 
 ---
 

@@ -1,6 +1,6 @@
 # ADR-0028: The Daily Factory Brief, and the section that says what AMP could not see
 
-**Status:** accepted · **Date:** 2026-09-20 · **Extends** [ADR-0007](0007-read-models.md) (read-models compose), [ADR-0014](0014-oee-contract.md) (one window, coverage stated), [ADR-0024](0024-factory-command-centre.md), [ADR-0025](0025-root-cause-explorer.md), [ADR-0026](0026-production-risk-radar.md)
+**Status:** accepted · **Date:** 2026-09-20 · **Extends** [ADR-0007](0007-read-models-projections.md) (read-models compose), [ADR-0014](0014-canonical-oee-contract.md) (one window, coverage stated), [ADR-0024](0024-factory-command-centre.md), [ADR-0025](0025-root-cause-explorer.md), [ADR-0026](0026-production-risk-radar.md)
 
 ---
 

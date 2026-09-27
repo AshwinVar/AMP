@@ -126,6 +126,63 @@ def resolve_subscription(env=None):
 TOPIC_PREFIX, LEGACY_TENANT, LEGACY_SITE, TOPIC_WARNINGS = resolve_subscription()
 
 
+# How far ahead of our clock a reading may claim to be. Small: a gateway and
+# AMP should agree to within seconds, and production that has not happened yet
+# must never land in a window that has not happened yet.
+MAX_READING_FUTURE_S = 60.0
+
+# How far BACK a reading may reach. A gateway buffers through long outages, so
+# this is generous -- but it is not unbounded, because `ts` on a workspace with
+# no registered gateway is unsigned, and an unbounded backdate is a licence to
+# rewrite finished months of OEE. Beyond this the record is still written; it
+# just carries the arrival time, which is the behaviour AMP had before.
+MAX_READING_AGE_S = 30 * 24 * 3600
+
+
+def reading_time(payload, now=None):
+    """When the reading HAPPENED, from the payload's own `ts`, or None.
+
+    WHY THIS EXISTS. ProductionRecord used to be built without `created_at`, so
+    it was stamped when AMP WROTE it. Nothing is lost that way and nothing is
+    duplicated -- but a record that waited in a broker queue through an outage
+    arrives with the time of the recovery, not the time of the work. Measured on
+    production during the AMP-PILOT gate: three records published over seven
+    seconds, replayed after a two-and-a-half minute outage, landed 63ms apart at
+    the instant AMP reconnected. Every count was right and every minute was
+    wrong, which is worse than it sounds, because time is the denominator of
+    OEE.
+
+    `ts` is set by edge/ampedge/payload.py when the reading window closes and is
+    covered by the HMAC, so a registered gateway cannot have it edited in
+    flight. It is still bounded here -- see the two constants above -- because a
+    wrong clock is more common than a hostile one and neither should be able to
+    file production outside the window it belongs to.
+
+    None means "no usable time", and the caller falls back to the arrival time.
+    A bad `ts` degrades to the old behaviour; it never rejects the record,
+    because the counts are still true and losing them would be the worse trade.
+    """
+    now = time.time() if now is None else now
+    value = payload.get("ts") if isinstance(payload, dict) else None
+    # bool is an int subclass, and `True` as a timestamp is 1970.
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    try:
+        seconds = float(value)
+    except (TypeError, ValueError, OverflowError):
+        return None
+    if seconds != seconds or seconds in (float("inf"), float("-inf")):
+        return None                                  # NaN / Infinity
+    if seconds > now + MAX_READING_FUTURE_S:
+        return None
+    if seconds < now - MAX_READING_AGE_S:
+        return None
+    try:
+        return datetime.utcfromtimestamp(seconds)
+    except (OverflowError, OSError, ValueError):
+        return None
+
+
 def _non_negative_int(value):
     """Parse an inbound production count/minute into a non-negative int, or None
     if it isn't a usable number. A guard on INGEST, mirroring the HTTP path
@@ -751,7 +808,7 @@ def on_message(client, userdata, msg):
                 log.info("production record %s already written for %s; the gateway re-sent it",
                          record_id, machine.tenant_code)
             else:
-                production = models.ProductionRecord(
+                fields = dict(
                     machine_id=machine.id,
                     tenant_code=machine.tenant_code,
                     planned_minutes=planned_minutes,
@@ -762,6 +819,20 @@ def on_message(client, userdata, msg):
                     rejected_count=rejected_count,
                     source_record_id=record_id,
                 )
+                # FILE IT WHEN IT HAPPENED, not when it arrived. See
+                # reading_time() for what makes a `ts` usable.
+                #
+                # The key is OMITTED rather than passed as None when there is no
+                # usable time. Passing None would in fact work -- SQLAlchemy
+                # applies `default=` for a None on insert, and a mutation
+                # confirmed the behaviour is identical -- but "omit it and let
+                # the column decide" says what is meant, where "pass None and
+                # rely on None meaning default" is the reading that has been
+                # wrong here before.
+                occurred_at = reading_time(payload)
+                if occurred_at is not None:
+                    fields["created_at"] = occurred_at
+                production = models.ProductionRecord(**fields)
                 # A SAVEPOINT, because the query above loses a race: two copies
                 # of the same message in flight both see "not written yet" and
                 # both insert. uq_production_source_record is what actually

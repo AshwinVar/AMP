@@ -355,6 +355,68 @@ def case_structural_guard():
               key in bulk and bool(why))
 
 
+def case_offboarding_uses_one_clock():
+    """Offboarding must stamp coverage however far the clock has moved.
+
+    THE FAILURE THIS REPRODUCES, AND WHY IT ONLY SHOWED UP SOME DAYS OF THE
+    MONTH. `_close_service_contracts` computed the termination boundary from
+    `datetime.utcnow()`, while the coverage stamp it sets up -- end_coverage,
+    fired by the unlink -- read `contract_linkage.utcnow()`. Two clocks for two
+    halves of one operation.
+
+    end_coverage leaves coverage OPEN once now is at or past the contract's
+    effective end. So whenever the stamping clock had moved past the boundary
+    the other clock chose, the row was silently left open on a terminated
+    contract -- and nothing anywhere said so.
+
+    case_release_and_offboarding above advances four days, which crosses a
+    monthly boundary only in the last four days of a period: green for most of
+    the month, red near the end of it, which is exactly how it was found. This
+    case advances FORTY days, so it crosses a boundary on every date, and fails
+    before the fix whenever it is run rather than whenever the calendar
+    cooperates.
+    """
+    section("7. OFFBOARDING READS ONE CLOCK, WHATEVER THE DATE")
+    # A FRESH serial under FACTORY_A. Not one of the seeded ones: SN-A1's only
+    # open row belongs to a contract that has already ended, which end_coverage
+    # is right to leave open, and SN-A3 already carries an overlapping
+    # contract. FACTORY_A is the factory because the OEM relationship the
+    # contract routes check is seeded for it. Runs last: it offboards FACTORY_A.
+    serial = "SN-CLK"
+    with H.unscoped() as db:
+        model = (db.query(models.MachineModel)
+                   .filter(models.MachineModel.oem_code == "OEM_ALPHA").first())
+        # Its own machine: acceptance refuses an installation that is not linked
+        # to something on the shop floor, and every seeded machine is taken.
+        machine = models.Machine(tenant_code="FACTORY_A", site="Plant",
+                                 name="CLK-01", status="Running", utilization=70)
+        db.add(machine)
+        db.flush()
+        row = models.MachineInstallation(
+            oem_code="OEM_ALPHA", serial_number=serial, model_id=model.id,
+            factory_tenant_code="FACTORY_A", machine_id=machine.id,
+            status="Active", site="Plant")
+        db.add(row)
+        db.commit()          # unscoped() closes without committing
+        db.refresh(row)
+        H.S["inst"][serial] = row.id
+    H.active_contract(serials=(serial,), tenant="FACTORY_A", fac_tok=H.TOKENS["fa"])
+    before = coverage(serial)
+    check("CONTROL: there is an open coverage row for offboarding to stamp",
+          len([c for c in before if c[1] is None]) == 1, str(before))
+
+    at = H.now_utc() + timedelta(days=40, seconds=11)
+    import offboard_tenant
+    with _Clock(at), H.unscoped() as db:
+        offboard_tenant.purge_tenant_data(db, "FACTORY_A")
+
+    after = coverage(serial)
+    check("coverage is stamped even when the clock has moved past a period boundary",
+          [c for c in after if c[1] is None] == []
+          and any(c[1:] == (at, "installation_released") for c in after),
+          str(after))
+
+
 def run_all():
     H.boot()
     H.seed()
@@ -364,6 +426,7 @@ def run_all():
     case_release_and_offboarding()
     case_the_statement_reads_the_stamp()
     case_structural_guard()
+    case_offboarding_uses_one_clock()
 
 
 def test_contract_linkage():

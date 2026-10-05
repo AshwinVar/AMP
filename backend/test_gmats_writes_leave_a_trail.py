@@ -170,19 +170,43 @@ def test_proforma_lifecycle_each_step_leaves_a_row():
     assert "CMP-001 x3" in row.details, row.details
 
     before = len(_rows(db))
-    inv = gmats.gmats_generate_invoice(pi["id"], db=db, current_user=GMATS_SUPERVISOR)
-    row = _only_new_row(db, before, "gmats_generate_invoice")
-    assert inv["invoice_no"] in row.details and pi["proforma_no"] in row.details, row.details
+    gmats.gmats_issue_proforma(pi["id"], db=db, current_user=GMATS_SUPERVISOR)
+    row = _only_new_row(db, before, "gmats_issue_proforma")
+    assert pi["proforma_no"] in row.details and "deducted" in row.details, row.details
     assert "CMP-001 x3" in row.details, row.details
 
     before = len(_rows(db))
-    gmats.gmats_void_invoice(inv["id"], db=db, current_user=GMATS_ADMIN)
-    assert db.query(models.GmatsInvoice).count() == 0, "the invoice row itself is gone"
-    row = _only_new_row(db, before, "gmats_void_invoice")
-    assert row.actor == "gmats_admin" and row.entity_id == inv["id"]
-    assert inv["invoice_no"] in row.details and pi["proforma_no"] in row.details, row.details
+    gmats.gmats_undo_issue(pi["id"], db=db, current_user=GMATS_ADMIN)
+    row = _only_new_row(db, before, "gmats_undo_issue")
+    assert row.actor == "gmats_admin" and row.entity_id == pi["id"]
+    assert pi["proforma_no"] in row.details, row.details
     assert "restored CMP-001 x3" in row.details, row.details
-    print("PASS proforma -> invoice -> void each leave a row; the void row outlives the invoice")
+    print("PASS proforma -> issue -> undo each leave a row naming the document and the quantity")
+
+
+def test_undoing_a_legacy_issue_records_the_tax_invoice_it_removed():
+    """The 8 'Invoiced' proformas on production still carry a tax-invoice row.
+
+    Undoing one deletes that row, so the audit entry is the only record left that
+    the invoice ever existed — the same reason the retired void captured its
+    number before committing."""
+    db = _db()
+    _item(db, physical=10)
+    pi = _proforma(db)
+    gmats.gmats_issue_proforma(pi["id"], db=db, current_user=GMATS_SUPERVISOR)
+    p = db.query(models.GmatsProforma).filter(models.GmatsProforma.id == pi["id"]).first()
+    p.status = "Invoiced"
+    db.add(models.GmatsInvoice(tenant_code="GMATS", invoice_no="INV-7005", proforma_id=p.id,
+                               customer_name=p.customer_name, status="Generated"))
+    db.commit()
+
+    before = len(_rows(db))
+    gmats.gmats_undo_issue(pi["id"], db=db, current_user=GMATS_ADMIN)
+    row = _only_new_row(db, before, "gmats_undo_issue")
+    assert db.query(models.GmatsInvoice).count() == 0, "the tax-invoice row itself is gone"
+    assert "INV-7005" in row.details, row.details
+    assert "restored CMP-001 x3" in row.details, row.details
+    print("PASS undoing a legacy issue names the tax invoice it removed")
 
 
 def test_cancel_proforma_records_released_reservation():
@@ -318,7 +342,7 @@ def test_refused_writes_leave_no_row():
     _expect(403, lambda: gmats.gmats_correct_item(1, {"physical_stock": 99}, db=db, current_user=ACME_ADMIN))
     _expect(403, lambda: gmats.gmats_delete_item(1, db=db, current_user=ACME_ADMIN))
     _expect(404, lambda: gmats.gmats_correct_item(999, {"physical_stock": 1}, db=db, current_user=GMATS_ADMIN))
-    _expect(404, lambda: gmats.gmats_void_invoice(999, db=db, current_user=GMATS_ADMIN))
+    _expect(404, lambda: gmats.gmats_undo_issue(999, db=db, current_user=GMATS_ADMIN))
     _expect(400, lambda: gmats.gmats_create_min({"tenant": "GMATS", "customer_name": "C",
                                                  "lines": [{"item_id": 1, "qty": 50}]},
                                                 db=db, current_user=GMATS_SUPERVISOR))
@@ -452,6 +476,7 @@ if __name__ == "__main__":
     test_create_item_records_code_and_opening_stock()
     test_delete_item_records_what_was_deleted()
     test_proforma_lifecycle_each_step_leaves_a_row()
+    test_undoing_a_legacy_issue_records_the_tax_invoice_it_removed()
     test_cancel_proforma_records_released_reservation()
     test_min_issue_and_void_each_leave_a_row()
     test_csv_import_records_counts_and_overwritten_stock()

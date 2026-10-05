@@ -2,8 +2,8 @@
 
 gmats_inventory_routes predates the ADR-0009 guard-test discipline. It owns the
 GMATS tenant's enterprise-inventory surface — items (+ aliases / correct /
-stock-in), the 4-bucket summary, resolve, MINs, proformas (cancel / invoice),
-invoices, and CSV import. Assert every path is registered exactly once and owned
+stock-in), the 4-bucket summary, resolve, MINs, proformas (cancel / issue /
+undo-issue), and CSV import. Assert every path is registered exactly once and owned
 solely by the module.
 
 Run:  python backend/test_gmats_inventory_routes.py     (exit 0 = pass)
@@ -28,8 +28,8 @@ EXPECTED = {
     "/gmats/items/{item_id}/correct", "/gmats/items/{item_id}/stock-in",
     "/gmats/summary", "/gmats/resolve", "/gmats/import-csv",
     "/gmats/min", "/gmats/min/{min_id}",
-    "/gmats/proformas", "/gmats/proformas/{pid}/cancel", "/gmats/proformas/{pid}/invoice",
-    "/gmats/invoices", "/gmats/invoices/{inv_id}",
+    "/gmats/proformas", "/gmats/proformas/{pid}/cancel",
+    "/gmats/proformas/{pid}/issue", "/gmats/proformas/{pid}/undo-issue",
 }
 
 
@@ -141,31 +141,33 @@ def _stock(db):
     return db.query(models.GmatsItem).filter(models.GmatsItem.id == 1).first()
 
 
-def test_invoice_rejects_over_issue_instead_of_clamping():
-    # physical 3, invoice line 10: the old code clamped physical to 0 (deducting
-    # only 3) and let the invoice through, so a later void restored the full 10 ->
+def test_issue_rejects_over_issue_instead_of_clamping():
+    # physical 3, line 10: the old code clamped physical to 0 (deducting only 3)
+    # and let the deduction through, so a later reversal restored the full 10 ->
     # +7 phantom stock. Now the over-issue is rejected and stock is untouched.
     db = _db()
     _proforma_with_line(db, qty=10, physical=3)
     try:
-        gmats.gmats_generate_invoice(1, db=db, current_user=_ADMIN)
-        assert False, "invoicing more than physical stock should 400"
+        gmats.gmats_issue_proforma(1, db=db, current_user=_ADMIN)
+        assert False, "issuing more than physical stock should 400"
     except HTTPException as e:
         assert e.status_code == 400, e.status_code
-    assert _stock(db).physical_stock == 3    # rejected invoice left stock untouched
-    print("PASS invoice rejects over-issue (no silent clamp that void would over-restore)")
+    assert _stock(db).physical_stock == 3    # a refused issue left stock untouched
+    print("PASS issue rejects over-issue (no silent clamp that undo would over-restore)")
 
 
-def test_invoice_then_void_is_stock_neutral():
-    # With enough stock the invoice deducts exactly and the void restores exactly,
-    # so physical returns to where it started — the deduction/restore are inverses.
+def test_issue_then_undo_is_stock_neutral():
+    # With enough stock the issue deducts exactly and the undo restores exactly,
+    # so BOTH halves return to where they started — reserved included, because an
+    # Open proforma holds a reservation everywhere else in this module.
     db = _db()
     _proforma_with_line(db, qty=4, physical=10)
-    inv = gmats.gmats_generate_invoice(1, db=db, current_user=_ADMIN)
+    gmats.gmats_issue_proforma(1, db=db, current_user=_ADMIN)
     assert _stock(db).physical_stock == 6 and _stock(db).reserved_stock == 0   # deducted 4, reservation cleared
-    gmats.gmats_void_invoice(inv["id"], db=db, current_user=_ADMIN)
+    gmats.gmats_undo_issue(1, db=db, current_user=_ADMIN)
     assert _stock(db).physical_stock == 10   # restored EXACTLY 4, not more
-    print("PASS invoice+void is stock-neutral (void is a true inverse of the deduction)")
+    assert _stock(db).reserved_stock == 4    # ...and it is spoken for again
+    print("PASS issue+undo is stock-neutral (undo is a true inverse of the deduction)")
 
 
 # --- NULL-stock safety: physical_stock / reserved_stock / reorder_level are
@@ -261,7 +263,7 @@ def test_summary_treats_null_as_zero_and_reconciles():
 
 # --- NULL-stock safety on the WRITE paths. The read path above already heals a
 # NULL physical/reserved column; the STOCK-MUTATION paths (stock-in, proforma,
-# cancel, invoice, MIN, and their voids) each do integer arithmetic on those same
+# cancel, issue, MIN, and their reversals) each do integer arithmetic on those same
 # columns — `physical += qty`, `physical - reserved`, `max(0, reserved - qty)`,
 # `qty > physical` — and on a genuine NULL raised `int + None` / `None - int`
 # TypeError, an unhandled 500. `_null_cols` forces a real NULL with a raw UPDATE
@@ -335,16 +337,16 @@ def test_cancel_proforma_releases_null_reservation():
     print("PASS cancel releases a NULL reservation to 0 without a 500")
 
 
-def test_generate_invoice_survives_null_reserved():
+def test_issue_survives_null_reserved():
     db = _db()
     _proforma_with_line(db, qty=4, physical=10)         # reserved 4
     _null_cols(db, 1, "reserved_stock")                 # force NULL after setup
-    gmats.gmats_generate_invoice(1, db=db, current_user=_ADMIN)
+    gmats.gmats_issue_proforma(1, db=db, current_user=_ADMIN)
     it = _stock(db)
     # physical 10 - 4 = 6; reserved heals 0 then max(0, 0 - 4) = 0 (was a `None - 4` 500).
     assert it.physical_stock == 6
     assert it.reserved_stock == 0
-    print("PASS invoice deducts and clears a NULL reservation without a 500")
+    print("PASS issue deducts and clears a NULL reservation without a 500")
 
 
 def test_create_min_null_physical_reports_insufficient_not_500():
@@ -364,15 +366,15 @@ def test_create_min_null_physical_reports_insufficient_not_500():
     print("PASS MIN against a NULL physical returns a clean 400, not a 500")
 
 
-def test_void_invoice_restores_onto_null_physical():
+def test_undo_issue_restores_onto_null_physical():
     db = _db()
     _proforma_with_line(db, qty=4, physical=10)
-    inv = gmats.gmats_generate_invoice(1, db=db, current_user=_ADMIN)   # physical -> 6
-    _null_cols(db, 1, "physical_stock")                 # force NULL before the void restore
-    gmats.gmats_void_invoice(inv["id"], db=db, current_user=_ADMIN)
+    gmats.gmats_issue_proforma(1, db=db, current_user=_ADMIN)           # physical -> 6
+    _null_cols(db, 1, "physical_stock")                 # force NULL before the undo restore
+    gmats.gmats_undo_issue(1, db=db, current_user=_ADMIN)
     # physical heals 0 then + 4 restored = 4 (was a `None + 4` 500).
     assert _stock(db).physical_stock == 4
-    print("PASS void invoice restores onto a NULL physical without a 500")
+    print("PASS undo issue restores onto a NULL physical without a 500")
 
 
 def test_void_min_restores_onto_null_physical():
@@ -394,8 +396,8 @@ def test_void_min_restores_onto_null_physical():
 # --- Duplicate-line safety on the multi-line issue paths. A proforma/MIN may
 # carry two lines for the SAME item. The availability check must validate the
 # SUM of those lines, not each in isolation, or the cumulative reserve/deduct
-# below over-commits stock past what's on the shelf. gmats_generate_invoice was
-# already hardened + tested this way (test_invoice_rejects_over_issue_...); these
+# below over-commits stock past what's on the shelf. gmats_issue_proforma was
+# already hardened + tested this way (test_issue_rejects_over_issue_...); these
 # pin the same guarantee on the proforma and MIN create paths. Expected values
 # are derived by hand. ---
 
@@ -704,7 +706,7 @@ def test_create_min_positive_line_still_issues():
 
 
 # --- Bounded windows + batched line fetch on the transactional listings. The
-# proforma / invoice / MIN lists grow without limit as a tenant trades, and each is
+# proforma / MIN lists grow without limit as a tenant trades, and each is
 # polled — yet they were the only list endpoints in the backend with no .limit()
 # cap. /gmats/proformas and /gmats/min also fired a per-row line query (an N+1 that
 # grew with every document); those are now collapsed into one batched IN(...) fetch
@@ -756,19 +758,28 @@ def test_proforma_listing_bounds_to_newest_500():
     print("PASS proforma listing bounds to the newest 500 (oldest beyond the window dropped)")
 
 
-def test_invoice_listing_bounds_to_newest_500():
+def test_status_filtered_listing_filters_before_it_bounds():
+    """The issued list asks for a status, and the filter runs in SQL INSIDE the cap.
+
+    Filtering after the cap would page the 500 newest rows and then throw most of
+    them away: here 501 Open proformas are raised AFTER the issued ones, so a
+    post-filter returns an EMPTY issued list while two issued documents sit on
+    file. That is the shape of the bug, so the fixture is built to produce it."""
     db = _db()
-    for i in range(1, 502):
-        db.add(models.GmatsInvoice(id=i, tenant_code="GMATS", invoice_no=f"INV-{i}",
-                                   proforma_id=None, customer_name="C", status="Generated"))
+    for i in range(1, 3):
+        db.add(models.GmatsProforma(id=i, tenant_code="GMATS", proforma_no=f"PI-{i}",
+                                    customer_name="C", status="Issued"))
+    for i in range(3, 504):
+        db.add(models.GmatsProforma(id=i, tenant_code="GMATS", proforma_no=f"PI-{i}",
+                                    customer_name="C", status="Open"))
     db.commit()
 
-    out = gmats.gmats_invoices(tenant="GMATS", db=db, current_user=_ADMIN)
-    assert len(out) == 500, f"expected the newest 500, got {len(out)}"
-    assert out[0]["invoice_no"] == "INV-501"
-    nos = {v["invoice_no"] for v in out}
-    assert "INV-1" not in nos and "INV-2" in nos
-    print("PASS invoice listing bounds to the newest 500")
+    issued = gmats.gmats_proformas(tenant="GMATS", status="Issued,Invoiced", db=db, current_user=_ADMIN)
+    assert [p["proforma_no"] for p in issued] == ["PI-2", "PI-1"], issued
+    opens = gmats.gmats_proformas(tenant="GMATS", status="Open", db=db, current_user=_ADMIN)
+    assert len(opens) == 500 and opens[0]["proforma_no"] == "PI-503", len(opens)
+    assert len(gmats.gmats_proformas(tenant="GMATS", db=db, current_user=_ADMIN)) == 500
+    print("PASS a status-filtered listing filters in SQL, then bounds to the newest 500")
 
 
 def test_min_listing_batches_lines_and_bounds_to_newest_500():
@@ -936,8 +947,8 @@ if __name__ == "__main__":
     test_proforma_listing_resolves_only_same_tenant_item_names()
     test_min_listing_resolves_only_same_tenant_item_names()
     test_listing_names_match_the_items_endpoint()
-    test_invoice_rejects_over_issue_instead_of_clamping()
-    test_invoice_then_void_is_stock_neutral()
+    test_issue_rejects_over_issue_instead_of_clamping()
+    test_issue_then_undo_is_stock_neutral()
     test_item_dict_coalesces_null_stock_to_zero()
     test_items_list_survives_one_null_row_among_healthy()
     test_summary_treats_null_as_zero_and_reconciles()
@@ -945,9 +956,9 @@ if __name__ == "__main__":
     test_create_proforma_reserves_against_null_reserved()
     test_create_proforma_null_stock_reports_insufficient_not_500()
     test_cancel_proforma_releases_null_reservation()
-    test_generate_invoice_survives_null_reserved()
+    test_issue_survives_null_reserved()
     test_create_min_null_physical_reports_insufficient_not_500()
-    test_void_invoice_restores_onto_null_physical()
+    test_undo_issue_restores_onto_null_physical()
     test_void_min_restores_onto_null_physical()
     test_create_proforma_sums_duplicate_lines_and_rejects_over_reserve()
     test_create_proforma_allows_duplicate_lines_within_stock()
@@ -965,7 +976,7 @@ if __name__ == "__main__":
     test_create_min_positive_line_still_issues()
     test_proforma_listing_batches_lines_per_document_correctly()
     test_proforma_listing_bounds_to_newest_500()
-    test_invoice_listing_bounds_to_newest_500()
+    test_status_filtered_listing_filters_before_it_bounds()
     test_min_listing_batches_lines_and_bounds_to_newest_500()
     test_int_cell_coerces_defaults_and_bounds()
     test_import_csv_rejects_negative_stock_and_reports_the_row()

@@ -1,4 +1,13 @@
-"""A GMATS tax invoice, MIN or proforma number is never issued twice.
+"""A GMATS MIN or proforma number is never issued twice.
+
+THE INV SERIES IS RETIRED. AMP no longer raises tax invoices: the proforma is
+the document, and issuing it is what deducts the stock
+(test_gmats_proforma_issue). The INV-7000+ numbers already on production stay on
+their rows, and `doc_numbers` keeps their counter, so nothing has to be renamed
+or renumbered. What follows binds the two series AMP still allocates. The
+reasoning below is kept because it is why `allocate` exists at all, and it
+applies unchanged to PI and MIN.
+
 
 GMATS numbered its documents with ``f"INV-{7000 + count + 1}"``, where count is
 the tenant's current number of invoices. Voiding an invoice or a MIN DELETES the
@@ -56,11 +65,6 @@ def _proforma(db, user=GMATS_SUPERVISOR, tenant="GMATS", item_id=1, qty=1):
                                         "lines": [{"item_id": item_id, "qty": qty}]}, db=db, current_user=user)
 
 
-def _invoice(db, user=GMATS_SUPERVISOR, tenant="GMATS", item_id=1):
-    pi = _proforma(db, user=user, tenant=tenant, item_id=item_id)
-    return gmats.gmats_generate_invoice(pi["id"], db=db, current_user=user)
-
-
 def _min(db, user=GMATS_SUPERVISOR, tenant="GMATS", item_id=1, qty=1):
     return gmats.gmats_create_min({"tenant": tenant, "customer_name": "Cust", "machine_ref": "Rig",
                                    "lines": [{"item_id": item_id, "qty": qty}]}, db=db, current_user=user)
@@ -70,18 +74,23 @@ def _live(db, model, column, tenant="GMATS"):
     return sorted(getattr(r, column) for r in db.query(model).filter(model.tenant_code == tenant).all())
 
 
-def test_a_voided_invoice_never_hands_its_count_to_a_live_number():
+def test_an_undone_issue_never_hands_its_number_to_another_document():
+    """A proforma survives its own reversal, so its number must never come round again.
+
+    The retired flow DELETED the tax-invoice row on a void, which is what made
+    count()+1 hand a live number out twice. Undo keeps the row and reopens it, so
+    there is no gap to re-fill — and allocate still only moves forward."""
     db = _db()
-    _item(db)
-    a = _invoice(db)
-    b = _invoice(db)
-    assert (a["invoice_no"], b["invoice_no"]) == ("INV-7001", "INV-7002"), (a, b)
-    gmats.gmats_void_invoice(a["id"], db=db, current_user=GMATS_ADMIN)
-    c = _invoice(db)
-    live = _live(db, models.GmatsInvoice, "invoice_no")
-    assert len(live) == len(set(live)), f"two live tax invoices share a number: {live}"
-    assert c["invoice_no"] == "INV-7003", f"got {c['invoice_no']}: 7002 is a live invoice, 7001 was voided"
-    print("PASS after a void the next invoice is INV-7003, never a live or voided number")
+    _item(db, physical=50)
+    a, b = _proforma(db), _proforma(db)
+    assert (a["proforma_no"], b["proforma_no"]) == ("PI-1001", "PI-1002"), (a, b)
+    gmats.gmats_issue_proforma(a["id"], db=db, current_user=GMATS_SUPERVISOR)
+    gmats.gmats_undo_issue(a["id"], db=db, current_user=GMATS_ADMIN)
+    c = _proforma(db)
+    live = _live(db, models.GmatsProforma, "proforma_no")
+    assert len(live) == len(set(live)), f"two live proformas share a number: {live}"
+    assert c["proforma_no"] == "PI-1003", f"got {c['proforma_no']}: PI-1001 is still on file"
+    print("PASS an issued-then-undone proforma keeps its number, and the next one is PI-1003")
 
 
 def test_a_voided_min_never_hands_its_count_to_a_live_number():
@@ -104,15 +113,12 @@ def test_numbering_continues_above_numbers_already_issued():
     db = _db()
     _item(db)
     db.add(models.GmatsProforma(tenant_code="GMATS", proforma_no="PI-1004", customer_name="Old", status="Invoiced"))
-    db.add(models.GmatsInvoice(tenant_code="GMATS", invoice_no="INV-7009", customer_name="Old", status="Generated"))
     db.add(models.GmatsMIN(tenant_code="GMATS", min_no="MIN-4007", customer_name="Old", status="Issued"))
     db.commit()
     pi = _proforma(db)
     assert pi["proforma_no"] == "PI-1005", pi
-    inv = gmats.gmats_generate_invoice(pi["id"], db=db, current_user=GMATS_SUPERVISOR)
-    assert inv["invoice_no"] == "INV-7010", inv
     assert _min(db)["min_no"] == "MIN-4008"
-    print("PASS numbering continues above PI-1004 / INV-7009 / MIN-4007 already on file")
+    print("PASS numbering continues above PI-1004 / MIN-4007 already on file")
 
 
 def test_each_company_keeps_its_own_series():
@@ -120,14 +126,14 @@ def test_each_company_keeps_its_own_series():
     _item(db, iid=1, tenant="GMATS")
     _item(db, iid=2, tenant="ACME")
     for _ in range(3):
-        _invoice(db)
-    acme = _invoice(db, user=ACME_SUPERVISOR, tenant="ACME", item_id=2)
-    assert acme["invoice_no"] == "INV-7001", acme
-    # The founder invoices for GMATS from the DEFAULT workspace: the number comes
-    # from the series of the company the invoice is filed under, not the caller's.
-    founder = _invoice(db, user=FOUNDER, tenant="GMATS")
-    assert founder["invoice_no"] == "INV-7004", founder
-    print("PASS ACME's first invoice is INV-7001; the founder's GMATS invoice continues GMATS's series")
+        _proforma(db)
+    acme = _proforma(db, user=ACME_SUPERVISOR, tenant="ACME", item_id=2)
+    assert acme["proforma_no"] == "PI-1001", acme
+    # The founder raises one for GMATS from the DEFAULT workspace: the number comes
+    # from the series of the company the document is filed under, not the caller's.
+    founder = _proforma(db, user=FOUNDER, tenant="GMATS")
+    assert founder["proforma_no"] == "PI-1004", founder
+    print("PASS ACME's first proforma is PI-1001; the founder's GMATS proforma continues GMATS's series")
 
 
 def test_a_refused_document_does_not_burn_a_number():
@@ -154,7 +160,7 @@ def test_a_refused_document_does_not_burn_a_number():
 def test_gmats_documents_draw_from_the_shared_sequence():
     with open(os.path.join(BACKEND, "gmats_inventory_routes.py"), encoding="utf-8") as fh:
         tree = ast.parse(fh.read())
-    wanted = {"gmats_create_proforma": "PI", "gmats_generate_invoice": "INV", "gmats_create_min": "MIN"}
+    wanted = {"gmats_create_proforma": "PI", "gmats_create_min": "MIN"}
     seen = {}
     for fn in tree.body:
         if isinstance(fn, ast.FunctionDef) and fn.name in wanted:
@@ -167,11 +173,11 @@ def test_gmats_documents_draw_from_the_shared_sequence():
     for name, prefix in wanted.items():
         assert name in seen, f"{name} does not call doc_numbers.allocate"
         assert prefix in seen[name], f"{name} allocates {seen[name]}, expected prefix {prefix}"
-    print("PASS proforma, invoice and MIN numbers come from doc_numbers.allocate")
+    print("PASS proforma and MIN numbers come from doc_numbers.allocate")
 
 
 if __name__ == "__main__":
-    test_a_voided_invoice_never_hands_its_count_to_a_live_number()
+    test_an_undone_issue_never_hands_its_number_to_another_document()
     test_a_voided_min_never_hands_its_count_to_a_live_number()
     test_numbering_continues_above_numbers_already_issued()
     test_each_company_keeps_its_own_series()

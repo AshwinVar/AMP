@@ -80,21 +80,23 @@ MUTATIONS = [
      '            db, tenancy.current_tenant() or "DEFAULT", "MIS", models.MaterialIssueSlip,\n'
      '            "slip_no", "MIS", start=5000),',
      '        slip_no=f"MIS-{5000 + db.query(models.MaterialIssueSlip).count() + 1}",'),
-    ("GMATS tax invoices go back to count()+1", "gmats_inventory_routes.py",
-     '        invoice_no=doc_numbers.allocate(db, p.tenant_code, "INV", models.GmatsInvoice, "invoice_no", "INV", start=7000),',
-     '        invoice_no=f"INV-{7000 + db.query(models.GmatsInvoice).filter(models.GmatsInvoice.tenant_code == p.tenant_code).count() + 1}",'),
+    # The three GMATS tax-invoice mutations that stood here are gone with the
+    # flow they measured: AMP no longer raises tax invoices, so there is no INV
+    # allocation left to weaken. A mutation whose pattern cannot apply measures
+    # nothing while looking like a guard that works, so it is deleted rather than
+    # left to report as a survivor. PI and MIN are unchanged and still covered.
     ("GMATS MINs go back to count()+1", "gmats_inventory_routes.py",
      '        min_no=doc_numbers.allocate(db, tenant, "MIN", models.GmatsMIN, "min_no", "MIN", start=4000),',
      '        min_no=f"MIN-{4000 + db.query(models.GmatsMIN).filter(models.GmatsMIN.tenant_code == tenant).count() + 1}",'),
     ("GMATS proformas go back to count()+1", "gmats_inventory_routes.py",
      '        proforma_no=doc_numbers.allocate(db, tenant, "PI", models.GmatsProforma, "proforma_no", "PI", start=1000),',
      '        proforma_no=f"PI-{1000 + db.query(models.GmatsProforma).filter(models.GmatsProforma.tenant_code == tenant).count() + 1}",'),
-    ("GMATS invoices draw from the MIN series", "gmats_inventory_routes.py",
-     '"INV", models.GmatsInvoice, "invoice_no", "INV", start=7000)',
-     '"MIN", models.GmatsInvoice, "invoice_no", "INV", start=7000)'),
-    ("GMATS invoice numbering keyed on the caller, not the document", "gmats_inventory_routes.py",
-     'doc_numbers.allocate(db, p.tenant_code, "INV",',
-     'doc_numbers.allocate(db, current_user.get("tenant"), "INV",'),
+    ("GMATS proformas draw from the MIN series", "gmats_inventory_routes.py",
+     '"PI", models.GmatsProforma, "proforma_no", "PI", start=1000)',
+     '"MIN", models.GmatsProforma, "proforma_no", "PI", start=1000)'),
+    ("GMATS proforma numbering keyed on the caller, not the document", "gmats_inventory_routes.py",
+     'proforma_no=doc_numbers.allocate(db, tenant,',
+     'proforma_no=doc_numbers.allocate(db, current_user.get("tenant"),'),
     ("GMATS MIN number allocated before the stock check", "gmats_inventory_routes.py",
      ['    for item_id, qty in needed.items():\n'
       '        item = db.query(models.GmatsItem).filter(\n'

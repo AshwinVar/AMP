@@ -366,6 +366,59 @@ check("...and the configured standard WINS over the measured cycle time",
       f"measured 7s would flatter performance; got {_both.get('ideal_cycle_time_seconds')}")
 
 
+section("10. THE QUALITY FLAG MUST SURVIVE THE CONFIG LOADER")
+
+# `payload.counts_of` refuses production when only part_count is mapped and
+# tells the commissioner to set `quality_unknown_is_good`. The runner reads it
+# off the machine spec; the loader did not put it there. So the flag could be
+# set, documented in an example, and have NO EFFECT — and every FANUC (which
+# counts parts and has no reject concept) silently recorded no production at
+# all. Four real parts were made on a customer's machine before this was found.
+_qbase = {
+    "amp": {"host": "b", "tenant": "T", "site": "s"},
+    "machines": [{"name": "M1", "protocol": "modbus",
+                  "connection": {"host": "10.0.0.5"},
+                  "quality_unknown_is_good": True,
+                  "tags": [{"tag": "p", "address": 40001, "signal": "part_count",
+                            "datatype": "int", "counter_mode": "cumulative"}]}],
+}
+check("quality_unknown_is_good reaches the machine spec",
+      _config_mod.validate(_qbase)["machines"][0]["quality_unknown_is_good"] is True,
+      str(_config_mod.validate(_qbase)["machines"][0].get("quality_unknown_is_good")))
+
+_qoff = copy.deepcopy(_qbase)
+del _qoff["machines"][0]["quality_unknown_is_good"]
+check("...defaults to False, so the refusal is the default",
+      _config_mod.validate(_qoff)["machines"][0]["quality_unknown_is_good"] is False)
+
+# A quoted "false" is a truthy STRING. Coercing it would mean the exact opposite
+# of what the file says, on the one setting that decides whether a plant's
+# quality figure is honest.
+for _bad in ("false", "no", 0, 1):
+    _qbad = copy.deepcopy(_qbase)
+    _qbad["machines"][0]["quality_unknown_is_good"] = _bad
+    try:
+        _config_mod.validate(_qbad)
+        check(f"a non-boolean quality flag ({_bad!r}) is refused", False, "accepted")
+    except _config_mod.ConfigError as e:
+        check(f"a non-boolean quality flag ({_bad!r}) is refused",
+              "quality_unknown_is_good" in str(e), str(e)[:80])
+
+# And the flag must actually change what is published, not merely exist.
+_spec = _config_mod.validate(_qbase)["machines"][0]
+_on = payload_mod.MachineState("M1", quality_unknown_is_good=_spec["quality_unknown_is_good"])
+_on.absorb([normalizer_mod.Sample(signals.PART_COUNT, 4, time.time())])
+check("a single-counter machine with the flag set DOES publish production",
+      payload_mod.build(_on, machine_name="M1").get("total_count") == 4,
+      str(payload_mod.build(_on, machine_name="M1")))
+
+_off = payload_mod.MachineState("M1", quality_unknown_is_good=False)
+_off.absorb([normalizer_mod.Sample(signals.PART_COUNT, 4, time.time())])
+_offbody = payload_mod.build(_off, machine_name="M1")
+check("...and without it, production is still refused rather than assumed good",
+      "total_count" not in _offbody, str(_offbody))
+
+
 print()
 print("=" * 74)
 if failures:

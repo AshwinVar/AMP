@@ -183,6 +183,27 @@ def _machine(entry, i, problems) -> dict:
         problems.append(f"{where}.poll_interval of {poll}s polls the PLC very hard. If a signal "
                         f"really is that fast, subscribe to it (opcua) rather than polling.")
 
+    # THE FLAG THAT DECIDES WHETHER A SINGLE-COUNTER MACHINE REPORTS AT ALL.
+    #
+    # `payload.counts_of` refuses to publish production when only part_count is
+    # mapped, rather than claim every part was good, and tells the engineer to
+    # set this flag if the line genuinely has no reject counter. The runner
+    # reads it off the machine spec and an example documents it — and this
+    # function did not put it in the spec, so setting it did nothing. A FANUC
+    # counts parts and has no reject concept, so EVERY FANUC machine silently
+    # published no production at all while the refusal told its commissioner to
+    # set a flag that had no effect.
+    #
+    # A non-boolean is refused rather than coerced: `quality_unknown_is_good:
+    # "false"` is a truthy STRING, and quietly meaning the opposite of what it
+    # says is the whole failure mode this flag exists to prevent.
+    quality_unknown = entry.get("quality_unknown_is_good", False)
+    if not isinstance(quality_unknown, bool):
+        problems.append(f"{where}.quality_unknown_is_good must be true or false, not "
+                        f"{quality_unknown!r} — a quoted \"false\" is a truthy string and would "
+                        f"mean the opposite of what it says")
+        quality_unknown = False
+
     # IDEAL CYCLE TIME IS AN ENGINEERING STANDARD, NOT A MEASUREMENT.
     #
     # OEE's performance component is ideal_seconds / runtime. `payload.build`
@@ -224,6 +245,7 @@ def _machine(entry, i, problems) -> dict:
         "connection": _resolve_env(connection, problems, f"{where}.connection"),
         "poll_interval": poll,
         "ideal_cycle_time_seconds": ideal_cycle,
+        "quality_unknown_is_good": quality_unknown,
         "tags": tags,
         "mappings": mappings,
     }

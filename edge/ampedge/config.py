@@ -221,7 +221,7 @@ def _machine(entry, i, problems) -> dict:
     return {
         "name": name,
         "protocol": protocol,
-        "connection": _resolve_env(connection, problems, where),
+        "connection": _resolve_env(connection, problems, f"{where}.connection"),
         "poll_interval": poll,
         "ideal_cycle_time_seconds": ideal_cycle,
         "tags": tags,
@@ -230,6 +230,13 @@ def _machine(entry, i, problems) -> dict:
 
 
 def _resolve_env(connection: dict, problems=None, where="connection") -> dict:
+    """`where` is the FULL path of the block, e.g. "amp" or
+    "machines[CNC-01].connection" — not a parent to which this function adds
+    ".connection". It used to add it, because it had exactly one caller and
+    that caller's shape was baked into the message; the amp block then
+    reported problems at `amp.connection.username_env`, a path that does not
+    exist in any config, which sends an engineer looking for a key they never
+    wrote."""
     """`password_env: PLC_PW` becomes `password: <value>`, in memory only.
 
     The resolved dict is handed to the adapter and never written anywhere: it
@@ -246,7 +253,7 @@ def _resolve_env(connection: dict, problems=None, where="connection") -> dict:
                 # told about one, fixed it, and was told about the next -- the
                 # exact round-tripping this module's docstring promises not to
                 # do.
-                message = (f"{where}.connection.{key} names the environment variable {name}, "
+                message = (f"{where}.{key} names the environment variable {name}, "
                            f"which is not set")
                 if problems is None:
                     raise ConfigError(message)

@@ -158,6 +158,46 @@ check("...with the _env key gone, so it cannot be written back out",
       "password_env" not in resolved["machines"][0]["connection"],
       str(resolved["machines"][0]["connection"].keys()))
 
+# THE SAME RESOLUTION FOR THE BROKER'S OWN CREDENTIALS.
+#
+# This is the half that was missing, and it was missing in the one place every
+# example tells a pilot to use. `amp.username_env` survived under its own name,
+# the Publisher's `settings.get("username")` found nothing, and the gateway
+# connected ANONYMOUSLY — which against `allow_anonymous false` is a CONNACK 5
+# reading "not authorised": a credentials error for credentials that were
+# correct and never sent. It went unnoticed because the commissioning gate
+# drove the Publisher from a hand-built dict instead of from a config file.
+#
+# The Publisher is constructed here rather than only inspecting the dict,
+# because what matters is not that a key exists but that the thing which opens
+# the socket can see it.
+os.environ["TEST_MQTT_USER"] = "gw-acme-1"
+os.environ["TEST_MQTT_PASSWORD"] = "brokerpass"
+with_creds = {
+    "amp": {"host": "broker.amp", "tenant": "ACME", "site": "plant-1",
+            "username_env": "TEST_MQTT_USER", "password_env": "TEST_MQTT_PASSWORD"},
+    "gateway": {"id": "gw-acme-1", "key_env": "TEST_GATEWAY_KEY"},
+    "machines": good["machines"],
+}
+amp_resolved = config_mod.validate(with_creds)["amp"]
+check("amp.username_env is resolved, or the gateway connects anonymously",
+      amp_resolved.get("username") == "gw-acme-1", str(sorted(amp_resolved)))
+check("amp.password_env is resolved too",
+      amp_resolved.get("password") == "brokerpass", str(sorted(amp_resolved)))
+check("...with no _env keys left in the amp block",
+      not [k for k in amp_resolved if k.endswith("_env")], str(sorted(amp_resolved)))
+
+from ampedge import publisher as _publisher_mod            # noqa: E402
+_pub = _publisher_mod.Publisher(dict(amp_resolved))
+check("the PUBLISHER itself sees the username, not just the config dict",
+      _pub.settings.get("username") == "gw-acme-1",
+      repr(_pub.settings.get("username")))
+check("the broker password never reaches describe()",
+      "brokerpass" not in json.dumps(_pub.describe()), json.dumps(_pub.describe())[:200])
+check("nor the redacted diagnostic bundle",
+      "brokerpass" not in json.dumps(config_mod.redact(config_mod.validate(with_creds))),
+      "the broker password would travel in a support ticket")
+
 redacted = config_mod.redact(resolved)
 check("the redacted copy carries no password", "plcpass" not in json.dumps(redacted),
       json.dumps(redacted)[:200])

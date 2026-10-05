@@ -336,20 +336,25 @@ def gmats_resolve(name: str, tenant: str = "GMATS", db: Session = Depends(get_db
 
 
 @router.get("/proformas")
-def gmats_proformas(response: Response = None, tenant: str = "GMATS",
+def gmats_proformas(response: Response = None, tenant: str = "GMATS", status: str = "",
                     limit: Optional[int] = None, offset: int = 0,
                     db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
     tenant = _effective_tenant(current_user, tenant)
+    # `status` is a comma-separated filter, applied in SQL and INSIDE the window
+    # below. The issued list asks for "Issued,Invoiced" — two spellings of one
+    # state, the second being what the retired tax-invoice flow wrote — and it
+    # must not have to page through every Open proforma to find them: filtering
+    # after the cap would hide the oldest issued documents behind newer open ones.
+    wanted = [s.strip() for s in status.split(",") if s.strip()]
     # Bound the window (rule-4): proformas grow without limit as the tenant trades,
     # and this list is polled — yet it was the one transactional list endpoint with
     # no cap, where every sibling (/escalations, /operator/executions, /iot/telemetry,
     # …) already takes the newest .limit(300/500). Take the newest 500 (id desc), so a
     # long-lived tenant's oldest proformas can't turn the poll into a full-table scan.
-    rows = paging.page(response,
-                       db.query(models.GmatsProforma)
-                       .filter(models.GmatsProforma.tenant_code == tenant)
-                       .order_by(models.GmatsProforma.id.desc()),
-                       500, limit, offset)
+    q = db.query(models.GmatsProforma).filter(models.GmatsProforma.tenant_code == tenant)
+    if wanted:
+        q = q.filter(models.GmatsProforma.status.in_(wanted))
+    rows = paging.page(response, q.order_by(models.GmatsProforma.id.desc()), 500, limit, offset)
     # Resolve line item names from THIS tenant's items only. GmatsItem is not in
     # tenancy.SCOPED_MODELS, so an unfiltered .all() loads every company's items
     # into memory (an unbounded cross-tenant scan) and would leak a foreign
@@ -401,7 +406,7 @@ def gmats_create_proforma(payload: dict, db: Session = Depends(get_db), current_
     # 10-in-stock item reserved 16 against 10, driving reserved_stock past physical
     # and available_stock negative, silently defeating the "reservation prevents
     # double-selling" guard this module promises (docstring). Summing per item first
-    # mirrors the already-hardened gmats_generate_invoice (which sums needed-per-item
+    # mirrors the already-hardened gmats_issue_proforma (which sums needed-per-item
     # so duplicate lines for one item are covered).
     from collections import defaultdict
     needed: dict = defaultdict(int)
@@ -482,43 +487,33 @@ def gmats_cancel_proforma(pid: int, db: Session = Depends(get_db), current_user:
            f"{p.proforma_no} cancelled: released {_lines_text(db, p.tenant_code, lines)}")
     return {"ok": True}
 
-# ── Tax Invoice (final deduction) ─────────────────────────────
+# ── Issue (final deduction) ───────────────────────────────────
+#
+# ONE DOCUMENT, NOT TWO. This used to generate a tax invoice: a second document
+# with its own number series (INV-7000+) and a printable PDF, whose only
+# operational effect was the deduction below. GMATS does not raise its tax
+# invoices from AMP, so AMP has no business minting a legal-looking document or
+# a second identity for one sale. The proforma IS the document; issuing it is
+# what moves the stock.
+#
+# The deduction, its guard and its audit row are unchanged — only the paperwork
+# around them is gone.
 
 
-@router.get("/invoices")
-def gmats_invoices(response: Response = None, tenant: str = "GMATS",
-                   limit: Optional[int] = None, offset: int = 0,
-                   db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
-    tenant = _effective_tenant(current_user, tenant)
-    # Bound the window (rule-4): invoices grow without limit and this list is polled;
-    # take the newest 500 (id desc), matching /gmats/proformas and every other
-    # transactional list endpoint that already caps rather than scanning the table.
-    rows = paging.page(response,
-                       db.query(models.GmatsInvoice)
-                       .filter(models.GmatsInvoice.tenant_code == tenant)
-                       .order_by(models.GmatsInvoice.id.desc()),
-                       500, limit, offset)
-    return [
-        {"id": v.id, "invoice_no": v.invoice_no, "proforma_id": v.proforma_id,
-         "customer_name": v.customer_name, "status": v.status, "created_at": v.created_at}
-        for v in rows
-    ]
-
-
-@router.post("/proformas/{pid}/invoice")
-def gmats_generate_invoice(pid: int, db: Session = Depends(get_db), current_user: dict = Depends(require_roles(["Admin", "Supervisor"]))):
-    """Generate Tax Invoice from a proforma: deduct physical, clear the reservation."""
+@router.post("/proformas/{pid}/issue")
+def gmats_issue_proforma(pid: int, db: Session = Depends(get_db), current_user: dict = Depends(require_roles(["Admin", "Supervisor"]))):
+    """Issue a proforma: deduct physical, clear the reservation. No invoice is written."""
     p = db.query(models.GmatsProforma).filter(models.GmatsProforma.id == pid).first()
     if not p or p.status != "Open":
-        raise HTTPException(status_code=400, detail="Only open proformas can be invoiced")
+        raise HTTPException(status_code=400, detail="Only open proformas can be issued")
     _guard_record(current_user, p.tenant_code)
     lines = db.query(models.GmatsProformaLine).filter(models.GmatsProformaLine.proforma_id == pid).all()
     # Guard the TOTAL physical needed per item BEFORE deducting (summed across
     # lines, so duplicate lines for one item are covered), then deduct exactly.
-    # gmats_create_min already guards issue this way; without it here, invoicing
+    # gmats_create_min already guards issue this way; without it here, issuing
     # more than the physical stock silently under-deducts via max(0, ...), and
-    # gmats_void_invoice later restores the FULL line qty — inflating stock by the
-    # clamped shortfall (phantom stock). An exact deduction makes void a true inverse.
+    # gmats_undo_issue later restores the FULL line qty — inflating stock by the
+    # clamped shortfall (phantom stock). An exact deduction makes undo a true inverse.
     from collections import defaultdict
     needed: dict = defaultdict(int)
     for l in lines:
@@ -530,7 +525,7 @@ def gmats_generate_invoice(pid: int, db: Session = Depends(get_db), current_user
             _heal_stock(item)
             if qty > item.physical_stock:
                 raise HTTPException(status_code=400,
-                                    detail=f"Cannot invoice {qty} {item.unit} of {item.item_name}: "
+                                    detail=f"Cannot issue {qty} {item.unit} of {item.item_name}: "
                                            f"only {item.physical_stock} physical")
             items[item_id] = item
     for l in lines:
@@ -538,23 +533,65 @@ def gmats_generate_invoice(pid: int, db: Session = Depends(get_db), current_user
         if item:
             item.physical_stock -= l.qty                              # exact (guard guarantees >= 0)
             item.reserved_stock = max(0, item.reserved_stock - l.qty)  # clear reservation
-    # A tax invoice number is the document's legal identity. count()+1 handed a
-    # voided invoice's count to the next one, so after a void two LIVE invoices
-    # carried one number; the shared sequence only moves forward (a void leaves
-    # a gap, named in its audit row). test_gmats_document_numbers_never_reused.
-    inv = models.GmatsInvoice(
-        tenant_code=p.tenant_code,
-        invoice_no=doc_numbers.allocate(db, p.tenant_code, "INV", models.GmatsInvoice, "invoice_no", "INV", start=7000),
-        proforma_id=p.id,
-        customer_name=p.customer_name,
-        status="Generated",
-    )
-    db.add(inv)
-    p.status = "Invoiced"
+    # No second number is allocated: the proforma's own PI number is the
+    # document's identity, and it was allocated (and audited) when it was raised.
+    p.status = "Issued"
     db.commit()
-    _audit(db, current_user, p.tenant_code, "gmats_generate_invoice", "gmats_invoice", inv.id,
-           f"{inv.invoice_no} from {p.proforma_no}: deducted {_lines_text(db, p.tenant_code, lines)}")
-    return {"id": inv.id, "invoice_no": inv.invoice_no}
+    _audit(db, current_user, p.tenant_code, "gmats_issue_proforma", "gmats_proforma", p.id,
+           f"{p.proforma_no} issued: deducted {_lines_text(db, p.tenant_code, lines)}")
+    return {"id": p.id, "proforma_no": p.proforma_no, "status": p.status}
+
+
+# The two spellings of "this stock has left the building". "Invoiced" is what the
+# retired tax-invoice flow wrote, and production holds 8 of them. They are not
+# migrated: the rows record what actually happened, and an UPDATE that renamed
+# them would quietly claim those sales were issued under a flow that did not
+# exist at the time. Every path that means "issued" accepts both.
+ISSUED_STATUSES = ("Issued", "Invoiced")
+
+
+@router.patch("/proformas/{pid}/undo-issue")
+def gmats_undo_issue(pid: int, db: Session = Depends(get_db), current_user: dict = Depends(require_roles(["Admin"]))):
+    """Admin undoes an issue: the exact inverse, back to Open and reserved.
+
+    Deliberately an INVERSE and not a cancellation. The retired void did restore
+    the physical stock, but then set the proforma to Cancelled and dropped the
+    reservation — so recovering from a mis-click meant re-keying the whole
+    document. Here the stock goes back on the shelf AND back into reserved, and
+    the proforma is Open again: it can be issued once the mistake is sorted out,
+    or cancelled with the button next to it to release the reservation. "Open
+    means reserved" is the invariant the rest of this module is built on, so the
+    inverse has to restore both halves or it leaves available stock overstated.
+
+    A proforma issued under the old flow (status "Invoiced") undoes the same way,
+    and its tax-invoice row goes with it: an Open proforma with an invoice still
+    pointing at it would be a document claiming a sale that is no longer made.
+    """
+    p = db.query(models.GmatsProforma).filter(models.GmatsProforma.id == pid).first()
+    if not p:
+        raise HTTPException(status_code=404, detail="Proforma not found")
+    _guard_record(current_user, p.tenant_code)
+    if p.status not in ISSUED_STATUSES:
+        raise HTTPException(status_code=400, detail="Only an issued proforma can be undone")
+    lines = db.query(models.GmatsProformaLine).filter(models.GmatsProformaLine.proforma_id == pid).all()
+    for l in lines:
+        item = db.query(models.GmatsItem).filter(models.GmatsItem.id == l.item_id).first()
+        if item:
+            _heal_stock(item)
+            item.physical_stock += l.qty      # back on the shelf
+            item.reserved_stock += l.qty      # and still spoken for — the proforma is Open again
+    undone = f"{p.proforma_no} issue undone"
+    # A legacy tax invoice is deleted with it, so the audit row is the only record
+    # left that it existed: name it before the commit, as the old void did.
+    legacy = db.query(models.GmatsInvoice).filter(models.GmatsInvoice.proforma_id == p.id).all()
+    for inv in legacy:
+        undone += f", tax invoice {inv.invoice_no} removed"
+        db.delete(inv)
+    p.status = "Open"
+    db.commit()
+    _audit(db, current_user, p.tenant_code, "gmats_undo_issue", "gmats_proforma", p.id,
+           f"{undone}: restored {_lines_text(db, p.tenant_code, lines)}")
+    return {"ok": True}
 
 # ── Material Issue Note (free spares with a machine) ──────────
 
@@ -610,7 +647,7 @@ def gmats_create_min(payload: dict, db: Session = Depends(get_db), current_user:
     if not lines:
         raise HTTPException(status_code=400, detail="At least one spare line required")
     # Validate the TOTAL physical needed per item BEFORE issuing (summed across
-    # lines), then deduct exactly — the same guard gmats_generate_invoice uses (and
+    # lines), then deduct exactly — the same guard gmats_issue_proforma uses (and
     # its comment already CLAIMS "gmats_create_min already guards issue this way",
     # which until now was untrue). The old per-line check let two lines for one item
     # each pass against full stock, after which `physical = max(0, physical - qty)`
@@ -711,34 +748,6 @@ def gmats_delete_item(item_id: int, db: Session = Depends(get_db), current_user:
     db.delete(item)
     db.commit()
     _audit(db, current_user, tenant, "gmats_delete_item", "gmats_item", item_id, gone)
-    return {"ok": True}
-
-
-@router.delete("/invoices/{inv_id}")
-def gmats_void_invoice(inv_id: int, db: Session = Depends(get_db), current_user: dict = Depends(require_roles(["Admin"]))):
-    """Admin voids a tax invoice: restores the deducted physical stock and cancels the proforma."""
-    inv = db.query(models.GmatsInvoice).filter(models.GmatsInvoice.id == inv_id).first()
-    if not inv:
-        raise HTTPException(status_code=404, detail="Invoice not found")
-    _guard_record(current_user, inv.tenant_code)
-    # The invoice row is deleted below, so the audit row is the only record left
-    # that it existed: capture its number, proforma and lines before the commit.
-    tenant, gone = inv.tenant_code, f"{inv.invoice_no} voided"
-    if inv.proforma_id:
-        lines = db.query(models.GmatsProformaLine).filter(models.GmatsProformaLine.proforma_id == inv.proforma_id).all()
-        for l in lines:
-            item = db.query(models.GmatsItem).filter(models.GmatsItem.id == l.item_id).first()
-            if item:
-                _heal_stock(item)
-                item.physical_stock += l.qty            # restore what the invoice deducted
-        p = db.query(models.GmatsProforma).filter(models.GmatsProforma.id == inv.proforma_id).first()
-        if p:
-            p.status = "Cancelled"
-            gone += f", {p.proforma_no} cancelled"
-        gone += f": restored {_lines_text(db, tenant, lines)}"
-    db.delete(inv)
-    db.commit()
-    _audit(db, current_user, tenant, "gmats_void_invoice", "gmats_invoice", inv_id, gone)
     return {"ok": True}
 
 

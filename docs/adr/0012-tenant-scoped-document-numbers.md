@@ -182,6 +182,15 @@ The first allocation seeds from the highest number already on file, so existing
 data needs no migration. A void leaves a gap, and the void's audit row
 (`gmats_void_invoice`, `gmats_void_min`) names the number that was voided.
 
+**Addendum (2026-10): the INV generator is gone, the rule is not.** AMP no longer
+raises tax invoices for GMATS — the proforma is the document, and issuing it is
+what deducts the stock. So there is no `INV` allocation left and no void to leave
+a gap; `gmats_undo_issue` reopens the proforma it reversed, which keeps its
+number, and deletes any legacy tax-invoice row (naming it in the audit entry).
+The INV-7000+ numbers already on production stay on their rows and `doc_numbers`
+keeps their counter, so nothing is renumbered. `PI` and `MIN` are unchanged, and
+the rule above still binds both.
+
 The simulator had the same defect in `tick_quality` (`QI-`) and `tick_operator`
 (`EXE-`). Those tables are unique per tenant and have Admin delete routes. After
 one deleted inspection, every later quality tick hit the constraint, and because

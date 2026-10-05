@@ -2,7 +2,7 @@ import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 /**
- * The GMATS inventory offers stock-in, proformas, invoicing, cancellation and
+ * The GMATS inventory offers stock-in, proformas, issuing them, cancellation and
  * free-spares issue only to a role gmats_inventory_routes lets do them (Admin
  * or Supervisor). It gated the Admin-only corrections and voids by `isAdmin`
  * and left these ungated, so an Operator — the screen is Operator-visible —
@@ -40,16 +40,16 @@ beforeEach(() => {
 afterEach(cleanup);
 
 describe("GMATS inventory offers writes by role", () => {
-  it("offers an Operator no stock-in, proforma, invoice, cancel or free-spares issue, and says who can", async () => {
+  it("offers an Operator no stock-in, proforma, issue, cancel or free-spares issue, and says who can", async () => {
     render(<GmatsInventory tenant="GMATS" isAdmin={false} canWrite={false} />);
     await screen.findByText("Air filter");
     expect(screen.queryByRole("button", { name: "+ Stock" })).toBeNull();
 
     fireEvent.click(screen.getByRole("button", { name: "Proforma (Reserve)" }));
     expect(screen.queryByRole("button", { name: "Create Proforma (Reserve)" })).toBeNull();
-    expect(screen.getByRole("note").textContent).toBe("Only an Admin or Supervisor can raise, invoice or cancel a proforma.");
+    expect(screen.getByRole("note").textContent).toBe("Only an Admin or Supervisor can raise, issue or cancel a proforma.");
     await screen.findByText("PF-9");
-    expect(screen.queryByRole("button", { name: /Generate Tax Invoice/ })).toBeNull();
+    expect(screen.queryByRole("button", { name: /Generate Proforma Invoice/ })).toBeNull();
     expect(screen.queryByRole("button", { name: "Cancel" })).toBeNull();
 
     fireEvent.click(screen.getByRole("button", { name: "Free Spares (MIN)" }));
@@ -67,7 +67,7 @@ describe("GMATS inventory offers writes by role", () => {
     fireEvent.click(screen.getByRole("button", { name: "Proforma (Reserve)" }));
     expect(screen.getByRole("button", { name: "Create Proforma (Reserve)" })).toBeTruthy();
     await screen.findByText("PF-9");
-    expect(screen.getByRole("button", { name: /Generate Tax Invoice/ })).toBeTruthy();
+    expect(screen.getByRole("button", { name: /Generate Proforma Invoice/ })).toBeTruthy();
     expect(screen.queryByRole("note")).toBeNull();
 
     fireEvent.click(screen.getByRole("button", { name: "Free Spares (MIN)" }));

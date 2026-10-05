@@ -257,7 +257,9 @@ The real sales flow, modelled exactly, is:
       ▼
  Proforma quote  ──▶  reserves stock (Reserved ↑, Available ↓)
       │
-      ├─▶ Tax Invoice   ──▶  deducts Physical, clears the Reserve (a real sale)
+      ├─▶ Issue         ──▶  deducts Physical, clears the Reserve (a real sale).
+      │                      The proforma IS the document — AMP raises no tax
+      │                      invoice, and an Admin can undo an issue.
       │
       └─▶ Material Issue Note (MIN) ──▶ free spare parts shipped with a machine
                                         (deducts Physical, not billed)
@@ -380,7 +382,7 @@ The intelligence layer is built from **read‑models** (ADR‑0007): pure functi
 
 ### `backend/gmats_inventory_routes.py` — the GMATS client module
 - **Plain English:** The exact quote‑to‑invoice inventory workflow of the first real client (GMATS compressors): four stock buckets, quotations that reserve stock, invoices that sell it, free‑spare issue notes, item aliases, and admin undo.
-- **Technical:** Tenant‑scoped endpoints under `/gmats/*` using `_effective_tenant`/`_guard_record` to prevent cross‑tenant access. Models the Physical/Reserved/Available/Reorder buckets, proforma reservation, tax‑invoice deduction, Material Issue Notes, alias lookup, CSV import, and void/correct operations (with careful FK‑ordered deletes).
+- **Technical:** Tenant‑scoped endpoints under `/gmats/*` using `_effective_tenant`/`_guard_record` to prevent cross‑tenant access. Models the Physical/Reserved/Available/Reorder buckets, proforma reservation, issue deduction (with an Admin undo), Material Issue Notes, alias lookup, CSV import, and void/correct operations (with careful FK‑ordered deletes).
 
 ### `backend/enterprise_inventory_routes.py` — advanced stores logistics
 - **Plain English:** The "warehouse pro" features: leftover‑material tracking, material issue slips, goods‑receipt inspection, stock‑audit counts, and spreadsheet import.
@@ -677,8 +679,8 @@ The real client workflow from [Part 3.9](#39-the-gmats-inventory-lifecycle-a-rea
 | `POST` | `/gmats/stock-in` | Add physical stock. |
 | `POST` | `/gmats/items/{id}/correct` 🔑 Admin | Directly correct a count (undo an operator mistake). |
 | `GET`/`POST` | `/gmats/proformas` | Quotations that **reserve** stock. |
-| `POST` | `/gmats/invoices` | Tax invoice — deducts physical, clears the reserve (a sale). |
-| `DELETE` | `/gmats/invoices/{id}` 🔑 Admin | Void an invoice → restore stock. |
+| `POST` | `/gmats/proformas/{id}/issue` | Issue the proforma — deducts physical, clears the reserve (a sale). No invoice is written. |
+| `PATCH` | `/gmats/proformas/{id}/undo-issue` 🔑 Admin | Undo an issue → stock restored and reserved again, proforma back to Open. |
 | `POST` | `/gmats/min` | Material Issue Note — free spares (deduct, not billed). |
 | `DELETE` | `/gmats/min/{id}` 🔑 Admin | Void a MIN → restore the issued spares. |
 | `POST` | `/gmats/import-csv` 🔑 Admin | Import inventory from a Tally/Excel CSV. |
@@ -723,7 +725,7 @@ The dashboard (`app/dashboard/page.tsx`) is one big menu that swaps in a differe
 |---|---|
 | `InventorySection` | The standard inventory module (items, stock, transactions, low‑stock alerts). |
 | `EnterpriseInventory` | Advanced stores logistics (remnants, issue slips, GRN, cycle counts). |
-| `GmatsInventory` | The GMATS client's 4‑bucket inventory + proforma/invoice/MIN workflow. |
+| `GmatsInventory` | The GMATS client's 4‑bucket inventory + proforma/issue/MIN workflow. |
 | `PurchasingSection` | Suppliers and purchase orders. |
 | `QualitySection` | Quality inspections (pass/fail, defects, rework, scrap). |
 | `MaintenanceSection` | The CMMS — preventive/corrective maintenance tasks. |
@@ -780,7 +782,7 @@ The dashboard (`app/dashboard/page.tsx`) is one big menu that swaps in a differe
 | **Multi‑tenancy** | One app serving many companies, each isolated (identified by `tenant_code`). |
 | **White‑label** | Showing each company its own brand name/logo/colours. |
 | **BOM** | Bill of Materials — the recipe of materials a product needs. |
-| **Proforma / Tax Invoice / MIN** | A price quote / a real billed sale / a free‑spares delivery note (GMATS workflow). |
+| **Proforma / Issue / MIN** | A price quote that reserves stock / issuing it, which takes the goods off the shelf / a free‑spares delivery note (GMATS workflow). AMP does not raise tax invoices; GMATS bills from its own accounting system. |
 | **CORS** | Browser security rule controlling which websites may call the API. |
 | **Vercel / Railway** | The cloud hosts for the frontend / backend. |
 | **NIXPACKS** | Railway's automatic app‑builder. |

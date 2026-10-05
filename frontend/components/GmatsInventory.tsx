@@ -26,36 +26,19 @@ interface Proforma {
   id: number; proforma_no: string; customer_name: string; status: string;
   created_at: string; lines: ProformaLine[];
 }
-interface Invoice {
-  id: number; invoice_no: string; proforma_id: number | null;
-  customer_name: string; status: string; created_at: string;
-}
 interface MIN {
   id: number; min_no: string; customer_name: string; machine_ref: string;
   status: string; created_at: string; lines: ProformaLine[];
 }
 
-// Seller details printed on the tax-invoice PDF.
-const COMPANY = {
-  name: "GMATS MACHINERIES INDIA PRIVATE LIMITED",
-  address: "No.01, Old Survey No.08/1C, Floors 1-3, Near Nadakerappa Industrial Area, Sri Veerabhadreshwara Nagar, Hegganahalli Main Road, Bengaluru, Karnataka 560091",
-  cin: "U29297KA2020PTC139267",
-  gstin: "29AAFCI8335Q1ZQ",
-  phone: "+91 80888 88405",
-  email: "info@gmats.in · sales@gmats.in",
-  // Leave blank to use the built-in branded wordmark. To use your exact logo,
-  // drop the file at frontend/public/gmats-logo.png and set this to "/gmats-logo.png".
-  logoUrl: "/gmats-logo.jpeg",
-};
-
-const TABS = ["Stock", "Proforma (Reserve)", "Tax Invoice", "Free Spares (MIN)", "Reorder Alerts", "Import"] as const;
+const TABS = ["Stock", "Proforma (Reserve)", "Issued", "Free Spares (MIN)", "Reorder Alerts", "Import"] as const;
 type Tab = typeof TABS[number];
 
 // ── Main ──────────────────────────────────────────────────────────
 
 /**
  * `isAdmin` gates the corrections and voids (gmats_inventory_routes: Admin);
- * `canWrite` gates stock-in, proformas, invoices, cancellations and issue notes
+ * `canWrite` gates stock-in, proformas, issuing them, cancellations and issue notes
  * (Admin or Supervisor). This screen is Operator-visible, and offered an
  * Operator every one of those — each a 403 once pressed.
  */
@@ -82,7 +65,7 @@ export default function GmatsInventory({ tenant = "GMATS", isAdmin = false, canW
           </span>
         </div>
         <p className="text-slate-400 mt-2 text-sm">
-          4-bucket stock (Physical · Reserved · Available) · item aliases · Proforma reservation · Tax-invoice deduction · free-spares issue
+          4-bucket stock (Physical · Reserved · Available) · item aliases · Proforma reservation · issue deducts the stock · free-spares issue
         </p>
         <LoadError message={error} />
       </div>
@@ -109,7 +92,7 @@ export default function GmatsInventory({ tenant = "GMATS", isAdmin = false, canW
 
       {tab === "Stock"              && <StockTab tenant={tenant} items={items} reload={loadItems} isAdmin={isAdmin} canWrite={canWrite} />}
       {tab === "Proforma (Reserve)" && <ProformaTab tenant={tenant} items={items} reload={loadItems} canWrite={canWrite} />}
-      {tab === "Tax Invoice"        && <InvoiceTab tenant={tenant} reload={loadItems} isAdmin={isAdmin} />}
+      {tab === "Issued"             && <IssuedTab tenant={tenant} reload={loadItems} isAdmin={isAdmin} />}
       {tab === "Free Spares (MIN)"  && <MinTab tenant={tenant} items={items} reload={loadItems} isAdmin={isAdmin} canWrite={canWrite} />}
       {tab === "Reorder Alerts"     && <ReorderTab items={items} />}
       {tab === "Import"             && <ImportTab tenant={tenant} reload={loadItems} isAdmin={isAdmin} />}
@@ -129,115 +112,6 @@ function Kpi({ title, value, accent }: { title: string; value: number; accent?: 
       <h3 className={`text-2xl font-bold mt-1 ${color}`}>{value}</h3>
     </div>
   );
-}
-
-// ── Tax-invoice PDF (print to PDF in a new window) ────────────────
-
-function printInvoice(invoiceNo: string, customer: string, lines: { name: string; qty: number; rate: number }[]) {
-  const rows = lines.map((l) => ({ ...l, amount: l.qty * l.rate }));
-  const subtotal = rows.reduce((s, r) => s + r.amount, 0);
-  const cgst = Math.round(subtotal * 0.09);
-  const sgst = Math.round(subtotal * 0.09);
-  const total = subtotal + cgst + sgst;
-  const fmt = (n: number) => "₹" + n.toLocaleString("en-IN");
-  const date = new Date().toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" });
-  const logoSrc = COMPANY.logoUrl
-    ? (COMPANY.logoUrl.startsWith("http") ? COMPANY.logoUrl : window.location.origin + COMPANY.logoUrl)
-    : "";
-  const logo = logoSrc
-    ? `<img src="${logoSrc}" alt="logo" style="height:60px"/>`
-    : `<div style="line-height:1">
-         <div style="font-size:30px;font-weight:800;letter-spacing:-1px;font-family:Arial,Helvetica,sans-serif">
-           <span style="color:#111">GMAT</span><span style="color:#e11d2a">S</span><span style="font-size:11px;vertical-align:super;color:#111">&reg;</span>
-         </div>
-         <div style="font-family:'Brush Script MT','Segoe Script',cursive;font-style:italic;color:#e11d2a;font-size:17px;text-align:right;margin-top:-3px">Best Choice</div>
-       </div>`;
-
-  const lineRows = rows
-    .map(
-      (r, i) => `<tr>
-        <td style="padding:8px 10px;border-bottom:1px solid #e5e7eb">${i + 1}</td>
-        <td style="padding:8px 10px;border-bottom:1px solid #e5e7eb">${r.name}</td>
-        <td style="padding:8px 10px;border-bottom:1px solid #e5e7eb;text-align:right">${r.qty}</td>
-        <td style="padding:8px 10px;border-bottom:1px solid #e5e7eb;text-align:right">${fmt(r.rate)}</td>
-        <td style="padding:8px 10px;border-bottom:1px solid #e5e7eb;text-align:right">${fmt(r.amount)}</td>
-      </tr>`
-    )
-    .join("");
-
-  const html = `<!doctype html><html><head><meta charset="utf-8"><title>${invoiceNo}</title></head>
-  <body style="font-family:Arial,Helvetica,sans-serif;color:#0f172a;max-width:780px;margin:0 auto;padding:32px">
-    <div style="display:flex;justify-content:space-between;align-items:flex-start;border-bottom:2px solid #0f172a;padding-bottom:16px">
-      <div style="display:flex;gap:12px;align-items:center">
-        ${logo}
-        <div>
-          <div style="font-size:18px;font-weight:700">${COMPANY.name}</div>
-          <div style="font-size:12px;color:#475569;max-width:320px">${COMPANY.address}</div>
-          <div style="font-size:12px;color:#475569">CIN: ${COMPANY.cin} &nbsp;|&nbsp; GSTIN: ${COMPANY.gstin}</div>
-          <div style="font-size:12px;color:#475569">${COMPANY.phone} &nbsp;|&nbsp; ${COMPANY.email}</div>
-        </div>
-      </div>
-      <div style="text-align:right">
-        <div style="font-size:22px;font-weight:700;letter-spacing:1px">TAX INVOICE</div>
-        <div style="font-size:13px;margin-top:6px"><b>${invoiceNo}</b></div>
-        <div style="font-size:12px;color:#475569">Date: ${date}</div>
-      </div>
-    </div>
-
-    <div style="margin:18px 0;font-size:13px">
-      <div style="color:#64748b;font-size:11px;text-transform:uppercase;letter-spacing:.5px">Bill To</div>
-      <div style="font-weight:600;font-size:15px;margin-top:2px">${customer}</div>
-    </div>
-
-    <table style="width:100%;border-collapse:collapse;font-size:13px">
-      <thead>
-        <tr style="background:#0f172a;color:#fff">
-          <th style="padding:9px 10px;text-align:left">#</th>
-          <th style="padding:9px 10px;text-align:left">Item</th>
-          <th style="padding:9px 10px;text-align:right">Qty</th>
-          <th style="padding:9px 10px;text-align:right">Rate</th>
-          <th style="padding:9px 10px;text-align:right">Amount</th>
-        </tr>
-      </thead>
-      <tbody>${lineRows}</tbody>
-    </table>
-
-    <div style="display:flex;justify-content:flex-end;margin-top:16px">
-      <table style="font-size:13px;min-width:260px">
-        <tr><td style="padding:4px 10px;color:#475569">Subtotal</td><td style="padding:4px 10px;text-align:right">${fmt(subtotal)}</td></tr>
-        <tr><td style="padding:4px 10px;color:#475569">CGST @ 9%</td><td style="padding:4px 10px;text-align:right">${fmt(cgst)}</td></tr>
-        <tr><td style="padding:4px 10px;color:#475569">SGST @ 9%</td><td style="padding:4px 10px;text-align:right">${fmt(sgst)}</td></tr>
-        <tr style="border-top:2px solid #0f172a"><td style="padding:8px 10px;font-weight:700">Grand Total</td><td style="padding:8px 10px;text-align:right;font-weight:700">${fmt(total)}</td></tr>
-      </table>
-    </div>
-
-    <div style="margin-top:40px;display:flex;justify-content:space-between;font-size:12px;color:#475569">
-      <div style="max-width:360px">
-        <div style="font-weight:600;color:#0f172a">Declaration</div>
-        We declare that this invoice shows the actual price of the goods described and that all particulars are true and correct.
-      </div>
-      <div style="text-align:center">
-        <div style="height:48px"></div>
-        <div style="border-top:1px solid #94a3b8;padding-top:6px">For ${COMPANY.name}</div>
-        <div style="margin-top:4px">Authorised Signatory</div>
-      </div>
-    </div>
-  </body></html>`;
-
-  const w = window.open("", "_blank", "width=820,height=920");
-  if (!w) { alert("Please allow pop-ups to generate the invoice PDF."); return; }
-  w.document.write(html);
-  w.document.close();
-  w.focus();
-  const triggerPrint = () => { try { w.print(); } catch {} };
-  const img = w.document.querySelector("img") as HTMLImageElement | null;
-  if (img && !img.complete) {
-    img.addEventListener("load", triggerPrint);
-    img.addEventListener("error", triggerPrint);
-    setTimeout(triggerPrint, 2000); // fallback if the image stalls
-  } else {
-    setTimeout(triggerPrint, 300);
-  }
 }
 
 // ── Stock tab ─────────────────────────────────────────────────────
@@ -446,18 +320,9 @@ function ProformaTab({ tenant, items, reload, canWrite }: { tenant: string; item
     } catch (e: any) { setErr(e.message || "Failed to create proforma"); }
   }
 
-  async function generateInvoice(pid: number) {
+  async function issueProforma(pid: number) {
     try {
-      const res = await apiPost<{ invoice_no: string }>(`/gmats/proformas/${pid}/invoice`, {});
-      const p = rows.find((r) => r.id === pid);
-      if (p) {
-        const invLines = p.lines.map((l) => ({
-          name: l.item_name,
-          qty: l.qty,
-          rate: items.find((i) => i.id === l.item_id)?.purchase_rate ?? 0,
-        }));
-        printInvoice(res.invoice_no, p.customer_name, invLines);
-      }
+      await apiPost(`/gmats/proformas/${pid}/issue`, {});
       load(); reload();
     } catch (e: any) { setErr(e.message); }
   }
@@ -467,12 +332,16 @@ function ProformaTab({ tenant, items, reload, canWrite }: { tenant: string; item
   }
 
   const statusBadge = (s: string) => {
+    // Every value the backend writes must be displayable, including "Invoiced":
+    // the retired tax-invoice flow wrote it and production still holds 8 of them.
+    // An unlisted status falls back to a neutral pill rather than an empty box.
     const m: Record<string, string> = {
       Open: "text-yellow-400 border-yellow-500/40 bg-yellow-500/10",
+      Issued: "text-green-400 border-green-500/40 bg-green-500/10",
       Invoiced: "text-green-400 border-green-500/40 bg-green-500/10",
       Cancelled: "text-slate-400 border-slate-600/40 bg-slate-600/10",
     };
-    return <span className={`rounded-full px-2 py-0.5 text-xs border ${m[s]}`}>{s}</span>;
+    return <span className={`rounded-full px-2 py-0.5 text-xs border ${m[s] ?? "text-slate-300 border-slate-600/40 bg-slate-600/10"}`}>{s}</span>;
   };
 
   return (
@@ -481,11 +350,11 @@ function ProformaTab({ tenant, items, reload, canWrite }: { tenant: string; item
       <div className="rounded-2xl bg-slate-900 border border-slate-800 p-5">
         <h3 className="text-lg font-semibold mb-1">Proforma Invoice → reserves stock (prevents double-selling)</h3>
         <p className="text-slate-400 text-sm">
-          When Sales raises a Proforma, the quantity moves from <span className="text-green-400">Available</span> into <span className="text-yellow-400">Reserved</span>. Physical stock is untouched until the Tax Invoice is generated.
+          When Sales raises a Proforma, the quantity moves from <span className="text-green-400">Available</span> into <span className="text-yellow-400">Reserved</span>. Physical stock is untouched until the Proforma Invoice is generated, which is what takes the goods off the shelf.
         </p>
       </div>
 
-      {!canWrite && <RoleNote>{onlyRoles("an Admin or Supervisor", "raise, invoice or cancel a proforma")}</RoleNote>}
+      {!canWrite && <RoleNote>{onlyRoles("an Admin or Supervisor", "raise, issue or cancel a proforma")}</RoleNote>}
       {canWrite && (
       <form onSubmit={submit} className="rounded-2xl bg-slate-900 border border-slate-800 p-5 space-y-4">
         <input className="bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-sm w-full md:w-80" placeholder="Customer name" value={customer} onChange={(e) => setCustomer(e.target.value)} required />
@@ -520,7 +389,7 @@ function ProformaTab({ tenant, items, reload, canWrite }: { tenant: string; item
               </div>
               {canWrite && p.status === "Open" && (
                 <div className="flex gap-2">
-                  <button onClick={() => generateInvoice(p.id)} className="text-sm text-green-400 border border-green-500/30 rounded-xl px-4 py-1.5 hover:bg-green-500/10 font-semibold">Generate Tax Invoice →</button>
+                  <button onClick={() => issueProforma(p.id)} className="text-sm text-green-400 border border-green-500/30 rounded-xl px-4 py-1.5 hover:bg-green-500/10 font-semibold">Generate Proforma Invoice →</button>
                   <button onClick={() => cancel(p.id)} className="text-sm text-red-400 border border-red-500/30 rounded-xl px-3 py-1.5 hover:bg-red-500/10">Cancel</button>
                 </div>
               )}
@@ -535,19 +404,23 @@ function ProformaTab({ tenant, items, reload, canWrite }: { tenant: string; item
   );
 }
 
-// ── Tax Invoice tab ───────────────────────────────────────────────
+// ── Issued tab ────────────────────────────────────────────────────
 
-function InvoiceTab({ tenant, reload, isAdmin }: { tenant: string; reload: () => void; isAdmin: boolean }) {
-  const [rows, setRows] = useState<Invoice[]>([]);
+function IssuedTab({ tenant, reload, isAdmin }: { tenant: string; reload: () => void; isAdmin: boolean }) {
+  const [rows, setRows] = useState<Proforma[]>([]);
   const [total, setTotal] = useState<number | null>(null);   // the list is a page (ADR-0036)
   const { error, track } = useLoadError();
-  const load = () => track(apiGetWithTotal<Invoice[]>(`/gmats/invoices?tenant=${tenant}`)
-    .then((r) => { setTotal(r.total); return r.data; }), setRows, "invoices");
+  // "Invoiced" is the same state under the name the retired tax-invoice flow
+  // wrote. Asking for both keeps the documents already on file in this list
+  // instead of hiding history behind a vocabulary change.
+  const load = () => track(
+    apiGetWithTotal<Proforma[]>(`/gmats/proformas?tenant=${tenant}&status=Issued,Invoiced`)
+      .then((r) => { setTotal(r.total); return r.data; }), setRows, "issued proformas");
   useEffect(() => { load(); }, [tenant]);
 
-  async function voidInvoice(id: number) {
-    if (!confirm("Void this invoice? The deducted stock will be restored and the proforma cancelled.")) return;
-    await apiDelete(`/gmats/invoices/${id}`);
+  async function undoIssue(id: number, no: string) {
+    if (!confirm(`Undo the issue of ${no}? The stock goes back on the shelf, stays reserved, and the proforma is Open again.`)) return;
+    await apiPatch(`/gmats/proformas/${id}/undo-issue`, {});
     load(); reload();
   }
 
@@ -555,31 +428,31 @@ function InvoiceTab({ tenant, reload, isAdmin }: { tenant: string; reload: () =>
     <div className="space-y-5">
       <LoadError message={error} />
       <div className="rounded-2xl bg-slate-900 border border-slate-800 p-5">
-        <h3 className="text-lg font-semibold mb-1">Tax Invoice → final stock deduction</h3>
+        <h3 className="text-lg font-semibold mb-1">Issued → the stock has left the building</h3>
         <p className="text-slate-400 text-sm">
-          Generating the Tax Invoice (from the Proforma tab) deducts the reserved quantity from <span className="text-white">Physical</span> stock and clears the reservation, and produces a printable PDF invoice. {isAdmin && <span className="text-indigo-300">As Admin you can Void an invoice to undo a mistake — the stock is restored.</span>}
+          Generating the Proforma Invoice (from the Proforma tab) deducts the reserved quantity from <span className="text-white">Physical</span> stock and clears the reservation. No tax invoice is raised — the proforma is the document. {isAdmin && <span className="text-indigo-300">As Admin you can undo an issue: the stock is restored and reserved again, and the proforma goes back to Open.</span>}
         </p>
       </div>
       <div className="rounded-2xl bg-slate-900 border border-slate-800 p-5">
-        <h3 className="text-lg font-semibold mb-4">Generated Invoices</h3>
-        <PageNotice shown={rows.length} total={total} noun="invoices" className="mb-3" />
+        <h3 className="text-lg font-semibold mb-4">Issued Proformas</h3>
+        <PageNotice shown={rows.length} total={total} noun="issued proformas" className="mb-3" />
         <div className="overflow-x-auto rounded-xl border border-slate-800">
           <table className="w-full text-left text-sm">
             <thead className="text-slate-400 border-b border-slate-800">
-              <tr>{["Invoice No", "From Proforma", "Customer", "Status", "Date", "Actions"].map(h => <th key={h} className="py-3 px-4">{h}</th>)}</tr>
+              <tr>{["Proforma No", "Customer", "Items", "Status", "Date", "Actions"].map(h => <th key={h} className="py-3 px-4">{h}</th>)}</tr>
             </thead>
             <tbody>
-              {!error && rows.length === 0 && <tr><td colSpan={6} className="py-6 px-4 text-slate-400">No invoices yet — generate one from the Proforma tab.</td></tr>}
-              {rows.map((v) => (
-                <tr key={v.id} className="border-b border-slate-800">
-                  <td className="py-3 px-4 font-mono font-semibold text-green-400">{v.invoice_no}</td>
-                  <td className="py-3 px-4 font-mono text-slate-400">PI #{v.proforma_id ?? "-"}</td>
-                  <td className="py-3 px-4">{v.customer_name}</td>
-                  <td className="py-3 px-4"><span className="rounded-full px-2 py-0.5 text-xs border border-green-500/40 bg-green-500/10 text-green-400">{v.status}</span></td>
-                  <td className="py-3 px-4 text-slate-400 text-xs">{parseApiDate(v.created_at)?.toLocaleString() ?? "—"}</td>
+              {!error && rows.length === 0 && <tr><td colSpan={6} className="py-6 px-4 text-slate-400">Nothing issued yet — generate a Proforma Invoice from the Proforma tab.</td></tr>}
+              {rows.map((p) => (
+                <tr key={p.id} className="border-b border-slate-800">
+                  <td className="py-3 px-4 font-mono font-semibold text-green-400">{p.proforma_no}</td>
+                  <td className="py-3 px-4">{p.customer_name}</td>
+                  <td className="py-3 px-4 text-slate-400">{p.lines.map((l) => `${l.item_name} x ${l.qty}`).join(", ")}</td>
+                  <td className="py-3 px-4"><span className="rounded-full px-2 py-0.5 text-xs border border-green-500/40 bg-green-500/10 text-green-400">{p.status}</span></td>
+                  <td className="py-3 px-4 text-slate-400 text-xs">{parseApiDate(p.created_at)?.toLocaleString() ?? "—"}</td>
                   <td className="py-3 px-4">
                     {isAdmin
-                      ? <button onClick={() => voidInvoice(v.id)} className="text-xs text-red-400 border border-red-500/30 rounded-lg px-3 py-1 hover:bg-red-500/10">Void</button>
+                      ? <button onClick={() => undoIssue(p.id, p.proforma_no)} className="text-xs text-red-400 border border-red-500/30 rounded-lg px-3 py-1 hover:bg-red-500/10">Undo issue</button>
                       : <span className="text-slate-600 text-xs">—</span>}
                   </td>
                 </tr>

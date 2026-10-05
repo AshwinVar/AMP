@@ -22,7 +22,7 @@ A live, GMATS-only inventory system that mirrors how your store actually works:
 | **4-bucket stock** | Physical · Reserved · Available · Reorder — always know what's truly sellable |
 | **Item aliases** | "1″ Collar" = "1″ Coupler" = "GI Coupler 1″" all update one stock item |
 | **Proforma → reserve** | Raising a proforma blocks stock so it can't be double-sold |
-| **Tax invoice → deduct** | Final invoice deducts physical stock and prints a GST tax invoice (PDF) |
+| **Issue → deduct** | Issuing the proforma deducts physical stock. AMP raises no tax invoice — you bill from your own accounting system, and an Admin can undo an issue |
 | **Free spares (MIN)** | Spares shipped free with a compressor are deducted — no more missing stock |
 | **Reorder alerts** | Items below minimum flagged "Purchase Required" before you run out |
 | **Tally import** | Your existing item master comes in via CSV — no re-typing |

@@ -250,8 +250,11 @@ def main():
             routes.append(fn.name)
             if not (calls(fn, "_effective_tenant") or calls(fn, "_guard_record")):
                 unguarded.append(fn.name)
+    # 17 since the tax-invoice flow was retired: three routes went (generate,
+    # list, void), two came back (issue, undo-issue). The floor is a self-probe
+    # against a matcher that silently stops matching, not a count of the module.
     check("the guard still finds the routes (a matcher that matches nothing "
-          "reports all-clear)", len(routes) >= 18, f"found {len(routes)}")
+          "reports all-clear)", len(routes) >= 17, f"found {len(routes)}")
     check("every /gmats route calls _effective_tenant or _guard_record",
           unguarded == [], f"unscoped routes: {unguarded}")
 

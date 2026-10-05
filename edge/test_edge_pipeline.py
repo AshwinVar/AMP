@@ -419,6 +419,55 @@ check("...and without it, production is still refused rather than assumed good",
       "total_count" not in _offbody, str(_offbody))
 
 
+section("11. AVAILABILITY MUST SURVIVE WHOLE-MINUTE ROUNDING")
+
+# Availability is runtime_minutes / planned_minutes, both whole minutes. Three
+# ways that went wrong, all of which published a confident wrong figure.
+from ampedge import runner as _runner_mod                     # noqa: E402
+
+
+def _avail(window_s, ran_s, run_bit):
+    st = payload_mod.MachineState("M", quality_unknown_is_good=True)
+    t = time.time()
+    st.window_started = t - window_s
+    samples = [normalizer_mod.Sample(signals.PART_COUNT, 3, t)]
+    if run_bit is not None:
+        samples.append(normalizer_mod.Sample(signals.RUNNING, run_bit, t))
+    st.absorb(samples, now=t)
+    st.running_seconds = ran_s
+    body = payload_mod.build(st, machine_name="M", now=t)
+    return body.get("planned_minutes"), body.get("runtime_minutes")
+
+
+_pl, _rt = _avail(30, 30, True)
+check("a machine running a WHOLE short window is not reported as 0% available",
+      _rt == _pl, f"planned={_pl} runtime={_rt} — planned floored up while runtime rounded down")
+
+_pl, _rt = _avail(30, 0, True)
+check("a mapped run bit that never ran reports NO runtime, not the whole window",
+      _rt == 0, f"planned={_pl} runtime={_rt} — a stopped machine claimed 100% availability")
+
+_pl, _rt = _avail(30, 0, None)
+check("...but with NO run bit mapped the window stands, because it cannot be measured",
+      _rt == _pl, f"planned={_pl} runtime={_rt}")
+
+_pl, _rt = _avail(600, 300, True)
+check("half a window reads as half", _pl == 10 and _rt == 5, f"planned={_pl} runtime={_rt}")
+
+_pl, _rt = _avail(600, 900, True)
+check("runtime is clamped to the window, never more than planned",
+      _rt <= _pl, f"planned={_pl} runtime={_rt}")
+
+# THE DEFAULT WINDOW IS PART OF THE CONTRACT. A tool room cutting 21% of a shift
+# is ordinary, and at a 30s window round(1 x 0.21) is 0 for every window ever
+# published — OEE zero for a plant working normally.
+_planned = max(1, round(_runner_mod.PUBLISH_WINDOW_S / 60.0))
+check("the default production window can express a realistic duty cycle",
+      round(_planned * 0.21) >= 1,
+      f"PUBLISH_WINDOW_S={_runner_mod.PUBLISH_WINDOW_S}s gives planned={_planned}, and "
+      f"round({_planned} x 0.21)=0 — a 21% duty cycle would publish as 0% availability")
+
+
 print()
 print("=" * 74)
 if failures:

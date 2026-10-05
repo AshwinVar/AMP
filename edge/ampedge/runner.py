@@ -40,7 +40,25 @@ RECONNECT_MIN_S = 2.0
 RECONNECT_MAX_S = 60.0
 DRAIN_BATCH = 50
 DRAIN_IDLE_S = 1.0
-PUBLISH_WINDOW_S = 30.0
+# THE PRODUCTION WINDOW MUST BE LONG ENOUGH TO CARRY A DUTY CYCLE.
+#
+# AMP's ProductionRecord stores planned_minutes and runtime_minutes as whole
+# MINUTES, and availability is their ratio. A 30-second window cannot express a
+# duty cycle in that unit: a machine cutting 21% of the time (100 minutes of a
+# 480-minute shift, which is an ordinary tool room) yields planned=1 and
+# round(1 x 0.21) = 0 — availability 0%, every window, forever, and therefore
+# OEE 0% for a plant working normally.
+#
+#   window  30s -> planned=1  runtime=0  ->   0%   (true 21%)
+#   window 120s -> planned=2  runtime=0  ->   0%
+#   window 300s -> planned=5  runtime=1  ->  20%   usable
+#
+# Five minutes is the shortest window at which the ratio survives the rounding.
+# It costs nothing in responsiveness: since state changes publish immediately
+# and carry no counts, this window governs ONLY the production accounting, and
+# a count arriving up to five minutes late is an accounting figure, not an
+# alarm.
+PUBLISH_WINDOW_S = 300.0
 
 
 def build_adapter(machine: dict):

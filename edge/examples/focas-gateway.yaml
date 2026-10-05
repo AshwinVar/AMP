@@ -1,0 +1,74 @@
+# AMP Edge — FANUC FOCAS example.
+#
+# FOCAS is a FANUC control's own interface, on TCP 8193. Two things to know
+# before you write one of these:
+#
+#   THE ADDRESS SAYS WHICH NAMESPACE IT MEANS. `macro:3901` is a macro
+#   variable, `status:run` is a field of the control's status record. A bare
+#   number is read as a macro and `preview` says so, the same way the Modbus
+#   adapter tells you which addressing convention it used.
+#
+#   THE CONTROL'S VOCABULARY STAYS IN THIS FILE. `status:run` arrives as the
+#   integer FANUC puts on the wire — 0 reset, 1 STOP, 2 HOLD, 3 STaRT, 4 MSTR.
+#   Which of those the plant calls "running" is declared here, not decided
+#   inside AMP.
+#
+# To find the IP: on the control press SYSTEM, then the soft-key continue arrow
+# until EMBED PORT appears. The COMMON page has the address; the FOCAS2 page
+# has the port. If there is no FOCAS2 page, the option is not enabled on that
+# machine and nothing here will connect.
+
+amp:
+  host: broker.amp.example.com
+  port: 8883
+  tls: true
+  tenant: ACME
+  site: plant-1
+  username_env: AMP_MQTT_USERNAME
+  password_env: AMP_MQTT_PASSWORD
+
+gateway:
+  id: gw-acme-plant1-03
+  key_env: AMP_GATEWAY_KEY
+
+machines:
+  - name: VMC-01
+    protocol: focas
+    # A machining centre's cycle is minutes, not milliseconds. Polling harder
+    # buys nothing and costs the control sessions.
+    poll_interval: 5.0
+    connection:
+      host: 192.168.1.1
+      port: 8193
+      timeout: 5
+    tags:
+      # #3901 is FANUC's "parts machined" system macro — the number on the
+      # operator's PARTS COUNT display. Check `preview` against that screen
+      # before streaming: some builders wire the counter to the PMC instead,
+      # and then #3901 reads as undefined while the screen shows a figure.
+      - tag: parts
+        address: macro:3901
+        signal: part_count
+        datatype: int
+        counter_mode: cumulative
+
+      - tag: run
+        address: status:run
+        signal: running
+        datatype: bool
+        true_values: [3]            # STaRT
+        false_values: [0, 1, 2, 4]  # reset, STOP, HOLD, MSTR (retract transient)
+
+      # The alarm word is a bitfield: zero is no alarm, anything else is one.
+      # No true_values/false_values, so any non-zero reads as a fault.
+      - tag: alarm
+        address: status:alarm
+        signal: fault_active
+        datatype: bool
+
+# NOT AVAILABLE HERE, deliberately: `operating_hours`. The HMI's RUN TIME lives
+# in parameters 6751/6752, and a parameter read is not one of the four FOCAS
+# functions this gateway can speak. Macro #3002 is an hour timer and is NOT the
+# same number — on the machine this adapter was built against it read 2128 h
+# against an HMI showing 602 h. Mapping it to operating_hours would publish a
+# confident wrong figure. AMP derives runtime from `running` over time instead.

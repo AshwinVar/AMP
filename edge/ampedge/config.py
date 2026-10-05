@@ -31,7 +31,7 @@ except ImportError:                      # pragma: no cover
     yaml = None
     YAML = False
 
-PROTOCOLS = ("opcua", "modbus")
+PROTOCOLS = ("opcua", "modbus", "focas")
 
 # Keys that must never hold a value in the file itself. The `_env` form of each
 # is the supported way to say where the value lives.
@@ -139,7 +139,7 @@ def _machine(entry, i, problems) -> dict:
     protocol = str(entry.get("protocol") or "").lower()
     if protocol not in PROTOCOLS:
         problems.append(f"{where}.protocol: {protocol or 'missing'!r} — AMP Edge speaks "
-                        f"{' and '.join(PROTOCOLS)}. Anything else is not supported, whatever a "
+                        f"{', '.join(PROTOCOLS)}. Anything else is not supported, whatever a "
                         f"datasheet says the PLC can do.")
     connection = entry.get("connection") or {}
     if not isinstance(connection, dict):
@@ -149,6 +149,9 @@ def _machine(entry, i, problems) -> dict:
         problems.append(f"{where}.connection.url: required for opcua, e.g. opc.tcp://10.0.0.5:4840")
     if protocol == "modbus" and not connection.get("host"):
         problems.append(f"{where}.connection.host: required for modbus, e.g. 10.0.0.5")
+    if protocol == "focas" and not connection.get("host"):
+        problems.append(f"{where}.connection.host: required for focas, e.g. 192.168.1.1 "
+                        f"(the address on the control's SYSTEM -> EMBED PORT screen)")
 
     try:
         poll = float(entry.get("poll_interval") or DEFAULT_POLL_INTERVAL_S)

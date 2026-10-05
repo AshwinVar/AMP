@@ -7,7 +7,7 @@ industrial software to write and the hardest to mean. An adapter class is not
 support. A passing unit test against a mock is not support. This page says what
 has been run against what, and it does not round up.
 
-**Status as of 2026-09-25.** Read the support matrix before promising anything
+**Status as of 2026-10-05.** Read the support matrix before promising anything
 to a customer.
 
 ---
@@ -24,6 +24,11 @@ to a customer.
 | **Modbus TCP — coils, discrete inputs, input & holding registers** | **SIMULATOR VERIFIED** | Driven end to end against a live `pymodbus` server: all four register types, a 32-bit value across two registers, declared word order, scale/offset, and a device exception response refused rather than read as zero. |
 | **Modbus TCP — 4xxxx/3xxxx/1xxxx addressing** | **SIMULATOR VERIFIED** | Documentation-style addresses accepted as written; one that contradicts an explicit `register_type` is refused rather than guessed. |
 | **Modbus RTU / serial** | **NOT IMPLEMENTED** | Only TCP. |
+| **FANUC FOCAS — session, status record, macro read** | **HARDWARE VERIFIED** | The ONLY row on this page proven against a physical control rather than a simulator. Read from a FANUC Series 0i-MF Plus on a BFW BMV 45+ TC24 (serial PJ-537) on 2026-10-05: system info matched the machine's own plate, and macro #3901 returned 1683 — the number on the operator's PARTS COUNT display at that moment. Via `pyfocas` (MIT), which speaks the wire protocol over an ordinary socket, so **no FANUC `fwlib` licence and no vendor DLL**. |
+| **FANUC FOCAS — undefined macro refused** | **HARDWARE VERIFIED** | A macro nobody configured comes back with the control's FF FF sentinel and becomes `no_data`, not zero. Proven on the real control, where the refusal arrives as `DecodingError` — not the `AssertionError` the library's source suggested. |
+| **FANUC FOCAS — parameter read (operating hours)** | **NOT IMPLEMENTED** | The HMI's RUN TIME lives in parameters 6751/6752 and `pyfocas` implements four functions, none of them a parameter read. Macro #3002 is a DIFFERENT timer: it read 2128 h against an HMI showing 602H59M. The adapter therefore offers no `operating_hours` at all rather than a confident wrong one; AMP derives runtime from `running` over time. |
+| **FANUC FOCAS — browse** | **PARTIAL, BY DESIGN** | The status record is enumerable and is listed. The macro space is 10,000 unnamed numbers with no way to ask which are in use, so it is not — "discovering" it would mean reading all of them against a live CNC. |
+| **FANUC FOCAS — writes** | **NEVER** | `pyfocas` can set macro variables, and a macro on a CNC can be a tool offset. Nothing in the adapter calls it. |
 | **Tag mapping from configuration** | **VERIFIED** | Addresses, datatypes, scale, offset, boolean maps, enums, units and counter behaviour are all data. No Python is edited to map a pilot's tags. Validation refuses a bad mapping before anything connects. |
 | **Canonical signal model** | **VERIFIED** | Both protocols produce identical canonical signals; the layers above the adapters contain no protocol-specific code. |
 | **Counter to production arithmetic** | **VERIFIED** | Baseline on first reading, cumulative deltas, declared rollover, declared reset, and a refusal (counting zero) for any backwards step the declared mode does not explain. |
@@ -46,12 +51,15 @@ to a customer.
 | **Issuing and revoking gateway credentials** | **VERIFIED** | Admin-only routes. The key is returned by the POST that creates it and by nothing else — the list response model has no field to put it in. Revocation is a flag, not a delete, so it cannot re-open the workspace. |
 | **Commissioning CLI (validate / check-amp / browse / preview / run / diagnose)** | **VERIFIED** | `preview` is exercised against the live OPC UA server, printing raw beside canonical. |
 | **Redacted diagnostic export** | **VERIFIED** | Contains the configuration with secrets replaced and the NAMES of relevant environment variables. No values. |
-| **PROFINET, EtherNet/IP, Siemens S7, Mitsubishi, Omron, Beckhoff ADS, CAN, BACnet** | **NOT IMPLEMENTED** | Not started, not planned for this pilot. A PLC datasheet listing these does not mean AMP can read them. |
+| **PROFINET, EtherNet/IP, Siemens S7, Mitsubishi, Omron, Beckhoff ADS, CAN, BACnet, MTConnect** | **NOT IMPLEMENTED** | Not started. A PLC datasheet listing these does not mean AMP can read them. |
 
 ### What "SIMULATOR VERIFIED" is not
 
-Every protocol row above was proven against a **software server on loopback**,
-not against a physical controller. Software servers are forgiving in ways real
+Every protocol row above marked SIMULATOR VERIFIED was proven against a
+**software server on loopback**, not against a physical controller. Note the
+asymmetry, which is the opposite of what anyone would guess: the two protocols
+that have been in the product longest — OPC UA and Modbus — are the two that
+have never met real hardware. FOCAS, the newest, is the only one that has. Software servers are forgiving in ways real
 PLCs are not: they do not run out of sessions, they do not have a watchdog that
 resets the CPU under load, their clock is the same clock, and their address
 spaces are small. The first connection to a real machine will find something
@@ -64,9 +72,14 @@ nobody reads a green row as "this has run in a factory".
 
 ## Before the first pilot: what must still be true
 
-1. **One connection to a real PLC**, with the customer's controls engineer on
-   the call, using `preview` to check values against the machine itself. This is
-   the only item on this page that a visit, rather than more code, can close.
+1. ~~**One connection to a real PLC**~~ — **DONE 2026-10-05.** `preview` was run
+   against a FANUC Series 0i-MF Plus on a BFW BMV 45+ TC24, on the customer's
+   own network, and its PARTS COUNT was checked against the operator's screen.
+   What the visit found that no amount of testing had: the undefined-macro
+   sentinel raises a different exception than the library's source implies, and
+   a FOCAS **range** read is refused by the control outright while single reads
+   succeed. Both are now pinned by `edge/test_focas_end_to_end.py`.
+   **Still open for OPC UA and Modbus**, which remain simulator-only.
 2. **A real broker with TLS**, with credentials issued per gateway.
 3. **NTP on the gateway host.** A clock more than five minutes out cannot
    authenticate at all — the replay window has to be short to be worth having.
@@ -126,6 +139,8 @@ listing the six that nothing pins yet.
 |---|---|
 | `edge/test_opcua_end_to_end.py` | A live `asyncua` server through adapter, mapper, normalizer, payload and AMP's real `on_message`, plus `preview` and a subscription. |
 | `edge/test_modbus_end_to_end.py` | A live `pymodbus` server through the same pipeline onto the same kind of machine. |
+| `edge/test_focas_end_to_end.py` | A fake FOCAS server speaking the real packet framing, decoded by the adapter's own client: macro reads, the undefined-macro refusal, the status record read once per poll however many status tags, single-macro reads only, and a dead socket raising so the runner reconnects. |
+| `edge/mutate_focas.py` | 5 mutations of the FOCAS guards; all caught. |
 | `edge/test_edge_pipeline.py` | Counter arithmetic, absence-is-not-zero, clock handling, quality codes, and the durable queue. |
 | `edge/test_edge_security.py` | Signing, tampering, replay windows, and the refusal to hold a secret in a config file. |
 | `edge/test_publisher_against_broker.py` | A real MQTT 3.1.1 broker, including a withheld PUBACK. |

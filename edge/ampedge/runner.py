@@ -52,6 +52,9 @@ def build_adapter(machine: dict):
     if protocol == "modbus":
         from .adapters.modbus import ModbusAdapter
         return ModbusAdapter(machine["connection"])
+    if protocol == "focas":
+        from .adapters.focas import FocasAdapter
+        return FocasAdapter(machine["connection"])
     raise config_mod.ConfigError(
         f"{machine.get('name')}: AMP Edge does not speak {protocol!r}. "
         f"Supported: {', '.join(config_mod.PROTOCOLS)}.")

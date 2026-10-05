@@ -37,6 +37,21 @@ machines:
     # A machining centre's cycle is minutes, not milliseconds. Polling harder
     # buys nothing and costs the control sessions.
     poll_interval: 5.0
+
+    # HOW LONG ONE PART SHOULD TAKE. No controller knows this — it is process
+    # planning data. OEE performance is ideal_seconds / runtime, so without it
+    # performance cannot be computed and OEE reads zero for a machine running
+    # perfectly.
+    ideal_cycle_time_seconds: 1200
+
+    # A FANUC counts parts; it has no concept of a reject. With only part_count
+    # mapped the gateway publishes NO production at all rather than claim every
+    # part was good. This line is the deliberate decision to count a made part
+    # as a good part. Agree it with the customer BEFORE commissioning, not on
+    # the day — and if they start scrapping and want that visible, it has to
+    # become a real reject source instead.
+    quality_unknown_is_good: true
+
     connection:
       host: 192.168.1.1
       port: 8193
@@ -65,6 +80,28 @@ machines:
         address: status:alarm
         signal: fault_active
         datatype: bool
+
+      # The operator's mode selector, in FANUC's own numbering. Named here
+      # rather than inside AMP: "JOG" is this control's word, and the canonical
+      # layer must not learn a vendor's vocabulary. A value with no entry is
+      # REFUSED rather than guessed, so an unlisted mode shows up as a named
+      # rejection instead of a wrong label.
+      - tag: mode
+        address: status:aut
+        signal: machine_mode
+        datatype: int
+        enum:
+          0: MDI
+          1: MEM
+          2: NONE
+          3: EDIT
+          4: HANDLE
+          5: JOG
+          6: TEACH_JOG
+          7: TEACH_HANDLE
+          8: INC
+          9: REF
+          10: REMOTE
 
 # NOT AVAILABLE HERE, deliberately: `operating_hours`. The HMI's RUN TIME lives
 # in parameters 6751/6752, and a parameter read is not one of the four FOCAS

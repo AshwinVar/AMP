@@ -191,10 +191,18 @@ jobs:
         env:
           AMP_GATEWAY_KEY: ci-not-a-real-key
           PLC_PASSWORD: ci-not-a-real-password
+          # The amp block resolves its `_env` keys too now, so an example that
+          # names them no longer validates without them set. Before that fix
+          # those names were silently ignored and every gateway using the
+          # documented syntax connected anonymously.
+          AMP_MQTT_USERNAME: ci-not-a-real-user
+          AMP_MQTT_PASSWORD: ci-not-a-real-password
         run: |
           cd edge
-          python -m ampedge validate examples/opcua-gateway.yaml
-          python -m ampedge validate examples/modbus-gateway.yaml
+          for example in examples/*.yaml; do
+            echo "--- $example"
+            python -m ampedge validate "$example"
+          done
 
       - name: The broker's ACL grants one tenant and no more
         # infra/mosquitto renders the ACL that backend/mqtt_identity.py's

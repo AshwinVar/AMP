@@ -165,8 +165,19 @@ def counts_of(state):
     return None
 
 
-def build(state, *, machine_name=None, ideal_cycle_time_seconds=None, now=None):
-    """The MQTT payload, or None when there is nothing honest to say."""
+def build(state, *, machine_name=None, ideal_cycle_time_seconds=None, now=None,
+          include_counts=True):
+    """The MQTT payload, or None when there is nothing honest to say.
+
+    `include_counts=False` publishes the machine's STATE and nothing it has
+    made. It exists because the two have opposite timeliness: a stop is news
+    the instant it happens, while counts are an accounting window with a
+    `planned_minutes` attached. Publishing a state change by closing the
+    production window early would split one window into two, each rounding
+    its planned minutes up to 1, which quietly inflates planned time and
+    deflates availability. So the state goes now, the counts keep their
+    window, and the counts are NOT sent twice.
+    """
     now = time.time() if now is None else now
     if not state.has_anything():
         return None
@@ -187,7 +198,7 @@ def build(state, *, machine_name=None, ideal_cycle_time_seconds=None, now=None):
     if state.latest.get(signals.FAULT_CODE) not in (None, ""):
         body["fault_code"] = state.latest[signals.FAULT_CODE]
 
-    counts = counts_of(state)
+    counts = counts_of(state) if include_counts else None
     if counts is not None:
         total, good, rejected = counts
         if total > 0:

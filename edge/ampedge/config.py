@@ -183,6 +183,31 @@ def _machine(entry, i, problems) -> dict:
         problems.append(f"{where}.poll_interval of {poll}s polls the PLC very hard. If a signal "
                         f"really is that fast, subscribe to it (opcua) rather than polling.")
 
+    # IDEAL CYCLE TIME IS AN ENGINEERING STANDARD, NOT A MEASUREMENT.
+    #
+    # OEE's performance component is ideal_seconds / runtime. `payload.build`
+    # has accepted this for its whole life and NOTHING EVER PASSED IT, so the
+    # only source was the machine's own measured `cycle_time` — and using what a
+    # part actually took as what it should have taken makes performance 100% by
+    # construction. Every pilot's OEE was therefore either absent or flattering,
+    # and neither is a number anyone can act on.
+    #
+    # It lives here rather than on the machine because no controller knows it:
+    # it is "how long SHOULD this part take", which comes from process planning.
+    ideal_cycle = entry.get("ideal_cycle_time_seconds")
+    if ideal_cycle is not None:
+        try:
+            ideal_cycle = float(ideal_cycle)
+        except (TypeError, ValueError):
+            problems.append(f"{where}.ideal_cycle_time_seconds is not a number")
+            ideal_cycle = None
+        else:
+            if ideal_cycle <= 0:
+                problems.append(f"{where}.ideal_cycle_time_seconds must be greater than zero — "
+                                f"a zero ideal makes OEE performance zero for a machine running "
+                                f"perfectly")
+                ideal_cycle = None
+
     tags = entry.get("tags") or []
     mappings = []
     if not tags:
@@ -196,14 +221,22 @@ def _machine(entry, i, problems) -> dict:
     return {
         "name": name,
         "protocol": protocol,
-        "connection": _resolve_env(connection, problems, where),
+        "connection": _resolve_env(connection, problems, f"{where}.connection"),
         "poll_interval": poll,
+        "ideal_cycle_time_seconds": ideal_cycle,
         "tags": tags,
         "mappings": mappings,
     }
 
 
 def _resolve_env(connection: dict, problems=None, where="connection") -> dict:
+    """`where` is the FULL path of the block, e.g. "amp" or
+    "machines[CNC-01].connection" — not a parent to which this function adds
+    ".connection". It used to add it, because it had exactly one caller and
+    that caller's shape was baked into the message; the amp block then
+    reported problems at `amp.connection.username_env`, a path that does not
+    exist in any config, which sends an engineer looking for a key they never
+    wrote."""
     """`password_env: PLC_PW` becomes `password: <value>`, in memory only.
 
     The resolved dict is handed to the adapter and never written anywhere: it
@@ -220,7 +253,7 @@ def _resolve_env(connection: dict, problems=None, where="connection") -> dict:
                 # told about one, fixed it, and was told about the next -- the
                 # exact round-tripping this module's docstring promises not to
                 # do.
-                message = (f"{where}.connection.{key} names the environment variable {name}, "
+                message = (f"{where}.{key} names the environment variable {name}, "
                            f"which is not set")
                 if problems is None:
                     raise ConfigError(message)

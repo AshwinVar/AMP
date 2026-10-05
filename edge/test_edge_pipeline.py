@@ -309,6 +309,63 @@ no_clock.absorb([base.Reading(tag="r", value=True)])
 check("a protocol with no clock reports None, not a confident zero",
       no_clock.clock_skew is None, str(no_clock.clock_skew))
 
+section("9. IDEAL CYCLE TIME IS CONFIGURED, NOT MEASURED")
+
+# OEE performance is ideal_seconds / runtime. `payload.build` accepted an
+# ideal_cycle_time_seconds argument from the day it was written and NOTHING
+# EVER PASSED IT, so the only source was the machine's own measured cycle time
+# — using what a part took as what it should have taken, which makes
+# performance 100% by construction. These pin the wiring that closes it.
+from ampedge import config as _config_mod                     # noqa: E402
+from ampedge import signals                                   # noqa: E402
+
+_base = {
+    "amp": {"host": "b", "tenant": "T", "site": "s"},
+    "machines": [{"name": "M1", "protocol": "modbus",
+                  "connection": {"host": "10.0.0.5"},
+                  "ideal_cycle_time_seconds": 1200,
+                  "tags": [{"tag": "r", "address": 0, "register_type": "coil",
+                            "signal": "running", "datatype": "bool"}]}],
+}
+_resolved = _config_mod.validate(_base)
+check("a machine may declare its ideal cycle time",
+      _resolved["machines"][0]["ideal_cycle_time_seconds"] == 1200.0,
+      str(_resolved["machines"][0].get("ideal_cycle_time_seconds")))
+
+import copy                                                   # noqa: E402
+for _bad, _why in ((0, "zero"), (-5, "negative"), ("soon", "not a number")):
+    _spec = copy.deepcopy(_base)
+    _spec["machines"][0]["ideal_cycle_time_seconds"] = _bad
+    try:
+        _config_mod.validate(_spec)
+        check(f"a {_why} ideal cycle time is refused", False, "it was accepted")
+    except _config_mod.ConfigError as e:
+        check(f"a {_why} ideal cycle time is refused", "ideal_cycle_time_seconds" in str(e),
+              str(e)[:90])
+
+_omitted = copy.deepcopy(_base)
+del _omitted["machines"][0]["ideal_cycle_time_seconds"]
+check("omitting it is allowed, and lands as None rather than a guess",
+      _config_mod.validate(_omitted)["machines"][0]["ideal_cycle_time_seconds"] is None)
+
+# The number must reach the WIRE, not merely the config dict.
+_state = payload_mod.MachineState("M1", quality_unknown_is_good=True)
+_state.absorb([normalizer_mod.Sample(signals.RUNNING, True, time.time()),
+               normalizer_mod.Sample(signals.PART_COUNT, 3, time.time())])
+_body = payload_mod.build(_state, machine_name="M1", ideal_cycle_time_seconds=1200)
+check("the configured ideal cycle time reaches the published payload",
+      _body.get("ideal_cycle_time_seconds") == 1200, str(_body))
+
+_measured = payload_mod.MachineState("M1", quality_unknown_is_good=True)
+_measured.absorb([normalizer_mod.Sample(signals.RUNNING, True, time.time()),
+                  normalizer_mod.Sample(signals.PART_COUNT, 3, time.time()),
+                  normalizer_mod.Sample(signals.CYCLE_TIME, 7.0, time.time())])
+_both = payload_mod.build(_measured, machine_name="M1", ideal_cycle_time_seconds=1200)
+check("...and the configured standard WINS over the measured cycle time",
+      _both.get("ideal_cycle_time_seconds") == 1200,
+      f"measured 7s would flatter performance; got {_both.get('ideal_cycle_time_seconds')}")
+
+
 print()
 print("=" * 74)
 if failures:

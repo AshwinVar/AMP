@@ -32,6 +32,21 @@ from ampedge import signing                 # noqa: E402
 failures = []
 
 
+def _machine_path_problem():
+    """The text of a machine-level unset-variable problem, for path checking."""
+    try:
+        config_mod.validate({
+            "amp": {"host": "b", "tenant": "T", "site": "s"},
+            "machines": [{"name": "CNC-01", "protocol": "opcua",
+                          "connection": {"url": "opc.tcp://10.0.0.5:4840",
+                                         "password_env": "NOT_SET_ANYWHERE"},
+                          "tags": [{"tag": "r", "address": "ns=2;i=3",
+                                    "signal": "running", "datatype": "bool"}]}]})
+    except Exception as e:
+        return str(e)
+    return ""
+
+
 def check(label, condition, detail=""):
     print(f"  {'PASS' if condition else 'FAIL'}  {label}" + (f"   [{detail}]" if detail and not condition else ""))
     if not condition:
@@ -192,6 +207,28 @@ _pub = _publisher_mod.Publisher(dict(amp_resolved))
 check("the PUBLISHER itself sees the username, not just the config dict",
       _pub.settings.get("username") == "gw-acme-1",
       repr(_pub.settings.get("username")))
+# A PROBLEM MUST NAME A PATH THAT EXISTS IN THE FILE. The resolver had one
+# caller and baked that caller's shape in, so an unset amp variable reported
+# `amp.connection.username_env` — sending an engineer to look for a key they
+# never wrote, in a block that has no `connection`.
+_was = os.environ.pop("TEST_MQTT_USER", None)
+try:
+    config_mod.validate(with_creds)
+    check("an unset amp variable is refused", False, "it validated anyway")
+except config_mod.ConfigError as e:
+    check("an unset amp variable is refused", "TEST_MQTT_USER" in str(e), str(e)[:90])
+    check("...naming the path as it appears in the file",
+          "amp.username_env" in str(e) and "amp.connection" not in str(e), str(e)[:120])
+finally:
+    if _was is not None:
+        os.environ["TEST_MQTT_USER"] = _was
+
+_machine_problem = _machine_path_problem()
+check("a machine's problem still names its own full path",
+      "machines[CNC-01].connection.password_env" in _machine_problem,
+      f"the machine path regressed when the amp block started sharing the helper: "
+      f"{_machine_problem[:90]}")
+
 check("the broker password never reaches describe()",
       "brokerpass" not in json.dumps(_pub.describe()), json.dumps(_pub.describe())[:200])
 check("nor the redacted diagnostic bundle",

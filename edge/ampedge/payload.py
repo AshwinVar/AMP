@@ -202,16 +202,38 @@ def build(state, *, machine_name=None, ideal_cycle_time_seconds=None, now=None,
     if counts is not None:
         total, good, rejected = counts
         if total > 0:
-            window_minutes = max(1, int(round((now - state.window_started) / 60.0)))
+            window_seconds = max(0.0, now - state.window_started)
+            window_minutes = max(1, int(round(window_seconds / 60.0)))
+
+            # RUNTIME IS A SHARE OF THE WINDOW, NOT AN INDEPENDENT ROUNDING.
+            #
+            # Both figures are whole minutes because AMP's columns are. A window
+            # shorter than a minute cannot express itself in them: planned was
+            # floored UP to 1 while runtime rounded DOWN to 0, so at the default
+            # 30s window a machine running the entire time published
+            # planned=1 runtime=0 — availability 0%, and therefore OEE 0%, for a
+            # machine running perfectly. Rounding the RATIO instead keeps the
+            # two figures on the same scale, which is the only thing
+            # availability actually asks of them.
+            #
+            # AND "DID NOT RUN" IS NOT "CANNOT MEASURE". The previous fallback
+            # fired whenever running_seconds was zero, which is also what a
+            # mapped run bit reports for a machine that stood still all window —
+            # so a stopped machine claimed the whole window as runtime, 100%
+            # availability. The fallback belongs only to a machine with NO run
+            # bit mapped, where the gateway genuinely cannot measure it.
+            if signals.RUNNING in state.latest:
+                ratio = (state.running_seconds / window_seconds) if window_seconds else 0.0
+                runtime_minutes = int(round(window_minutes * min(1.0, max(0.0, ratio))))
+            else:
+                runtime_minutes = window_minutes
+
             body.update({
                 "total_count": int(total),
                 "good_count": int(good),
                 "rejected_count": int(rejected),
                 "planned_minutes": window_minutes,
-                # Measured from the run bit where there is one. Falling back to
-                # the window would claim the machine ran the whole time.
-                "runtime_minutes": int(round(state.running_seconds / 60.0))
-                if state.running_seconds else window_minutes,
+                "runtime_minutes": runtime_minutes,
             })
             cycle = ideal_cycle_time_seconds or state.latest.get(signals.CYCLE_TIME)
             if cycle:

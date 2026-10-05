@@ -183,6 +183,31 @@ def _machine(entry, i, problems) -> dict:
         problems.append(f"{where}.poll_interval of {poll}s polls the PLC very hard. If a signal "
                         f"really is that fast, subscribe to it (opcua) rather than polling.")
 
+    # IDEAL CYCLE TIME IS AN ENGINEERING STANDARD, NOT A MEASUREMENT.
+    #
+    # OEE's performance component is ideal_seconds / runtime. `payload.build`
+    # has accepted this for its whole life and NOTHING EVER PASSED IT, so the
+    # only source was the machine's own measured `cycle_time` — and using what a
+    # part actually took as what it should have taken makes performance 100% by
+    # construction. Every pilot's OEE was therefore either absent or flattering,
+    # and neither is a number anyone can act on.
+    #
+    # It lives here rather than on the machine because no controller knows it:
+    # it is "how long SHOULD this part take", which comes from process planning.
+    ideal_cycle = entry.get("ideal_cycle_time_seconds")
+    if ideal_cycle is not None:
+        try:
+            ideal_cycle = float(ideal_cycle)
+        except (TypeError, ValueError):
+            problems.append(f"{where}.ideal_cycle_time_seconds is not a number")
+            ideal_cycle = None
+        else:
+            if ideal_cycle <= 0:
+                problems.append(f"{where}.ideal_cycle_time_seconds must be greater than zero — "
+                                f"a zero ideal makes OEE performance zero for a machine running "
+                                f"perfectly")
+                ideal_cycle = None
+
     tags = entry.get("tags") or []
     mappings = []
     if not tags:
@@ -198,6 +223,7 @@ def _machine(entry, i, problems) -> dict:
         "protocol": protocol,
         "connection": _resolve_env(connection, problems, where),
         "poll_interval": poll,
+        "ideal_cycle_time_seconds": ideal_cycle,
         "tags": tags,
         "mappings": mappings,
     }

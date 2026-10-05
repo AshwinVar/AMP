@@ -185,15 +185,28 @@ async def scenarios():
     await asyncio.sleep(0.05)
     PLC["parts"] = 3007
     await asyncio.sleep(0.05)
-    check("nothing has been queued yet, because the window has not closed",
-          buf2.depth() == 0, str(buf2.depth()))
+    # A STATE CHANGE DOES NOT WAIT FOR THE WINDOW. The machine started running,
+    # so that goes out at once even though the window here is effectively
+    # infinite — a dashboard showing a stopped machine as running for thirty
+    # seconds is reporting the gateway's batching, not the floor.
+    early = buf2.peek(5)
+    check("a state change is published immediately, not held for the window",
+          len(early) == 1, f"{len(early)} queued")
+    first = early[0][3] if early else {}
+    check("...and it is the state", first.get("status") == "Running", str(first))
+    check("...carrying NO counts, so the window's parts are not published twice",
+          "total_count" not in first, str(first))
+
     await w2.stop()
     task2.cancel()
-    check("stopping writes the in-flight window to disk", buf2.depth() >= 1, str(buf2.depth()))
+    check("stopping writes the in-flight window to disk", buf2.depth() >= 2, str(buf2.depth()))
     queued = buf2.peek(5)
-    body = queued[0][3] if queued else {}
+    body = next((q[3] for q in queued if "total_count" in q[3]), {})
     check("...and it carries the parts made since the last publish",
           body.get("total_count") == 7, str(body))
+    check("...exactly once, not once per state announcement",
+          sum(1 for q in queued if "total_count" in q[3]) == 1,
+          str([q[3].get("total_count") for q in queued]))
     check("...on the right machine", body.get("machine") == "CNC-01", str(body.get("machine")))
     buf2.close()
 

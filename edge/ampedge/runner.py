@@ -82,6 +82,9 @@ class MachineWorker:
         self.addresses = [m.raw for m in spec["mappings"]]
         self.poll_interval = spec["poll_interval"]
         self.publish_window = publish_window
+        # The last state AMP has been told. None means 'nothing yet', which
+        # is not the same as Idle and must not publish as one.
+        self.published_status = None
         self.attempt = 0
         self.stopping = False
         self.last_publish = time.time()
@@ -136,18 +139,46 @@ class MachineWorker:
             # should be looking.
             log.debug("%s: %s -> %s", self.name, rejection.tag, rejection.reason)
         self.state.absorb(samples)
+        await self._announce_state_change()
         await self._flush()
+
+    async def _announce_state_change(self):
+        """Send a stop or a start the moment it is seen, not up to 30s later.
+
+        A dashboard that shows a machine running half a minute after it stopped
+        is not reporting the floor, it is reporting the gateway's batching
+        interval — and an operator who can see the spindle has stopped stops
+        believing the screen. Production counts can wait for their window; a
+        state change cannot.
+
+        State ONLY. Sending the counts here as well would publish them twice:
+        once now and once when the window closes.
+        """
+        status = payload_mod.status_of(self.state.latest)
+        if status is None or status == self.published_status:
+            return
+        body = payload_mod.build(self.state, machine_name=self.name, include_counts=False)
+        if body is None:
+            return
+        self.published_status = status
+        self.buffer.put(body)
+        log.info("%s: %s", self.name, status)
 
     async def _flush(self, force=False):
         """Close the window and queue a message, if there is one worth sending."""
         due = (time.time() - self.last_publish) >= self.publish_window
         if not (due or force):
             return
-        body = payload_mod.build(self.state, machine_name=self.name)
+        body = payload_mod.build(
+            self.state, machine_name=self.name,
+            ideal_cycle_time_seconds=self.spec.get('ideal_cycle_time_seconds'))
         self.last_publish = time.time()
         self.state.reset()
         if body is None:
             return
+        status = body.get("status")
+        if status is not None:
+            self.published_status = status
         self.buffer.put(body)
 
     async def stop(self):

@@ -81,6 +81,22 @@ def validate(raw: dict) -> dict:
     _refuse_literal_secrets(raw, problems, path="")
 
     amp = raw.get("amp") or {}
+    # THE SAME `_env` RESOLUTION THE MACHINES GET, and it was missing here.
+    #
+    # `amp.username_env` / `amp.password_env` are how every shipped example
+    # tells a pilot to give the gateway its broker credentials — and until this
+    # line the amp block was passed to the Publisher as `dict(amp)`, raw. The
+    # `_env` keys survived under their own names, `settings.get("username")`
+    # found nothing, and the gateway connected ANONYMOUSLY. Against a broker
+    # with `allow_anonymous false` that is a CONNACK 5, which reads as
+    # "not authorised" — a credentials error for credentials that were correct
+    # and never sent.
+    #
+    # It survived because nothing exercised it: the commissioning gate drove
+    # the Publisher from a hand-built settings dict rather than from a config
+    # file, so the one path every customer is told to use was the one path with
+    # no coverage. test_edge_security.py now pins it.
+    amp = _resolve_env(amp, problems, "amp")
     if not amp.get("host"):
         problems.append("amp.host: where to publish to (the AMP broker) is missing")
     for field in ("tenant", "site"):

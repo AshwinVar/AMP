@@ -40,6 +40,23 @@ TABLE = "gateway_credentials"
 COLUMN = "source_record_id"
 
 
+def _down_revision_of(rev):
+    """0013's parent, read from the migration itself.
+
+    Hardcoding it would be the same mistake as "-1" in slower motion: a
+    re-parented chain would leave this pointing at a revision that is no
+    longer 0013's parent, and the test would fail for a reason that has
+    nothing to do with 0013.
+    """
+    src = io.open(os.path.join(VERSIONS, rev + ".py"), encoding="utf-8").read()
+    m = re.search(r'^down_revision\s*=\s*"([^"]+)"', src, re.M)
+    assert m, f"{rev}.py declares no down_revision"
+    return m.group(1)
+
+
+PREVIOUS = _down_revision_of(REVISION)
+
+
 def _json(out):
     """The JSON line from a subprocess's combined output.
 
@@ -293,7 +310,11 @@ with engine.begin() as c:
     c.execute(text("INSERT INTO %(table)s (tenant_code, site, gateway_id, secret, is_active) "
                    "VALUES ('T','plant-1','gw-1','k',1)"))
 
-command.downgrade(cfg, "-1")
+# DOWN TO THE REVISION BEFORE THIS ONE, BY NAME. This was "-1", which means
+# "one step back from head" -- correct only while 0013 WAS head. The moment a
+# later migration landed, this undid THAT one instead and then asserted 0013's
+# table was gone, failing a test of 0013 because of a change somewhere else.
+command.downgrade(cfg, "%(prev)s")
 insp = inspect(engine)
 after_down = {
     "table_gone": "%(table)s" not in insp.get_table_names(),
@@ -314,7 +335,7 @@ print(json.dumps({"down": after_down, "up": after_up}))
 
 def test_downgrade_keeps_the_production_records():
     with _TempDb() as url:
-        rc, out = _run(ROUND_TRIP % {"url": url, "table": TABLE, "col": COLUMN}, url)
+        rc, out = _run(ROUND_TRIP % {"url": url, "table": TABLE, "col": COLUMN, "prev": PREVIOUS}, url)
         assert rc == 0, out[-2000:]
         result = _json(out)
         assert result["down"]["table_gone"], "downgrade left the table behind"

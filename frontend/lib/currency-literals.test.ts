@@ -94,22 +94,36 @@ describe("the currency symbol has one home", () => {
       const inBlock = { open: false };
       return lines.filter((l) => codeOf(l, inBlock).includes(CURRENCY));
     };
+    // The fixtures are BUILT FROM CURRENCY, not written with a symbol.
+    //
+    // They used to spell out "£". When the platform moved to rupees this test
+    // kept passing the empty-result half and silently stopped proving the other
+    // half: scan() looks for CURRENCY, the fixtures contained a pound sign, so
+    // "code may not name the symbol" was asserted against three lines that
+    // named no symbol at all. A scanner self-test has to follow the symbol it
+    // scans for.
+    const C = CURRENCY;
     expect(scan([
-      "// shows £ when a rate is set",
-      "/* a £ figure */ const x = 1;",
+      "// shows " + C + " when a rate is set",
+      "/* a " + C + " figure */ const x = 1;",
       "/**",
-      " * £/good-unit rate",
+      " * " + C + "/good-unit rate",
       " */",
-      "const url = \"https://example.com\"; // £ note",
+      'const url = "https://example.com"; // ' + C + " note",
     ])).toEqual([]);
     expect(scan([
-      "const gbp = (n: number) => `£${n}`;",
-      "<span>£{rate}</span>",
-      "/* note */ const s = \"£0\";",
+      "const rate = (n: number) => `" + C + "${n}`;",
+      "<span>" + C + "{rate}</span>",
+      '/* note */ const s = "' + C + '0";',
     ])).toHaveLength(3);
   });
 
-  it("money() groups thousands, which the hand-written copies did not", () => {
+  it("money() groups in lakhs, as an Indian plant's own ledger does", () => {
+    // 49,740 groups identically under either convention, which is why it could
+    // not catch the backend and the frontend disagreeing. 1400000 can.
     expect(money(49740)).toBe(`${CURRENCY}49,740`);
+    expect(money(100000)).toBe(`${CURRENCY}1,00,000`);
+    expect(money(1400000)).toBe(`${CURRENCY}14,00,000`);
+    expect(money(-1400000)).toBe(`${CURRENCY}-14,00,000`);
   });
 });

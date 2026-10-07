@@ -53,12 +53,20 @@ def test_loss_value_is_comma_grouped_not_bare_digits():
     assert "₹49740" not in text, "loss printed without a thousands separator"
 
 
-def test_large_loss_value_gets_every_thousands_separator():
-    # A seven-figure loss must group every three digits: 1234567 -> ₹1,234,567.
+def test_large_loss_value_is_grouped_in_LAKHS():
+    """A seven-figure loss groups the way the reader counts: 1234567 ->
+    ₹12,34,567, not ₹1,234,567.
+
+    The platform prints rupees and this report is read beside an Indian plant's
+    own ledger, so currency.money groups in lakhs on both stacks. The expected
+    literal stays hand-written rather than calling money(), because a test that
+    computes its expectation with the function under test asserts nothing.
+    """
     summary = _full_summary()
     summary["estimated_loss_value"] = 1234567
     text = build_daily_summary_text(summary, [], [])
-    assert "Estimated Downtime Loss, last 7 days: ₹1,234,567" in text, text
+    assert "Estimated Downtime Loss, last 7 days: ₹12,34,567" in text, text
+    assert "₹1,234,567" not in text, "the report still groups in thousands"
 
 
 def test_loss_value_matches_the_shared_money_helper():
@@ -157,7 +165,7 @@ def test_header_and_section_structure_present():
 
 if __name__ == "__main__":
     test_loss_value_is_comma_grouped_not_bare_digits()
-    test_large_loss_value_gets_every_thousands_separator()
+    test_large_loss_value_is_grouped_in_LAKHS()
     test_loss_value_matches_the_shared_money_helper()
     test_zero_loss_renders_a_real_zero()
     test_no_unit_value_prints_units_and_never_a_pound()

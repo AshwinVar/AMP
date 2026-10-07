@@ -107,7 +107,7 @@
         {"key": "documents", "label": "Documents", "icon": "▱"},
         {"key": "saas", "label": "SaaS Admin", "icon": "◌"},
         {"key": "users", "label": "User Management", "icon": "◔"},
-        {"key": "costing", "label": "Costing", "icon": "£"},
+        {"key": "costing", "label": "Costing", "icon": "₹"},
         {"key": "enterprise", "label": "Enterprise Polish", "icon": "◆"}
       ]
     }

@@ -84,7 +84,7 @@ describe("formatDecimalMoney", () => {
   });
 
   it("uses the contract's own currency symbol", () => {
-    expect(formatDecimalMoney("1234.50", "GBP")).toBe("₹1,234.50");
+    expect(formatDecimalMoney("1234.50", "GBP")).toBe("£1,234.50");
   });
 
   it("says nothing rather than a number when there is no amount", () => {

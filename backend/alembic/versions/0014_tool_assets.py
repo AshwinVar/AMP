@@ -91,11 +91,17 @@ def upgrade():
                                 name="uq_tool_assets_tenant_tool_no"),
         )
 
-    existing = {ix["name"] for ix in inspector.get_indexes("tool_assets")} \
-        if "tool_assets" in inspector.get_table_names() else set()
-    # The engine's only access path: every live tool fitted to one machine.
+    existing = {ix["name"] for ix in _inspector().get_indexes("tool_assets")}
+    # THE ID INDEX IS NOT OPTIONAL HERE. The primary key is already indexed and
+    # this one is redundant -- but every other table in models.py declares
+    # `index=True` on its id, ToolAsset included, and the drift gate compares
+    # the migration against the MODEL. Omitting it is exactly what turned this
+    # branch red: DIFF ('add_index', Index('ix_tool_assets_id', ...)).
+    if "ix_tool_assets_id" not in existing:
+        op.create_index("ix_tool_assets_id", "tool_assets", ["id"])
     if "ix_tool_assets_tenant_code" not in existing:
         op.create_index("ix_tool_assets_tenant_code", "tool_assets", ["tenant_code"])
+    # The interlock engine's only access path: every live tool on one machine.
     if "ix_tool_assets_machine_status" not in existing:
         op.create_index("ix_tool_assets_machine_status", "tool_assets",
                         ["machine_id", "status"])
@@ -106,7 +112,8 @@ def downgrade():
     if "tool_assets" not in inspector.get_table_names():
         return
     existing = {ix["name"] for ix in inspector.get_indexes("tool_assets")}
-    for name in ("ix_tool_assets_machine_status", "ix_tool_assets_tenant_code"):
+    for name in ("ix_tool_assets_machine_status", "ix_tool_assets_tenant_code",
+                 "ix_tool_assets_id"):
         if name in existing:
             op.drop_index(name, table_name="tool_assets")
     op.drop_table("tool_assets")

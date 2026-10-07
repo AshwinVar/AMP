@@ -283,7 +283,7 @@ def oee_summary(db: Session = Depends(_get_db), current_user: dict = Depends(get
 router.get("/analytics/summary")(analytics_summary)
 
 
-@router.get("/plant-board")
+@router.get("/analytics/plant-board")
 def plant_board_day(on: str = "", db: Session = Depends(_get_db),
                     current_user: dict = Depends(get_current_user)):
     """One day of the plant board: hourly production, raw material and shift rate.
@@ -304,7 +304,7 @@ def plant_board_day(on: str = "", db: Session = Depends(_get_db),
     return ai.plant_board.day(db, request_tenant(current_user), when)
 
 
-@router.get("/plant-board/month")
+@router.get("/analytics/plant-board/month")
 def plant_board_month(year: int = 0, month: int = 0,
                       db: Session = Depends(_get_db),
                       current_user: dict = Depends(get_current_user)):

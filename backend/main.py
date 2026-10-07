@@ -73,6 +73,7 @@ import reports_routes
 import analytics_routes
 import recommendations_routes
 import bom_routes
+import part_spec_routes
 import gateway_routes
 import core_routes
 import industrial_adapters
@@ -448,6 +449,7 @@ app.include_router(reports_routes.router)
 app.include_router(analytics_routes.router)
 app.include_router(recommendations_routes.router)
 app.include_router(bom_routes.router)
+app.include_router(part_spec_routes.router)
 app.include_router(gateway_routes.router)
 app.include_router(core_routes.router)
 

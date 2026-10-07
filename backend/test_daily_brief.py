@@ -328,6 +328,23 @@ def _machine_names(db):
     import models
     return {m.name for m in db.query(models.Machine).all()}
 
+# ── Collected by pytest as well as run as a script ────────────────────
+#
+# CI's per-file runner (`python test_daily_brief.py`) is the contract
+# and is unchanged. The separate coverage job collects every suite into ONE
+# pytest process to compute the branch-coverage floor, and pytest only collects
+# module-level `test_*` functions -- this file had none, so every line it
+# exercises counted as untested. conftest.py describes the intended shape.
+def test_everything():
+    """The whole suite as one case, failing with whatever it recorded."""
+    code = None
+    try:
+        code = main_()
+    except SystemExit as exc:          # several suites exit from inside main_()
+        code = exc.code
+    assert not failures, "\n  " + "\n  ".join(str(f) for f in failures)
+    assert code in (0, None), f"the suite exited with {code}"
+
 
 if __name__ == "__main__":
     sys.exit(main_())

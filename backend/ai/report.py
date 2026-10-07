@@ -45,8 +45,8 @@ def _kpi_line(k) -> str:
 
 
 def loss_lines(cost) -> list:
-    """The week's losses as report bullets: £ with the tenant's rate, good units
-    without it (ADR-0010). Never a £ the tenant did not set."""
+    """The week's losses as report bullets: ₹ with the tenant's rate, good units
+    without it (ADR-0010). Never a ₹ the tenant did not set."""
     down = cost["downtime_minutes"]
     if cost["lost_units"] is None:
         return [f"- {down:,} min of downtime with no run time to convert into lost units; "

@@ -138,7 +138,7 @@ def test_analytics_scan_is_bounded_not_per_row():
     assert big_selects == small_selects, (small_selects, big_selects)
 
     # And the aggregates are still correct on the 40-row registry: 10 per status,
-    # MRR over Trial+Active only (10 + 10 = 20 rows x £100), seats over all 40 x 5.
+    # MRR over Trial+Active only (10 + 10 = 20 rows x ₹100), seats over all 40 x 5.
     assert big_out["total_tenants"] == 40, big_out
     assert big_out["trial"] == big_out["active"] == 10, big_out
     assert big_out["past_due"] == big_out["cancelled"] == 10, big_out

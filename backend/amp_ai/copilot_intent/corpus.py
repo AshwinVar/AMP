@@ -620,7 +620,7 @@ FAMILIES = (
     _f("cost", "cost-financial",
        ("{financial} loss summary {PERIOD}", "{financial} impact report"),
        {"financial": ("financial", "cost", "monetary", "money")},
-       ("financials of losses", "loss £ this week", "costing of losses pls")),
+       ("financials of losses", "loss ₹ this week", "costing of losses pls")),
 
     # ------------------------------------------------------------------ quality
     _f("quality", "q-fpy",

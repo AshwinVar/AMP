@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 /**
  * A rate that did not save says so.
  *
- * The £/good-unit rate is what the recovery card and the Executive OEE money
+ * The ₹/good-unit rate is what the recovery card and the Executive OEE money
  * panel price every loss figure from. The editor's catch was empty — "stay
  * quiet, leave things as they are" — so a refused or failed save left the
  * input open holding the typed value and the displayed rate unchanged, which

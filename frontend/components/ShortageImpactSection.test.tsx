@@ -30,7 +30,7 @@ const impact = (over: Record<string, unknown> = {}) => ({
       shortfall_units: 340,
       units_at_risk: 170,
       money_at_risk: 2040,
-      currency: "£",
+      currency: "₹",
       orders_affected: 4,
       suggested_order_units: 340,
       basis: "Stock on hand is given to the open orders in due-date order, earliest first.",

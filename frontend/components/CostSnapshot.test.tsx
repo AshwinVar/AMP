@@ -2,15 +2,15 @@ import { render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 /**
- * No £ on the cost-of-losses cards without the tenant's own unit value (ADR-0010).
+ * No ₹ on the cost-of-losses cards without the tenant's own unit value (ADR-0010).
  *
- * ai/cost.py priced every tenant's downtime at a fixed £12 a minute and every
- * scrapped unit at a fixed £25, and these cards money()'d the result, so a plant
- * that had never told AMP its margin was shown a precise-looking £ figure it never
+ * ai/cost.py priced every tenant's downtime at a fixed ₹12 a minute and every
+ * scrapped unit at a fixed ₹25, and these cards money()'d the result, so a plant
+ * that had never told AMP its margin was shown a precise-looking ₹ figure it never
  * supplied. The backend now measures losses in good units and sends every *_cost
  * as null until a unit value is set. These tests render the real cards against both
  * payloads: without a rate the currency must not appear anywhere on the card,
- * and with one the £ is the backend's figure, not a re-derived one.
+ * and with one the ₹ is the backend's figure, not a re-derived one.
  *
  * CostIntelCard also printed a literal "$" before every machine's figure, a
  * currency the product does not use at all.

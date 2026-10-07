@@ -139,7 +139,7 @@ def build_scorecard(db, tenant: str) -> dict:
     # exists: cost["has_data"] is true for a week whose only row recorded
     # nothing, and published losses of 0 in green for a plant that did not run.
     measured_cost = oee["has_data"]
-    # Losses are £ only with the tenant's own rate (ADR-0010); without it the KPI is
+    # Losses are ₹ only with the tenant's own rate (ADR-0010); without it the KPI is
     # good units not made, on the same basis for this week and last.
     loss_key = "loss_cost" if cost["priced"] else "lost_units"
     loss_now = cost[loss_key]
@@ -197,9 +197,9 @@ def build_scorecard(db, tenant: str) -> dict:
         # `unit` is the DISPLAY token four consumers branch on to decide prefix-vs-suffix
         # formatting: ai/report.py, ai/assistant.py and frontend ScorecardStrip.tsx all
         # test it against the currency symbol. It must come from currency.CURRENCY, not a
-        # literal, or the strip silently falls through to suffix formatting ("49740£").
+        # literal, or the strip silently falls through to suffix formatting ("49740₹").
         # Without a rate the same KPI is in good units: " units" is a suffix token, so
-        # every consumer's prefix-vs-suffix branch renders "80 units", never a £.
+        # every consumer's prefix-vs-suffix branch renders "80 units", never a ₹.
         {"key": "loss_cost", "label": "Cost of losses" if cost["priced"] else "Losses (good units)",
          "value": cost_v, "unit": CURRENCY if cost["priced"] else " units",
          "tone": cost_tone, "delta": cost_d, "delta_tone": cost_dt},

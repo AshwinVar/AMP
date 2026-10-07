@@ -31,7 +31,7 @@ const deltaCls: Record<string, string> = {
 // `unit` is the backend's display token (ai/scorecard.py sends currency.CURRENCY for
 // loss_cost). Compare against the shared constant, never a literal: currency is the one
 // unit rendered as a PREFIX, so if this comparison misses, the value falls through to the
-// suffix branch and reads "49740£".
+// suffix branch and reads "49740₹".
 const fmt = (k: Kpi) =>
   k.value == null ? "—"
     : k.unit === CURRENCY ? money(k.value)

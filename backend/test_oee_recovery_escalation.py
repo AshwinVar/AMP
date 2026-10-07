@@ -64,9 +64,9 @@ def test_creates_one_escalation_with_the_lever_and_prize():
     e = db.query(models.Escalation).one()
     assert e.title == "OEE recovery: close the Performance gap"
     assert e.source == "OEE Recovery" and e.severity == "High" and e.status == "Open"
-    assert "£444,416/yr" in e.notes and "91% -> 95%" in e.notes
+    assert "₹444,416/yr" in e.notes and "91% -> 95%" in e.notes
     assert "Close the speed loss" in e.notes
-    print("PASS raises one escalation naming the lever + £ prize + action")
+    print("PASS raises one escalation naming the lever + ₹ prize + action")
 
 
 def test_is_idempotent_while_unresolved():
@@ -120,8 +120,8 @@ def test_units_only_when_no_rate():
     finally:
         rec.build_recovery_summary = orig
     e = db.query(models.Escalation).one()
-    assert "159,609 good units/yr" in e.notes and "£" not in e.notes
-    print("PASS no configured rate -> the prize is stated in good units, no made-up £")
+    assert "159,609 good units/yr" in e.notes and "₹" not in e.notes
+    print("PASS no configured rate -> the prize is stated in good units, no made-up ₹")
 
 
 def test_targets_worst_machine_on_the_lever():

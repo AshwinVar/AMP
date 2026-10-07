@@ -28,16 +28,16 @@ through both stacks — and it is not what was broken. Centralising first makes 
 a one-line change here later instead of a 20-site sweep again.
 """
 
-CURRENCY = "£"
+CURRENCY = "₹"
 
 
 def money(n) -> str:
-    """Format a whole-currency amount: money(49740) -> '£49,740'."""
+    """Format a whole-currency amount: money(49740) -> '₹49,740'."""
     return f"{CURRENCY}{n:,}"
 
 
 def signed_money(n) -> str:
-    """Format a delta, sign always shown: signed_money(-500) -> '£-500'.
+    """Format a delta, sign always shown: signed_money(-500) -> '₹-500'.
 
     Matches the shape the f"${x:+,}" call sites produced, so the trend verdict
     strings read exactly as before apart from the symbol.
@@ -47,8 +47,8 @@ def signed_money(n) -> str:
 
 def unit_rate(n) -> str:
     """Format a per-unit rate, keeping pence when it has them: unit_rate(12) ->
-    '£12', unit_rate(2.5) -> '£2.50'. A tenant's unit value is a Float column, and
-    money() would print 2.5 as '£2.5'."""
+    '₹12', unit_rate(2.5) -> '₹2.50'. A tenant's unit value is a Float column, and
+    money() would print 2.5 as '₹2.5'."""
     if float(n).is_integer():
         return money(int(n))
     return f"{CURRENCY}{n:,.2f}"

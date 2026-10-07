@@ -122,7 +122,7 @@ def say_cost(c):
         ans = (f"Losses cost about {money(c['loss_cost'])} this week — "
                f"downtime {money(c['downtime_cost'])}, scrap {money(c['scrap_cost'])}.")
     else:
-        # No £ without the tenant's own unit value (ADR-0010).
+        # No ₹ without the tenant's own unit value (ADR-0010).
         ans = (f"Losses came to about {c['lost_units']:,} good units this week — "
                f"downtime {c['downtime_lost_units']:,}, scrap {c['rejected_units']:,}. "
                "Set a unit value to see that in money.")
@@ -483,9 +483,9 @@ _ROUTES = [
       "between operations", "half-built", "half built"), _flow),
     (("shift", "attainment", "crew", "night", "day shift", "evening"), _shift),
     (("deliver", "on-time", "on time", " late", "customer", "ship", "fulfil", "bugatti", "mercedes", "order", "dispatch", "behind schedule"), _delivery),
-    # "$" stays alongside "£": these are tokens the USER types, not display symbols, and
+    # "$" stays alongside "₹": these are tokens the USER types, not display symbols, and
     # someone asking "what's this costing me in $" should still reach the cost answer.
-    (("cost", "money", "losing", "£", "$", "expensive", "spend", "margin",
+    (("cost", "money", "losing", "₹", "$", "expensive", "spend", "margin",
       "financ", "loss"), _cost),
     (("quality", "defect", "reject", "scrap", "fail", "yield", "fpy", "first-pass", "first pass"), _quality),
     (("compliance", "document", "audit", "iso", "sop", "controlled doc",

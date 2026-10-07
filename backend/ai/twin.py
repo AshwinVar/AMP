@@ -272,12 +272,12 @@ def build_twin_overlay(db, tenant: str) -> dict:
 
     # OEE side is the full per-machine list; the cost side MUST be the full,
     # uncapped map too (not build_cost_summary's TOP_N `by_machine` display list),
-    # or machines ranked outside the top few paint as £0 on the map while carrying
+    # or machines ranked outside the top few paint as ₹0 on the map while carrying
     # real losses — the two heat sources have to share one basis (rule 3).
     oee = {m["machine_id"]: m["oee"] for m in build_oee_summary(db, tenant)["machines"]}
     summary = build_cost_summary(db, tenant)
     cost, units = summary["machine_cost"], summary["machine_lost_units"]
-    # £ only with the tenant's rate (ADR-0010); the map heats by lost units, which
+    # ₹ only with the tenant's rate (ADR-0010); the map heats by lost units, which
     # exist either way. A machine with no loss row has nothing measured: None.
     ids = set(oee) | set(cost)
     return {

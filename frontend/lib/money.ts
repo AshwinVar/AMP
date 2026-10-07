@@ -11,9 +11,9 @@
 // used "£" as the Costing nav icon directly above an all-"$" card. ADR-0010 (accepted)
 // makes a per-tenant £/good-unit rate the single money basis — the column is
 // `unit_value_gbp` — so GBP is canonical and "$" was the defect.
-export const CURRENCY = "£";
+export const CURRENCY = "₹";
 
-/** money(49740) -> "£49,740" */
+/** money(49740) -> "₹49,740" */
 export function money(n: number): string {
   return `${CURRENCY}${n.toLocaleString()}`;
 }

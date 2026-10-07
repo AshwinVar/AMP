@@ -363,7 +363,7 @@ def update_tenant_config(payload: dict, db: Session = Depends(get_db),
     is_platform_owner = tenancy.is_founder(current_user)
     c = get_or_create_config(db, tenant)
     set_branding(c, payload)
-    # £ per good unit — a tenant Admin sets their own margin so the recovery
+    # ₹ per good unit — a tenant Admin sets their own margin so the recovery
     # read-model can value the OEE gap. null/"" clears it (back to units-only).
     if "unit_value_gbp" in payload:
         raw = payload["unit_value_gbp"]

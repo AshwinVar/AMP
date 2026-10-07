@@ -1,6 +1,6 @@
 """Tests for the configurable per-unit value (TenantConfig.unit_value_gbp).
 
-An Admin sets their tenant's £-per-good-unit via PATCH /tenant-config; the
+An Admin sets their tenant's ₹-per-good-unit via PATCH /tenant-config; the
 recovery read-model reads it to value the OEE gap. Cover the round-trip, the
 validation (must be a non-negative number, null clears it), and that
 recovery._unit_value reads back what was set.

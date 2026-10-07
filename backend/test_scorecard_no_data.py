@@ -12,7 +12,7 @@ Reproduced on a plant that dispatched an order this week and produced nothing:
       Plant OEE              value=0     unit=%  tone=bad
       Good rate              value=0     unit=%  tone=bad
       Delivery reliability   value=100   unit=%  tone=good
-      Cost of losses         value=0     unit=£  tone=good
+      Cost of losses         value=0     unit=₹  tone=good
 
 Read that as the customer reads it: *the plant ran catastrophically badly, every
 unit it made was scrap, and it eliminated all its losses.* None of those things

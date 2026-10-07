@@ -40,7 +40,7 @@ def test_context_includes_all_advertised_domains():
     db.add(models.QualityInspection(inspection_no="QC-1", machine_id=1, inspector="qa",
                                     inspected_quantity=100, passed_quantity=90, failed_quantity=10,
                                     defect_category="solder"))
-    # a unit value -> the cost section is in £ (ADR-0010)
+    # a unit value -> the cost section is in ₹ (ADR-0010)
     db.add(models.TenantConfig(tenant_code="DEFAULT", plan="Pro", unit_value_gbp=45))
     db.commit()
 
@@ -57,7 +57,7 @@ def test_context_includes_all_advertised_domains():
 
 
 def test_context_without_a_unit_value_gives_the_model_units_not_money():
-    """No unit value set: the model must not be handed a £ to repeat (ADR-0010).
+    """No unit value set: the model must not be handed a ₹ to repeat (ADR-0010).
     40 min down at 90 good / 440 run minutes ≈ 8 units, + 10 scrap = 18 units."""
     db = _sess()
     now = datetime.utcnow()
@@ -70,8 +70,8 @@ def test_context_without_a_unit_value_gives_the_model_units_not_money():
     assert "COST OF LOSSES" not in ctx, ctx
     losses = [line for line in ctx.splitlines() if line.startswith("LOSSES (7d)")]
     assert losses and "18 good units not made" in losses[0], ctx
-    assert "£" not in losses[0] and "no unit value set" in losses[0], losses[0]
-    print("PASS no unit value: the copilot context carries lost units and no £")
+    assert "₹" not in losses[0] and "no unit value set" in losses[0], losses[0]
+    print("PASS no unit value: the copilot context carries lost units and no ₹")
 
 
 def test_context_empty_is_safe():

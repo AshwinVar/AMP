@@ -20,7 +20,7 @@ import oee_contract
 from analytics_engine import (
     pooled_oee, biggest_lever, oee_direction, WORLD_CLASS_OEE, WORLD_CLASS_COMPONENTS,
 )
-# The single per-tenant £ rate lives in tenancy (shared with the management
+# The single per-tenant ₹ rate lives in tenancy (shared with the management
 # summary); aliased as _unit_value so the recovery tests can stub it.
 from tenancy import tenant_unit_value as _unit_value
 
@@ -122,17 +122,17 @@ def build_recovery_summary(db, tenant: str) -> dict:
     lever_key = biggest_lever(o)
     biggest = next((c for c in components if c["key"] == lever_key), None)
 
-    # Value the recoverable output in £ only when the tenant has SET a per-unit
-    # rate (None = unset -> units only). A configured rate of 0 is a real £0 margin,
-    # so it yields £0, matching build_management_summary — `is not None`, not
-    # truthiness, so the two money surfaces agree on a £0 rate.
+    # Value the recoverable output in ₹ only when the tenant has SET a per-unit
+    # rate (None = unset -> units only). A configured rate of 0 is a real ₹0 margin,
+    # so it yields ₹0, matching build_management_summary — `is not None`, not
+    # truthiness, so the two money surfaces agree on a ₹0 rate.
     rate = _unit_value(db, tenant)
     value_window = round(recoverable_window * rate) if rate is not None else None
     value_year = round(recoverable_year * rate) if rate is not None else None
 
     # "Fix this first": the prize for closing JUST the biggest lever's gap.
     # Closing one component from current -> target scales good output by
-    # target/current (same run time), so it's a real, isolated £/units figure.
+    # target/current (same run time), so it's a real, isolated ₹/units figure.
     lever_units_year = 0
     if lever_key and biggest["current"] > 0:
         lever_window = round(good * (biggest["target"] / biggest["current"] - 1))

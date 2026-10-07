@@ -4,12 +4,12 @@ THE DEFECT
 ----------
 The Costing view's intelligence card prints two figures for one week, side by
 side: "Total lost" from /cost-summary, and the verdict from /cost-trend, "Losses
-up £X to £Y week on week". The summary pools THE window, `OeeWindow(7)` =
+up ₹X to ₹Y week on week". The summary pools THE window, `OeeWindow(7)` =
 [now-7d, now), as the scorecard's "Cost of losses" KPI and its week-on-week delta
 do. The trend split its fortnight by CALENDAR DAY: "this week" was a record's date
 0..6 days before today, "last week" 7..13. So a loss from late on the eighth date
 (after the same clock time seven days ago) was in the card's "Total lost" and in
-the trend's PRIOR week: £Y in the verdict was not the total printed beside it,
+the trend's PRIOR week: ₹Y in the verdict was not the total printed beside it,
 and the week-on-week move was measured over neither of the scorecard's weeks.
 
 The fetch was the rolling fortnight [now-14d, now), so a record on date today-14
@@ -39,7 +39,7 @@ from ai import cost
 from currency import money
 from database import Base
 
-UNIT_VALUE = 2     # £ per good unit
+UNIT_VALUE = 2     # ₹ per good unit
 
 failures = []
 
@@ -93,7 +93,7 @@ def section_the_card_agrees_with_itself():
     check("the trend's current cost is the card's 'Total lost'",
           trend["current"]["cost"] == summary["loss_cost"],
           f"trend {trend['current']['cost']} vs summary {summary['loss_cost']}")
-    # "... to £Y week on week" when it moved, "steady at £Y ..." when it did not.
+    # "... to ₹Y week on week" when it moved, "steady at ₹Y ..." when it did not.
     check("the verdict quotes the card's 'Total lost'",
           any(f"{w} {money(summary['loss_cost'])}" in trend["verdict"] for w in ("to", "at")),
           f"{trend['verdict']!r} vs {money(summary['loss_cost'])}")
@@ -168,8 +168,8 @@ def section_the_seam_date():
           str(seam))
     db.close()
 
-    # Without a unit value there is no £ anywhere, and adding two unknowns on the
-    # seam date must not invent a £0.
+    # Without a unit value there is no ₹ anywhere, and adding two unknowns on the
+    # seam date must not invent a ₹0.
     db = _session()
     db.query(models.TenantConfig).delete()
     db.commit()
@@ -177,7 +177,7 @@ def section_the_seam_date():
     _record(db, current.start + timedelta(hours=2), scrap=9)
     trend = cost.build_cost_trend(db, "DEFAULT", now=now)
     seam = [d for d in trend["series"] if d["date"] == current.start.date().isoformat()]
-    check("unpriced: the seam date keeps its units and has no £ figure",
+    check("unpriced: the seam date keeps its units and has no ₹ figure",
           trend["priced"] is False and len(seam) == 1 and seam[0]["lost_units"] == 16
           and seam[0]["cost"] is None and seam[0]["scrap_cost"] is None, str(seam))
     db.close()

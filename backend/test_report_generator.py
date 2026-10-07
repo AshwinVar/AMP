@@ -5,7 +5,7 @@ export. Before this file it had NO test coverage.
 
 THE FIX these pin: the estimated downtime loss was rendered inline as
 f"{CURRENCY}{value}" — no thousands separator — so a five/six-figure loss printed
-"£49740" in this report while the identical figure reads "£49,740" through the
+"₹49740" in this report while the identical figure reads "₹49,740" through the
 shared money() helper on every card, the weekly report and the scorecard. That is
 the exact "one figure, two renderings" inconsistency currency.py exists to kill
 (rule-1: reuse the shared helper). The money assertions below compare against
@@ -34,19 +34,19 @@ def _full_summary():
 
 
 def test_loss_value_is_comma_grouped_not_bare_digits():
-    # The bug: "£49740" (no separator). The fix: "£49,740" — the SAME string every
+    # The bug: "₹49740" (no separator). The fix: "₹49,740" — the SAME string every
     # other money surface prints. The expected literal is hand-written, not money().
     text = build_daily_summary_text(_full_summary(), [], [])
-    assert "Estimated Downtime Loss, last 7 days: £49,740" in text, text
-    assert "£49740" not in text, "loss printed without a thousands separator"
+    assert "Estimated Downtime Loss, last 7 days: ₹49,740" in text, text
+    assert "₹49740" not in text, "loss printed without a thousands separator"
 
 
 def test_large_loss_value_gets_every_thousands_separator():
-    # A seven-figure loss must group every three digits: 1234567 -> £1,234,567.
+    # A seven-figure loss must group every three digits: 1234567 -> ₹1,234,567.
     summary = _full_summary()
     summary["estimated_loss_value"] = 1234567
     text = build_daily_summary_text(summary, [], [])
-    assert "Estimated Downtime Loss, last 7 days: £1,234,567" in text, text
+    assert "Estimated Downtime Loss, last 7 days: ₹1,234,567" in text, text
 
 
 def test_loss_value_matches_the_shared_money_helper():
@@ -62,24 +62,24 @@ def test_zero_loss_renders_a_real_zero():
     summary = _full_summary()
     summary["estimated_loss_value"] = 0
     text = build_daily_summary_text(summary, [], [])
-    assert "Estimated Downtime Loss, last 7 days: £0" in text, text
+    assert "Estimated Downtime Loss, last 7 days: ₹0" in text, text
 
 
 def test_no_unit_value_prints_units_and_never_a_pound():
     # No unit value set (ADR-0010): the summary carries lost units and a None value.
-    # This used to print "£0" -- or, before that, £8 a minute the customer never set.
+    # This used to print "₹0" -- or, before that, ₹8 a minute the customer never set.
     text = build_daily_summary_text({"estimated_loss_value": None, "estimated_loss_units": 133}, [], [])
     assert "Estimated Downtime Loss, last 7 days: 133 good units" in text, text
-    assert "£" not in text.split("Estimated Downtime Loss, last 7 days:")[1].splitlines()[0], text
+    assert "₹" not in text.split("Estimated Downtime Loss, last 7 days:")[1].splitlines()[0], text
 
 
 def test_missing_and_unknown_loss_say_unknown_not_zero():
     # A hand-built summary that omits both keys, or downtime with no run time to
-    # convert (units None), is not a £0 loss. It must not KeyError or print "£None".
+    # convert (units None), is not a ₹0 loss. It must not KeyError or print "₹None".
     for summary in ({}, {"estimated_loss_value": None, "estimated_loss_units": None}):
         text = build_daily_summary_text(summary, [], [])
         assert "Estimated Downtime Loss, last 7 days: unknown" in text, text
-        assert "£0" not in text and "None" not in text, text
+        assert "₹0" not in text and "None" not in text, text
 
 
 def test_empty_summary_uses_honest_defaults():

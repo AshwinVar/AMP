@@ -4,7 +4,7 @@
 good units not made) against last week's, on the SAME per-record basis as
 build_cost_summary — downtime floored per record, never on the net, converted at
 each week's own run rate — and attributes the swing to machines and to the two
-drivers. £ figures exist only when the tenant has set its unit value; without it
+drivers. ₹ figures exist only when the tenant has set its unit value; without it
 the verdict speaks in units. The noise floor is the downtime trend's 30 minutes,
 in units at the fortnight's run rate.
 
@@ -28,7 +28,7 @@ import models
 from database import Base
 from ai import cost
 
-UNIT_VALUE = 2     # £ per good unit, when a test prices
+UNIT_VALUE = 2     # ₹ per good unit, when a test prices
 
 
 def _fresh_session(unit_value=None):
@@ -96,7 +96,7 @@ def test_worsening_trend_attributes_swing_to_machine_and_driver():
     assert t["thin_sample"] is False                                # 5 loss records >= 4
     assert t["tone"] == "bad"
 
-    # who moved it: M1 up 116 units / £232 (120 vs 4); M2 down 44 units / £88 (14 vs 58)
+    # who moved it: M1 up 116 units / ₹232 (120 vs 4); M2 down 44 units / ₹88 (14 vs 58)
     assert [m["machine_id"] for m in t["worsening_machines"]] == [1]
     w = t["worsening_machines"][0]
     assert (w["delta_units"], w["delta_cost"], w["cost"], w["prior_cost"]) == (116, 232, 240, 8), w
@@ -104,14 +104,14 @@ def test_worsening_trend_attributes_swing_to_machine_and_driver():
     assert t["improving_machines"][0]["delta_units"] == -44
     assert t["improving_machines"][0]["delta_cost"] == -88
 
-    # drivers ranked by change: downtime +60 units / £120, scrap +12 units / £24
+    # drivers ranked by change: downtime +60 units / ₹120, scrap +12 units / ₹24
     drivers = {d["key"]: d for d in t["drivers"]}
     assert [d["key"] for d in t["drivers"]] == ["downtime", "scrap"]
     assert drivers["downtime"]["delta_cost"] == 120 and drivers["downtime"]["cost"] == 220
     assert drivers["scrap"]["delta_units"] == 12 and drivers["scrap"]["prior_cost"] == 24
 
-    assert "PRESS-01 drove it (+£232)" in t["verdict"], t["verdict"]
-    assert "up £144 (116%) to £268" in t["verdict"], t["verdict"]
+    assert "PRESS-01 drove it (+₹232)" in t["verdict"], t["verdict"]
+    assert "up ₹144 (116%) to ₹268" in t["verdict"], t["verdict"]
 
     # rule 3: the daily series sums back to the half totals, exactly
     assert sum(d["cost"] for d in t["series"]) == 268 + 124
@@ -140,7 +140,7 @@ def test_without_a_unit_value_the_trend_speaks_units_only():
     assert t["direction"] == "worsening"
     assert t["worsening_machines"][0]["delta_cost"] is None
     assert all(d["cost"] is None for d in t["series"])
-    assert "£" not in t["verdict"], t["verdict"]
+    assert "₹" not in t["verdict"], t["verdict"]
     assert "up 72 good units (116%) to 134 good units" in t["verdict"], t["verdict"]
     assert "PRESS-01 drove it (+116 good units)" in t["verdict"], t["verdict"]
 
@@ -150,9 +150,9 @@ def test_thin_sample_reports_but_does_not_judge():
     _machines(db)
     now = datetime.utcnow()
     db.add_all([
-        _rec(1, 300, 100, 0, now),                        # current: 200 down-min -> 200 units, £400
+        _rec(1, 300, 100, 0, now),                        # current: 200 down-min -> 200 units, ₹400
         _rec(2, 100, 100, 0, now - timedelta(days=3)),    # current: a record with no loss
-        _rec(1, 100, 100, 20, now - timedelta(days=8)),   # prior: 20 scrap -> £40
+        _rec(1, 100, 100, 20, now - timedelta(days=8)),   # prior: 20 scrap -> ₹40
     ])
     db.commit()
 
@@ -166,7 +166,7 @@ def test_thin_sample_reports_but_does_not_judge():
     assert t["tone"] == "warn"
     assert "2 loss-making records" in t["verdict"]
     assert "too little to call a trend" in t["verdict"]
-    assert "+£360 to £400" in t["verdict"], t["verdict"]
+    assert "+₹360 to ₹400" in t["verdict"], t["verdict"]
 
 
 def test_empty_table_is_safe_and_reads_as_no_losses():
@@ -196,7 +196,7 @@ def test_prior_empty_is_worsening_with_no_percentage():
     db = _fresh_session(UNIT_VALUE)
     _machines(db)
     now = datetime.utcnow()
-    db.add_all([_rec(1, 100, 100, 10, now - timedelta(days=d)) for d in range(4)])  # 40 units, £80
+    db.add_all([_rec(1, 100, 100, 10, now - timedelta(days=d)) for d in range(4)])  # 40 units, ₹80
     db.commit()
 
     t = cost.build_cost_trend(db, "DEFAULT")
@@ -205,7 +205,7 @@ def test_prior_empty_is_worsening_with_no_percentage():
     assert t["delta_pct"] is None                          # prior is 0 -> no %
     assert t["direction"] == "worsening"                   # 40 units >= 30
     assert t["thin_sample"] is False                       # 4 loss records == threshold
-    assert "up £80 to £80 week on week" in t["verdict"], t["verdict"]
+    assert "up ₹80 to ₹80 week on week" in t["verdict"], t["verdict"]
     assert "%" not in t["verdict"]
 
 
@@ -214,10 +214,10 @@ def test_improving_trend_reports_the_drop():
     _machines(db)
     now = datetime.utcnow()
     db.add_all([
-        # current: 4 + 4 scrap = 8 units, £16
+        # current: 4 + 4 scrap = 8 units, ₹16
         _rec(1, 100, 100, 4, now),
         _rec(1, 100, 100, 4, now - timedelta(days=1)),
-        # prior: 400 down-min + 40 scrap = 440 units, £880
+        # prior: 400 down-min + 40 scrap = 440 units, ₹880
         _rec(1, 500, 100, 0, now - timedelta(days=8)),
         _rec(1, 100, 100, 40, now - timedelta(days=9)),
     ])
@@ -229,7 +229,7 @@ def test_improving_trend_reports_the_drop():
     assert t["delta_pct"] == -98                           # round(-864 / 880 * 100)
     assert t["direction"] == "improving"
     assert t["tone"] == "good"
-    assert "down £864 (98%) to £16 week on week" in t["verdict"], t["verdict"]
+    assert "down ₹864 (98%) to ₹16 week on week" in t["verdict"], t["verdict"]
 
 
 def test_small_move_reads_as_steady():
@@ -237,10 +237,10 @@ def test_small_move_reads_as_steady():
     _machines(db)
     now = datetime.utcnow()
     db.add_all([
-        # current: 20 + 20 scrap = 40 units, £80 (2 loss recs)
+        # current: 20 + 20 scrap = 40 units, ₹80 (2 loss recs)
         _rec(1, 100, 100, 20, now),
         _rec(1, 100, 100, 20, now - timedelta(days=1)),
-        # prior: 20 + 18 scrap = 38 units, £76 (2 loss recs) -> 4 total, not thin
+        # prior: 20 + 18 scrap = 38 units, ₹76 (2 loss recs) -> 4 total, not thin
         _rec(1, 100, 100, 20, now - timedelta(days=8)),
         _rec(1, 100, 100, 18, now - timedelta(days=9)),
     ])
@@ -251,7 +251,7 @@ def test_small_move_reads_as_steady():
     assert t["direction"] == "steady"
     assert t["thin_sample"] is False
     assert t["tone"] == "good"
-    assert "steady at £80 (a move of £4 week on week)" in t["verdict"], t["verdict"]
+    assert "steady at ₹80 (a move of ₹4 week on week)" in t["verdict"], t["verdict"]
 
 
 def test_the_noise_floor_follows_the_plants_run_rate():
@@ -318,8 +318,8 @@ def test_no_loss_and_machineless_rows_are_safe():
     _machines(db)
     now = datetime.utcnow()
     db.add_all([
-        _rec(1, 100, 100, 40, now),                        # 40 units, £80, machine 1
-        _rec(None, 100, 100, 10, now),                     # 10 units, £20, no machine -> total only
+        _rec(1, 100, 100, 40, now),                        # 40 units, ₹80, machine 1
+        _rec(None, 100, 100, 10, now),                     # 10 units, ₹20, no machine -> total only
         _rec(2, 100, 100, 0, now),                         # no loss -> record, not a loss record
     ])
     db.commit()
@@ -328,7 +328,7 @@ def test_no_loss_and_machineless_rows_are_safe():
     assert t["current"]["cost"] == 100                     # 80 + 20 + 0
     assert t["current"]["records"] == 3
     assert t["current"]["loss_records"] == 2               # the no-loss row excluded
-    # the machineless £20 is in the total but not attributed to a machine
+    # the machineless ₹20 is in the total but not attributed to a machine
     assert sum(m["cost"] for m in t["worsening_machines"]) == 80
     assert t["worsening_machines"][0]["machine_id"] == 1
     # daily series still reconciles to the (machine'd + machine-less) total

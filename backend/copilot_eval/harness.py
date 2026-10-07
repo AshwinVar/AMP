@@ -208,8 +208,8 @@ def _row(resp, case_id, tenant, role, split, acceptable=None, fact_keys=(), ques
             fact_misses.append(f"{key}: got {f['value'] if f else 'nothing'}, want {orc.get(key, 'absent')}")
     want_state = EXPECTED_STATE.get((case_id, tenant))
     gate = resp.get("grounding")
-    money_fabricated = (not orc["priced"]) and ("£" in resp["answer"] or any(
-        f["unit"] == "£" and isinstance(f["value"], (int, float)) for f in resp["evidence"]))
+    money_fabricated = (not orc["priced"]) and ("₹" in resp["answer"] or any(
+        f["unit"] == "₹" and isinstance(f["value"], (int, float)) for f in resp["evidence"]))
     return {
         "id": case_id, "tenant": tenant, "role": role, "split": split,
         "tools": tools, "tool_ok": (first_ok if acceptable is not None else None),

@@ -193,7 +193,7 @@ def build_briefing(db, tenant: str) -> dict:
     recovery = build_recovery_summary(db, tenant)
     if recovery["has_data"] and recovery["biggest_lever"]:
         if recovery["lever_recoverable_value_per_year"] is not None:
-            worth = f"£{recovery['lever_recoverable_value_per_year']:,}/yr to recover"
+            worth = f"₹{recovery['lever_recoverable_value_per_year']:,}/yr to recover"
         else:
             worth = f"{recovery['lever_recoverable_units_per_year']:,} good units/yr to recover"
         comp = next((c for c in recovery["components"] if c["key"] == recovery["biggest_lever"]), None)

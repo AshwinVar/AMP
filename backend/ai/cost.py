@@ -5,14 +5,14 @@ any costs actually logged against the period rolled up by type. Ties the OEE
 story to the P&L. A read-model over production_records + cost_records —
 auto-scoped to the tenant (ADR-0002); it adds no storage.
 
-THE NUMBER IS GOOD UNITS NOT MADE, AND £ ONLY WITH THE TENANT'S OWN RATE.
-This module used to price every tenant's downtime at a fixed £12 a minute and
-every scrapped unit at a fixed £25, so a plant with a £2 margin and one with a
-£400 margin were shown the same money, none of it from the customer. ADR-0010's
+THE NUMBER IS GOOD UNITS NOT MADE, AND ₹ ONLY WITH THE TENANT'S OWN RATE.
+This module used to price every tenant's downtime at a fixed ₹12 a minute and
+every scrapped unit at a fixed ₹25, so a plant with a ₹2 margin and one with a
+₹400 margin were shown the same money, none of it from the customer. ADR-0010's
 decision is one per-tenant margin per good unit, and "unset means units-only,
-never a fabricated £". Losses are now measured in good units (loss_value.py:
+never a fabricated ₹". Losses are now measured in good units (loss_value.py:
 scrap is one unit each; downtime is converted at the window's observed run rate)
-and priced only by tenancy.tenant_unit_value. With no rate every £ field is None.
+and priced only by tenancy.tenant_unit_value. With no rate every ₹ field is None.
 See test_loss_money_needs_the_tenant_rate.py.
 """
 from collections import Counter, defaultdict
@@ -38,7 +38,7 @@ TREND_WINDOW_DAYS = WINDOW_DAYS * TREND_HALVES
 # A week-to-week swing smaller than what DOWNTIME_MOVE_MINUTES of downtime loses at
 # the plant's own run rate is noise, not a trend, and it is the floor a machine must
 # clear to be named a mover. It is the downtime trend's floor (ai.downtime) in units,
-# so the two trend cards agree on what counts as a move. The old floor was £300 of
+# so the two trend cards agree on what counts as a move. The old floor was ₹300 of
 # the fixed tariff, which meant nothing once the tariff was gone.
 # The move is driven by fewer loss-making production records than this across BOTH
 # halves -> a single bad job swings the whole number; report it but don't judge it.
@@ -64,7 +64,7 @@ def _down(r) -> int:
 
 
 def loss_totals(records, unit_value) -> dict:
-    """The loss over a set of records, in good units and (with a rate) in £.
+    """The loss over a set of records, in good units and (with a rate) in ₹.
 
     The run rate is pooled over these same records, so each window is valued at
     what the line produced in that window. The scorecard's prior period calls this
@@ -89,7 +89,7 @@ def loss_totals(records, unit_value) -> dict:
 
 
 def _breakdown(groups, totals, unit_value) -> dict:
-    """Split `totals` across groups so every group's units and £ sum to the headline.
+    """Split `totals` across groups so every group's units and ₹ sum to the headline.
 
     `groups` maps a key to that group's {"down", "rejected"} and must cover every
     record (callers keep a hidden bucket for records with no machine / line). Each
@@ -141,7 +141,7 @@ def _loss_order(row):
 
 
 def build_cost_summary(db, tenant: str, now=None) -> dict:
-    """The week's losses in good units, and in £ when the tenant has set its rate,
+    """The week's losses in good units, and in ₹ when the tenant has set its rate,
     biggest first, plus the costs actually recorded in the period rolled up by
     type. production_records and cost_records are auto-scoped (ADR-0002)."""
     # ONE anchor for the request: the headline, the daily bars and the recorded
@@ -229,7 +229,7 @@ def build_cost_summary(db, tenant: str, now=None) -> dict:
         {"key": "scrap", "label": "Scrap", "units": rejected,
          "cost": totals["scrap_cost"], "detail": scrap_detail},
     ]
-    # Biggest by units: the rate is one number, so the £ order is the unit order.
+    # Biggest by units: the rate is one number, so the ₹ order is the unit order.
     # Unknown when downtime could not be converted and there is any scrap to compare.
     if down_units is None:
         biggest = "downtime" if rejected == 0 and down > 0 else None
@@ -269,7 +269,7 @@ def _add_rows(a, b):
 
 
 def _amount(units, cost, priced):
-    """A loss as the card reads it: £ with a rate, good units without."""
+    """A loss as the card reads it: ₹ with a rate, good units without."""
     if priced:
         return money(cost)
     return f"{units:,} good unit{'s' if units != 1 else ''}"
@@ -279,7 +279,7 @@ def build_cost_trend(db, tenant: str, now=None) -> dict:
     """Which way are the losses going, and who moved it? Compares the last 7 days
     of lost good units (downtime + scrap, on the SAME per-record basis as
     build_cost_summary, each week at its own run rate) against the 7 before, and
-    attributes the swing to machines and to the two drivers. £ figures ride along
+    attributes the swing to machines and to the two drivers. ₹ figures ride along
     when the tenant has set its rate. A read-model over production_records (+
     machines for labels), auto-scoped to the tenant (ADR-0002); no storage.
 
@@ -293,7 +293,7 @@ def build_cost_trend(db, tenant: str, now=None) -> dict:
     # `prior` tiles against it exactly (oee_contract.prior_window). The calendar
     # halves this replaces ([today-6 ... today] against the seven dates before)
     # put a loss from late on the eighth date in the card's total and in this
-    # trend's PRIOR week, so the verdict's "to £Y" was not the total beside it and
+    # trend's PRIOR week, so the verdict's "to ₹Y" was not the total beside it and
     # could call a week of rising losses a fall. The fetch was the rolling
     # fortnight, so a record on date today-14 landed in no half and no bar and
     # still set the noise floor's run rate

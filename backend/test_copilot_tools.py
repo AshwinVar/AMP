@@ -247,7 +247,7 @@ def main():
     no_money = call(Session, Principal(tenant=F.B, role="Admin"), "get_financial_losses")
     check("B has no unit value: its losses are NOT CONFIGURED, with no money figure",
           no_money.state == ev.NOT_CONFIGURED
-          and not any(f.unit == "£" and isinstance(f.value, (int, float)) for f in no_money.facts),
+          and not any(f.unit == "₹" and isinstance(f.value, (int, float)) for f in no_money.facts),
           no_money.state)
     money = next((f for f in no_money.facts if f.key == "losses.cost"), None)
     check("...and the money figure is stated as UNKNOWN, not left out silently",

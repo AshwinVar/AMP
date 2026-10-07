@@ -41,8 +41,8 @@ def test_costing_paths_owned_by_costing_routes():
 
 
 def test_cost_per_good_unit_keeps_pence_precision():
-    # £500 of logged cost over 1000 good units is £0.50/unit — round() to whole
-    # pounds reported £0, fabricating a free product. Keep pence precision.
+    # ₹500 of logged cost over 1000 good units is ₹0.50/unit — round() to whole
+    # pounds reported ₹0, fabricating a free product. Keep pence precision.
     db = _fresh_session()
     db.add(models.Machine(id=1, name="M1", status="Running", utilization=80))
     db.add(models.CostRecord(cost_no="C-1", cost_type="Labour", description="x", amount=500))
@@ -51,18 +51,18 @@ def test_cost_per_good_unit_keeps_pence_precision():
     db.commit()
     out = costing_routes.get_costing_analytics(db=db, current_user={})
     assert out["cost_per_good_unit"] == 0.5      # not round(0.5) == 0
-    print("PASS cost_per_good_unit keeps pence precision (£0.50, not £0)")
+    print("PASS cost_per_good_unit keeps pence precision (₹0.50, not ₹0)")
 
 
 def test_cost_per_good_unit_is_none_when_no_production():
     # Real costs but zero good units -> per-unit cost is undefined, reported as
-    # None ("—" in the UI), never a misleading £0 while costs exist.
+    # None ("—" in the UI), never a misleading ₹0 while costs exist.
     db = _fresh_session()
     db.add(models.CostRecord(cost_no="C-1", cost_type="Labour", description="x", amount=500))
     db.commit()
     out = costing_routes.get_costing_analytics(db=db, current_user={})
     assert out["cost_per_good_unit"] is None and out["manual_cost_total"] == 500
-    print("PASS cost_per_good_unit is None (undefined), not £0, when there is no production")
+    print("PASS cost_per_good_unit is None (undefined), not ₹0, when there is no production")
 
 
 def test_costing_survives_null_amount_and_received_quantity():
@@ -119,7 +119,7 @@ def test_costing_survives_null_amount_and_received_quantity():
 
 def test_costing_empty_tables_all_zero():
     # No cost records, no POs, no production -> every aggregate is 0 and the
-    # undefined per-unit cost is None, not a crash and not a fabricated £0.
+    # undefined per-unit cost is None, not a crash and not a fabricated ₹0.
     db = _fresh_session()
     out = costing_routes.get_costing_analytics(db=db, current_user={})
     assert out["total_cost_records"] == 0

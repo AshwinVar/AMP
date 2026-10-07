@@ -5,7 +5,7 @@ describe("money", () => {
   it("prefixes the currency symbol", () => {
     // Currency is the one unit rendered as a PREFIX. ScorecardStrip decides
     // prefix-vs-suffix by comparing the backend's `unit` token to CURRENCY, so a
-    // suffix here would mean the comparison broke: "49740£" instead of "£49,740".
+    // suffix here would mean the comparison broke: "49740₹" instead of "₹49,740".
     expect(money(49740).startsWith(CURRENCY)).toBe(true);
     expect(money(0)).toBe(`${CURRENCY}0`);
   });
@@ -38,10 +38,10 @@ describe("money", () => {
 describe("lossFigure", () => {
   // ADR-0010: a loss is money only at the tenant's own unit value. The backend
   // sends cost = null without one, and both null when downtime had no run time to
-  // convert. These cards used to money() a fixed £12/min + £25/unit tariff.
+  // convert. These cards used to money() a fixed ₹12/min + ₹25/unit tariff.
   it("shows money when the tenant has a unit value", () => {
     expect(lossFigure(225, 18)).toBe(money(225));
-    expect(lossFigure(0, 18)).toBe(money(0)); // a £0 rate is a real £0
+    expect(lossFigure(0, 18)).toBe(money(0)); // a ₹0 rate is a real ₹0
   });
 
   it("shows good units, and never the currency, without one", () => {
@@ -84,7 +84,7 @@ describe("formatDecimalMoney", () => {
   });
 
   it("uses the contract's own currency symbol", () => {
-    expect(formatDecimalMoney("1234.50", "GBP")).toBe("£1,234.50");
+    expect(formatDecimalMoney("1234.50", "GBP")).toBe("₹1,234.50");
   });
 
   it("says nothing rather than a number when there is no amount", () => {

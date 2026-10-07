@@ -22,6 +22,13 @@ these tests assert the RENDERED strings, not just the constant.
 
 Run:  python backend/test_currency_single.py     (exit 0 = pass)
 """
+
+import sys
+
+# This suite PRINTS the currency symbol it guards (via CURRENCY), so it is the
+# first to die on a cp1252 console. Same reason as the suites it pins below.
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 import io
 import os
 import re
@@ -48,9 +55,10 @@ def _fresh_session():
 def _seed_losses(db):
     """One machine with real downtime and scrap, so loss_cost is non-zero.
 
-    Priced at the tenant's own unit value, £45 (ADR-0010: no rate, no £). This week:
-    40 min down at 97 good / 440 run minutes ≈ 9 units, + 3 rejects = 12 units = £540.
-    The number matters: a fixture with loss_cost == 0 would render "£0" and still
+    Priced at the tenant's own unit value, ₹45 (ADR-0010: no rate, no money
+    figure at all). This week:
+    40 min down at 97 good / 440 run minutes ≈ 9 units, + 3 rejects = 12 units = ₹540.
+    The number matters: a fixture with loss_cost == 0 would render "₹0" and still
     pass a naive "no $" assertion while telling us nothing about the formatting path.
     """
     now = datetime.utcnow()
@@ -201,6 +209,61 @@ def test_the_formatters_themselves():
     print("PASS the shared formatters produce grouped, signed money")
 
 
+def test_a_suite_that_prints_the_symbol_survives_a_windows_console():
+    """A PASSING suite must not be killed by the act of saying so.
+
+    '₹' has no cp1252 code point, and a Windows console is cp1252 by
+    default. When the platform moved from pounds to rupees, 11 green suites
+    began exiting non-zero on the print that announced their own success —
+    UnicodeEncodeError, after every assertion had held. CI's runners are UTF-8,
+    so CI stayed green and only a developer ever saw it. An invariant that holds
+    on the build machine and fails on the machine it is read on is not much of
+    an invariant.
+
+    So: any backend suite carrying THE CURRENCY SYMBOL must make stdout tolerant
+    before it prints. One line, and it cannot rot silently because this asserts
+    it is there.
+
+    SCOPED TO THE SYMBOL, not to non-ASCII generally, and that was measured
+    rather than assumed. Forty other suites carry a character cp1252 cannot
+    encode -- box-drawing rules in comment separators, the deliberately
+    malformed input of test_canonical.py, arrows inside docstrings. Every one of
+    them was run on a cp1252 console and every one exited zero, because those
+    characters never reach a print. A guard that flagged them would demand forty
+    edits for no defect and teach everyone to add the line as a ritual. This
+    file owns the currency symbol; it guards the currency symbol.
+    """
+    missing, examined = [], 0
+    for name in sorted(os.listdir(HERE)):
+        if not (name.startswith("test_") and name.endswith(".py")):
+            continue
+        text = _read(os.path.join(HERE, name))
+        if CURRENCY not in text:
+            continue
+        examined += 1
+        if "sys.stdout.reconfigure" not in text:
+            missing.append(name)
+    # A rename, a moved directory or a currency that stopped being printed must
+    # not quietly turn this into a check of nothing.
+    assert examined >= 20, (
+        f"only {examined} suites were found to carry {CURRENCY} — expected 20+. "
+        f"Either the suite directory moved or the money surfaces stopped naming "
+        f"the currency, and this guard is now checking nothing.")
+    # A rename or a moved directory must not turn this into a check of nothing.
+    assert len(
+        [n for n in os.listdir(HERE) if n.startswith("test_") and n.endswith(".py")]
+    ) > 300, "the suite directory moved; this guard is reading the wrong place"
+    assert not missing, (
+        "these suites carry a non-ASCII character but never make stdout "
+        "tolerant, so they die on a cp1252 console AFTER passing:\n  "
+        + "\n  ".join(missing)
+        + '\n\nAdd, after the module docstring:\n'
+          '    import sys\n'
+          '    if hasattr(sys.stdout, "reconfigure"):\n'
+          '        sys.stdout.reconfigure(encoding="utf-8", errors="replace")')
+    print(f"PASS all {examined} suites printing {CURRENCY} survive a cp1252 console")
+
+
 if __name__ == "__main__":
     test_the_two_stacks_agree_on_the_symbol()
     test_the_scorecard_unit_token_survives_every_consumer()
@@ -208,4 +271,5 @@ if __name__ == "__main__":
     test_the_frontend_guard_catches_a_dollar_in_jsx_text()
     test_source_rot_guard_no_bare_symbol_in_a_money_file()
     test_the_formatters_themselves()
+    test_a_suite_that_prints_the_symbol_survives_a_windows_console()
     print("ALL CURRENCY TESTS PASSED")

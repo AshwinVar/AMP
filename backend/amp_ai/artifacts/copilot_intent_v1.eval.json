@@ -3,11 +3,14 @@
   "adopted": false,
   "reasons": [
    "the external pool gain is +3.1 points, under 5 points",
-   "McNemar p = 0.625 on the external pool is not below 0.05"
+   "McNemar p = 0.625 on the external pool is not below 0.05",
+   "test set external_pool has 2 recorded evaluations for this data (adoption needs exactly 1): reused or unrecorded",
+   "test set section1_literal has 2 recorded evaluations for this data (adoption needs exactly 1): reused or unrecorded",
+   "test set section1b has 2 recorded evaluations for this data (adoption needs exactly 1): reused or unrecorded"
   ]
  },
  "artifact_file": "copilot_intent_v1.json",
- "artifact_sha256": "69e825efacdf160529193b5709cf6a397fa5838c57071eb830dceb1c4235922b",
+ "artifact_sha256": "55a331e9726dda58a6d3b1d210798fadffed6b2a19c09c7cf2218cd5f07a1777",
  "baseline_metrics": {
   "corpus_test": {
    "accuracy": 0.696969696969697,
@@ -26,7 +29,7 @@
   "examples": 3623,
   "families": 200,
   "max_per_family": 20,
-  "sha256": "0c1ab5cefe4d6929e7f1cba4ad5209eb2b26aeabdcbc85ab8f8100c140b0dd63",
+  "sha256": "ac709ba1eac08b10c4e515ae17dccdad96a9229c4c648bc866ca299d7591735f",
   "split_examples": {
    "test": 561,
    "train": 2493,
@@ -39,7 +42,7 @@
   },
   "version": "amp_ai.copilot_intent.corpus@v1"
  },
- "created_at": "2026-09-17T09:55:32+00:00",
+ "created_at": "2026-10-07T21:01:33+00:00",
  "eval_ledger": {
   "ledger_version": 1,
   "test_runs": {
@@ -47,9 +50,12 @@
     "corpus_test": 1
    },
    "560d8798d1068d1bd31cf6237026a1ab7a46d9ca5e0363ac3361d10266620839": {
-    "external_pool": 1,
-    "section1_literal": 1,
-    "section1b": 1
+    "external_pool": 2,
+    "section1_literal": 2,
+    "section1b": 2
+   },
+   "ac709ba1eac08b10c4e515ae17dccdad96a9229c4c648bc866ca299d7591735f": {
+    "corpus_test": 1
    }
   }
  },
@@ -1186,7 +1192,7 @@
     "machine_detail",
     "find"
    ],
-   "corpus_sha256": "0c1ab5cefe4d6929e7f1cba4ad5209eb2b26aeabdcbc85ab8f8100c140b0dd63",
+   "corpus_sha256": "ac709ba1eac08b10c4e515ae17dccdad96a9229c4c648bc866ca299d7591735f",
    "h_minus_k_accuracy_bootstrap": {
     "alpha": 0.05,
     "estimate": 0.019607843137254832,
@@ -1490,16 +1496,16 @@
   "tau": 0.59
  },
  "timings_seconds": {
-  "corpus_and_leakage": 0.7905561999650672,
-  "evaluate_corpus_test": 2.175659899949096,
-  "evaluate_external": 0.8332310999976471,
-  "featurize": 0.1502080000936985,
+  "corpus_and_leakage": 1.2229022001847625,
+  "evaluate_corpus_test": 4.397400200134143,
+  "evaluate_external": 1.4902544000651687,
+  "featurize": 0.2475111000239849,
   "grid": [
-   38.86448600003496,
-   24.233079400029965
+   38.05289249983616,
+   37.69983469997533
   ],
-  "tau": 0.03125130000989884,
-  "total": 68.58414900000207
+  "tau": 0.06974150007590652,
+  "total": 85.22042770008557
  },
  "version": "v1"
 }

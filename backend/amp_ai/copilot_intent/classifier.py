@@ -58,7 +58,7 @@ MODEL_VERSION = "v1"
 
 # The SHA-256 of the committed artifact's canonical payload. Changing the model
 # means changing this line. test_amp_ai_intent_build.py ties the file to it.
-ARTIFACT_SHA256 = "69e825efacdf160529193b5709cf6a397fa5838c57071eb830dceb1c4235922b"
+ARTIFACT_SHA256 = "55a331e9726dda58a6d3b1d210798fadffed6b2a19c09c7cf2218cd5f07a1777"
 
 _ARTIFACT_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "artifacts")
 ARTIFACT_PATH = os.path.join(_ARTIFACT_DIR, "copilot_intent_v1.json")

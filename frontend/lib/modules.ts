@@ -39,6 +39,12 @@ export const NAV_ITEMS: NavItem[] = [
   { key: "downtime",       label: "Downtime",           icon: "◷", module: "core" },
   { key: "shifts",         label: "Shifts",             icon: "◴", module: "core" },
   { key: "analytics",      label: "Analytics",          icon: "▧", module: "core" },
+  // CORE, and one tab rather than five. A moulding plant with no operators on
+  // the floor asked for a wall of pictures it could point at: production against
+  // target by the hour, material consumed, the rate a shift is running at. Those
+  // are the same question asked four ways, so they belong on one page -- split
+  // across tabs, nobody sees that a good hour and a cheap hour are the same hour.
+  { key: "plantboard",     label: "Plant Board",        icon: "▩", module: "core" },
   { key: "trends",         label: "Trends",             icon: "▨", module: "core" },
   { key: "timeline",       label: "Timeline",           icon: "↔", module: "core" },
   // CORE, deliberately — not the Factory pack. This is where a customer sees

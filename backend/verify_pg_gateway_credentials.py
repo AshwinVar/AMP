@@ -266,7 +266,14 @@ def main():
         # above were REFUSED, and a magic number here tests my arithmetic
         # instead of the migration. (It was wrong the first time.)
         before_downgrade = c.execute(text("SELECT count(*) FROM production_records")).scalar()
-    rc, out = alembic(env, "downgrade", "-1")
+    # DOWN TO 0013'S OWN PARENT, BY NAME — `prev`, the same revision section 1
+    # upgraded from. This was "-1", which means "one step back from head" and is
+    # correct only while 0013 IS head. The moment a later migration landed it
+    # undid THAT one instead, and then asserted 0013's table was gone: two
+    # failures in a verification of 0013 caused by a change somewhere else
+    # entirely. (test_migration_0013_gateway_credentials.py had the identical
+    # bug and is fixed the same way; the two are twins and drifted together.)
+    rc, out = alembic(env, "downgrade", prev)
     check("downgrade succeeded with credentials and gateway records present", rc == 0,
           out[-600:])
     check("gateway_credentials is gone",

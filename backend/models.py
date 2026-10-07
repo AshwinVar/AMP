@@ -410,6 +410,61 @@ class MaintenanceTask(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
 
 
+class ToolAsset(Base):
+    """A die, mould, tool or fixture whose service falls due on CYCLES, not dates.
+
+    WHY A SEPARATE ASSET RATHER THAN A FIELD ON THE MACHINE. Tooling outlives the
+    machine it is fitted to and moves between machines as capacity allows. Its
+    wear history belongs to the tool, not to whichever press happened to be free
+    that week — a plant tracking it on the machine resets a mould's history every
+    time it is moved, which is exactly when the history matters most.
+
+    WHY CYCLES AND NOT A CALENDAR. Tooling wears per shot. A mould that ran three
+    shifts this week and none last month is not due "monthly"; it is due at
+    10,000 shots, whenever those happen to occur.
+
+    WHY PARTS ARE STORED AND CYCLES ARE DERIVED. A multi-cavity mould produces
+    `cavities` parts per shot, so cycles = parts / cavities. Storing cycles
+    directly would mean dividing each batch as it arrives and discarding the
+    remainder — on a 4-cavity mould that silently loses up to 3 parts every
+    batch, forever, and the loss grows without bound. Keeping the part totals and
+    deriving cycles on read makes the arithmetic exact at every point.
+    """
+
+    __tablename__ = "tool_assets"
+    __table_args__ = (
+        UniqueConstraint("tenant_code", "tool_no", name="uq_tool_assets_tenant_tool_no"),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    tenant_code = Column(String, index=True, nullable=False, default="DEFAULT")
+    tool_no = Column(String, nullable=False)
+    name = Column(String, nullable=False)
+    tool_type = Column(String, default="Mould")       # Mould | Die | Tool | Fixture
+    # The machine it is fitted to right now. Null = in the tool room, and a tool
+    # off the machine accrues nothing.
+    machine_id = Column(Integer, ForeignKey("machines.id"), nullable=True)
+    cavities = Column(Integer, default=1)
+    parts_total = Column(Integer, default=0)
+    parts_at_last_service = Column(Integer, default=0)
+    # The interlock thresholds. Null means "not watched" — a tool nobody has
+    # given an interval to must not be reported as overdue.
+    service_interval_cycles = Column(Integer, nullable=True)
+    life_limit_cycles = Column(Integer, nullable=True)
+    status = Column(String, default="Active")         # Active | Removed | Scrapped
+    last_service_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    @property
+    def cycles_total(self) -> int:
+        return int(self.parts_total or 0) // max(1, int(self.cavities or 1))
+
+    @property
+    def cycles_since_service(self) -> int:
+        made = int(self.parts_total or 0) - int(self.parts_at_last_service or 0)
+        return max(0, made) // max(1, int(self.cavities or 1))
+
+
 class ProductionSchedule(Base):
     __tablename__ = "production_schedules"
     __table_args__ = (

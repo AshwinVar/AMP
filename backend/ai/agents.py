@@ -17,7 +17,7 @@ from datetime import datetime, timedelta
 
 import approvals
 import models
-from ai import escalations, maintenance, outcomes, prediction
+from ai import escalations, interlocks, maintenance, outcomes, prediction
 from events import (
     ProductionCompleted, DowntimeStarted, InventoryLow, QualityInspectionFailed, event_bus,
 )
@@ -28,6 +28,9 @@ AUTO_TASK_TYPE = "Predictive (auto)"
 QUALITY_TASK_TYPE = "Quality (auto)"
 # The reorder agent tags its drafted POs with this prefix (humans never use it).
 AUTO_PO_PREFIX = "AUTO-PO"
+# The interlock agent. Named rather than inlined because the activity log and
+# the trusted-agent policy both key on the agent name.
+INTERLOCK_AGENT = "interlock"
 # Downtime events on a machine before the Escalation agent raises an escalation.
 ESCALATION_THRESHOLD = 3
 # Only downtime inside this window counts toward "repeated" — otherwise a machine
@@ -509,10 +512,47 @@ def assess_yield_on_production(event: ProductionCompleted, db) -> None:
     )
 
 
+def raise_interlocks_on_production(event: ProductionCompleted, db) -> None:
+    """Interlock agent: credit the run to the tooling, and raise what falls due.
+
+    THE COUNT ALREADY EXISTS; NOBODY IS WATCHING IT. A mould serviced every
+    10,000 shots is serviced when a toolmaker happens to remember, because no
+    one on the floor counts to ten thousand. This advances the fitted tooling by
+    the quantity just produced and proposes the work the moment a declared limit
+    is passed.
+
+    IT RAISES A TASK. IT DOES NOT STOP A MACHINE. Blocking is a PLC function with
+    a safety rating; AMP has no control path. See ai/interlocks.py.
+
+    ONE TASK PER CONDITION, not one per run. Without the duplicate guard a tool
+    at 12,000 shots proposes a service task on every batch for the rest of its
+    life, and an approval queue that cries wolf is one nobody reads.
+    """
+    machine_id = getattr(event, "machine_id", None)
+    if machine_id is None:
+        return
+    tools = interlocks.advance(db, machine_id, getattr(event, "quantity", 0))
+    for tool in tools:
+        for due in interlocks.check(tool):
+            if _open_auto_task_exists(db, machine_id, due.task_type):
+                continue
+            _propose_task(
+                db, event.tenant_code, INTERLOCK_AGENT,
+                task_no=f"AUTO-ILK-{tool.id}-{due.key}-{int(datetime.utcnow().timestamp())}",
+                machine_id=machine_id, task_type=due.task_type, priority=due.priority,
+                summary=due.summary,
+                notes=(f"Proposed by the Interlock agent on tool {tool.tool_no}. {due.reason} "
+                       f"Latest run {event.work_order_no}: {event.quantity} of "
+                       f"{event.part_number}."),
+                severity=due.priority,
+            )
+
+
 def register(bus=event_bus) -> None:
     """Wire the agents to their events."""
     bus.subscribe(ProductionCompleted, act_on_machine_event)            # Maintenance agent
     bus.subscribe(ProductionCompleted, assess_yield_on_production)      # Yield agent
+    bus.subscribe(ProductionCompleted, raise_interlocks_on_production)  # Interlock agent
     bus.subscribe(DowntimeStarted, act_on_machine_event)                # Maintenance agent
     bus.subscribe(DowntimeStarted, escalate_on_repeated_downtime)       # Escalation agent
     bus.subscribe(QualityInspectionFailed, inspect_on_quality_failed)   # Quality agent

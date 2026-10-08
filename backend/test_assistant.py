@@ -3,6 +3,18 @@
 Routes plant questions to the right read-model and phrases the answer, no API key
 required. Run:  python backend/test_assistant.py     (exit 0 = pass)
 """
+
+import sys
+
+# PRINTING THE CURRENCY SYMBOL MUST NOT KILL A PASSING SUITE.
+#
+# A Windows console is cp1252 by default, and '\u20b9' has no cp1252 code point.
+# Before this line, the suite ran green and then died with UnicodeEncodeError on
+# the print that announced it -- a non-zero exit from a test that had passed.
+# CI's runners are UTF-8, so CI never saw it; only a developer did.
+# test_currency_single.py pins this for every suite carrying the symbol.
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 from datetime import datetime, timedelta
 
 from sqlalchemy import create_engine
@@ -36,7 +48,7 @@ def _seed(db):
     db.add(models.CustomerOrder(order_no="BUG-1", customer_name="Bugatti", product_name="P",
                                 order_quantity=100, dispatched_quantity=0, status="Pending",
                                 due_date=(now.date() - timedelta(days=1))))
-    # The tenant's unit value: the only source of a £ in the answers (ADR-0010).
+    # The tenant's unit value: the only source of a ₹ in the answers (ADR-0010).
     # Without it they speak in good units (test_loss_money_needs_the_tenant_rate).
     db.add(models.TenantConfig(tenant_code="DEFAULT", plan="Pro", unit_value_gbp=45))
     db.commit()

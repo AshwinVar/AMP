@@ -21,6 +21,7 @@ from sqlalchemy.orm import Session, joinedload
 
 import ai
 import ai.escalations
+import ai.plant_board
 import ai.maintenance
 import ai.workforce
 import ai.prediction
@@ -280,6 +281,40 @@ def oee_summary(db: Session = Depends(_get_db), current_user: dict = Depends(get
     return data
 
 router.get("/analytics/summary")(analytics_summary)
+
+
+@router.get("/analytics/plant-board")
+def plant_board_day(on: str = "", db: Session = Depends(_get_db),
+                    current_user: dict = Depends(get_current_user)):
+    """One day of the plant board: hourly production, raw material and shift rate.
+
+    `on` is YYYY-MM-DD; absent means today. Tenant comes from the authenticated
+    principal (ADR-0002), never from the query, so a date is the only thing a
+    caller can choose.
+
+    Power and packing come back marked unavailable rather than as zeros. A plant
+    that consumed no power and a plant with no meter are different facts, and a
+    chart cannot tell them apart once they are both a flat line.
+    """
+    try:
+        when = datetime.strptime(on, "%Y-%m-%d").date() if on else datetime.utcnow().date()
+    except ValueError:
+        raise HTTPException(status_code=400,
+                            detail=f"`on` must be YYYY-MM-DD, not {on!r}")
+    return ai.plant_board.day(db, request_tenant(current_user), when)
+
+
+@router.get("/analytics/plant-board/month")
+def plant_board_month(year: int = 0, month: int = 0,
+                      db: Session = Depends(_get_db),
+                      current_user: dict = Depends(get_current_user)):
+    """The monthly tables behind the board. Absent year/month means this month."""
+    now = datetime.utcnow()
+    year = year or now.year
+    month = month or now.month
+    if not 1 <= month <= 12:
+        raise HTTPException(status_code=400, detail=f"month must be 1-12, not {month}")
+    return ai.plant_board.month(db, request_tenant(current_user), year, month)
 
 
 @router.get("/alerts")

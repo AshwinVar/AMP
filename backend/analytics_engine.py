@@ -433,10 +433,10 @@ def build_management_summary(machines, downtime_logs, shifts, production_records
     # with no run time to convert it is unknown (None), not 0 units.
     estimated_loss_units = loss_value.whole(
         loss_value.downtime_units(total_downtime, loss_value.run_rate(good, runtime)))
-    # Money = lost units x the tenant's configured £/good-unit, and nothing without
-    # it. This used to fall back to £8 a minute when no rate was set: a £ the
+    # Money = lost units x the tenant's configured ₹/good-unit, and nothing without
+    # it. This used to fall back to ₹8 a minute when no rate was set: a ₹ the
     # customer never gave us, on the one card that says "stays units-only until you
-    # set it" (ADR-0010). A configured rate of 0 is a real £0.
+    # set it" (ADR-0010). A configured rate of 0 is a real ₹0.
     estimated_loss_value = loss_value.value(estimated_loss_units, unit_value_gbp)
 
     return {

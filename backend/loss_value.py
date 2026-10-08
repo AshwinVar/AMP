@@ -8,12 +8,12 @@ summary's downtime loss.
   * A minute of downtime is valued at the observed RUN RATE: good units per minute
     of run time over the same records. That is what the line was producing while
     it ran, so it is what the stopped minutes would have produced.
-  * Money is those units times TenantConfig.unit_value_gbp. No rate means no £,
-    ever: a tenant without a rate sees units. A rate of 0 is a real £0.
+  * Money is those units times TenantConfig.unit_value_gbp. No rate means no ₹,
+    ever: a tenant without a rate sees units. A rate of 0 is a real ₹0.
 
-It replaces two made-up tariffs. ai/cost.py priced downtime at £12 a minute and
-scrap at £25 a unit for every tenant, and build_management_summary fell back to
-£8 a minute when no rate was set. A plant with a £2 margin and one with a £400
+It replaces two made-up tariffs. ai/cost.py priced downtime at ₹12 a minute and
+scrap at ₹25 a unit for every tenant, and build_management_summary fell back to
+₹8 a minute when no rate was set. A plant with a ₹2 margin and one with a ₹400
 margin were shown the same money. See test_loss_money_needs_the_tenant_rate.py.
 
 Deliberately a leaf module (no model or read-model imports) so analytics_engine
@@ -47,7 +47,7 @@ def whole(x):
 
 
 def value(units, unit_value):
-    """whole(units x the tenant's £ per good unit), or None if either is unknown."""
+    """whole(units x the tenant's ₹ per good unit), or None if either is unknown."""
     if units is None or unit_value is None:
         return None
     return whole(units * unit_value)

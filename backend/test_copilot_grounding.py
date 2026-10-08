@@ -13,6 +13,18 @@ Pinned here:
 
 Run: DATABASE_URL="sqlite:///./ci.db" python backend/test_copilot_grounding.py
 """
+
+import sys
+
+# PRINTING THE CURRENCY SYMBOL MUST NOT KILL A PASSING SUITE.
+#
+# A Windows console is cp1252 by default, and '\u20b9' has no cp1252 code point.
+# Before this line, the suite ran green and then died with UnicodeEncodeError on
+# the print that announced it -- a non-zero exit from a test that had passed.
+# CI's runners are UTF-8, so CI never saw it; only a developer did.
+# test_currency_single.py pins this for every suite carrying the symbol.
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 import random
 import sys
 
@@ -34,7 +46,7 @@ def fact(fid, value, label="Figure", unit="", detail="", window=""):
 
 FACTS = [fact("F1", 83.47, "Plant OEE", "%", "from 3 of 4 machines", "last 7 days"),
          fact("F2", "CNC-01", "Lowest-OEE machine"),
-         fact("F3", 49740, "Cost of losses", "£"),
+         fact("F3", 49740, "Cost of losses", "₹"),
          fact("F4", -4, "OEE change vs last week", "pts"),
          fact("F5", 2, "Alert 2 (high)"),
          fact("F6", "Preventive on PRESS-01", "Next task")]
@@ -52,10 +64,10 @@ def worked():
         ("CNC-01 has the lowest OEE.", True, "an identifier from the evidence"),
         ("CNC-02 has the lowest OEE.", False, "an invented machine"),
         ("PRESS-01 is next for preventive work.", True, "an identifier inside an evidence string"),
-        ("Losses cost £49,740 this week.", True, "thousands separators"),
-        ("Losses cost about £49.7k.", True, "a k suffix at its shown precision"),
-        ("Losses cost about £50k.", True, "k at whole thousands: 49.74 rounds to 50"),
-        ("Losses cost £50,000.", False, "50,000 is not 49,740"),
+        ("Losses cost ₹49,740 this week.", True, "thousands separators"),
+        ("Losses cost about ₹49.7k.", True, "a k suffix at its shown precision"),
+        ("Losses cost about ₹50k.", True, "k at whole thousands: 49.74 rounds to 50"),
+        ("Losses cost ₹50,000.", False, "50,000 is not 49,740"),
         ("OEE fell 4 points.", True, "the size of a negative change"),
         ("OEE fell 5 points.", False, "a wrong change"),
         ("CNC-01 lost 90m of production.", False, "a unit glued on does not hide a number"),

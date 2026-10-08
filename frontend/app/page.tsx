@@ -1,3 +1,5 @@
+import { money } from "../lib/money";
+
 const FEATURES = [
   { icon: "▦", title: "Real-time machine monitoring", body: "Live downtime, utilisation and OEE from your shop floor — see a stoppage the moment it happens, not at month-end." },
   { icon: "▥", title: "Smart inventory", body: "4-bucket stock (physical · reserved · available), item aliases, proforma reservation, tax-invoice deduction and free-spares tracking." },
@@ -9,13 +11,13 @@ const FEATURES = [
 
 const PLANS = [
   {
-    name: "Starter", price: "₹7,999", period: "/ plant / month",
+    name: "Starter", price: money(7999), period: "/ plant / month",
     tagline: "Core MES for a single plant",
     features: ["Machine monitoring & downtime", "OEE & shift performance", "Up to 5 users", "Email support"],
     cta: "Start with Starter", highlight: false,
   },
   {
-    name: "Growth", price: "₹14,999", period: "/ plant / month",
+    name: "Growth", price: money(14999), period: "/ plant / month",
     tagline: "Production + inventory, end to end",
     features: ["Everything in Starter", "Work orders & production planning", "Smart inventory & purchasing", "Quality & maintenance", "Up to 15 users", "Priority support"],
     cta: "Choose Growth", highlight: true,

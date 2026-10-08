@@ -88,12 +88,13 @@ def test_automatic_scoping_filters_reads_and_stamps_writes():
 
 def test_scoped_models_and_migration_tables_stay_in_lockstep():
     from tenancy import SCOPED_MODELS, CORE_TENANT_TABLES, FAIL_SAFE_TENANT_TABLES
-    # Every scoped model has a migration entry: 32 core (28 backfilled to
+    # Every scoped model has a migration entry: 34 core (28 backfilled to
     # DEFAULT, plus the two ADR-0013 bill-of-materials tables, the ADR-0021
-    # machine_telemetry_spans table and the ADR-0029 action_outcomes table,
-    # which are created WITH the column) + 7 fail-safe (audit + enterprise
-    # inventory, added NULL, not backfilled).
-    assert len(SCOPED_MODELS) == len(CORE_TENANT_TABLES) + len(FAIL_SAFE_TENANT_TABLES) == 39
+    # machine_telemetry_spans table, the ADR-0029 action_outcomes table, and the
+    # part master's tool_assets + part_specs, all of which are created WITH the
+    # column) + 7 fail-safe (audit + enterprise inventory, added NULL, not
+    # backfilled).
+    assert len(SCOPED_MODELS) == len(CORE_TENANT_TABLES) + len(FAIL_SAFE_TENANT_TABLES) == 41
     assert len(FAIL_SAFE_TENANT_TABLES) == 7
     # Lockstep by NAME, not only by count: two lists of the right length can
     # still disagree about which tables they mean.

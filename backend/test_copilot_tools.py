@@ -23,6 +23,18 @@ What is pinned here, one property per section:
 
 Run: DATABASE_URL="sqlite:///./ci.db" python backend/test_copilot_tools.py
 """
+
+import sys
+
+# PRINTING THE CURRENCY SYMBOL MUST NOT KILL A PASSING SUITE.
+#
+# A Windows console is cp1252 by default, and '\u20b9' has no cp1252 code point.
+# Before this line, the suite ran green and then died with UnicodeEncodeError on
+# the print that announced it -- a non-zero exit from a test that had passed.
+# CI's runners are UTF-8, so CI never saw it; only a developer did.
+# test_currency_single.py pins this for every suite carrying the symbol.
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 import json
 import sys
 
@@ -247,7 +259,7 @@ def main():
     no_money = call(Session, Principal(tenant=F.B, role="Admin"), "get_financial_losses")
     check("B has no unit value: its losses are NOT CONFIGURED, with no money figure",
           no_money.state == ev.NOT_CONFIGURED
-          and not any(f.unit == "£" and isinstance(f.value, (int, float)) for f in no_money.facts),
+          and not any(f.unit == "₹" and isinstance(f.value, (int, float)) for f in no_money.facts),
           no_money.state)
     money = next((f for f in no_money.facts if f.key == "losses.cost"), None)
     check("...and the money figure is stated as UNKNOWN, not left out silently",

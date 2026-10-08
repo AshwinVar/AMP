@@ -410,6 +410,69 @@ class MaintenanceTask(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
 
 
+class PartSpec(Base):
+    """What one moulded part IS: its material, weight, cavities, cycle and price.
+
+    WHY AMP NEEDS THIS AT ALL. A machine counts shots. Everything a plant
+    actually wants to know is a conversion away from that number and cannot be
+    derived from it alone:
+
+        parts        = shots x ACTIVE cavities
+        kg consumed  = parts x part_weight_g / 1000
+        revenue      = parts x price_per_piece
+        ideal rate   = 3600 / ideal_cycle_time_s x active cavities
+
+    None of those four numbers exists in any controller. They are process
+    planning and commercial data, and without them a shot counter is a number
+    nobody can act on.
+
+    WHY active_cavities IS SEPARATE FROM cavities. A 56-cavity mould running
+    with 4 cavities blocked makes 52 parts a shot, not 56. The tool still HAS
+    56. Collapsing the two overstates output by 8% permanently, and the error is
+    invisible because both numbers look plausible.
+
+    WHY IT IS EFFECTIVE-DATED. Price changes; cavities get blocked; a cycle time
+    is re-optimised. Overwriting the row would retrospectively restate every
+    month already reported — last year's revenue would move because this year's
+    price did. `effective_from` makes a spec a FACT ABOUT A PERIOD, and the
+    reader picks the row that was in force when the parts were made.
+    """
+
+    __tablename__ = "part_specs"
+    __table_args__ = (
+        UniqueConstraint("tenant_code", "part_code", "effective_from",
+                         name="uq_part_specs_tenant_part_from"),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    tenant_code = Column(String, index=True, nullable=False, default="DEFAULT")
+    part_code = Column(String, nullable=False)
+    part_name = Column(String, nullable=False)
+    material = Column(String, nullable=False)
+    part_weight_g = Column(Float, nullable=False)
+    cavities = Column(Integer, default=1)
+    active_cavities = Column(Integer, default=1)
+    ideal_cycle_time_s = Column(Float, nullable=False)
+    price_per_piece = Column(Float, default=0.0)
+    effective_from = Column(Date, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    @property
+    def parts_per_shot(self) -> int:
+        """Active cavities, floored at 1. A spec claiming zero would make every
+        shot produce nothing, which is never what a zero there means."""
+        return max(1, int(self.active_cavities or self.cavities or 1))
+
+    @property
+    def ideal_parts_per_hour(self) -> float:
+        """The green line on the hourly chart. Zero when no cycle is declared —
+        an undeclared ideal is unknown, not infinite."""
+        cycle = float(self.ideal_cycle_time_s or 0)
+        if cycle <= 0:
+            return 0.0
+        return (3600.0 / cycle) * self.parts_per_shot
+
+
 class ToolAsset(Base):
     """A die, mould, tool or fixture whose service falls due on CYCLES, not dates.
 
@@ -441,6 +504,11 @@ class ToolAsset(Base):
     tool_no = Column(String, nullable=False)
     name = Column(String, nullable=False)
     tool_type = Column(String, default="Mould")       # Mould | Die | Tool | Fixture
+    # WHICH PART THIS TOOL MAKES. The link lives here and not on the machine
+    # because a mould makes one part and moving the mould moves the part — a
+    # moulder changes tooling every week or two and the press is incidental.
+    # Null means the tool's output cannot be priced or costed, only counted.
+    part_code = Column(String, nullable=True)
     # The machine it is fitted to right now. Null = in the tool room, and a tool
     # off the machine accrues nothing.
     machine_id = Column(Integer, ForeignKey("machines.id"), nullable=True)
@@ -569,7 +637,7 @@ class TenantConfig(Base):
     brand_logo_url = Column(String, nullable=True)
     subscription_status = Column(String, default="trial")       # trial / active / past_due / cancelled
     trial_ends_at = Column(DateTime, nullable=True)
-    # £ of margin (or contribution) per good unit — set per tenant so the recovery
+    # ₹ of margin (or contribution) per good unit — set per tenant so the recovery
     # read-model can value the OEE gap in money. NULL = unset (report units only,
     # never a made-up figure).
     unit_value_gbp = Column(Float, nullable=True)

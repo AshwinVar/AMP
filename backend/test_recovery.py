@@ -7,6 +7,18 @@ Pure over records; the DB fetch is stubbed so no DB is needed.
 
 Run:  python backend/test_recovery.py     (exit 0 = pass)
 """
+
+import sys
+
+# PRINTING THE CURRENCY SYMBOL MUST NOT KILL A PASSING SUITE.
+#
+# A Windows console is cp1252 by default, and '\u20b9' has no cp1252 code point.
+# Before this line, the suite ran green and then died with UnicodeEncodeError on
+# the print that announced it -- a non-zero exit from a test that had passed.
+# CI's runners are UTF-8, so CI never saw it; only a developer did.
+# test_currency_single.py pins this for every suite carrying the symbol.
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 from types import SimpleNamespace
 
 import ai.recovery as rec
@@ -77,7 +89,7 @@ def test_biggest_lever_prize_is_quantified():
     assert out["lever_recoverable_value_per_year"] == round(expected_year * 4.50)
     # the single lever is a slice of the total gap, never larger than it
     assert out["lever_recoverable_units_per_year"] <= out["recoverable_units_per_year"]
-    print("PASS biggest-lever prize (units + £) is quantified for 'fix this first'")
+    print("PASS biggest-lever prize (units + ₹) is quantified for 'fix this first'")
 
 
 def test_lever_fields_empty_at_world_class():
@@ -101,38 +113,38 @@ def test_at_world_class_has_no_recoverable_units():
 
 
 def test_pound_value_when_rate_configured():
-    # 6518 recoverable units/yr at £4.50/unit -> £29,331/yr.
+    # 6518 recoverable units/yr at ₹4.50/unit -> ₹29,331/yr.
     recs = [_r(planned_minutes=480, runtime_minutes=400, ideal_cycle_time_seconds=30,
                total_count=700, good_count=690)]
     out = _run(recs, rate=4.50)
     assert out["unit_value_gbp"] == 4.50
     assert out["recoverable_value_per_year"] == 29331
     assert out["recoverable_value_window"] == round(out["recoverable_units_window"] * 4.50)
-    print("PASS £ recovery value is computed when a per-unit rate is set")
+    print("PASS ₹ recovery value is computed when a per-unit rate is set")
 
 
 def test_no_pound_value_when_rate_unset():
-    # No configured rate -> report units only, never a made-up £ figure.
+    # No configured rate -> report units only, never a made-up ₹ figure.
     recs = [_r(planned_minutes=480, runtime_minutes=400, ideal_cycle_time_seconds=30,
                total_count=700, good_count=690)]
     out = _run(recs, rate=None)
     assert out["unit_value_gbp"] is None
     assert out["recoverable_value_window"] is None and out["recoverable_value_per_year"] is None
     assert out["recoverable_units_per_year"] > 0  # units still reported
-    print("PASS £ fields stay null when no rate is configured (units still shown)")
+    print("PASS ₹ fields stay null when no rate is configured (units still shown)")
 
 
 def test_zero_rate_yields_zero_pounds_not_null():
-    # A configured rate of 0 is a real £0 margin (rate is SET), so the £ fields are
+    # A configured rate of 0 is a real ₹0 margin (rate is SET), so the ₹ fields are
     # 0, not null. Using truthiness (`if rate`) treated 0 like unset and showed
-    # units-only, diverging from build_management_summary — both now agree on £0.
+    # units-only, diverging from build_management_summary — both now agree on ₹0.
     recs = [_r(machine_id=1, planned_minutes=480, runtime_minutes=400,
                ideal_cycle_time_seconds=30, total_count=700, good_count=690)]
     out = _run(recs, rate=0)
     assert out["unit_value_gbp"] == 0
     assert out["recoverable_value_window"] == 0 and out["recoverable_value_per_year"] == 0
     assert out["lever_recoverable_value_per_year"] == 0
-    print("PASS a configured £0 rate yields £0 (not null): rate is set, margin is zero")
+    print("PASS a configured ₹0 rate yields ₹0 (not null): rate is set, margin is zero")
 
 
 def test_oee_trend_improving_vs_prior_week():

@@ -5,10 +5,10 @@ from currency import money
 
 
 def _downtime_loss(summary: dict) -> str:
-    """The management summary's downtime loss: £ with the tenant's unit value,
+    """The management summary's downtime loss: ₹ with the tenant's unit value,
     good units without it, and "unknown" when there was no run time to convert.
-    It used to print money(estimated_loss_value or 0): £8 a minute the customer
-    never set, or a £0 for a loss that was not zero."""
+    It used to print money(estimated_loss_value or 0): ₹8 a minute the customer
+    never set, or a ₹0 for a loss that was not zero."""
     value = summary.get("estimated_loss_value")
     units = summary.get("estimated_loss_units")
     if value is not None:
@@ -53,13 +53,13 @@ def build_daily_summary_text(summary: dict, shift_kpis: list, alerts: list):
         # Format through the shared money() helper (currency.py) — the single money
         # renderer every other surface uses — rather than re-spelling "{CURRENCY}{n}"
         # here. The inline version emitted no thousands separator, so a five/six-figure
-        # loss printed as "£49740" in this downloadable report while the exact same
-        # figure reads "£49,740" on every card, the weekly report and the scorecard
+        # loss printed as "₹49740" in this downloadable report while the exact same
+        # figure reads "₹49,740" on every card, the weekly report and the scorecard
         # (rule-1: reuse the shared helper, don't render a money value a second way).
-        # `... or 0` coalesces a missing/None value to a real £0 (build_management_summary
+        # `... or 0` coalesces a missing/None value to a real ₹0 (build_management_summary
         # always sets an int, but this keeps the pre-existing `.get(.., 0)` null-safety
         # and avoids money(None) raising on a hand-built summary dict).
-        # £ only with the tenant's unit value (ADR-0010); units otherwise, and
+        # ₹ only with the tenant's unit value (ADR-0010); units otherwise, and
         # "unknown" when downtime had no run time to convert.
         f"Estimated Downtime Loss, last {days} days: {_downtime_loss(summary)}",
         "",

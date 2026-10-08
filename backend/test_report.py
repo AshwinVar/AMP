@@ -3,6 +3,18 @@
 Composes scorecard + cost + delivery + briefing into one Markdown report.
 Run:  python backend/test_report.py     (exit 0 = pass)
 """
+
+import sys
+
+# PRINTING THE CURRENCY SYMBOL MUST NOT KILL A PASSING SUITE.
+#
+# A Windows console is cp1252 by default, and '\u20b9' has no cp1252 code point.
+# Before this line, the suite ran green and then died with UnicodeEncodeError on
+# the print that announced it -- a non-zero exit from a test that had passed.
+# CI's runners are UTF-8, so CI never saw it; only a developer did.
+# test_currency_single.py pins this for every suite carrying the symbol.
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 from datetime import datetime, timedelta
 
 from sqlalchemy import create_engine
@@ -23,7 +35,7 @@ def _fresh_session():
 def test_weekly_report_composes_a_markdown_page():
     db = _fresh_session()
     now = datetime.utcnow()
-    # A unit value, so the Cost of losses section is in £ (ADR-0010: no rate, no £).
+    # A unit value, so the Cost of losses section is in ₹ (ADR-0010: no rate, no ₹).
     db.add(models.TenantConfig(tenant_code="DEFAULT", plan="Pro", unit_value_gbp=45))
     db.add(models.Machine(id=1, name="SMT-Reflow-01", status="Breakdown", utilization=0, line="SMT"))
     db.add(models.ProductionRecord(machine_id=1, planned_minutes=480, runtime_minutes=440,

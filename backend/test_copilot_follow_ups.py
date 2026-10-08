@@ -24,6 +24,18 @@ authorization.
 
 Run: DATABASE_URL="sqlite:///./ci.db" python backend/test_copilot_follow_ups.py
 """
+
+import sys
+
+# PRINTING THE CURRENCY SYMBOL MUST NOT KILL A PASSING SUITE.
+#
+# A Windows console is cp1252 by default, and '\u20b9' has no cp1252 code point.
+# Before this line, the suite ran green and then died with UnicodeEncodeError on
+# the print that announced it -- a non-zero exit from a test that had passed.
+# CI's runners are UTF-8, so CI never saw it; only a developer did.
+# test_currency_single.py pins this for every suite carrying the symbol.
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 import json
 import os
 import sys
@@ -210,7 +222,7 @@ def main():
     check("every tool that ran was authorized for the operator",
           all(permitted(REGISTRY[t], op) for t in tools_of(r) if t in REGISTRY), str(tools_of(r)))
     check("no money for an unpriced factory, whatever the thread claimed",
-          "£" not in r["answer"] and not any(f.get("unit") == "£" for f in r["evidence"]))
+          "₹" not in r["answer"] and not any(f.get("unit") == "₹" for f in r["evidence"]))
 
     section("7. CAPS AND JUNK")
     r = ask(A, "hello", [{"question": f"q{i}", "calls": []} for i in range(20)])

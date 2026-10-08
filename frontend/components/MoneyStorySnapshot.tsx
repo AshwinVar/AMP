@@ -7,8 +7,8 @@ import { CURRENCY, money } from "../lib/money";
 import UnitRateEditor from "./UnitRateEditor";
 
 // The money story: the OEE gap and downtime, both valued off the one per-tenant
-// £/good-unit rate. Reads the recovery read-model (upside) and the management
-// summary (downtime loss); shows £ when a rate is set, honest units otherwise.
+// ₹/good-unit rate. Reads the recovery read-model (upside) and the management
+// summary (downtime loss); shows ₹ when a rate is set, honest units otherwise.
 type Recovery = {
   has_data: boolean;
   oee: number;
@@ -28,7 +28,7 @@ type Recovery = {
   lever_recoverable_value_per_year: number | null;
   lever_recoverable_units_per_year: number;
 };
-// estimated_loss_value is null without a unit value (it used to be a made-up £8 a
+// estimated_loss_value is null without a unit value (it used to be a made-up ₹8 a
 // minute); estimated_loss_units is null when downtime had no run time to convert.
 type Management = {
   total_downtime_minutes: number;

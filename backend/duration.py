@@ -11,7 +11,7 @@ this one function.
 The number is matched as a decimal (\\d+(?:\\.\\d+)?) so "1.5 hrs" is 90 minutes,
 not 300. An integer-only `\\d+` skipped the "1." and matched the "5" in "1.5 h",
 reading a 90-minute stop as 5 hours — a 3x overstatement that flowed straight
-into every downtime rollup, the cost-of-losses £ and the risk score. Operators
+into every downtime rollup, the cost-of-losses ₹ and the risk score. Operators
 type this field free-hand, so decimals are real input.
 """
 import re

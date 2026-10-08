@@ -90,6 +90,11 @@ CORE_TENANT_TABLES = [
     # ensure_tenant_columns finds the column present and does nothing; listed to
     # keep this list and SCOPED_MODELS in lockstep, which test_tenancy asserts.
     "action_outcomes",
+    # The part master (0015) and its tooling (0014). Both created WITH
+    # tenant_code, so ensure_tenant_columns finds it present and does nothing;
+    # listed to keep this list and SCOPED_MODELS in lockstep, which test_tenancy
+    # asserts.
+    "part_specs", "tool_assets",
 ]
 
 # Tables that gain tenant_code but must NOT be blind-backfilled to DEFAULT: the
@@ -217,6 +222,13 @@ SCOPED_MODELS = (
     # tenant explicitly as well — an outcome is evidence about one company's
     # plant, and it is the last place to rely on an ambient binding.
     models.ActionOutcome,
+    # The part master and the tooling it runs on. part_spec_routes and
+    # ai/plant_board filter by tenant explicitly too, and they must: a part spec
+    # carries a SELLING PRICE, which is a company's commercial position and the
+    # last thing that may leak on a forgotten filter. The hook belongs on them
+    # like every other tenant-owned table, so a read written later is scoped by
+    # default rather than by whoever remembers.
+    models.PartSpec, models.ToolAsset,
 )
 
 
@@ -327,8 +339,8 @@ def is_founder(current_user) -> bool:
 
 
 def tenant_unit_value(db, tenant):
-    """The tenant's configured £ margin per good unit (TenantConfig.unit_value_gbp),
-    or None if unset. The single per-tenant £ rate — shared by the recovery
+    """The tenant's configured ₹ margin per good unit (TenantConfig.unit_value_gbp),
+    or None if unset. The single per-tenant ₹ rate — shared by the recovery
     read-model and the management summary's estimated_loss_value so every money
     figure uses the same number (never a made-up default when unset)."""
     c = db.query(models.TenantConfig).filter(models.TenantConfig.tenant_code == tenant).first()

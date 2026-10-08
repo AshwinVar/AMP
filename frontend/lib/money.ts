@@ -11,11 +11,25 @@
 // used "£" as the Costing nav icon directly above an all-"$" card. ADR-0010 (accepted)
 // makes a per-tenant £/good-unit rate the single money basis — the column is
 // `unit_value_gbp` — so GBP is canonical and "$" was the defect.
-export const CURRENCY = "£";
+export const CURRENCY = "₹";
 
-/** money(49740) -> "£49,740" */
+// ── Grouping, which is part of the currency and not a detail ──────────
+//
+// `n.toLocaleString()` with no locale follows whatever locale the BROWSER is
+// set to, so the same figure read "₹14,00,000" on the customer's machine and
+// "₹1,400,000" on the developer's. A money format that depends on who is
+// looking is not a format.
+//
+// en-IN, pinned, for the reason stated for contract money below: the platform
+// prints rupees, and an Indian plant's own invoices and ledgers group in lakhs.
+// It also puts this in step with backend/currency.py, which groups the same way
+// — the two had quietly disagreed above six digits, which the symbol check
+// could not see because it only ever compared ₹49,740, identical either way.
+const GROUP = new Intl.NumberFormat("en-IN", { maximumFractionDigits: 0 });
+
+/** money(49740) -> "₹49,740"; money(1400000) -> "₹14,00,000" */
 export function money(n: number): string {
-  return `${CURRENCY}${n.toLocaleString()}`;
+  return `${CURRENCY}${GROUP.format(n)}`;
 }
 
 /**
@@ -40,8 +54,9 @@ export function lossFigure(cost: number | null | undefined, units: number | null
 // places ("40000.00"), in the contract's own currency, computed server-side
 // with exact decimals. It is displayed without ever becoming a float: the
 // integer part is grouped as a BigInt and the paise are appended as the two
-// characters the server sent. `money()` above is the platform's GBP analytics
-// figure and is a different thing; do not route contract amounts through it.
+// characters the server sent. `money()` above is the platform's whole-rupee
+// analytics figure and is a different thing -- it takes a number, so it would
+// round the paise away; do not route contract amounts through it.
 //
 // Indian digit grouping (12,34,567.89) is right because contracts are INR-only
 // (backend contract_terms.CURRENCIES). Admitting a second currency means the

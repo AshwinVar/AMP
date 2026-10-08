@@ -7,6 +7,18 @@ production data is needed.
 
 Run:  python backend/test_oee_recovery_escalation.py     (exit 0 = pass)
 """
+
+import sys
+
+# PRINTING THE CURRENCY SYMBOL MUST NOT KILL A PASSING SUITE.
+#
+# A Windows console is cp1252 by default, and '\u20b9' has no cp1252 code point.
+# Before this line, the suite ran green and then died with UnicodeEncodeError on
+# the print that announced it -- a non-zero exit from a test that had passed.
+# CI's runners are UTF-8, so CI never saw it; only a developer did.
+# test_currency_single.py pins this for every suite carrying the symbol.
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
@@ -64,9 +76,9 @@ def test_creates_one_escalation_with_the_lever_and_prize():
     e = db.query(models.Escalation).one()
     assert e.title == "OEE recovery: close the Performance gap"
     assert e.source == "OEE Recovery" and e.severity == "High" and e.status == "Open"
-    assert "£444,416/yr" in e.notes and "91% -> 95%" in e.notes
+    assert "₹444,416/yr" in e.notes and "91% -> 95%" in e.notes
     assert "Close the speed loss" in e.notes
-    print("PASS raises one escalation naming the lever + £ prize + action")
+    print("PASS raises one escalation naming the lever + ₹ prize + action")
 
 
 def test_is_idempotent_while_unresolved():
@@ -120,8 +132,8 @@ def test_units_only_when_no_rate():
     finally:
         rec.build_recovery_summary = orig
     e = db.query(models.Escalation).one()
-    assert "159,609 good units/yr" in e.notes and "£" not in e.notes
-    print("PASS no configured rate -> the prize is stated in good units, no made-up £")
+    assert "159,609 good units/yr" in e.notes and "₹" not in e.notes
+    print("PASS no configured rate -> the prize is stated in good units, no made-up ₹")
 
 
 def test_targets_worst_machine_on_the_lever():

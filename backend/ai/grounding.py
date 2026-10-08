@@ -4,7 +4,7 @@ When a language model phrases a Copilot answer, AMP checks the text against the
 evidence the tools returned BEFORE anyone sees it:
 
   * every NUMBER in the text must equal a number in the evidence, allowing only
-    for the rounding the text itself shows ("83.5" or "84" for 83.47, "£49.7k"
+    for the rounding the text itself shows ("83.5" or "84" for 83.47, "₹49.7k"
     for 49,740) and thousands separators;
   * every IDENTIFIER-like token (letters with digits: CNC-02, WO-118, PO-77)
     must appear in the evidence, so a model cannot invent a machine or an order;

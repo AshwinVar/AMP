@@ -548,7 +548,7 @@ def generate_oee_recovery_escalation(
     current_user: dict = Depends(require_roles(["Admin", "Supervisor", "Operator"])),
 ):
     """Raise (or surface) one escalation for the biggest OEE-recovery lever — the
-    component furthest from world-class — carrying the £ prize for closing it and
+    component furthest from world-class — carrying the ₹ prize for closing it and
     the concrete move, pointed at the worst machine on that lever so triage has a
     starting place. This is what the overview's "fix this first" CTA fires, so the
     insight becomes a tracked action. Idempotent: while an unresolved one exists
@@ -586,7 +586,7 @@ def generate_oee_recovery_escalation(
         return {"created": 0, "escalation_id": existing.id}
 
     if rec["lever_recoverable_value_per_year"] is not None:
-        prize = f"£{rec['lever_recoverable_value_per_year']:,}/yr"
+        prize = f"₹{rec['lever_recoverable_value_per_year']:,}/yr"
     else:
         prize = f"{rec['lever_recoverable_units_per_year']:,} good units/yr"
     comp = next((c for c in rec["components"] if c["key"] == rec["biggest_lever"]), None)

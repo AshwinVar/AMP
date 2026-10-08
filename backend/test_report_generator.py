@@ -5,7 +5,7 @@ export. Before this file it had NO test coverage.
 
 THE FIX these pin: the estimated downtime loss was rendered inline as
 f"{CURRENCY}{value}" — no thousands separator — so a five/six-figure loss printed
-"£49740" in this report while the identical figure reads "£49,740" through the
+"₹49740" in this report while the identical figure reads "₹49,740" through the
 shared money() helper on every card, the weekly report and the scorecard. That is
 the exact "one figure, two renderings" inconsistency currency.py exists to kill
 (rule-1: reuse the shared helper). The money assertions below compare against
@@ -14,6 +14,18 @@ so a regression to the inline form fails here.
 
 Run:  python backend/test_report_generator.py     (exit 0 = pass)
 """
+
+import sys
+
+# PRINTING THE CURRENCY SYMBOL MUST NOT KILL A PASSING SUITE.
+#
+# A Windows console is cp1252 by default, and '\u20b9' has no cp1252 code point.
+# Before this line, the suite ran green and then died with UnicodeEncodeError on
+# the print that announced it -- a non-zero exit from a test that had passed.
+# CI's runners are UTF-8, so CI never saw it; only a developer did.
+# test_currency_single.py pins this for every suite carrying the symbol.
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 from currency import money
 from report_generator import build_daily_summary_text
 
@@ -34,19 +46,27 @@ def _full_summary():
 
 
 def test_loss_value_is_comma_grouped_not_bare_digits():
-    # The bug: "£49740" (no separator). The fix: "£49,740" — the SAME string every
+    # The bug: "₹49740" (no separator). The fix: "₹49,740" — the SAME string every
     # other money surface prints. The expected literal is hand-written, not money().
     text = build_daily_summary_text(_full_summary(), [], [])
-    assert "Estimated Downtime Loss, last 7 days: £49,740" in text, text
-    assert "£49740" not in text, "loss printed without a thousands separator"
+    assert "Estimated Downtime Loss, last 7 days: ₹49,740" in text, text
+    assert "₹49740" not in text, "loss printed without a thousands separator"
 
 
-def test_large_loss_value_gets_every_thousands_separator():
-    # A seven-figure loss must group every three digits: 1234567 -> £1,234,567.
+def test_large_loss_value_is_grouped_in_LAKHS():
+    """A seven-figure loss groups the way the reader counts: 1234567 ->
+    ₹12,34,567, not ₹1,234,567.
+
+    The platform prints rupees and this report is read beside an Indian plant's
+    own ledger, so currency.money groups in lakhs on both stacks. The expected
+    literal stays hand-written rather than calling money(), because a test that
+    computes its expectation with the function under test asserts nothing.
+    """
     summary = _full_summary()
     summary["estimated_loss_value"] = 1234567
     text = build_daily_summary_text(summary, [], [])
-    assert "Estimated Downtime Loss, last 7 days: £1,234,567" in text, text
+    assert "Estimated Downtime Loss, last 7 days: ₹12,34,567" in text, text
+    assert "₹1,234,567" not in text, "the report still groups in thousands"
 
 
 def test_loss_value_matches_the_shared_money_helper():
@@ -62,24 +82,24 @@ def test_zero_loss_renders_a_real_zero():
     summary = _full_summary()
     summary["estimated_loss_value"] = 0
     text = build_daily_summary_text(summary, [], [])
-    assert "Estimated Downtime Loss, last 7 days: £0" in text, text
+    assert "Estimated Downtime Loss, last 7 days: ₹0" in text, text
 
 
 def test_no_unit_value_prints_units_and_never_a_pound():
     # No unit value set (ADR-0010): the summary carries lost units and a None value.
-    # This used to print "£0" -- or, before that, £8 a minute the customer never set.
+    # This used to print "₹0" -- or, before that, ₹8 a minute the customer never set.
     text = build_daily_summary_text({"estimated_loss_value": None, "estimated_loss_units": 133}, [], [])
     assert "Estimated Downtime Loss, last 7 days: 133 good units" in text, text
-    assert "£" not in text.split("Estimated Downtime Loss, last 7 days:")[1].splitlines()[0], text
+    assert "₹" not in text.split("Estimated Downtime Loss, last 7 days:")[1].splitlines()[0], text
 
 
 def test_missing_and_unknown_loss_say_unknown_not_zero():
     # A hand-built summary that omits both keys, or downtime with no run time to
-    # convert (units None), is not a £0 loss. It must not KeyError or print "£None".
+    # convert (units None), is not a ₹0 loss. It must not KeyError or print "₹None".
     for summary in ({}, {"estimated_loss_value": None, "estimated_loss_units": None}):
         text = build_daily_summary_text(summary, [], [])
         assert "Estimated Downtime Loss, last 7 days: unknown" in text, text
-        assert "£0" not in text and "None" not in text, text
+        assert "₹0" not in text and "None" not in text, text
 
 
 def test_empty_summary_uses_honest_defaults():
@@ -145,7 +165,7 @@ def test_header_and_section_structure_present():
 
 if __name__ == "__main__":
     test_loss_value_is_comma_grouped_not_bare_digits()
-    test_large_loss_value_gets_every_thousands_separator()
+    test_large_loss_value_is_grouped_in_LAKHS()
     test_loss_value_matches_the_shared_money_helper()
     test_zero_loss_renders_a_real_zero()
     test_no_unit_value_prints_units_and_never_a_pound()

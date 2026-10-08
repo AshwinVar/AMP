@@ -3,6 +3,18 @@
 Measures the week's downtime + scrap in good units not made, prices them only with
 the tenant's own unit value, and rolls up recorded costs by type. Run:  python backend/test_cost.py     (exit 0 = pass)
 """
+
+import sys
+
+# PRINTING THE CURRENCY SYMBOL MUST NOT KILL A PASSING SUITE.
+#
+# A Windows console is cp1252 by default, and '\u20b9' has no cp1252 code point.
+# Before this line, the suite ran green and then died with UnicodeEncodeError on
+# the print that announced it -- a non-zero exit from a test that had passed.
+# CI's runners are UTF-8, so CI never saw it; only a developer did.
+# test_currency_single.py pins this for every suite carrying the symbol.
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 from types import SimpleNamespace
 
 from sqlalchemy import create_engine
@@ -20,7 +32,7 @@ def _fresh_session(rate=None):
     Base.metadata.create_all(bind=engine)
     db = sessionmaker(bind=engine)()
     if rate is not None:
-        # The tenant's own margin per good unit: the only source of a £ (ADR-0010).
+        # The tenant's own margin per good unit: the only source of a ₹ (ADR-0010).
         db.add(models.TenantConfig(tenant_code="DEFAULT", plan="Pro", unit_value_gbp=rate))
         db.commit()
     return db
@@ -55,10 +67,10 @@ def test_headline_downtime_reconciles_with_breakdown_when_a_job_runs_over():
     db.commit()
 
     s = cost.build_cost_summary(db, "DEFAULT")
-    # per-record clamp: 0 (A) + 50 (B) = 50 min -> 50 x 150/170 = 44.1 -> 44 units -> £132
+    # per-record clamp: 0 (A) + 50 (B) = 50 min -> 50 x 150/170 = 44.1 -> 44 units -> ₹132
     assert s["downtime_minutes"] == 50
     assert s["downtime_lost_units"] == 44 and s["loss_cost"] == 132, s
-    # the OLD aggregate clamp max(0, 200-170) = 30 min -> 26 units -> £78 would have understated it
+    # the OLD aggregate clamp max(0, 200-170) = 30 min -> 26 units -> ₹78 would have understated it
     assert s["loss_cost"] != 78
     # the headline reconciles with EVERY drill-down it sits above
     assert s["loss_cost"] == sum(m["cost"] for m in s["by_machine"])
@@ -83,8 +95,8 @@ def test_cost_prices_downtime_and_scrap_and_rolls_up_recorded():
     s = cost.build_cost_summary(db, "DEFAULT")
     assert s["has_data"] is True and s["priced"] is True and s["unit_value_gbp"] == 12.5
     assert s["downtime_minutes"] == 40 and s["downtime_lost_units"] == 8
-    assert s["downtime_cost"] == 100                                    # 8 units x £12.50
-    assert s["rejected_units"] == 10 and s["scrap_cost"] == 125         # 10 units x £12.50
+    assert s["downtime_cost"] == 100                                    # 8 units x ₹12.50
+    assert s["rejected_units"] == 10 and s["scrap_cost"] == 125         # 10 units x ₹12.50
     assert s["lost_units"] == 18 and s["loss_cost"] == 225
     assert s["biggest"] == "scrap"                                      # 10 units > 8 units
     # recorded costs grouped by type, worst first (the tenant's own amounts)
@@ -96,7 +108,7 @@ def test_cost_prices_downtime_and_scrap_and_rolls_up_recorded():
     assert s["by_line"] == [{"line": "SMT", **row}]
     # and to the machine that incurred it, biggest first
     assert s["by_machine"] == [{"machine_id": 1, "name": "M1", **row}]
-    assert "£12.50/unit" in s["losses"][1]["detail"], s["losses"]
+    assert "₹12.50/unit" in s["losses"][1]["detail"], s["losses"]
     # The trend spans the calendar dates the rolling window TOUCHES — eight when
     # it opens mid-day, seven exactly at midnight. Pinning a fixed 7 was pinning
     # the defect: the partial eighth date's cost was in the headline and in no
@@ -110,7 +122,7 @@ def test_cost_prices_downtime_and_scrap_and_rolls_up_recorded():
     # The property that actually matters, and which this suite already had right.
     assert sum(d["cost"] for d in s["daily"]) == 225
 
-    # empty -> no data, no crash; nothing lost, and no £ at all without a rate
+    # empty -> no data, no crash; nothing lost, and no ₹ at all without a rate
     empty = cost.build_cost_summary(_fresh_session(), "DEFAULT")
     assert empty["has_data"] is False and empty["lost_units"] == 0 and empty["loss_cost"] is None
     assert empty["by_type"] == []
@@ -127,7 +139,7 @@ def test_machine_cost_is_the_full_uncapped_map_not_just_top_n():
     # 7 machines, each with a DISTINCT, decreasing downtime so their ranks are
     # unambiguous: machine i has (8 - i) * 10 minutes of downtime, no scrap, and
     # makes exactly half a good unit per run minute, so the pooled run rate is 0.5:
-    #   M1 -> 70 min -> 35 units -> £350 ... M7 -> 10 min -> 5 units -> £50
+    #   M1 -> 70 min -> 35 units -> ₹350 ... M7 -> 10 min -> 5 units -> ₹50
     expected = {}
     for i in range(1, 8):
         db.add(models.Machine(id=i, name=f"M{i}", status="Running", utilization=80, line="SMT"))

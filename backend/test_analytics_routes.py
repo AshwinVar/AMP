@@ -12,6 +12,18 @@ its own copy of the relocated helpers.
 
 Run:  python backend/test_analytics_routes.py     (exit 0 = pass)
 """
+
+import sys
+
+# PRINTING THE CURRENCY SYMBOL MUST NOT KILL A PASSING SUITE.
+#
+# A Windows console is cp1252 by default, and '\u20b9' has no cp1252 code point.
+# Before this line, the suite ran green and then died with UnicodeEncodeError on
+# the print that announced it -- a non-zero exit from a test that had passed.
+# CI's runners are UTF-8, so CI never saw it; only a developer did.
+# test_currency_single.py pins this for every suite carrying the symbol.
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 import inspect
 from datetime import date, datetime, timedelta
 
@@ -718,7 +730,7 @@ def test_final_executive_summary_null_columns_are_zero_not_a_crash():
     # cost: 1000 + 0(NULL->0) = 1000
     assert out["total_cost"] == 1000, out
     print("PASS final-executive-summary: NULL count columns -> 0, no crash "
-          "(quality 53% / dispatch 20% / 2 low-stock / £1000)")
+          "(quality 53% / dispatch 20% / 2 low-stock / ₹1000)")
 
 
 def test_final_executive_summary_empty_tables_are_unmeasured_not_zero():
@@ -795,7 +807,7 @@ def test_final_executive_summary_counts_are_tenant_scoped():
     assert out["quality_rate"] == 75, out
     # dispatch over GMATS's single order only: 40/200 -> 20 (NOT folding DEFAULT's 50/100)
     assert out["customer_orders"] == 1 and out["dispatch_rate"] == 20, out
-    # total_cost is GMATS's £500 alone, never £999 + £500
+    # total_cost is GMATS's ₹500 alone, never ₹999 + ₹500
     assert out["total_cost"] == 500, out
     print("PASS final-executive-summary: SQL counts/sums stay tenant-scoped (GMATS sees only its own)")
 

@@ -4,7 +4,7 @@ import { useCallback, useState } from "react";
 import { apiPatch, errorDetail } from "../lib/api";
 import { CURRENCY } from "../lib/money";
 
-// Shared inline editor for the tenant's £/good-unit rate
+// Shared inline editor for the tenant's ₹/good-unit rate
 // (TenantConfig.unit_value_gbp). Admin-only; PATCHes /tenant-config and calls
 // onSaved so the caller can refresh. Used by the recovery card and the Executive
 // OEE money-story panel so the control lives in one place.

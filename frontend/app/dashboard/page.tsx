@@ -38,6 +38,7 @@ import ServiceContracts from "../../components/ServiceContracts";
 import type { User } from "../../lib/types";
 import QualitySection from "../../components/QualitySection";
 import ExecutiveOeeSection from "../../components/ExecutiveOeeSection";
+import PlantBoardSection from "../../components/PlantBoardSection";
 import MoneyStorySnapshot from "../../components/MoneyStorySnapshot";
 import FactoryPulse from "../../components/FactoryPulse";
 import QualitySnapshot from "../../components/QualitySnapshot";
@@ -2954,6 +2955,13 @@ export default function DashboardPage() {
           getMachineName={getMachineName}
         />
         </>
+      ))}
+
+      {/* THE PLANT BOARD. One tab, every chart a moulding plant asked for, and
+          an honest gap where power and packing have no source. It fetches its
+          own day and month, so nothing here has to hold its state. */}
+      {renderSection("plantboard", (
+        <PlantBoardSection isAdmin={isAdmin} />
       ))}
 
       {renderSection("executive", (

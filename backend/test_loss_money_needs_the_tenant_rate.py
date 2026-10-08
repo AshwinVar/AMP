@@ -1,34 +1,46 @@
-"""No cost-of-losses £ exists without the tenant's own rate (ADR-0010).
+"""No cost-of-losses ₹ exists without the tenant's own rate (ADR-0010).
 
 ADR-0010's decision: one per-tenant margin per good unit (TenantConfig.
 unit_value_gbp) drives every money figure, and "unset means units-only, never a
-fabricated £". The dashboard's own money panel says so to the customer: "one rate
+fabricated ₹". The dashboard's own money panel says so to the customer: "one rate
 drives the whole dashboard, and stays units-only until you set it."
 
 The cost-of-losses family never followed it. ai/cost.py priced every tenant's
-downtime at a fixed £12 a minute and every scrapped unit at a fixed £25:
+downtime at a fixed ₹12 a minute and every scrapped unit at a fixed ₹25:
 
   * GET /cost-summary and /cost-trend, the Cost of losses cards and Trends card;
   * the scorecard's "Cost of losses" KPI and its week-on-week change;
   * the weekly report, the assistant's answers and digest, the copilot context;
   * the digital twin's cost heat map;
 
-and build_management_summary valued downtime at £8 a minute whenever no rate was
-set. None of these numbers came from the customer. A plant with a £2 margin
-and one with a £400 margin were shown the same £.
+and build_management_summary valued downtime at ₹8 a minute whenever no rate was
+set. None of these numbers came from the customer. A plant with a ₹2 margin
+and one with a ₹400 margin were shown the same ₹.
 
 THE RULE THESE TESTS PIN
   * A loss is measured in GOOD UNITS NOT MADE: a scrapped unit is one; downtime
     minutes are converted at the window's observed run rate (good units per minute
     of run time), the conversion build_management_summary already used.
-  * Money = those units x the tenant's rate. No rate -> every £ is None and the
-    surfaces speak in units. A rate of 0 is a real £0.
+  * Money = those units x the tenant's rate. No rate -> every ₹ is None and the
+    surfaces speak in units. A rate of 0 is a real ₹0.
   * Downtime with no run time in the window has no run rate to convert it, so its
-    units (and £) are None, not 0.
-  * Every headline still equals the sum of its breakdowns, units and £ alike.
+    units (and ₹) are None, not 0.
+  * Every headline still equals the sum of its breakdowns, units and ₹ alike.
 
 Run:  python backend/test_loss_money_needs_the_tenant_rate.py     (exit 0 = pass)
 """
+
+import sys
+
+# PRINTING THE CURRENCY SYMBOL MUST NOT KILL A PASSING SUITE.
+#
+# A Windows console is cp1252 by default, and '\u20b9' has no cp1252 code point.
+# Before this line, the suite ran green and then died with UnicodeEncodeError on
+# the print that announced it -- a non-zero exit from a test that had passed.
+# CI's runners are UTF-8, so CI never saw it; only a developer did.
+# test_currency_single.py pins this for every suite carrying the symbol.
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 from datetime import datetime, timedelta
 from types import SimpleNamespace
 
@@ -71,10 +83,10 @@ def _plant(db, hours_ago=2):
 
 
 def _no_pound(text):
-    assert CURRENCY not in text, f"a £ figure with no rate set: {text!r}"
+    assert CURRENCY not in text, f"a ₹ figure with no rate set: {text!r}"
 
 
-# ── Unset: units only, never a fabricated £ ─────────────────────────────────
+# ── Unset: units only, never a fabricated ₹ ─────────────────────────────────
 
 
 def test_cost_summary_without_a_rate_reports_units_and_no_money():
@@ -93,7 +105,7 @@ def test_cost_summary_without_a_rate_reports_units_and_no_money():
         _no_pound(l["detail"])
     assert s["biggest"] == "downtime"                    # 70 units > 10 units
     assert [m["lost_units"] for m in s["by_machine"]] == [50, 30]
-    print("PASS no rate: the cost summary reports 80 good units lost and no £ at all")
+    print("PASS no rate: the cost summary reports 80 good units lost and no ₹ at all")
 
 
 def test_trend_scorecard_report_assistant_twin_speak_units_without_a_rate():
@@ -122,7 +134,7 @@ def test_trend_scorecard_report_assistant_twin_speak_units_without_a_rate():
 
     overlay = {m["machine_id"]: m for m in twin.build_twin_overlay(db, TENANT)["machines"]}
     assert overlay[1]["cost"] is None and overlay[1]["lost_units"] == 50, overlay
-    print("PASS no rate: trend, scorecard, weekly report, assistant and twin speak units, never £")
+    print("PASS no rate: trend, scorecard, weekly report, assistant and twin speak units, never ₹")
 
 
 def test_management_summary_has_no_per_minute_proxy():
@@ -132,17 +144,17 @@ def test_management_summary_has_no_per_minute_proxy():
                            good_count=160, rejected_count=10, ideal_cycle_time_seconds=30)]
     s = analytics_engine.build_management_summary(machines, downtime, [], rec)
     assert s["total_downtime_minutes"] == 40 and s["estimated_loss_units"] == 40, s
-    assert s["estimated_loss_value"] is None, f"£{s['estimated_loss_value']} with no rate (the old £8/min proxy)"
+    assert s["estimated_loss_value"] is None, f"₹{s['estimated_loss_value']} with no rate (the old ₹8/min proxy)"
     priced = analytics_engine.build_management_summary(machines, downtime, [], rec, unit_value_gbp=3)
     assert priced["estimated_loss_value"] == 120, priced
     stopped = [SimpleNamespace(machine_id=1, planned_minutes=200, runtime_minutes=0, total_count=0,
                                good_count=0, rejected_count=0, ideal_cycle_time_seconds=30)]
     unknown = analytics_engine.build_management_summary(machines, downtime, [], stopped, unit_value_gbp=3)
     assert unknown["estimated_loss_units"] is None and unknown["estimated_loss_value"] is None, unknown
-    print("PASS the management summary no longer invents £8 a minute, and no run time means unknown")
+    print("PASS the management summary no longer invents ₹8 a minute, and no run time means unknown")
 
 
-# ── Set: £ = units x the tenant's rate, reconciled ───────────────────────────
+# ── Set: ₹ = units x the tenant's rate, reconciled ───────────────────────────
 
 
 def test_money_is_units_times_the_tenants_rate():
@@ -158,7 +170,7 @@ def test_money_is_units_times_the_tenants_rate():
     kpi = {k["key"]: k for k in scorecard.build_scorecard(db, TENANT)["kpis"]}["loss_cost"]
     assert kpi["unit"] == CURRENCY and kpi["value"] == 200, kpi
     assert cost.build_cost_trend(db, TENANT)["current"]["cost"] == 200
-    print("PASS rate £2.50: 80 lost units -> £200, and every breakdown sums to it")
+    print("PASS rate ₹2.50: 80 lost units -> ₹200, and every breakdown sums to it")
 
 
 def test_a_rate_of_zero_is_a_real_zero():
@@ -166,7 +178,7 @@ def test_a_rate_of_zero_is_a_real_zero():
     _plant(db)
     s = cost.build_cost_summary(db, TENANT)
     assert s["priced"] is True and s["loss_cost"] == 0 and s["lost_units"] == 80
-    print("PASS rate £0: £0 lost, still 80 units")
+    print("PASS rate ₹0: ₹0 lost, still 80 units")
 
 
 def test_fractional_units_still_reconcile_exactly():
@@ -194,7 +206,7 @@ def test_fractional_units_still_reconcile_exactly():
     # one unit still owed goes to the LARGEST remainder, M2's .67, so 16 / 26 / 30,
     # plus one scrapped unit each.
     assert {m["machine_id"]: m["lost_units"] for m in s["by_machine"]} == {1: 17, 2: 27, 3: 31}, s["by_machine"]
-    print("PASS fractional run rates: units and £ headlines equal the sum of every breakdown")
+    print("PASS fractional run rates: units and ₹ headlines equal the sum of every breakdown")
 
 
 def test_rounding_each_row_on_its_own_would_miss_the_headline():
@@ -227,7 +239,7 @@ def test_a_machine_with_no_line_is_in_the_headline_but_on_no_line():
                                    rejected_count=0, created_at=datetime.utcnow() - timedelta(hours=2)))
     db.commit()
     s = cost.build_cost_summary(db, TENANT)
-    # pooled run rate (160 + 90 + 100) / (160 + 90 + 100) = 1: M3 lost 50 units, £50
+    # pooled run rate (160 + 90 + 100) / (160 + 90 + 100) = 1: M3 lost 50 units, ₹50
     lines = {r["line"]: r for r in s["by_line"]}
     assert set(lines) == {"SMT", "IC"}, lines
     assert s["loss_cost"] == 130 and lines["SMT"]["cost"] == 50 and lines["IC"]["cost"] == 30, s["by_line"]
@@ -247,7 +259,7 @@ def test_downtime_with_no_run_time_is_unknown_not_zero():
     assert s["downtime_minutes"] == 480
     assert s["downtime_lost_units"] is None and s["lost_units"] is None, s
     assert s["downtime_cost"] is None and s["loss_cost"] is None, s
-    print("PASS 480 min down with no run time: lost units and £ are unknown, not 0")
+    print("PASS 480 min down with no run time: lost units and ₹ are unknown, not 0")
 
 
 if __name__ == "__main__":

@@ -10,7 +10,7 @@ import { lossFigure, money } from "../lib/money";
 // Losses are GOOD UNITS NOT MADE, and money only at the tenant's own unit value
 // (ADR-0010). Every *_cost field is null when no unit value is set, and every
 // units field is null when downtime had no run time to convert. The card used to
-// print a fixed £12 a minute and £25 a unit for every tenant.
+// print a fixed ₹12 a minute and ₹25 a unit for every tenant.
 type Loss = { key: string; label: string; units: number | null; cost: number | null; detail: string };
 type LossRow = {
   downtime_minutes: number;
@@ -73,7 +73,7 @@ export default function CostSnapshot({ onOpen }: { onOpen?: (viewKey: string) =>
 
   if (!s || !s.has_data) return null;
 
-  // Bars scale by lost units: with one rate, the £ order is the unit order, and
+  // Bars scale by lost units: with one rate, the ₹ order is the unit order, and
   // units exist whether or not a rate is set.
   const peak = s.losses.reduce((m, l) => Math.max(m, l.units ?? 0), 0) || 1;
   const dailyPeak = Math.max(...s.daily.map((d) => d.lost_units ?? 0), 1);

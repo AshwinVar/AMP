@@ -3,6 +3,18 @@
 Four headline KPIs (OEE, good rate, on-time orders, cost of losses), each with a
 tone, composed from the pillar read-models. Run:  python backend/test_scorecard.py
 """
+
+import sys
+
+# PRINTING THE CURRENCY SYMBOL MUST NOT KILL A PASSING SUITE.
+#
+# A Windows console is cp1252 by default, and '\u20b9' has no cp1252 code point.
+# Before this line, the suite ran green and then died with UnicodeEncodeError on
+# the print that announced it -- a non-zero exit from a test that had passed.
+# CI's runners are UTF-8, so CI never saw it; only a developer did.
+# test_currency_single.py pins this for every suite carrying the symbol.
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 from datetime import datetime, timedelta
 from types import SimpleNamespace
 
@@ -30,11 +42,11 @@ def test_prior_period_loss_cost_shares_the_per_record_downtime_basis():
                             good_count=100, rejected_count=0, ideal_cycle_time_seconds=30),
             SimpleNamespace(planned_minutes=100, runtime_minutes=50, total_count=50,
                             good_count=50, rejected_count=0, ideal_cycle_time_seconds=30)]
-    # Run rate 150 good / 170 run minutes: 50 min -> 44 units -> £132 at a £3 unit value.
+    # Run rate 150 good / 170 run minutes: 50 min -> 44 units -> ₹132 at a ₹3 unit value.
     k = scorecard._period_kpis(recs, 3)
     assert k["lost_units"] == 44 and k["loss_cost"] == 132, k
-    assert k["loss_cost"] != 78                    # not the aggregate 30 min -> 26 units -> £78
-    # no unit value -> the same lost units, and no £ (ADR-0010)
+    assert k["loss_cost"] != 78                    # not the aggregate 30 min -> 26 units -> ₹78
+    # no unit value -> the same lost units, and no ₹ (ADR-0010)
     unpriced = scorecard._period_kpis(recs, None)
     assert unpriced["lost_units"] == 44 and unpriced["loss_cost"] is None, unpriced
     print("PASS scorecard prior-period loss_cost uses the per-record downtime basis (like-for-like WoW)")
@@ -44,13 +56,13 @@ def test_scorecard_headlines_one_kpi_per_pillar_with_tone():
     db = _fresh_session()
     now = datetime.utcnow()
     db.add(models.Machine(id=1, name="M1", status="Running", utilization=90, line="SMT"))
-    # The tenant's unit value, £45 per good unit: the only source of a £ (ADR-0010).
+    # The tenant's unit value, ₹45 per good unit: the only source of a ₹ (ADR-0010).
     db.add(models.TenantConfig(tenant_code="DEFAULT", plan="Pro", unit_value_gbp=45))
-    # current week: good rate 97; 40 min at 97/440 a minute ≈ 9 units + 3 scrap = 12 units = £540
+    # current week: good rate 97; 40 min at 97/440 a minute ≈ 9 units + 3 scrap = 12 units = ₹540
     db.add(models.ProductionRecord(machine_id=1, planned_minutes=480, runtime_minutes=440,
                                    ideal_cycle_time_seconds=30, total_count=100, good_count=97,
                                    rejected_count=3, created_at=now))
-    # prior week (8 days ago): good rate 90; 60 min at 90/420 ≈ 13 units + 10 scrap = 23 units = £1,035
+    # prior week (8 days ago): good rate 90; 60 min at 90/420 ≈ 13 units + 10 scrap = 23 units = ₹1,035
     db.add(models.ProductionRecord(machine_id=1, planned_minutes=480, runtime_minutes=420,
                                    ideal_cycle_time_seconds=30, total_count=100, good_count=90,
                                    rejected_count=10, created_at=now - timedelta(days=8)))

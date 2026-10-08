@@ -1,9 +1,21 @@
 """Digital-twin overlay read-model tests (ADR-0007).
 
-Per-machine OEE + losses (good units, and £ only at the tenant's unit value), keyed
+Per-machine OEE + losses (good units, and ₹ only at the tenant's unit value), keyed
 by machine, for heating the floor map.
 Run:  python backend/test_twin_overlay.py     (exit 0 = pass)
 """
+
+import sys
+
+# PRINTING THE CURRENCY SYMBOL MUST NOT KILL A PASSING SUITE.
+#
+# A Windows console is cp1252 by default, and '\u20b9' has no cp1252 code point.
+# Before this line, the suite ran green and then died with UnicodeEncodeError on
+# the print that announced it -- a non-zero exit from a test that had passed.
+# CI's runners are UTF-8, so CI never saw it; only a developer did.
+# test_currency_single.py pins this for every suite carrying the symbol.
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
@@ -43,11 +55,11 @@ def test_overlay_keys_oee_and_cost_by_machine():
     o = twin.build_twin_overlay(db, "DEFAULT")
     by = {m["machine_id"]: m for m in o["machines"]}
     assert set(by) == {1, 2} and o["priced"] is True
-    assert by[1]["lost_units"] == 18 and by[1]["cost"] == 225       # 18 units x £12.50
+    assert by[1]["lost_units"] == 18 and by[1]["cost"] == 225       # 18 units x ₹12.50
     assert by[2]["lost_units"] == 0 and by[2]["cost"] == 0
     assert isinstance(by[1]["oee"], int) and isinstance(by[2]["oee"], int)
 
-    # no unit value -> the map heats by lost units and carries no £ (ADR-0010)
+    # no unit value -> the map heats by lost units and carries no ₹ (ADR-0010)
     db = _fresh_session()
     _two_machines(db)
     o = twin.build_twin_overlay(db, "DEFAULT")
@@ -64,11 +76,11 @@ def test_overlay_cost_covers_every_machine_not_just_the_top_five():
     """Regression: the overlay must key cost off the FULL per-machine cost map, not
     build_cost_summary's TOP_N `by_machine` display page. With more cost-incurring
     machines than the cap, a machine ranked outside the top 5 must still carry its
-    real cost on the map — not paint as £0. Both OEE and cost sides cover every
+    real cost on the map — not paint as ₹0. Both OEE and cost sides cover every
     machine that ran (one shared basis, rule 3)."""
     db = _fresh_session(unit_value=10)
     # 7 machines, each with distinct decreasing downtime, each making half a good unit
-    # per run minute: M1 -> 70 min -> 35 units -> £350 ... M7 -> 10 min -> 5 units -> £50.
+    # per run minute: M1 -> 70 min -> 35 units -> ₹350 ... M7 -> 10 min -> 5 units -> ₹50.
     expected_cost = {}
     for i in range(1, 8):
         db.add(models.Machine(id=i, name=f"M{i}", status="Running", utilization=80, line="SMT"))
@@ -85,7 +97,7 @@ def test_overlay_cost_covers_every_machine_not_just_the_top_five():
     # Every machine that ran is on the map (not just the 5 costliest).
     assert set(by) == set(range(1, 8)), set(by)
     # Each machine carries its real cost — crucially the ones past the top-5 cap
-    # (M6 -> £100, M7 -> £50) are NOT dropped to 0.
+    # (M6 -> ₹100, M7 -> ₹50) are NOT dropped to 0.
     for mid, c in expected_cost.items():
         assert by[mid]["cost"] == c, (mid, by[mid]["cost"], c)
     assert by[6]["cost"] == 100 and by[7]["cost"] == 50

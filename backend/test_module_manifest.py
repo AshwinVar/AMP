@@ -47,6 +47,14 @@ def test_manifest_reproduces_the_plan_gate_route_map():
 _EXPECTED_VIEWS = {
     "mission": "core", "overview": "core", "machines": "core", "downtime": "core",
     "shifts": "core", "analytics": "core", "trends": "core", "timeline": "core",
+    # CORE, and deliberately not Factory. The plant board is hourly output
+    # against target, material consumed and the shift's money rate — it is what
+    # a plant watches, not an advanced analysis, and it is drawn from the same
+    # production records every Starter tenant already has. Putting it behind a
+    # pack would leave the smallest customers, who are exactly the ones with
+    # nobody on the floor to read a report, with the counts and none of the
+    # pictures.
+    "plantboard": "core",
     # CORE, deliberately (ADR-0017). This is where a customer sees and withdraws
     # what a machine's manufacturer may read about their shop floor, and a
     # consent control behind a paywall is not a consent control. Moving it into

@@ -73,6 +73,7 @@ import reports_routes
 import analytics_routes
 import recommendations_routes
 import bom_routes
+import part_spec_routes
 import gateway_routes
 import core_routes
 import industrial_adapters
@@ -308,6 +309,13 @@ _ensure_column("machine_installations", "last_service_hours",
                "ALTER TABLE machine_installations ADD COLUMN last_service_hours FLOAT")
 _ensure_column("machine_installations", "last_service_at",
                "ALTER TABLE machine_installations ADD COLUMN last_service_at TIMESTAMP")
+# Same class once more, from alembic 0015: `tool_assets` is created by 0014, so a
+# deploy that ran 0014 and not 0015 has the table without the column. Nullable
+# with no backfill, exactly as the migration argues — a tool that does not say
+# what it makes simply cannot be priced, and a default would assert a part
+# nobody chose.
+_ensure_column("tool_assets", "part_code",
+               "ALTER TABLE tool_assets ADD COLUMN part_code VARCHAR")
 # The windowed read-models filter these by created_at in SQL — index them so the
 # window stays fast as the tables grow.
 _ensure_index("production_records", "created_at")
@@ -448,6 +456,7 @@ app.include_router(reports_routes.router)
 app.include_router(analytics_routes.router)
 app.include_router(recommendations_routes.router)
 app.include_router(bom_routes.router)
+app.include_router(part_spec_routes.router)
 app.include_router(gateway_routes.router)
 app.include_router(core_routes.router)
 

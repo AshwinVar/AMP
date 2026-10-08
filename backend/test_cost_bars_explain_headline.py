@@ -43,6 +43,18 @@ and it was the chart that could not explain it. Section 4 pins that.
 
 Run: DATABASE_URL="sqlite:///./ci.db" python backend/test_cost_bars_explain_headline.py
 """
+
+import sys
+
+# PRINTING THE CURRENCY SYMBOL MUST NOT KILL A PASSING SUITE.
+#
+# A Windows console is cp1252 by default, and '\u20b9' has no cp1252 code point.
+# Before this line, the suite ran green and then died with UnicodeEncodeError on
+# the print that announced it -- a non-zero exit from a test that had passed.
+# CI's runners are UTF-8, so CI never saw it; only a developer did.
+# test_currency_single.py pins this for every suite carrying the symbol.
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 from datetime import datetime, timedelta
 
 from sqlalchemy import create_engine
@@ -64,7 +76,7 @@ def check(label, condition, detail=""):
           + (f"   [{detail}]" if detail and not condition else ""))
 
 
-# The tenant's own margin per good unit. Without one there is no £ to reconcile
+# The tenant's own margin per good unit. Without one there is no ₹ to reconcile
 # (ADR-0010: units only), so every section below prices at this rate.
 UNIT_VALUE = 2
 
@@ -176,7 +188,7 @@ def main():
     # Derived independently from the records, not from the payload: downtime
     # minutes at the window's pooled run rate, plus scrap, each at the tenant's
     # unit value, rounded half up. Fixture: 480 min down, 100 good in 480 run
-    # minutes, 1000 scrapped -> 100 + 1000 units -> £200 + £2,000.
+    # minutes, 1000 scrapped -> 100 + 1000 units -> ₹200 + ₹2,000.
     import math
     in_window = [r for r in db.query(models.ProductionRecord).all()
                  if window.start <= r.created_at < window.end]
@@ -185,7 +197,7 @@ def main():
     down_units = math.floor(down * run_rate + 0.5)
     scrap = sum(r.rejected_count or 0 for r in in_window)
     expected = math.floor(down_units * UNIT_VALUE + 0.5) + math.floor(scrap * UNIT_VALUE + 0.5)
-    check("...the independent derivation is the hand-worked £2,200", expected == 2200, str(expected))
+    check("...the independent derivation is the hand-worked ₹2,200", expected == 2200, str(expected))
     check(f"loss_cost still pools the whole rolling window "
           f"({summary['loss_cost']} vs {expected} derived)",
           summary["loss_cost"] == expected,

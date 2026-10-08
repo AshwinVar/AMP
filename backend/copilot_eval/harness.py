@@ -43,6 +43,16 @@ EXPECTED_STATE = {
     ("shifts", F.A): ev.OK, ("shifts", F.B): ev.OK, ("shifts", F.C): ev.NOT_CONFIGURED,
     ("fpy", F.C): ev.NO_DATA, ("reorder", F.C): ev.NO_DATA,
     ("losses", F.A): ev.OK, ("losses", F.B): ev.NOT_CONFIGURED, ("losses", F.C): ev.OK,
+    # The board always has two series with no source, so it never claims OK.
+    # B has no part spec at all: nothing on its board is derivable, and the state
+    # has to say so rather than report a plant that consumed and earned nothing.
+    ("board_kg", F.A): ev.PARTIAL_DATA, ("board_kg", F.B): ev.NOT_MEASURED,
+    ("board_kg", F.C): ev.PARTIAL_DATA,
+    ("board_rate", F.A): ev.PARTIAL_DATA, ("board_rate", F.B): ev.NOT_MEASURED,
+    ("board_rate", F.C): ev.PARTIAL_DATA,
+    # Power is not measured for anybody, and that is the answer.
+    ("board_power", F.A): ev.NOT_MEASURED, ("board_power", F.B): ev.NOT_MEASURED,
+    ("board_power", F.C): ev.NOT_MEASURED,
 }
 
 PCT_KEYS = {"oee.plant", "oee.availability", "oee.performance", "oee.quality", "plan.attainment",
@@ -67,6 +77,13 @@ def _expected_call(case_id, tools, tenant, machine="CNC-01"):
         return tool, {"machine": machine}
     if tool == "find_record":
         return tool, {"query": "WO-001"}
+    # Every board case names yesterday, and for the board the day IS the window:
+    # a plan that read today where the question said yesterday would be answering
+    # a different question, not making a worse job of this one. Written out here
+    # rather than taken from the router, for the reason the oracle exists: an
+    # answer key computed by the code under test checks nothing.
+    if tool == "get_plant_board":
+        return tool, {"on": "yesterday"}
     return tool, {}
 
 

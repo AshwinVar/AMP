@@ -120,6 +120,27 @@ WORK_ORDERS = {
 
 UNIT_VALUE = {A: 12.0, B: None, C: 7.5}
 
+# WHAT THE PARTS ARE (ai/plant_board.py). A machine counts shots; parts,
+# kilograms and rupees exist only through a PartSpec, and only for the machine
+# the mould is fitted to. The three conversions are INDEPENDENT, so the three
+# factories answer one board question three different true ways:
+#
+#   A  specced AND priced   -> a target, kilograms and a money rate
+#   B  nothing specced      -> shot counts, and nothing derived from them. B also
+#                              has no unit value, so no money figure may appear
+#                              for it anywhere
+#   C  specced, NOT priced  -> kilograms derivable, money not. This is the
+#                              factory that proves the three do not come as a set
+#
+# Both specs are effective well before the window, so the as-of lookup finds
+# them; a service interval is deliberately left unset, so no tool is reported
+# overdue and the board is the only thing these rows change.
+# machine -> (part_code, part_name, material, weight_g, active_cavities, cycle_s, price)
+PART_SPECS = {
+    A: ("CNC-01", "A-CLIP", "Alpha clip", "PP H 110", 0.33, 4, 16.0, 0.08),
+    C: ("CNC-01", "C-CAP", "Cygnus cap", "ABS NAT", 0.5, 1, 7.2, 0.0),
+}
+
 
 def seed(Session, now=None):
     """Write the three factories and the OEM into an empty schema. Returns `now`."""
@@ -148,6 +169,17 @@ def seed(Session, now=None):
                         tenant_code=t, machine_id=ids[(t, mname)], planned_minutes=planned,
                         runtime_minutes=runtime, ideal_cycle_time_seconds=ideal, total_count=total,
                         good_count=good, rejected_count=total - good, created_at=at(d)))
+            spec = PART_SPECS.get(t)
+            if spec:
+                on_machine, code, pname, material, weight, cav, cycle, price = spec
+                db.add(models.PartSpec(
+                    tenant_code=t, part_code=code, part_name=pname, material=material,
+                    part_weight_g=weight, cavities=cav, active_cavities=cav,
+                    ideal_cycle_time_s=cycle, price_per_piece=price,
+                    effective_from=today - timedelta(days=400)))
+                db.add(models.ToolAsset(
+                    tenant_code=t, tool_no=f"MLD-{code}", name=f"{pname} mould",
+                    machine_id=ids[(t, on_machine)], cavities=cav, part_code=code, status="Active"))
             for mname, reason, minutes, d in DOWNTIME[t]:
                 db.add(models.DowntimeLog(tenant_code=t, machine_id=ids[(t, mname)], reason=reason,
                                           duration=f"{minutes} min", created_at=at(d, 9)))
@@ -272,5 +304,25 @@ def oracle(tenant):
     out["orders.late"] = sum(1 for o in orders if o[3] < o[2] and o[4] < 0)
     out["maint.open"] = len(MAINTENANCE[tenant])
     out["maint.overdue"] = sum(1 for m in MAINTENANCE[tenant] if m[3] < 0)
+    # ── The plant board, for YESTERDAY ──
+    # The board cases ask for yesterday because the fixture writes production for
+    # days 1..5 back, so day 1 always has rows and the answer never depends on
+    # the hour the suite runs at.
+    yday = [r for rs in PRODUCTION[tenant].values() for r in rs if r[0] == 1]
+    out["board.parts"] = sum(r[4] for r in yday)
+    spec = PART_SPECS.get(tenant)
+    # A machine is unspecified unless a fitted tool names a part with a spec.
+    out["board.unspecified"] = len(machines) - (1 if spec else 0)
+    if spec:
+        on_machine, _code, _pname, _material, weight, cav, cycle, price = spec
+        made = sum(r[4] for r in PRODUCTION[tenant].get(on_machine, []) if r[0] == 1)
+        # parts x active cavities / the declared cycle: the board's own formulae,
+        # written out here rather than imported from the code under test.
+        out["board.machine_1.target"] = round(3600.0 / cycle * cav)
+        out["board.kg"] = round(made * weight / 1000.0, 3)
+        if price:
+            # The fixture writes at hour 10, so one 8-hour block holds all of it.
+            out["board.revenue"] = round(made * price, 2)
+            out["board.best_rate"] = round(made * price / 8, 2)
     out["priced"] = UNIT_VALUE[tenant] is not None
     return out

@@ -18,6 +18,8 @@ and take no period argument, so the tools take none either and every fact says
 which window it covers. A tool that offered `days` would have to compute a
 second version of each figure, which is the drift ADR-0014 exists to stop.
 """
+from datetime import datetime, timedelta
+
 import models
 import oee_contract
 from ai import assistant
@@ -39,7 +41,7 @@ from ai.schedule import build_schedule_adherence
 from ai.scorecard import build_scorecard
 from ai.shift import build_shift_summary
 from ai.tools.registry import Param, tool
-from currency import CURRENCY
+from currency import CURRENCY, unit_rate
 
 M, D, R, U = ev.MEASURED, ev.DERIVED, ev.RULE, ev.UNKNOWN
 W7 = "last 7 days"
@@ -955,3 +957,394 @@ def get_anomaly_sweep(db, tenant):
                            detail=NOT_ADOPTED))
     state = s["state"] if s["state"] in ev.DATA_STATES else ev.MODEL_NOT_VALIDATED
     return _result("get_anomaly_sweep", state, say_anomaly_sweep(s), facts, notes=[NOT_ADOPTED])
+
+
+# ── The plant board: parts against target, kilograms, rupees ────────
+#
+# The board (ai/plant_board.py) is the one read-model whose figures are a
+# CONVERSION away from anything a controller holds. A machine counts shots;
+# parts, kilograms and money exist only once somebody has entered a PartSpec for
+# the part the fitted mould makes. So these tools carry two honesty rules the
+# other tools never need:
+#
+#   1. A MACHINE WITH NO SPEC STILL HAS A COUNT. Its parts are measured. Its
+#      target, its kilograms and its rupees are not derivable AT ALL. The builder
+#      returns 0.0 for those because a chart needs a number to draw, and a tool
+#      that passed those zeros on would report a plant that consumed no material
+#      and earned nothing. Each is stated as UNKNOWN with the reason instead, and
+#      the builder's own `material` / `priced` / `ideal_per_hour` decide which:
+#      they are independent, because a spec with no declared cycle prices output
+#      it cannot rate.
+#   2. POWER AND PACKING HAVE NO SOURCE on this customer's floor -- no meter is
+#      fitted and nobody records packed quantities. The builder marks both
+#      unavailable and carries no points; test_plant_board.py pins that at length,
+#      and it has to survive into the Copilot's answer, because "0 kWh" and
+#      "nothing is measuring kWh" are different claims and only one is true.
+#
+# The window is the DAY or the MONTH asked for, not the usual seven, so every
+# fact here says which period it covers.
+
+BOARD_VIEW = "plantboard"
+BOARD_MACHINES_SHOWN = 3
+
+_NO_SPEC = ("no part spec is on record for the part this machine is making, so its shot count "
+            "cannot be converted at all -- this is underivable, not zero")
+_NO_CYCLE = ("the part spec declares no cycle time, so no ideal rate exists and the hours are "
+             "unrated rather than missed")
+_NO_PRICE = ("no price per piece is on record for this part, so its output has no money value here")
+# plant_board.month's own label for output it could not attribute to a part.
+# Pinned by test_copilot_plant_board_tool.py so a rename there fails loudly here.
+_NO_PART_BUCKET = "(no part assigned)"
+
+
+def _on_date(on):
+    """(date, None) or (None, why).
+
+    "today" and "yesterday" are accepted because that is how a person asks;
+    anything else must be the route's own YYYY-MM-DD, so a tool can never read a
+    day the REST route would have rejected.
+    """
+    text = (on or "").strip().lower()
+    today = datetime.utcnow().date()
+    if not text or text == "today":
+        return today, None
+    if text == "yesterday":
+        return today - timedelta(days=1), None
+    try:
+        return datetime.strptime(text, "%Y-%m-%d").date(), None
+    except ValueError:
+        return None, f"A day must be YYYY-MM-DD, \"today\" or \"yesterday\", not {str(on)[:40]!r}."
+
+
+def _coverage(have, total, what):
+    """What a plant total actually covers. A sum over the specced machines only
+    is not a plant figure, and saying so is the difference between a total and a
+    guess."""
+    if have >= total:
+        return f"every machine has {what}"
+    return (f"covers the {have} of {total} machines that have {what}; the other {total - have} are "
+            f"counted but not converted, so this is not a plant total")
+
+
+def _board_rows(board):
+    """The board's three per-machine series joined on machine_id, with what is
+    derivable for each machine stated rather than implied.
+
+    `kg_total` and the shift revenues come back from the builder as 0.0 for a
+    machine with no spec. That zero is drawable but it is not a reading, so it is
+    dropped to None here and the caller says UNKNOWN.
+    """
+    rm = {r["machine_id"]: r for r in board["rm_status"]}
+    sr = {s["machine_id"]: s for s in board["shift_rate"]}
+    rows = []
+    for p in board["production"]:
+        mid = p["machine_id"]
+        material = (rm.get(mid) or {}).get("material")
+        blocks = (sr.get(mid) or {}).get("points") or []
+        priced = bool((sr.get(mid) or {}).get("priced")) and bool(blocks)
+        points = p["points"]
+        rows.append({
+            "machine": p["machine"], "part": p["part"], "material": material,
+            "parts": int(p["total"] or 0),
+            "target": int(p["ideal_per_hour"] or 0) or None,
+            # An hour is BELOW a level only where a level was declared. An
+            # unrated hour is not a miss; it is an hour nobody set a standard for.
+            "below": sum(1 for pt in points if pt["status"] == "low"),
+            "hours": len(points),
+            "kg": (rm.get(mid) or {}).get("kg_total") if material else None,
+            "revenue": round(sum(b["revenue"] for b in blocks), 2) if priced else None,
+            "best": max(blocks, key=lambda b: (b["rate_per_hour"], -b["shift"])) if priced else None,
+        })
+    return rows
+
+
+def _unavailable_facts(prefix, board, window):
+    """The two series with no source, as UNKNOWN facts carrying the builder's own
+    reason and fix. Never zeros, and never omitted: a reader who asked for the
+    board is owed the fact that two of its five graphs cannot be drawn."""
+    out = []
+    for key, unit, label in (("power", "kWh", "Power consumed"),
+                             ("packing", "parts", "Quantity packed")):
+        series = board.get(key) or {}
+        out.append(_fact(f"{prefix}.{key}", label, None, U, unit, "no source is connected", window,
+                         detail=f"{series.get('reason', '')} {series.get('fix', '')}".strip()
+                                + " -- reported as unavailable, not as 0"))
+    return out
+
+
+@tool("get_plant_board",
+      "One day of the plant board, per machine: parts made against the target the "
+      "part spec implies, kilograms of material consumed, and the shift-hour money "
+      "rate. Use for hourly output against target, which machine missed its target, "
+      "kilograms or material used on a day, and shift-rate questions. Power and "
+      "packing are not measured and are reported as such.",
+      mirrors="/analytics/plant-board", view=BOARD_VIEW, domain="production",
+      params={"on": Param("str", "The day: YYYY-MM-DD, or \"today\" or \"yesterday\"")})
+def get_plant_board(db, tenant, on=""):
+    from ai import plant_board            # lazy: the board pulls in the models layer
+    when, why = _on_date(on)
+    if when is None:
+        return ev.refusal("get_plant_board", ev.INVALID_ARGUMENTS, why)
+    board = plant_board.day(db, tenant, when)
+    day = board["date"]
+    rows = _board_rows(board)
+    if not rows:
+        return _result("get_plant_board", ev.NO_DATA,
+                       (f"There are no machines on the plant board for {day}.", BOARD_VIEW),
+                       [_fact("board.machines", "Machines on the board", 0, M, "machines", "machines", day)])
+
+    specced = [r for r in rows if r["kg"] is not None]
+    priced = [r for r in rows if r["revenue"] is not None]
+    targeted = [r for r in rows if r["target"]]
+    nospec = [r for r in rows if not r["material"]]
+    parts = sum(r["parts"] for r in rows)
+    facts = [
+        _fact("board.date", "The day this covers", day, M, source="the day asked for", window=day),
+        _fact("board.machines", "Machines on the board", len(rows), M, "machines", "machines", day),
+        _fact("board.parts", "Parts made", parts, M, "parts", "production_records", day),
+        _fact("board.acceptable", "The level an hour must reach to count as acceptable",
+              round(board["acceptable_fraction"] * 100), R, "% of target",
+              "plant policy (ai.plant_board.ACCEPTABLE)", day,
+              detail="a plant policy, not a law; the board returns it rather than fixing it in the browser"),
+        _fact("board.unspecified", "Machines with no part spec", len(nospec), M, "machines",
+              "part_specs, via the tool fitted to each machine", day,
+              detail="their parts are counted; their target, kilograms and money are not derivable "
+                     "until somebody enters a part spec" if nospec else "every machine's part is on record"),
+    ]
+
+    # Target. "Below target" only means something where a target was declared.
+    if targeted:
+        worst = max(targeted, key=lambda r: (r["below"], r["machine"]))
+        facts.append(_fact("board.worst_machine", "Machine below target for the most hours",
+                           worst["machine"], M, source="production_records", window=day))
+        facts.append(_fact("board.worst_machine_hours", f"{worst['machine']} hours below target",
+                           worst["below"], R, "hours", "hourly parts against the spec's ideal rate", day,
+                           detail=f"out of {worst['hours']} hours in the day"))
+    else:
+        facts.append(_fact("board.worst_machine_hours", "Hours below target", None, U, "hours",
+                           "part_specs", day,
+                           detail="no machine has a part spec with a declared cycle time, so no hour "
+                                  "has a target to be below -- unrated, not missed"))
+
+    # Material.
+    if specced:
+        facts.append(_fact("board.kg", "Material consumed", round(sum(r["kg"] for r in specced), 3), D,
+                           "kg", "parts x the spec's part weight", day,
+                           detail=_coverage(len(specced), len(rows), "a part spec")))
+    else:
+        facts.append(_fact("board.kg", "Material consumed", None, U, "kg", "part_specs", day,
+                           detail="no machine has a part spec, so the shot counts cannot become "
+                                  "kilograms at all (not 0 kg)"))
+
+    # Money. The rate is the builder's own block figure, never re-derived here.
+    if priced:
+        facts.append(_fact("board.revenue", "Value of the day's output",
+                           round(sum(r["revenue"] for r in priced), 2), D, CURRENCY,
+                           "parts x the spec's price per piece", day,
+                           detail=_coverage(len(priced), len(rows), "a priced part spec")))
+        top = max(priced, key=lambda r: (r["best"]["rate_per_hour"], r["machine"]))
+        facts.append(_fact("board.best_rate_where", "Where the highest shift-hour rate was",
+                           f"{top['machine']} shift {top['best']['shift']}", M, source="shift_rate",
+                           window=day))
+        facts.append(_fact("board.best_rate", "Highest shift-hour rate", top["best"]["rate_per_hour"], D,
+                           CURRENCY, "that block's revenue over its 8 hours", day))
+    else:
+        facts.append(_fact("board.revenue", "Value of the day's output", None, U, CURRENCY,
+                           "part_specs", day,
+                           detail="no machine has a priced part spec, so the day's output has no money "
+                                  "value here (not zero)"))
+        facts.append(_fact("board.best_rate", "Highest shift-hour rate", None, U, CURRENCY,
+                           "part_specs", day, detail=_NO_PRICE))
+
+    # Per machine, most parts first: the count ALWAYS, and each conversion only
+    # where the spec supports it.
+    ranked = sorted(rows, key=lambda r: (-r["parts"], r["machine"]))
+    for i, r in enumerate(ranked[:BOARD_MACHINES_SHOWN], 1):
+        k = f"board.machine_{i}"
+        facts.append(_fact(k, f"Machine {i}", r["machine"], M, source="machines", window=day,
+                           detail=f"making {r['part']}" if r["part"] else "no part on record"))
+        facts.append(_fact(f"{k}.parts", f"{r['machine']} parts made", r["parts"], M, "parts",
+                           "production_records", day))
+        if r["target"]:
+            facts.append(_fact(f"{k}.target", f"{r['machine']} target per hour", r["target"], D,
+                               "parts/hour", "3600 / the spec's cycle time x its active cavities", day))
+            facts.append(_fact(f"{k}.below", f"{r['machine']} hours below target", r["below"], R, "hours",
+                               "hourly parts against that target", day))
+        else:
+            facts.append(_fact(f"{k}.target", f"{r['machine']} target per hour", None, U, "parts/hour",
+                               "part_specs", day, detail=_NO_SPEC if not r["material"] else _NO_CYCLE))
+        if r["kg"] is not None:
+            facts.append(_fact(f"{k}.kg", f"{r['machine']} material consumed", r["kg"], D, "kg",
+                               "parts x the spec's part weight", day, detail=f"material: {r['material']}"))
+        else:
+            facts.append(_fact(f"{k}.kg", f"{r['machine']} material consumed", None, U, "kg",
+                               "part_specs", day, detail=_NO_SPEC))
+        if r["revenue"] is not None:
+            facts.append(_fact(f"{k}.rate", f"{r['machine']} best shift-hour rate",
+                               r["best"]["rate_per_hour"], D, CURRENCY,
+                               "that block's revenue over its 8 hours", day))
+        else:
+            facts.append(_fact(f"{k}.rate", f"{r['machine']} shift-hour rate", None, U, CURRENCY,
+                               "part_specs", day, detail=_NO_SPEC if not r["material"] else _NO_PRICE))
+
+    facts += _unavailable_facts("board", board, day)
+
+    # Power and packing are ALWAYS absent, so this state never claims a complete
+    # picture. A board with no conversions at all is NOT MEASURED rather than
+    # PARTIAL: nothing on it has been turned into a figure a person asked for.
+    state = ev.NOT_MEASURED if not specced and not priced else ev.PARTIAL_DATA
+    return _result("get_plant_board", state,
+                   _say_board(day, rows, parts, specced, priced, targeted, nospec), facts,
+                   notes=["Parts, kilograms and money are conversions of a shot count through the part "
+                          "spec in force on the day read; a machine with no spec is counted only.",
+                          "Power and packing have no source on this floor and are never shown as zero."])
+
+
+def _say_board(day, rows, parts, specced, priced, targeted, nospec):
+    """AMP's own sentence for the board. Every figure in it is one of the facts
+    above, and the rupee figure appears only where a part is priced -- a plant
+    with no price must not see a money sentence at all."""
+    out = [f"The plant board for {day}: {len(rows)} machine{'' if len(rows) == 1 else 's'} "
+           f"made {parts:,} parts."]
+    if targeted:
+        worst = max(targeted, key=lambda r: (r["below"], r["machine"]))
+        out.append(f"{worst['machine']} was below its target for {worst['below']} "
+                   f"of {worst['hours']} hours.")
+    else:
+        out.append("No machine has a declared target, so no hour is rated against one.")
+    if specced:
+        out.append(f"{round(sum(r['kg'] for r in specced), 3):,} kg of material was consumed.")
+    else:
+        out.append("Material consumed is not derivable: no machine has a part spec.")
+    if priced:
+        top = max(priced, key=lambda r: (r["best"]["rate_per_hour"], r["machine"]))
+        out.append(f"The best shift-hour rate was {unit_rate(top['best']['rate_per_hour'])} "
+                   f"at {top['machine']} shift {top['best']['shift']}.")
+    else:
+        out.append("No part is priced, so there is no money rate for the day.")
+    if nospec:
+        out.append(f"{len(nospec)} machine{'' if len(nospec) == 1 else 's'} "
+                   f"have no part spec, so their parts are counted but not converted.")
+    out.append("Power and packing have no source on this floor, so neither is reported.")
+    return " ".join(out), BOARD_VIEW
+
+
+@tool("get_plant_board_month",
+      "The plant board's monthly tables: output by part, kilograms of each material "
+      "consumed, and the shift-hour money rate by machine, over a whole month. Use "
+      "for monthly kilograms or material consumption, monthly output by part, and "
+      "monthly rate questions. Power and packing are not measured.",
+      mirrors="/analytics/plant-board/month", view=BOARD_VIEW, domain="production",
+      params={"year": Param("int", "The year, e.g. 2026", minimum=2000, maximum=2100),
+              "month": Param("int", "The month of the year, 1-12", minimum=1, maximum=12)})
+def get_plant_board_month(db, tenant, year=0, month=0):
+    from ai import plant_board            # lazy: the board pulls in the models layer
+    now = datetime.utcnow()
+    year, month = year or now.year, month or now.month
+    m = plant_board.month(db, tenant, year, month)
+    window = f"{year}-{month:02d}"
+
+    items = m["itemwise_production"]
+    materials = m["rm_consumption"]
+    machines = m["shift_rate_by_machine"]
+    # Output the board could not attribute to a part: counted, never converted.
+    unassigned = sum(i["total"] for i in items if i["part"] == _NO_PART_BUCKET)
+    parts = sum(i["total"] for i in items)
+    facts = [
+        _fact("month.parts", "Parts made in the month", parts, M, "parts", "production_records", window),
+        _fact("month.good", "Good parts", sum(i["good"] for i in items), M, "parts",
+              "production_records", window),
+        _fact("month.unassigned", "Parts made with no part spec", unassigned, M, "parts",
+              "production_records with no part spec for the machine's tool", window,
+              detail="counted, but not convertible to kilograms or money"
+                     if unassigned else "every part made was attributable to a spec"),
+    ]
+    for i, row in enumerate([x for x in items if x["part"] != _NO_PART_BUCKET][:3], 1):
+        facts.append(_fact(f"month.part_{i}", f"Part {i} by output", row["part"], M,
+                           source="part_specs", window=window))
+        facts.append(_fact(f"month.part_{i}.total", f"{row['part']} made", row["total"], M, "parts",
+                           "production_records", window))
+
+    if materials:
+        facts.append(_fact("month.kg", "Material consumed", round(sum(x["kg"] for x in materials), 3), D,
+                           "kg", "parts x each spec's part weight", window,
+                           detail="covers only output with a part spec" if unassigned
+                                  else "every part made had a spec"))
+        for i, row in enumerate(materials[:3], 1):
+            facts.append(_fact(f"month.material_{i}", f"Material {i} by weight", row["material"], M,
+                               source="part_specs", window=window))
+            facts.append(_fact(f"month.material_{i}.kg", f"{row['material']} consumed", row["kg"], D, "kg",
+                               "parts x that spec's part weight", window))
+    else:
+        facts.append(_fact("month.kg", "Material consumed", None, U, "kg", "part_specs", window,
+                           detail="no output in the month had a part spec, so no weight is derivable "
+                                  "(not 0 kg)"))
+
+    if machines:
+        facts.append(_fact("month.revenue", "Value of the month's output", m["total_revenue"], D, CURRENCY,
+                           "parts x each spec's price per piece", window))
+        facts.append(_fact("month.rate", "Shift-hour rate for the plant", m["total_rate_per_hour"], D,
+                           CURRENCY, "revenue over the hours in the month", window,
+                           detail="the machine rates added together, each revenue over the month's hours"))
+        top = machines[0]
+        facts.append(_fact("month.top_machine", "Machine earning the most", top["machine"], M,
+                           source="production_records", window=window))
+        facts.append(_fact("month.top_machine_rate", f"{top['machine']} shift-hour rate",
+                           top["rate_per_hour"], D, CURRENCY, "its revenue over the month's hours", window))
+    else:
+        facts.append(_fact("month.revenue", "Value of the month's output", None, U, CURRENCY,
+                           "part_specs", window,
+                           detail="no machine made output against a priced part spec, so the month has "
+                                  "no money value here (not zero)"))
+        facts.append(_fact("month.rate", "Shift-hour rate for the plant", None, U, CURRENCY,
+                           "part_specs", window, detail=_NO_PRICE))
+
+    facts += _unavailable_facts("month", m, window)
+    state = ev.NOT_MEASURED if not materials and not machines else ev.PARTIAL_DATA
+    return _result("get_plant_board_month", state,
+                   _say_month(window, parts, unassigned, materials, machines, m), facts,
+                   notes=["Monthly kilograms and money are conversions through each part's spec; output "
+                          "with no spec is counted in the totals but converted in neither.",
+                          "Power and packing have no source on this floor and are never shown as zero."])
+
+
+def _say_month(window, parts, unassigned, materials, machines, m):
+    out = [f"The plant board for {window}: {parts:,} parts made."]
+    if materials:
+        top = materials[0]
+        out.append(f"{round(sum(x['kg'] for x in materials), 3):,} kg of material was consumed, "
+                   f"most of it {top['material']} at {top['kg']:,} kg.")
+    else:
+        out.append("No output in the month had a part spec, so no material weight is derivable.")
+    if machines:
+        out.append(f"The plant's shift-hour rate was {unit_rate(m['total_rate_per_hour'])}, "
+                   f"with {machines[0]['machine']} earning most.")
+    else:
+        out.append("No part is priced, so the month has no money rate.")
+    if unassigned:
+        out.append(f"{unassigned:,} parts were made with no part spec, so they are counted "
+                   f"but converted to neither kilograms nor money.")
+    out.append("Power and packing have no source on this floor, so neither is reported.")
+    return " ".join(out), BOARD_VIEW
+
+
+@tool("get_plant_power",
+      "Whether AMP can report power or packed quantities at all. It cannot: no "
+      "energy meter is fitted on this floor and nothing records packing, so this "
+      "says so and what fitting a source would take. Use for power, energy, kWh, "
+      "electricity and packed-quantity questions, which have no measured answer.",
+      mirrors="/analytics/plant-board", view=BOARD_VIEW, domain="production")
+def get_plant_power(db, tenant):
+    from ai import plant_board            # lazy: the board pulls in the models layer
+    # Read through the builder rather than restating the reason in a second
+    # place: the board owns why these two series cannot be drawn, and a copy here
+    # is exactly the drift ADR-0014 exists to stop.
+    board = plant_board.day(db, tenant, datetime.utcnow().date())
+    power, packing = board["power"], board["packing"]
+    facts = _unavailable_facts("board", board, "now")
+    said = (f"AMP cannot report power consumed: {power['reason']} Nor packed quantities: "
+            f"{packing['reason']} Neither is reported as zero, because no meter and no consumption "
+            f"are different facts. To measure power: {power['fix']}")
+    return _result("get_plant_power", ev.NOT_MEASURED, (said, BOARD_VIEW), facts,
+                   notes=["Nothing is estimated in place of a missing meter: an inferred kWh figure "
+                          "would read exactly like a measured one."])

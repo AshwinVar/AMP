@@ -147,6 +147,32 @@ _SHORTAGE_PHRASES = ("what will the shortage", "shortage stop", "stock-out stopp
                      "stop production", "hold up production", "which orders are at risk from",
                      "what does the shortage")
 _SHORTAGE_PILLARS = ("inventory", "briefing")
+# The plant board answers three questions no pillar owned, because none of them
+# exists until a PART SPEC turns a shot count into something a person asked for:
+# parts against the target the spec implies, kilograms of material consumed, and
+# the shift's money rate. The pillars listed are the ones those words reach
+# today -- a shift-RATE question lands on `shift`, "missed its target" on
+# `machines`, a kilograms question on `inventory` or the fallback -- so every
+# question the router already answers keeps its answer, and route_names(), the
+# allowlist the native intent model is pinned to, is unchanged.
+_BOARD_PHRASES = ("plant board", "shift rate", "shift-rate", "shift hour rate", "shift-hour rate",
+                  "rate per hour", "parts against target", "parts against its target",
+                  "against its target", "missed its target", "missed their target", "below target",
+                  "under target", "hourly output", "output by hour", "parts per hour", "kilograms",
+                  "kilogram", " kgs ", " kg ", "material consumed", "material used", "how much material")
+_BOARD_PILLARS = ("briefing", "shift", "machines", "inventory", "production")
+# A board question about a MONTH is the monthly table, which totals the same
+# inputs by part, by material and by machine over the month.
+_MONTH_WORDS = ("this month", "last month", "the month", "monthly", "month to date", "per month")
+# Power and packing have NO SOURCE on this floor: no meter is fitted and nobody
+# records packed quantities (ai/plant_board.py). A question about either is
+# answered by saying so. Answering it with a plant summary would be a different
+# question answered confidently, and answering it with 0 would be a lie with
+# axes on it. These are single WORDS, so they need a boundary where a phrase
+# does not: "power" must not fire on "horsepower", and must still fire on
+# "power?".
+_POWER_WORDS = re.compile(r"\b(power|energy|kwh|kilowatt|electricity|electrical|packed|packing)\b")
+_POWER_PILLARS = ("briefing", "production", "cost", "machines")
 
 # ── Asking AMP to DO something (ADR-0039) ───────────────────────────
 #
@@ -174,6 +200,13 @@ _ACTION_NEEDS_MACHINE_TEXT = (
     "I can draft a maintenance task for one machine, for you to raise and approve — but I need to "
     "know which machine. Try \"raise a maintenance task on CNC-01\". I don't create anything on my "
     "own: you raise the draft, and somebody approves it before it takes effect.")
+
+
+def _board_day_args(q) -> dict:
+    """The day a board question names, and nothing more. "yesterday" is the only
+    relative day a person says often enough to be worth reading; a date the
+    caller did not say is not a date AMP may choose for them."""
+    return {"on": "yesterday"} if "yesterday" in q else {}
 
 
 def _asks_for_an_action(question) -> bool:
@@ -296,6 +329,12 @@ def _plan_rules(db, question, proposer=None) -> Plan:
         return Plan([("get_action_outcomes", {})], "action_outcomes", r.labels)
     if r.matched in _SHORTAGE_PILLARS and any(p in q for p in _SHORTAGE_PHRASES):
         return Plan([("get_shortage_risk", {})], "shortage_impact", r.labels)
+    if r.matched in _POWER_PILLARS and _POWER_WORDS.search(q):
+        return Plan([("get_plant_power", {})], "plant_power", r.labels)
+    if r.matched in _BOARD_PILLARS and any(p in q for p in _BOARD_PHRASES):
+        if any(w in q for w in _MONTH_WORDS):
+            return Plan([("get_plant_board_month", {})], "plant_board_month", r.labels)
+        return Plan([("get_plant_board", _board_day_args(q))], "plant_board", r.labels)
     name = PILLAR_TOOL.get(r.matched)
     return Plan([(name, {})] if name else [], r.matched, r.labels)
 

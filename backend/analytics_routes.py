@@ -13,7 +13,7 @@ analytics_summary is defined at MODULE LEVEL (not nested in register) because
 main's /reports/daily-summary.txt calls it directly; it is registered as
 /analytics/summary here and imported by main.
 """
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import func, or_
@@ -315,6 +315,47 @@ def plant_board_month(year: int = 0, month: int = 0,
     if not 1 <= month <= 12:
         raise HTTPException(status_code=400, detail=f"month must be 1-12, not {month}")
     return ai.plant_board.month(db, request_tenant(current_user), year, month)
+
+
+#: The longest window the board will read in one request. A plant with three
+#: years of records asked for in one go is a timeout, not a chart.
+MAX_BOARD_DAYS = 400
+
+
+@router.get("/analytics/plant-board/period")
+def plant_board_period(start: str = "", end: str = "", bucket: str = "",
+                       db: Session = Depends(_get_db),
+                       current_user: dict = Depends(get_current_user)):
+    """The board over ANY window: an hour, a shift, a week, a quarter.
+
+    `start` and `end` are YYYY-MM-DD, `end` EXCLUSIVE so a single day is
+    start=D, end=D+1 and no record can fall in two windows. Absent means today.
+    `bucket` is hour / day / month; absent lets the span choose, which is what
+    the screen does.
+
+    Tenant comes from the authenticated principal (ADR-0002), never the query,
+    so the window is the only thing a caller chooses.
+    """
+    def parsed(text, field):
+        try:
+            return datetime.strptime(text, "%Y-%m-%d")
+        except ValueError:
+            raise HTTPException(status_code=400,
+                                detail=f"`{field}` must be YYYY-MM-DD, not {text!r}")
+
+    today = datetime.combine(datetime.utcnow().date(), datetime.min.time())
+    begin = parsed(start, "start") if start else today
+    finish = parsed(end, "end") if end else begin + timedelta(days=1)
+    if finish <= begin:
+        raise HTTPException(status_code=400, detail="`end` must be after `start`")
+    if (finish - begin) > timedelta(days=MAX_BOARD_DAYS):
+        raise HTTPException(status_code=400,
+                            detail=f"a window may not exceed {MAX_BOARD_DAYS} days")
+    if bucket and bucket not in ai.plant_board.BUCKETS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"`bucket` must be one of {', '.join(ai.plant_board.BUCKETS)}, not {bucket!r}")
+    return ai.plant_board.period(db, request_tenant(current_user), begin, finish, bucket)
 
 
 @router.get("/alerts")

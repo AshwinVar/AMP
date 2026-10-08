@@ -35,6 +35,9 @@ from ai import plant_board  # noqa: E402
 
 failures = []
 T = "BOARD-TEST"
+#: A second workspace, so a receipt belonging to somebody else can be shown
+#: not to reach this board.
+OTHER = "BOARD-OTHER"
 DAY = date(2026, 10, 7)
 
 
@@ -49,8 +52,11 @@ def section(t):
 
 
 def wipe(db):
-    for M in (models.ProductionRecord, models.ToolAsset, models.PartSpec, models.Machine):
-        db.query(M).filter(M.tenant_code == T).delete()
+    # GRN lines before their notes and items: they carry the foreign keys.
+    for M in (models.GRNItem, models.GoodsReceiptNote, models.InventoryItem,
+              models.ProductionRecord, models.ToolAsset, models.PartSpec, models.Machine):
+        for tenant in (T, OTHER):
+            db.query(M).filter(M.tenant_code == tenant).delete()
     db.commit()
 
 
@@ -198,6 +204,159 @@ def main():
               str(mon["shift_rate_by_machine"]))
         check("monthly power and packing are unavailable too",
               mon["power"]["available"] is False and mon["packing"]["available"] is False)
+
+
+        section("9. ANY WINDOW, BUCKETED BY ITS SPAN")
+        m = setup(db)
+        for d in (5, 6, 7):
+            db.add(models.ProductionRecord(
+                tenant_code=T, machine_id=m.id, total_count=10000, good_count=9800,
+                rejected_count=200, planned_minutes=60, runtime_minutes=55,
+                ideal_cycle_time_seconds=14,
+                created_at=datetime(2026, 10, d, 9, 0)))
+        db.commit()
+
+        one = plant_board.period(db, T, datetime(2026, 10, 7), datetime(2026, 10, 8))
+        check("one day is read in hours", one["bucket"] == "hour" and len(one["series"]) == 24,
+              f"{one['bucket']} / {len(one['series'])}")
+        check("...and the hour that ran is the one with the parts",
+              [s["parts"] for s in one["series"]].index(10000) == 9,
+              str([s["parts"] for s in one["series"] if s["parts"]]))
+
+        three = plant_board.period(db, T, datetime(2026, 10, 5), datetime(2026, 10, 8))
+        check("three days are read in days", three["bucket"] == "day" and len(three["series"]) == 3,
+              f"{three['bucket']} / {len(three['series'])}")
+        check("...every day carries its own parts and kilograms",
+              [s["parts"] for s in three["series"]] == [10000, 10000, 10000]
+              and [s["kg"] for s in three["series"]] == [3.3, 3.3, 3.3],
+              str(three["series"]))
+
+        year = plant_board.period(db, T, datetime(2026, 1, 1), datetime(2027, 1, 1))
+        check("a year is read in months", year["bucket"] == "month" and len(year["series"]) == 12,
+              f"{year['bucket']} / {len(year['series'])}")
+        check("...and October holds all of it",
+              year["series"][9]["parts"] == 30000, str(year["series"][9]))
+
+        forced = plant_board.period(db, T, datetime(2026, 10, 5), datetime(2026, 10, 8), "hour")
+        check("an explicit bucket overrides the span", forced["bucket"] == "hour"
+              and len(forced["series"]) == 72, f"{forced['bucket']} / {len(forced['series'])}")
+
+        # The window is the denominator of the rate, so it must be the window
+        # asked for and not a calendar month.
+        check("the shift-hour rate divides by the hours in THIS window",
+              three["hours"] == 72.0 and one["hours"] == 24.0,
+              f"{three['hours']} / {one['hours']}")
+
+        section("10. AN EMPTY BUCKET IS A ZERO; AN UNDERIVABLE ONE IS NOT")
+        check("a bucket with no production says 0 parts, which is what happened",
+              one["series"][0]["parts"] == 0, str(one["series"][0]))
+        check("...and 0.0 kg, because the weight IS known for this part",
+              one["series"][0]["kg"] == 0.0, str(one["series"][0]["kg"]))
+        setup(db, fit_tool=False)        # output, but no spec anywhere
+        db.add(models.ProductionRecord(
+            tenant_code=T, machine_id=db.query(models.Machine).filter(
+                models.Machine.tenant_code == T).first().id,
+            total_count=500, good_count=500, rejected_count=0, planned_minutes=60,
+            runtime_minutes=55, ideal_cycle_time_seconds=14,
+            created_at=datetime(2026, 10, 7, 9, 0)))
+        db.commit()
+        bare = plant_board.period(db, T, datetime(2026, 10, 7), datetime(2026, 10, 8))
+        check("with no spec in the window every bucket's kg is UNKNOWN, not 0",
+              all(s["kg"] is None for s in bare["series"]),
+              str([s["kg"] for s in bare["series"][:3]]))
+        check("...and every bucket's revenue is UNKNOWN, not 0",
+              all(s["revenue"] is None for s in bare["series"]))
+        check("...while the parts are still counted",
+              sum(s["parts"] for s in bare["series"]) == 500)
+        check("...and named as unconverted",
+              sum(s["unassigned"] for s in bare["series"]) == 500)
+
+        section("11. MATERIAL RECEIVED: ITS OWN UNIT, AND NEVER ADDED TO A WEIGHT")
+        m = setup(db)
+        resin = models.InventoryItem(tenant_code=T, item_code="PP", item_name="PP H 110",
+                                     category="Raw", unit="kg", current_stock=0,
+                                     reorder_level=0, supplier="S")
+        bags = models.InventoryItem(tenant_code=T, item_code="MB", item_name="Masterbatch",
+                                    category="Raw", unit="bags", current_stock=0,
+                                    reorder_level=0, supplier="S")
+        db.add_all([resin, bags])
+        db.flush()
+        taken = models.GoodsReceiptNote(tenant_code=T, grn_no="G-1", supplier_name="S",
+                                        received_by="store", status="Accepted",
+                                        created_at=datetime(2026, 10, 6, 9, 0))
+        draft = models.GoodsReceiptNote(tenant_code=T, grn_no="G-2", supplier_name="S",
+                                        received_by="store", status="Draft",
+                                        created_at=datetime(2026, 10, 6, 9, 0))
+        db.add_all([taken, draft])
+        db.flush()
+        db.add(models.GRNItem(tenant_code=T, grn_id=taken.id, item_id=resin.id,
+                              ordered_qty=500, received_qty=500, accepted_qty=500))
+        db.add(models.GRNItem(tenant_code=T, grn_id=taken.id, item_id=bags.id,
+                              ordered_qty=4, received_qty=4, accepted_qty=4))
+        db.add(models.GRNItem(tenant_code=T, grn_id=draft.id, item_id=resin.id,
+                              ordered_qty=9999, received_qty=9999, accepted_qty=9999))
+        db.commit()
+        db.add(models.ProductionRecord(
+            tenant_code=T, machine_id=m.id, total_count=10000, good_count=10000,
+            rejected_count=0, planned_minutes=60, runtime_minutes=55,
+            ideal_cycle_time_seconds=14, created_at=datetime(2026, 10, 6, 9, 0)))
+        db.commit()
+
+        w = plant_board.period(db, T, datetime(2026, 10, 6), datetime(2026, 10, 7))
+        added = {a["material"]: a for a in w["rm_added"]}
+        check("a receipt in kilograms carries a kilogram figure",
+              added["PP H 110"]["kg"] == 500.0 and added["PP H 110"]["unit"] == "kg",
+              str(added.get("PP H 110")))
+        check("a receipt in BAGS keeps its count and has NO kilogram figure",
+              added["Masterbatch"]["quantity"] == 4.0
+              and added["Masterbatch"]["kg"] is None
+              and added["Masterbatch"]["unit"] == "bags",
+              str(added.get("Masterbatch")))
+        check("a DRAFT receipt is not on the floor and is not counted",
+              added["PP H 110"]["quantity"] == 500.0,
+              f"got {added['PP H 110']['quantity']}; the draft would make it 10499")
+
+        balance = {b["material"]: b for b in w["rm_balance"]}
+        # 10,000 x 0.33 g = 3.3 kg used against 500 kg received.
+        check("used and received sit on one row for the same material",
+              balance["PP H 110"]["consumed_kg"] == 3.3
+              and balance["PP H 110"]["added_kg"] == 500.0,
+              str(balance.get("PP H 110")))
+        check("a material received but never consumed says so with None, not 0",
+              balance["Masterbatch"]["consumed_kg"] is None
+              and balance["Masterbatch"]["added_qty"] == 4.0,
+              str(balance.get("Masterbatch")))
+
+        outside = plant_board.period(db, T, datetime(2026, 10, 7), datetime(2026, 10, 8))
+        check("a receipt outside the window is not in it", outside["rm_added"] == [],
+              str(outside["rm_added"]))
+
+        section("12. ANOTHER WORKSPACE'S RECEIPTS ARE NOT ON THIS BOARD")
+        other = models.InventoryItem(tenant_code=OTHER, item_code="PP", item_name="PP H 110",
+                                     category="Raw", unit="kg", current_stock=0,
+                                     reorder_level=0, supplier="S")
+        db.add(other)
+        db.flush()
+        og = models.GoodsReceiptNote(tenant_code=OTHER, grn_no="G-X", supplier_name="S",
+                                     received_by="store", status="Accepted",
+                                     created_at=datetime(2026, 10, 6, 9, 0))
+        db.add(og)
+        db.flush()
+        db.add(models.GRNItem(tenant_code=OTHER, grn_id=og.id, item_id=other.id,
+                              ordered_qty=77777, received_qty=77777, accepted_qty=77777))
+        db.commit()
+        mine = plant_board.period(db, T, datetime(2026, 10, 6), datetime(2026, 10, 7))
+        check("the other workspace's 77,777 kg is nowhere in this tenant's window",
+              all(a["quantity"] != 77777.0 for a in mine["rm_added"]),
+              str(mine["rm_added"]))
+
+        section("13. month() IS STILL THE MONTH, AND STILL SAYS SO")
+        mo = plant_board.month(db, T, 2026, 10)
+        check("it keeps year and month in the payload",
+              mo["year"] == 2026 and mo["month"] == 10, str((mo.get("year"), mo.get("month"))))
+        check("...is bucketed by day", mo["bucket"] == "day", mo["bucket"])
+        check("...and still reports power and packing as unavailable",
+              mo["power"]["available"] is False and mo["packing"]["available"] is False)
 
         wipe(db)
     finally:

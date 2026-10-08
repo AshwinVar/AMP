@@ -7,8 +7,6 @@ import {
   Cell,
   CartesianGrid,
   Legend,
-  Line,
-  LineChart,
   ReferenceLine,
   ResponsiveContainer,
   Tooltip,
@@ -27,6 +25,7 @@ import {
   missingLinks,
   plantHourly,
   shiftLabel,
+  type HourStatus,
   type PlantBoardDay,
   type PlantBoardMonth,
   todayLocalIso,
@@ -372,34 +371,44 @@ export default function PlantBoardSection({ isAdmin }: { isAdmin: boolean }) {
                     Close
                   </button>
                 </div>
-                <table className="mt-3 w-full text-sm">
-                  <thead>
-                    <tr className="text-left text-xs uppercase tracking-wide text-slate-500">
-                      <th className="py-1">Machine</th>
-                      <th className="py-1">Part</th>
-                      <th className="py-1 text-right">Parts</th>
-                      <th className="py-1 text-right">Target</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {atHour.map((r) => (
-                      <tr
-                        key={r.machine_id}
-                        onClick={() => setMachineId(r.machine_id)}
-                        className="cursor-pointer border-t border-slate-800 hover:bg-slate-800/50"
-                      >
-                        <td className="py-1.5 text-slate-200">{r.machine}</td>
-                        <td className="py-1.5 text-slate-400">{r.part ?? "—"}</td>
-                        <td className="py-1.5 text-right text-slate-200">
-                          {r.parts.toLocaleString()}
-                        </td>
-                        <td className="py-1.5 text-right text-slate-500">
-                          {r.ideal > 0 ? r.ideal.toLocaleString() : "not set"}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
+                {/* Made against target, machine by machine, for the hour that
+                    was clicked. Horizontal so the machine names stay readable
+                    down the side at fourteen presses, and the two bars are
+                    paired rather than stacked: the question is "did this one
+                    hit its number", which is a comparison, not a total.
+                    Clicking a bar still opens that machine's own day. */}
+                <ResponsiveContainer width="100%" height={Math.max(160, atHour.length * 26)}>
+                  <BarChart data={atHour} layout="vertical">
+                    <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" />
+                    <XAxis type="number" stroke="#64748b" fontSize={10} />
+                    <YAxis
+                      type="category"
+                      dataKey="machine"
+                      stroke="#64748b"
+                      fontSize={10}
+                      width={110}
+                    />
+                    <Tooltip
+                      contentStyle={{ background: "#0f172a", border: "1px solid #334155" }}
+                      formatter={fmtCount}
+                    />
+                    <Legend wrapperStyle={{ fontSize: 11 }} />
+                    <Bar
+                      dataKey="parts"
+                      name="Made"
+                      cursor="pointer"
+                      onClick={(entry: unknown) => {
+                        const id = (entry as { machine_id?: number } | null)?.machine_id;
+                        if (typeof id === "number") setMachineId(id);
+                      }}
+                    >
+                      {atHour.map((r) => (
+                        <Cell key={r.machine_id} fill={HOUR_FILL[r.status as HourStatus]} />
+                      ))}
+                    </Bar>
+                    <Bar dataKey="ideal" name="Target" fill="#334155" />
+                  </BarChart>
+                </ResponsiveContainer>
               </div>
             ) : null}
           </Card>
@@ -511,7 +520,11 @@ export default function PlantBoardSection({ isAdmin }: { isAdmin: boolean }) {
               >
                 {selectedRm && selectedRm.kg_total > 0 ? (
                   <ResponsiveContainer width="100%" height={200}>
-                    <LineChart
+                    {/* Bars, not a line. Material is consumed BY THE HOUR — each
+                        hour is its own quantity, not a reading on a continuous
+                        curve, and a line between 09:00 and 11:00 draws a slope
+                        through an idle 10:00 that nothing consumed. */}
+                    <BarChart
                       data={selectedRm.points.map((p) => ({ ...p, label: hourLabel(p.hour) }))}
                     >
                       <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" />
@@ -521,8 +534,8 @@ export default function PlantBoardSection({ isAdmin }: { isAdmin: boolean }) {
                         contentStyle={{ background: "#0f172a", border: "1px solid #334155" }}
                         formatter={fmtKg}
                       />
-                      <Line type="monotone" dataKey="kg" stroke="#a78bfa" dot={false} name="kg" />
-                    </LineChart>
+                      <Bar dataKey="kg" name="kg" fill="#a78bfa" />
+                    </BarChart>
                   </ResponsiveContainer>
                 ) : (
                   <p className="py-12 text-center text-sm text-slate-500">
@@ -606,22 +619,27 @@ export default function PlantBoardSection({ isAdmin }: { isAdmin: boolean }) {
 
               <Card title="Raw material consumed this month">
                 {month.rm_consumption.length ? (
-                  <table className="w-full text-sm">
-                    <thead>
-                      <tr className="text-left text-xs uppercase tracking-wide text-slate-500">
-                        <th className="py-2">Material</th>
-                        <th className="py-2 text-right">kg</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {month.rm_consumption.map((r) => (
-                        <tr key={r.material} className="border-t border-slate-800">
-                          <td className="py-2 text-slate-200">{r.material}</td>
-                          <td className="py-2 text-right text-slate-200">{r.kg.toFixed(2)}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
+                  <ResponsiveContainer width="100%" height={220}>
+                    {/* Horizontal, because a material name is a word and a
+                        vertical axis of them turns into unreadable 45-degree
+                        labels the moment a plant runs more than three grades. */}
+                    <BarChart data={month.rm_consumption} layout="vertical">
+                      <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" />
+                      <XAxis type="number" stroke="#64748b" fontSize={10} unit=" kg" />
+                      <YAxis
+                        type="category"
+                        dataKey="material"
+                        stroke="#64748b"
+                        fontSize={10}
+                        width={110}
+                      />
+                      <Tooltip
+                        contentStyle={{ background: "#0f172a", border: "1px solid #334155" }}
+                        formatter={fmtKg}
+                      />
+                      <Bar dataKey="kg" name="kg" fill="#a78bfa" />
+                    </BarChart>
+                  </ResponsiveContainer>
                 ) : (
                   <p className="py-12 text-center text-sm text-slate-500">
                     Needs a part weight against the parts being made.
@@ -638,28 +656,30 @@ export default function PlantBoardSection({ isAdmin }: { isAdmin: boolean }) {
                 }
               >
                 {month.shift_rate_by_machine.length ? (
-                  <table className="w-full text-sm">
-                    <thead>
-                      <tr className="text-left text-xs uppercase tracking-wide text-slate-500">
-                        <th className="py-2">Machine</th>
-                        <th className="py-2 text-right">Value</th>
-                        <th className="py-2 text-right">Per hour</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {month.shift_rate_by_machine.map((r) => (
-                        <tr key={r.machine} className="border-t border-slate-800">
-                          <td className="py-2 text-slate-200">{r.machine}</td>
-                          <td className="py-2 text-right text-slate-200">
-                            {money(Math.round(r.revenue))}
-                          </td>
-                          <td className="py-2 text-right text-slate-400">
-                            {money(Math.round(r.rate_per_hour))}
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
+                  <ResponsiveContainer width="100%" height={220}>
+                    {/* VALUE ONLY, not value and rate on one pair of axes. The
+                        month's value is six figures and its per-hour rate is
+                        two or three; drawn together the rate bar is a line of
+                        pixels against the axis and reads as zero. The rate is
+                        in the tooltip, where it keeps its own magnitude. */}
+                    <BarChart data={month.shift_rate_by_machine} layout="vertical">
+                      <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" />
+                      <XAxis type="number" stroke="#64748b" fontSize={10} />
+                      <YAxis
+                        type="category"
+                        dataKey="machine"
+                        stroke="#64748b"
+                        fontSize={10}
+                        width={110}
+                      />
+                      <Tooltip
+                        contentStyle={{ background: "#0f172a", border: "1px solid #334155" }}
+                        formatter={(v: unknown, name: unknown) =>
+                          fmtMoney(v) + (String(name).includes("hour") ? "/hr" : "")}
+                      />
+                      <Bar dataKey="revenue" name="Value this month" fill="#fbbf24" />
+                    </BarChart>
+                  </ResponsiveContainer>
                 ) : (
                   <p className="py-12 text-center text-sm text-slate-500">
                     Enter a price per piece for the parts being made.

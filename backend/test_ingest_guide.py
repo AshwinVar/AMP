@@ -176,5 +176,24 @@ if failures:
     print(f"FAILED ({len(failures)})")
     for f in failures:
         print("  -", f)
-    sys.exit(1)
-print("ALL CHECKS PASSED")
+    # Under pytest this module's checks run during COLLECTION, before any test
+    # has reported. Exiting here would abort the entire run with a collection
+    # error rather than one readable failure, so the exit is for the script
+    # path only -- test_everything() below turns the same failure into an
+    # ordinary test failure.
+    if __name__ == "__main__":
+        sys.exit(1)
+else:
+    print("ALL CHECKS PASSED")
+
+
+# ── Collected by pytest as well as run as a script ────────────────────
+#
+# This suite runs its checks at IMPORT rather than inside a main(), so unlike
+# the other standalone suites its code already executed under pytest and its
+# coverage was already measured. What was missing was any REPORTED test: a
+# regression here surfaced as a collection error, which reads like the harness
+# broke rather than like a check failed.
+def test_everything():
+    """Whatever the checks above recorded."""
+    assert not failures, "\n  " + "\n  ".join(str(f) for f in failures)

@@ -1,4 +1,7 @@
-.env
+# .env*, not .env: a seeding run writes .env-<tenant>-prod next to it with a
+# generated production password, and `.env` alone left that untracked-but-
+# committable, which is how a real credential reaches a public remote.
+.env*
 *.env
 venv/
 __pycache__/

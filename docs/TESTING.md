@@ -30,6 +30,19 @@ read by `python test_X.py` — verified on 2026-08-04 by looping the whole set a
 they landed (170 suites run, none failed). If you add a suite, follow the same
 shape; a new file that only works under pytest breaks CI.
 
+**Module-level `test_*` functions are not optional, and are now enforced.** The
+shape above was a convention nobody checked, and thirty-seven suites drifted out
+of it: they had a `main()` and an `if __name__` ladder but no function pytest
+could collect. They passed in CI every time — the per-file runner does not care —
+while the application code they exercise counted as *untested* against the
+coverage floor below. A suite nobody can collect is a suite the floor is blind
+to, and the floor is the number people cite when deciding whether to write
+another test. `test_every_suite_is_collectable.py` now fails if any suite has no
+collectable test. Its exemption list is deliberately empty: a suite that
+genuinely cannot share the pytest process — one that drops and recreates the
+schema, say — belongs in a CI step of its own, the way the AERON demo does, not
+in an allowlist where it is invisible again.
+
 This document covers the unit suites and their coverage. Browser end-to-end tests,
 where they exist, are a separate concern and are not measured here.
 

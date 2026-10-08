@@ -218,10 +218,24 @@ class Msg:
         self.payload = json.dumps(payload).encode()
 
 
-Base.metadata.drop_all(bind=engine)
+# ITS OWN ROWS, NOT THE WHOLE SCHEMA.
+#
+# This was `Base.metadata.drop_all(bind=engine)` on the SHARED engine imported
+# from database.py. Under the per-file runner that is harmless -- the database
+# belongs to this suite alone. Under pytest it is not: every suite shares one
+# process and one database, this module's body runs during COLLECTION, and the
+# drop took the schema out from under all of them. It is the hazard conftest.py
+# and test_mqtt_tenant_identity.py document, and the reason the AERON demo was
+# given a CI step of its own instead of a test file.
+#
+# Nothing here needs a clean SCHEMA; it needs its own tenant to be empty, which
+# is what every other suite does.
 Base.metadata.create_all(bind=engine)
 real = SessionLocal()
 tok = tenancy.set_current_tenant(None)
+for _model in (models.Notification, models.Machine, models.TenantConfig):
+    real.query(_model).filter(_model.tenant_code == "ACME").delete(synchronize_session=False)
+real.commit()
 real.add(models.TenantConfig(tenant_code="ACME"))
 real.add(models.Machine(tenant_code="ACME", site="plant-1", name="MILL-01", status="Idle",
                         utilization=0, downtime="0 min"))
@@ -457,5 +471,24 @@ if failures:
     print(f"FAILED ({len(failures)})")
     for f in failures:
         print("  -", f)
-    sys.exit(1)
-print("ALL CHECKS PASSED")
+    # Under pytest this module's checks run during COLLECTION, before any test
+    # has reported. Exiting here would abort the entire run with a collection
+    # error rather than one readable failure, so the exit is for the script
+    # path only -- test_everything() below turns the same failure into an
+    # ordinary test failure.
+    if __name__ == "__main__":
+        sys.exit(1)
+else:
+    print("ALL CHECKS PASSED")
+
+
+# ── Collected by pytest as well as run as a script ────────────────────
+#
+# This suite runs its checks at IMPORT rather than inside a main(), so unlike
+# the other standalone suites its code already executed under pytest and its
+# coverage was already measured. What was missing was any REPORTED test: a
+# regression here surfaced as a collection error, which reads like the harness
+# broke rather than like a check failed.
+def test_everything():
+    """Whatever the checks above recorded."""
+    assert not failures, "\n  " + "\n  ".join(str(f) for f in failures)

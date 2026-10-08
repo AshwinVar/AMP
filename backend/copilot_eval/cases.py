@@ -75,6 +75,27 @@ QUESTIONS = [
     ("health_points", "What is taking points off CNC-01?", {"get_machine_history"}, [], "unseen"),
     ("brief", "Give me the daily brief", {"get_daily_brief"}, [], "core"),
     ("catch_up", "Catch me up on the factory", {"get_daily_brief"}, [], "unseen"),
+    # ── The plant board (ai/plant_board.py) ──
+    # Every figure on the board is a CONVERSION of a shot count through a part
+    # spec, so the same question has three different true answers here: A has a
+    # priced spec, C has an unpriced one, B has none at all. A figure that is not
+    # derivable must come back UNKNOWN -- a fact key the oracle does not hold for
+    # a factory passes only if that factory reports it absent or unknown, so a
+    # tool that returned 0 kg or a rate of 0 fails these outright.
+    ("board_rate", "What was our shift rate yesterday?", {"get_plant_board"},
+     ["board.best_rate", "board.revenue"], "unseen"),
+    ("board_target", "Which machine missed its target most often yesterday?", {"get_plant_board"},
+     ["board.machine_1.target", "board.parts"], "unseen"),
+    ("board_kg", "How many kg did we use yesterday?", {"get_plant_board"},
+     ["board.kg", "board.unspecified"], "unseen"),
+    ("board_month_kg", "How many kilograms of PP did we use this month?",
+     {"get_plant_board_month"}, [], "unseen"),
+    # Power has NO SOURCE: no meter is fitted on this floor. The only honest
+    # answer is to say it is not measured, so this case passes only where AMP
+    # says exactly that -- answering it with a figure, or with the plant summary
+    # it used to fall through to, fails.
+    ("board_power", "How much power did we use yesterday?", {"get_plant_power"},
+     ["board.power"], "unseen"),
 ]
 
 # (id, question). Asked by every factory and every role.

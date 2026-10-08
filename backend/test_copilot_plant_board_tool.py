@@ -416,6 +416,131 @@ def main():   # noqa: C901 - one section per pinned property, read top to bottom
               "no part spec" not in full.summary, full.summary)
         check("...and is still grounded",
               grounding.check(full.summary, full.to_dict()["facts"]).passed, full.summary)
+
+        section("15. ANY WINDOW: AMP RESOLVES THE NAME, THE MODEL DOES NOT")
+        from ai.tools.factory import NAMED_PERIODS, _window   # noqa: PLC0415
+        today = datetime.combine(datetime.utcnow().date(), datetime.min.time())
+        # A model has no reliable clock. It names the period; AMP works out the
+        # dates, so "last week" cannot become a week the caller guessed at.
+        got = {n: _window(n) for n in NAMED_PERIODS}
+        check("every period the tool offers actually resolves",
+              all(w[0] is not None for w in got.values()),
+              str([n for n, w in got.items() if w[0] is None]))
+        check("today is one day wide, end exclusive",
+              got["today"][1] - got["today"][0] == timedelta(days=1))
+        check("yesterday ends where today begins",
+              got["yesterday"][1] == today and got["today"][0] == today)
+        check("last week is the seven days before this week, Monday to Monday",
+              got["last week"][1] == got["this week"][0]
+              and got["this week"][1] - got["this week"][0] == timedelta(days=7)
+              and got["this week"][0].weekday() == 0,
+              f"{got['last week']} / {got['this week']}")
+        # The defect this tool exists to fix: "last month" used to reach the
+        # month read-model, which answers for the CURRENT month.
+        check("LAST month ends where THIS month begins, and is not this month",
+              got["last month"][1] == got["this month"][0]
+              and got["last month"][0] < got["this month"][0],
+              f"{got['last month']} vs {got['this month']}")
+        check("a quarter is a real calendar quarter, not ninety-odd days",
+              got["this quarter"][0].month in (1, 4, 7, 10)
+              and got["last quarter"][1] == got["this quarter"][0],
+              f"{got['this quarter']} / {got['last quarter']}")
+        check("a named range includes BOTH days a person typed",
+              _window("2026-10-01 to 2026-10-07")[0] == datetime(2026, 10, 1)
+              and _window("2026-10-01 to 2026-10-07")[1] == datetime(2026, 10, 8),
+              str(_window("2026-10-01 to 2026-10-07")[:2]))
+        check("a backwards range is refused", _window("2026-10-07 to 2026-10-01")[0] is None)
+        check("a window longer than the route allows is refused",
+              _window("2020-01-01 to 2026-01-01")[0] is None)
+        check("a period AMP cannot read is refused, and the refusal lists the ones it can",
+              _window("next tuesday")[0] is None
+              and "last week" in (_window("next tuesday")[2] or ""),
+              str(_window("next tuesday")[2]))
+
+        section("16. THE PERIOD TOOL ANSWERS FOR THE WINDOW ASKED FOR")
+        setup(db)        # IMM-01 priced, IMM-02 specced but unpriced, IMM-03 no mould
+        res = ask(db, "get_plant_board_period", {"period": f"{day} to {day}"})
+        PF = facts_of(res)
+        check("the tool answered", not res.refused, f"{res.state}: {res.summary}")
+        check("every fact names the window, not a 7-day default",
+              not [k for k, f in PF.items() if f.window != day],
+              str([k for k, f in PF.items() if f.window != day][:4]))
+        check("one day is read by hour", PF["period.bucket"].value == "hour",
+              str(PF["period.bucket"].value))
+        # Hour 9 holds IMM-01's 14,400 plus IMM-02's first 400 and IMM-03's 1,000.
+        check("it names the busiest bucket and what was made in it",
+              PF["period.busiest_parts"].value == 15800, str(PF["period.busiest_parts"].value))
+        check("every machine's parts are counted, specced or not",
+              PF["period.parts"].value == 14400 + 800 + 1000, str(PF["period.parts"].value))
+        # 14,400 x 0.33 g + 800 x 0.5 g; IMM-03 contributes nothing because
+        # nothing about it is known, which is not the same as contributing zero.
+        check("kilograms add up only the machines with a spec",
+              PF["period.kg"].value == 5.152, str(PF["period.kg"].value))
+        check("the rate divides by the hours in THIS window",
+              "24 hours" in PF["period.rate"].detail, PF["period.rate"].detail)
+        check("the sentence is grounded in its own evidence",
+              grounding.check(res.summary, res.to_dict()["facts"]).passed, res.summary)
+
+        section("17. RECEIVED MATERIAL KEEPS ITS OWN UNIT HERE TOO")
+        resin = models.InventoryItem(tenant_code=T, item_code="PP", item_name="PP H 110",
+                                     category="Raw", unit="kg", current_stock=0,
+                                     reorder_level=0, supplier="S")
+        bags = models.InventoryItem(tenant_code=T, item_code="MB", item_name="Masterbatch",
+                                    category="Raw", unit="bags", current_stock=0,
+                                    reorder_level=0, supplier="S")
+        db.add_all([resin, bags])
+        db.flush()
+        grn = models.GoodsReceiptNote(tenant_code=T, grn_no="G-P", supplier_name="S",
+                                      received_by="store", status="Accepted",
+                                      created_at=datetime.combine(DAY, datetime.min.time())
+                                      + timedelta(hours=8))
+        db.add(grn)
+        db.flush()
+        db.add(models.GRNItem(tenant_code=T, grn_id=grn.id, item_id=resin.id,
+                              ordered_qty=500, received_qty=500, accepted_qty=500))
+        db.add(models.GRNItem(tenant_code=T, grn_id=grn.id, item_id=bags.id,
+                              ordered_qty=4, received_qty=4, accepted_qty=4))
+        db.commit()
+        res = ask(db, "get_plant_board_period", {"period": f"{day} to {day}"})
+        PF = facts_of(res)
+        check("the kilogram receipt is a kilogram figure",
+              PF["period.received_kg"].value == 500.0, str(PF["period.received_kg"].value))
+        check("...and says it covers only what was booked in kilograms",
+              "only receipts booked in kilograms" in PF["period.received_kg"].detail,
+              PF["period.received_kg"].detail)
+        other = [f for k, f in PF.items() if k.startswith("period.received_other_")]
+        check("the bags are reported as bags, in their own unit",
+              len(other) == 1 and other[0].value == 4.0 and other[0].unit == "bags",
+              str([(f.value, f.unit) for f in other]))
+        check("...and are named as not being a weight",
+              "not a weight" in other[0].detail, other[0].detail)
+        check("no rupee or kilogram figure silently absorbs them",
+              PF["period.received_kg"].value == 500.0)
+        check("the sentence is still grounded",
+              grounding.check(res.summary, res.to_dict()["facts"]).passed, res.summary)
+
+        section("18. A WINDOW WITH NOTHING IN IT IS UNKNOWN, NOT EMPTY")
+        quiet = ask(db, "get_plant_board_period", {"period": "2026-09-01 to 2026-09-30"})
+        QF = facts_of(quiet)
+        check("no parts is a real 0 — the window was watched",
+              QF["period.parts"].value == 0, str(QF["period.parts"].value))
+        for key in ("period.kg", "period.received_kg", "period.revenue", "period.rate"):
+            check(f"{key} is UNKNOWN, not 0", unknown(QF[key]), f"value={QF[key].value!r}")
+        check("the state says NOT MEASURED", quiet.state == ev.NOT_MEASURED, quiet.state)
+        check("no rupee figure appears for an empty window",
+              not [f.key for f in quiet.facts
+                   if f.unit == CURRENCY and isinstance(f.value, (int, float))])
+        for key in ("period.power", "period.packing"):
+            check(f"{key} is UNKNOWN with a reason", unknown(QF[key]), f"value={QF[key].value!r}")
+
+        section("19. THE WINDOW IS NOT A WAY ROUND THE TENANT")
+        bad = ask(db, "get_plant_board_period", {"period": "today", "tenant": OTHER})
+        check("an argument naming another workspace is refused, not ignored",
+              bad.state == ev.INVALID_ARGUMENTS, f"{bad.state}: {bad.summary}")
+        mine = ask(db, "get_plant_board_period", {"period": f"{day} to {day}"})
+        check("and the other workspace's output is not in this window",
+              "999999" not in str(mine.to_dict()))
+
         wipe(db)
     finally:
         db.close()

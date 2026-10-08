@@ -160,10 +160,18 @@ _BOARD_PHRASES = ("plant board", "shift rate", "shift-rate", "shift hour rate", 
                   "against its target", "missed its target", "missed their target", "below target",
                   "under target", "hourly output", "output by hour", "parts per hour", "kilograms",
                   "kilogram", " kgs ", " kg ", "material consumed", "material used", "how much material")
-_BOARD_PILLARS = ("briefing", "shift", "machines", "inventory", "production")
+_BOARD_PILLARS = ("briefing", "shift", "machines", "inventory", "production", "trend")
 # A board question about a MONTH is the monthly table, which totals the same
 # inputs by part, by material and by machine over the month.
-_MONTH_WORDS = ("this month", "last month", "the month", "monthly", "month to date", "per month")
+_MONTH_WORDS = ("this month", "the month", "monthly", "month to date", "per month")
+# A board question naming any OTHER window goes to the period read, which
+# resolves the name against AMP's own clock. "last month" belongs here and not
+# above: the month tool reads the CURRENT month, so routing it there answered a
+# different question with no sign that it had.
+_PERIOD_WORDS = ("last month", "past month", "this week", "last week", "past week",
+                 "last 7 days", "last seven days", "last 30 days", "last thirty days",
+                 "this quarter", "last quarter", "this year", "last year", "year to date",
+                 "fortnight", "so far this")
 # Power and packing have NO SOURCE on this floor: no meter is fitted and nobody
 # records packed quantities (ai/plant_board.py). A question about either is
 # answered by saying so. Answering it with a plant summary would be a different
@@ -172,7 +180,7 @@ _MONTH_WORDS = ("this month", "last month", "the month", "monthly", "month to da
 # does not: "power" must not fire on "horsepower", and must still fire on
 # "power?".
 _POWER_WORDS = re.compile(r"\b(power|energy|kwh|kilowatt|electricity|electrical|packed|packing)\b")
-_POWER_PILLARS = ("briefing", "production", "cost", "machines")
+_POWER_PILLARS = ("briefing", "production", "cost", "machines", "trend")
 
 # ── Asking AMP to DO something (ADR-0039) ───────────────────────────
 #
@@ -200,6 +208,22 @@ _ACTION_NEEDS_MACHINE_TEXT = (
     "I can draft a maintenance task for one machine, for you to raise and approve — but I need to "
     "know which machine. Try \"raise a maintenance task on CNC-01\". I don't create anything on my "
     "own: you raise the draft, and somebody approves it before it takes effect.")
+
+
+def _board_period_args(named) -> dict:
+    """The window a board question named, as the period tool spells it.
+
+    Only the phrases the tool itself understands are passed through; anything
+    else it would refuse, and a refusal a router could have avoided is a worse
+    answer than the plant's default month.
+    """
+    from ai.tools.factory import NAMED_PERIODS      # lazy: factory imports the builders
+    spoken = {"past month": "last month", "past week": "last week",
+              "last seven days": "last 7 days", "last thirty days": "last 30 days",
+              "year to date": "this year", "so far this": "this month",
+              "fortnight": "last 14 days"}
+    name = spoken.get(named, named)
+    return {"period": name} if name in NAMED_PERIODS else {}
 
 
 def _board_day_args(q) -> dict:
@@ -332,6 +356,10 @@ def _plan_rules(db, question, proposer=None) -> Plan:
     if r.matched in _POWER_PILLARS and _POWER_WORDS.search(q):
         return Plan([("get_plant_power", {})], "plant_power", r.labels)
     if r.matched in _BOARD_PILLARS and any(p in q for p in _BOARD_PHRASES):
+        named = next((w for w in _PERIOD_WORDS if w in q), "")
+        if named:
+            return Plan([("get_plant_board_period", _board_period_args(named))],
+                        "plant_board_period", r.labels)
         if any(w in q for w in _MONTH_WORDS):
             return Plan([("get_plant_board_month", {})], "plant_board_month", r.labels)
         return Plan([("get_plant_board", _board_day_args(q))], "plant_board", r.labels)

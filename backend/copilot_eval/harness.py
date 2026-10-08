@@ -84,6 +84,8 @@ def _expected_call(case_id, tools, tenant, machine="CNC-01"):
     # answer key computed by the code under test checks nothing.
     if tool == "get_plant_board":
         return tool, {"on": "yesterday"}
+    if tool == "get_plant_board_period":
+        return tool, {"period": "last month" if "month" in case_id else "last week"}
     return tool, {}
 
 

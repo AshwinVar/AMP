@@ -27,9 +27,16 @@ import {
   shiftLabel,
   type HourStatus,
   type PlantBoardDay,
-  type PlantBoardMonth,
   todayLocalIso,
+  shiftDays,
   type UnavailableSeries,
+  PRESETS,
+  type Preset,
+  type PlantBoardPeriod,
+  periodWindow,
+  periodLabel,
+  bucketTick,
+  addedKgTotal,
 } from "../lib/plant-board";
 import PartMasterCard from "./PartMasterCard";
 
@@ -118,29 +125,46 @@ function NoSource({ title, series }: { title: string; series: UnavailableSeries 
 export default function PlantBoardSection({ isAdmin }: { isAdmin: boolean }) {
   const [on, setOn] = useState(todayLocalIso());
   const [day, setDay] = useState<PlantBoardDay | null>(null);
-  const [month, setMonth] = useState<PlantBoardMonth | null>(null);
+  // The aggregate half of the board used to be hard-wired to the current
+  // calendar month, so "how did this week go?" had nowhere to be asked. It is
+  // now a window: a preset around the day in the picker, or an explicit range.
+  const [preset, setPreset] = useState<Preset>("month");
+  const [customFrom, setCustomFrom] = useState(todayLocalIso());
+  const [customTo, setCustomTo] = useState(todayLocalIso());
+  const [period, setPeriod] = useState<PlantBoardPeriod | null>(null);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
   const [machineId, setMachineId] = useState<number | null>(null);
   const [hour, setHour] = useState<number | null>(null);
 
+  // `end` is EXCLUSIVE, matching the route: one day is [D, D+1) so no record
+  // can fall in two windows. Custom takes the two inputs as typed; everything
+  // else is derived from the day in the picker, so "week" means the week that
+  // day is in rather than only the current one.
+  const window = useMemo(
+    () => (preset === "custom"
+      ? { start: customFrom, end: shiftDays(customTo, 1) }
+      : periodWindow(preset, on)),
+    [preset, on, customFrom, customTo],
+  );
+
   const load = useCallback(async () => {
     setLoading(true);
     setError("");
-    const [y, m] = on.split("-");
     try {
-      const [d, mo] = await Promise.all([
+      const [d, pr] = await Promise.all([
         apiGet<PlantBoardDay>("/analytics/plant-board?on=" + on),
-        apiGet<PlantBoardMonth>("/analytics/plant-board/month?year=" + y + "&month=" + Number(m)),
+        apiGet<PlantBoardPeriod>(
+          "/analytics/plant-board/period?start=" + window.start + "&end=" + window.end),
       ]);
       setDay(d);
-      setMonth(mo);
+      setPeriod(pr);
     } catch (e) {
       setError(errorDetail(e));
     } finally {
       setLoading(false);
     }
-  }, [on]);
+  }, [on, window]);
 
   useEffect(() => {
     // Deferred by a tick, and guarded for unmount, the way RootCauseSection
@@ -164,6 +188,19 @@ export default function PlantBoardSection({ isAdmin }: { isAdmin: boolean }) {
   );
   const selectedRm = day?.rm_status.find((r) => r.machine_id === machineId) ?? null;
   const selectedShift = day?.shift_rate.find((s) => s.machine_id === machineId) ?? null;
+
+  const windowLabel = useMemo(() => periodLabel(window.start, window.end), [window]);
+  // Rejected is what the record says was made minus what passed, never a
+  // separate count: the two always add up to the bar's height.
+  const chartSeries = useMemo(
+    () => (period?.series ?? []).map((pt) => ({ ...pt, scrap: Math.max(0, pt.parts - pt.good) })),
+    [period],
+  );
+  const addedKg = useMemo(() => addedKgTotal(period?.rm_added ?? []), [period]);
+  const nonKgReceipts = useMemo(
+    () => (period?.rm_added ?? []).filter((r) => r.kg === null),
+    [period],
+  );
 
   const plant = useMemo(() => plantHourly(production), [production]);
   const plantTarget = plant[0]?.ideal ?? 0;
@@ -206,7 +243,53 @@ export default function PlantBoardSection({ isAdmin }: { isAdmin: boolean }) {
             came from.
           </p>
         </div>
-        <div className="flex items-end gap-3">
+        <div className="flex flex-wrap items-end gap-3">
+          <div className="text-xs text-slate-400">
+            <span className="block mb-1">Period</span>
+            <div className="flex overflow-hidden rounded-lg border border-slate-700">
+              {PRESETS.map((pr) => (
+                <button
+                  key={pr.key}
+                  type="button"
+                  aria-pressed={preset === pr.key}
+                  onClick={() => setPreset(pr.key)}
+                  className={
+                    "px-3 py-2 text-sm " +
+                    (preset === pr.key
+                      ? "bg-sky-600 text-white"
+                      : "bg-slate-950 text-slate-300 hover:bg-slate-800")
+                  }
+                >
+                  {pr.label}
+                </button>
+              ))}
+            </div>
+          </div>
+          {preset === "custom" ? (
+            <>
+              <label className="text-xs text-slate-400">
+                <span className="block mb-1">From</span>
+                <input
+                  type="date"
+                  value={customFrom}
+                  max={customTo}
+                  onChange={(e) => setCustomFrom(e.target.value)}
+                  className="rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-white"
+                />
+              </label>
+              <label className="text-xs text-slate-400">
+                <span className="block mb-1">To</span>
+                <input
+                  type="date"
+                  value={customTo}
+                  min={customFrom}
+                  max={todayLocalIso()}
+                  onChange={(e) => setCustomTo(e.target.value)}
+                  className="rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-white"
+                />
+              </label>
+            </>
+          ) : null}
           <label className="text-xs text-slate-400">
             <span className="block mb-1">Day</span>
             <input
@@ -585,108 +668,177 @@ export default function PlantBoardSection({ isAdmin }: { isAdmin: boolean }) {
             <NoSource title="Packing" series={day.packing} />
           </div>
 
-          {/* ── The month ─────────────────────────────────────────── */}
-          {month ? (
-            <div className="grid gap-4 lg:grid-cols-3">
-              <Card title="Item-wise production this month">
-                {month.itemwise_production.length ? (
-                  <ResponsiveContainer width="100%" height={220}>
-                    <BarChart data={month.itemwise_production} layout="vertical">
-                      <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" />
-                      <XAxis type="number" stroke="#64748b" fontSize={10} />
-                      <YAxis
-                        type="category"
-                        dataKey="part"
-                        stroke="#64748b"
-                        fontSize={10}
-                        width={110}
-                      />
-                      <Tooltip
-                        contentStyle={{ background: "#0f172a", border: "1px solid #334155" }}
-                        formatter={fmtCount}
-                      />
-                      <Legend wrapperStyle={{ fontSize: 11 }} />
-                      <Bar dataKey="good" name="Good" fill="#34d399" />
-                      <Bar dataKey="total" name="Total" fill="#475569" />
-                    </BarChart>
-                  </ResponsiveContainer>
-                ) : (
-                  <p className="py-12 text-center text-sm text-slate-500">
-                    Nothing produced this month yet.
-                  </p>
-                )}
-              </Card>
-
-              <Card title="Raw material consumed this month">
-                {month.rm_consumption.length ? (
-                  <ResponsiveContainer width="100%" height={220}>
-                    {/* Horizontal, because a material name is a word and a
-                        vertical axis of them turns into unreadable 45-degree
-                        labels the moment a plant runs more than three grades. */}
-                    <BarChart data={month.rm_consumption} layout="vertical">
-                      <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" />
-                      <XAxis type="number" stroke="#64748b" fontSize={10} unit=" kg" />
-                      <YAxis
-                        type="category"
-                        dataKey="material"
-                        stroke="#64748b"
-                        fontSize={10}
-                        width={110}
-                      />
-                      <Tooltip
-                        contentStyle={{ background: "#0f172a", border: "1px solid #334155" }}
-                        formatter={fmtKg}
-                      />
-                      <Bar dataKey="kg" name="kg" fill="#a78bfa" />
-                    </BarChart>
-                  </ResponsiveContainer>
-                ) : (
-                  <p className="py-12 text-center text-sm text-slate-500">
-                    Needs a part weight against the parts being made.
-                  </p>
-                )}
-              </Card>
-
+          {/* ── The period ────────────────────────────────────────────
+              Was "this month", fixed. Now whatever window the control above
+              names, bucketed by the span: hours across a day, days across a
+              month, months across a year. */}
+          {period ? (
+            <>
               <Card
-                title="Shift rate by machine, this month"
+                title={"Production per " + period.bucket}
                 hint={
-                  month.total_revenue > 0
-                    ? "Plant total " + money(Math.round(month.total_revenue))
-                    : "No priced part has produced anything this month"
+                  windowLabel
+                  + (period.series.length ? " · " + period.series.length + " " + period.bucket + "s" : "")
                 }
               >
-                {month.shift_rate_by_machine.length ? (
-                  <ResponsiveContainer width="100%" height={220}>
-                    {/* VALUE ONLY, not value and rate on one pair of axes. The
-                        month's value is six figures and its per-hour rate is
-                        two or three; drawn together the rate bar is a line of
-                        pixels against the axis and reads as zero. The rate is
-                        in the tooltip, where it keeps its own magnitude. */}
-                    <BarChart data={month.shift_rate_by_machine} layout="vertical">
+                {chartSeries.some((pt) => pt.parts > 0) ? (
+                  <ResponsiveContainer width="100%" height={260}>
+                    <BarChart data={chartSeries}>
                       <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" />
-                      <XAxis type="number" stroke="#64748b" fontSize={10} />
-                      <YAxis
-                        type="category"
-                        dataKey="machine"
+                      <XAxis
+                        dataKey="start"
                         stroke="#64748b"
                         fontSize={10}
-                        width={110}
+                        tickFormatter={(v: string) => bucketTick(v, period.bucket)}
+                        interval="preserveStartEnd"
+                        minTickGap={12}
                       />
+                      <YAxis stroke="#64748b" fontSize={10} />
                       <Tooltip
                         contentStyle={{ background: "#0f172a", border: "1px solid #334155" }}
+                        labelFormatter={(v: unknown) => bucketTick(String(v), period.bucket)}
                         formatter={(v: unknown, name: unknown) =>
-                          fmtMoney(v) + (String(name).includes("hour") ? "/hr" : "")}
+                          [fmtCount(v), String(name)]}
                       />
-                      <Bar dataKey="revenue" name="Value this month" fill="#fbbf24" />
+                      <Legend wrapperStyle={{ fontSize: 11 }} />
+                      <Bar dataKey="good" name="Good" stackId="p" fill="#34d399" />
+                      <Bar dataKey="scrap" name="Rejected" stackId="p" fill="#f87171" />
                     </BarChart>
                   </ResponsiveContainer>
                 ) : (
                   <p className="py-12 text-center text-sm text-slate-500">
-                    Enter a price per piece for the parts being made.
+                    Nothing was recorded in this window.
                   </p>
                 )}
               </Card>
-            </div>
+
+              <div className="grid gap-4 lg:grid-cols-3">
+                <Card title="Item-wise production" hint={windowLabel}>
+                  {period.itemwise_production.length ? (
+                    <ResponsiveContainer width="100%" height={220}>
+                      <BarChart data={period.itemwise_production} layout="vertical">
+                        <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" />
+                        <XAxis type="number" stroke="#64748b" fontSize={10} />
+                        <YAxis
+                          type="category"
+                          dataKey="part"
+                          stroke="#64748b"
+                          fontSize={10}
+                          width={110}
+                        />
+                        <Tooltip
+                          contentStyle={{ background: "#0f172a", border: "1px solid #334155" }}
+                          formatter={(v: unknown) => fmtCount(v)}
+                        />
+                        <Legend wrapperStyle={{ fontSize: 11 }} />
+                        <Bar dataKey="good" name="Good" fill="#34d399" />
+                        <Bar dataKey="total" name="Total" fill="#475569" />
+                      </BarChart>
+                    </ResponsiveContainer>
+                  ) : (
+                    <p className="py-12 text-center text-sm text-slate-500">
+                      Nothing was produced in this window.
+                    </p>
+                  )}
+                </Card>
+
+                {/* Consumed is DERIVED (parts x part weight) and always
+                    kilograms. Received is whatever the storekeeper booked it
+                    in, so a receipt in bags is shown as bags and kept out of
+                    the kilogram total — see rm_added in ai/plant_board.py. */}
+                <Card
+                  title="Raw material: used and received"
+                  hint={
+                    addedKg === null
+                      ? windowLabel + " · nothing received was booked in kilograms"
+                      : windowLabel + " · " + addedKg.toLocaleString() + " kg received"
+                  }
+                >
+                  {period.rm_balance.length ? (
+                    <>
+                      <ResponsiveContainer width="100%" height={200}>
+                        <BarChart data={period.rm_balance} layout="vertical">
+                          <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" />
+                          <XAxis type="number" stroke="#64748b" fontSize={10}
+                                 tickFormatter={(v: number) => v + " kg"} />
+                          <YAxis
+                            type="category"
+                            dataKey="material"
+                            stroke="#64748b"
+                            fontSize={10}
+                            width={110}
+                          />
+                          <Tooltip
+                            contentStyle={{ background: "#0f172a", border: "1px solid #334155" }}
+                            formatter={(v: unknown, name: unknown) =>
+                              [v === null || v === undefined ? "not derivable" : fmtKg(v), String(name)]}
+                          />
+                          <Legend wrapperStyle={{ fontSize: 11 }} />
+                          <Bar dataKey="consumed_kg" name="Used" fill="#a78bfa" />
+                          <Bar dataKey="added_kg" name="Received" fill="#38bdf8" />
+                        </BarChart>
+                      </ResponsiveContainer>
+                      {nonKgReceipts.length ? (
+                        <p className="mt-2 text-xs text-slate-500">
+                          Not drawn, because these are not weights:{" "}
+                          {nonKgReceipts
+                            .map((r) => r.material + " " + r.quantity.toLocaleString() + " " + r.unit)
+                            .join(", ")}
+                          .
+                        </p>
+                      ) : null}
+                    </>
+                  ) : (
+                    <p className="py-12 text-center text-sm text-slate-500">
+                      No material was used or received in this window.
+                    </p>
+                  )}
+                </Card>
+
+                <Card
+                  title="Shift rate by machine"
+                  hint={
+                    period.shift_rate_by_machine.length
+                      ? windowLabel
+                        + " · plant total " + money(Math.round(period.total_revenue))
+                        + " at " + money(Math.round(period.total_rate_per_hour)) + "/hr"
+                      : "No priced part has produced anything in this window"
+                  }
+                >
+                  {period.shift_rate_by_machine.length ? (
+                    <ResponsiveContainer width="100%" height={220}>
+                      {/* VALUE ONLY, not value and rate on one pair of axes.
+                          The window's value is six figures and its per-hour
+                          rate is two or three; drawn together the rate bar is a
+                          line of pixels against the axis and reads as zero. The
+                          rate is in the tooltip and the hint, where it keeps
+                          its own magnitude. */}
+                      <BarChart data={period.shift_rate_by_machine} layout="vertical">
+                        <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" />
+                        <XAxis type="number" stroke="#64748b" fontSize={10} />
+                        <YAxis
+                          type="category"
+                          dataKey="machine"
+                          stroke="#64748b"
+                          fontSize={10}
+                          width={110}
+                        />
+                        <Tooltip
+                          contentStyle={{ background: "#0f172a", border: "1px solid #334155" }}
+                          formatter={(v: unknown, name: unknown) =>
+                            fmtMoney(v) + (String(name).includes("hour") ? "/hr" : "")}
+                        />
+                        <Bar dataKey="revenue" name="Value in this window" fill="#fbbf24" />
+                      </BarChart>
+                    </ResponsiveContainer>
+                  ) : (
+                    <p className="py-12 text-center text-sm text-slate-500">
+                      Enter a price per piece for the parts being made.
+                    </p>
+                  )}
+                </Card>
+              </div>
+            </>
           ) : null}
         </>
       ) : null}

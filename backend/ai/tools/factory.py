@@ -18,7 +18,8 @@ and take no period argument, so the tools take none either and every fact says
 which window it covers. A tool that offered `days` would have to compute a
 second version of each figure, which is the drift ADR-0014 exists to stop.
 """
-from datetime import datetime, timedelta
+import re
+from datetime import datetime, time, timedelta
 
 import models
 import oee_contract
@@ -1324,6 +1325,235 @@ def _say_month(window, parts, unassigned, materials, machines, m):
     if unassigned:
         out.append(f"{unassigned:,} parts were made with no part spec, so they are counted "
                    f"but converted to neither kilograms nor money.")
+    out.append("Power and packing have no source on this floor, so neither is reported.")
+    return " ".join(out), BOARD_VIEW
+
+
+#: The windows a person names out loud, resolved by AMP against ITS clock.
+#: A model has no reliable one -- asked for "last week" it would have to guess
+#: today's date and then count backwards, and a window computed from a guessed
+#: date is a window nobody asked for. So the model names the period and AMP
+#: works out the dates, exactly as `on: "yesterday"` already works.
+NAMED_PERIODS = ("today", "yesterday", "this week", "last week", "this month",
+                 "last month", "this quarter", "last quarter", "this year", "last year",
+                 "last 7 days", "last 14 days", "last 30 days")
+#: The same cap the route enforces, so a tool cannot ask for a window the REST
+#: door would refuse.
+MAX_PERIOD_DAYS = 400
+_RANGE = re.compile(r"^(\d{4}-\d{2}-\d{2})\s*(?:to|\.\.|-{1,2}|through)\s*(\d{4}-\d{2}-\d{2})$")
+
+
+def _month_start(d):
+    return datetime(d.year, d.month, 1)
+
+
+def _next_month(d):
+    return datetime(d.year + (d.month == 12), (d.month % 12) + 1, 1)
+
+
+def _window(text):
+    """(start, end, None) or (None, None, why). `end` is EXCLUSIVE throughout.
+
+    An explicit range is INCLUSIVE of both dates, because that is what a person
+    typing "1 Oct to 7 Oct" means; it is converted here rather than making the
+    caller reason about a half-open interval.
+    """
+    name = " ".join((text or "").split()).lower() or "this month"
+    today = datetime.combine(datetime.utcnow().date(), time.min)
+    monday = today - timedelta(days=today.weekday())
+    if name == "today":
+        return today, today + timedelta(days=1), None
+    if name == "yesterday":
+        return today - timedelta(days=1), today, None
+    if name == "this week":
+        return monday, monday + timedelta(days=7), None
+    if name == "last week":
+        return monday - timedelta(days=7), monday, None
+    if name == "this month":
+        return _month_start(today), _next_month(today), None
+    if name == "last month":
+        this = _month_start(today)
+        return _month_start(this - timedelta(days=1)), this, None
+    if name in ("this quarter", "last quarter"):
+        # Calendar quarters, not "about ninety days": a quarter is a period the
+        # plant reports on, and an approximation of one is a different window.
+        q_start = datetime(today.year, ((today.month - 1) // 3) * 3 + 1, 1)
+        if name == "this quarter":
+            nxt = q_start
+            for _ in range(3):
+                nxt = _next_month(nxt)
+            return q_start, nxt, None
+        prev = q_start
+        for _ in range(3):
+            prev = _month_start(prev - timedelta(days=1))
+        return prev, q_start, None
+    if name == "this year":
+        return datetime(today.year, 1, 1), datetime(today.year + 1, 1, 1), None
+    if name == "last year":
+        return datetime(today.year - 1, 1, 1), datetime(today.year, 1, 1), None
+    if name in ("last 7 days", "last seven days"):
+        return today - timedelta(days=6), today + timedelta(days=1), None
+    if name in ("last 14 days", "last fortnight", "fortnight"):
+        return today - timedelta(days=13), today + timedelta(days=1), None
+    if name in ("last 30 days", "last thirty days"):
+        return today - timedelta(days=29), today + timedelta(days=1), None
+    m = _RANGE.match(name)
+    if m:
+        try:
+            start = datetime.strptime(m.group(1), "%Y-%m-%d")
+            last = datetime.strptime(m.group(2), "%Y-%m-%d")
+        except ValueError:
+            return None, None, f"{text!r} is not a pair of real dates."
+        if last < start:
+            return None, None, "The end of a range cannot be before its start."
+        end = last + timedelta(days=1)
+        if (end - start) > timedelta(days=MAX_PERIOD_DAYS):
+            return None, None, f"A window may not be longer than {MAX_PERIOD_DAYS} days."
+        return start, end, None
+    return None, None, (f"{text!r} is not a period AMP can read. Use one of: "
+                        f"{', '.join(NAMED_PERIODS)}; or a range like "
+                        f"\"2026-10-01 to 2026-10-07\".")
+
+
+@tool("get_plant_board_period",
+      "The plant board over ANY window: a week, last month, a quarter, a named "
+      "range. Gives parts made, kilograms of material consumed AND received, the "
+      "value of the output and the plant's shift-hour rate for that window, plus "
+      "which day or hour in it was busiest. Use whenever a board question names a "
+      "period other than today -- last week, this quarter, last month, a date "
+      "range. Power and packing are not measured.",
+      mirrors="/analytics/plant-board/period", view=BOARD_VIEW, domain="production",
+      params={"period": Param(
+          "str", "The window: " + ", ".join(NAMED_PERIODS)
+                 + "; or a range like \"2026-10-01 to 2026-10-07\" (both days included)")})
+def get_plant_board_period(db, tenant, period="this month"):
+    from ai import plant_board            # lazy: the board pulls in the models layer
+    start, end, why = _window(period)
+    if start is None:
+        return ev.refusal("get_plant_board_period", ev.INVALID_ARGUMENTS, why)
+    p = plant_board.period(db, tenant, start, end)
+    # The window as a reader says it, and as every fact below is scoped by.
+    last = (end - timedelta(days=1)).date().isoformat()
+    window = start.date().isoformat() if last == start.date().isoformat() \
+        else f"{start.date().isoformat()} to {last}"
+
+    items = p["itemwise_production"]
+    materials = p["rm_consumption"]
+    received = p["rm_added"]
+    machines = p["shift_rate_by_machine"]
+    parts = sum(i["total"] for i in items)
+    unassigned = sum(i["total"] for i in items if i["part"] == _NO_PART_BUCKET)
+
+    facts = [
+        _fact("period.window", "The window this covers", window, M,
+              source="the period asked for", window=window),
+        _fact("period.bucket", "The shape it is read in", p["bucket"], R,
+              source="chosen from the span of the window", window=window,
+              detail="hours across a day or two, days up to a quarter, months beyond"),
+        _fact("period.parts", "Parts made", parts, M, "parts", "production_records", window),
+        _fact("period.good", "Good parts", sum(i["good"] for i in items), M, "parts",
+              "production_records", window),
+        _fact("period.unassigned", "Parts made with no part spec", unassigned, M, "parts",
+              "production_records with no spec for the machine's tool", window,
+              detail="counted, but convertible to neither kilograms nor money"
+                     if unassigned else "every part made was attributable to a spec"),
+    ]
+
+    # The busiest bucket: the one figure a shape has that a total does not.
+    busiest = max(p["series"], key=lambda s: s["parts"], default=None)
+    if busiest and busiest["parts"]:
+        facts.append(_fact("period.busiest", f"Busiest {p['bucket']}", busiest["start"], M,
+                           source="production_records", window=window))
+        facts.append(_fact("period.busiest_parts", "Parts made in it", busiest["parts"], M,
+                           "parts", "production_records", window))
+
+    if materials:
+        facts.append(_fact("period.kg", "Material consumed",
+                           round(sum(x["kg"] for x in materials), 3), D, "kg",
+                           "parts x each spec's part weight", window,
+                           detail="covers only output with a part spec" if unassigned
+                                  else "every part made had a spec"))
+        for i, row in enumerate(materials[:3], 1):
+            facts.append(_fact(f"period.material_{i}", f"Material {i} by weight", row["material"],
+                               M, source="part_specs", window=window))
+            facts.append(_fact(f"period.material_{i}.kg", f"{row['material']} consumed", row["kg"],
+                               D, "kg", "parts x that spec's part weight", window))
+    else:
+        facts.append(_fact("period.kg", "Material consumed", None, U, "kg", "part_specs", window,
+                           detail="no output in the window had a part spec, so no weight is "
+                                  "derivable (not 0 kg)"))
+
+    # What came IN. Reported in each item's own unit, and totalled only across
+    # the ones that are weights -- see rm_added in ai/plant_board.py.
+    in_kg = [r for r in received if r["kg"] is not None]
+    if in_kg:
+        facts.append(_fact("period.received_kg", "Material received",
+                           round(sum(r["kg"] for r in in_kg), 3), M, "kg",
+                           "accepted goods receipts", window,
+                           detail="counts only receipts booked in kilograms"
+                                  if len(in_kg) != len(received) else "every receipt was in kilograms"))
+    else:
+        facts.append(_fact("period.received_kg", "Material received", None, U, "kg",
+                           "accepted goods receipts", window,
+                           detail="nothing received in the window was booked in kilograms, so "
+                                  "there is no weight to report (not 0 kg)" if received
+                                  else "no goods receipt was accepted in the window"))
+    for i, r in enumerate([x for x in received if x["kg"] is None][:2], 1):
+        # A receipt in bags or drums is a COUNT. It is named, never weighed.
+        facts.append(_fact(f"period.received_other_{i}", f"{r['material']} received",
+                           r["quantity"], M, r["unit"], "accepted goods receipts", window,
+                           detail="a count in its own unit; it is not a weight and is not in "
+                                  "the kilogram total"))
+
+    if machines:
+        facts.append(_fact("period.revenue", "Value of the output", p["total_revenue"], D, CURRENCY,
+                           "parts x each spec's price per piece", window))
+        facts.append(_fact("period.rate", "Shift-hour rate for the plant", p["total_rate_per_hour"],
+                           D, CURRENCY, "revenue over the hours in the window", window,
+                           detail=f"{p['hours']:g} hours in this window; the same revenue reads "
+                                  f"differently over a longer one"))
+        top = machines[0]
+        facts.append(_fact("period.top_machine", "Machine earning the most", top["machine"], M,
+                           source="production_records", window=window))
+        facts.append(_fact("period.top_machine_rate", f"{top['machine']} shift-hour rate",
+                           top["rate_per_hour"], D, CURRENCY, "its revenue over those hours", window))
+    else:
+        facts.append(_fact("period.revenue", "Value of the output", None, U, CURRENCY,
+                           "part_specs", window,
+                           detail="no machine made output against a priced part spec, so the "
+                                  "window has no money value here (not zero)"))
+        facts.append(_fact("period.rate", "Shift-hour rate for the plant", None, U, CURRENCY,
+                           "part_specs", window, detail=_NO_PRICE))
+
+    facts += _unavailable_facts("period", p, window)
+    state = ev.NOT_MEASURED if not materials and not machines else ev.PARTIAL_DATA
+    return _result("get_plant_board_period", state,
+                   _say_period(window, p, parts, unassigned, materials, in_kg, received, machines),
+                   facts,
+                   notes=["Kilograms and money are conversions through each part's spec; output "
+                          "with no spec is counted in the totals and converted in neither.",
+                          "Material received is reported in the unit it was booked in; only "
+                          "receipts in kilograms are added into a kilogram total.",
+                          "Power and packing have no source on this floor and are never zero."])
+
+
+def _say_period(window, p, parts, unassigned, materials, in_kg, received, machines):
+    out = [f"The plant board for {window}: {parts:,} parts made, read by {p['bucket']}."]
+    if materials:
+        out.append(f"{round(sum(x['kg'] for x in materials), 3):,} kg of material was consumed.")
+    else:
+        out.append("No output in the window had a part spec, so no material weight is derivable.")
+    if in_kg:
+        out.append(f"{round(sum(r['kg'] for r in in_kg), 3):,} kg was received.")
+    elif received:
+        out.append("Nothing received was booked in kilograms, so the weight received is unknown.")
+    if machines:
+        out.append(f"The plant's shift-hour rate was {unit_rate(p['total_rate_per_hour'])} "
+                   f"over {p['hours']:g} hours, with {machines[0]['machine']} earning most.")
+    else:
+        out.append("No part is priced, so the window has no money rate.")
+    if unassigned:
+        out.append(f"{unassigned:,} parts were made with no part spec and are counted only.")
     out.append("Power and packing have no source on this floor, so neither is reported.")
     return " ".join(out), BOARD_VIEW
 

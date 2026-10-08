@@ -96,6 +96,19 @@ QUESTIONS = [
     # it used to fall through to, fails.
     ("board_power", "How much power did we use yesterday?", {"get_plant_power"},
      ["board.power"], "unseen"),
+    # A window other than today or the current month. "last month" is the one
+    # that matters: it used to reach the month read-model, which answers for the
+    # CURRENT month -- a different question, answered with no sign of it.
+    # No oracle facts on purpose: these windows are relative to the day the
+    # suite RUNS, and the fixture writes production 1-5 days back, so whether
+    # "last week" or "last month" contains any of it depends on today's date.
+    # A pinned figure here would pass all month and fail on the 3rd. The values
+    # are pinned in test_copilot_plant_board_tool.py against explicit ranges;
+    # what these cases are for is that the question reaches the right tool.
+    ("board_last_month", "How many kilograms did we use last month?",
+     {"get_plant_board_period"}, [], "unseen"),
+    ("board_last_week", "What was our shift rate last week?",
+     {"get_plant_board_period"}, [], "unseen"),
 ]
 
 # (id, question). Asked by every factory and every role.

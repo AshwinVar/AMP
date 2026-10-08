@@ -8,6 +8,8 @@
 // carries no points at all, so there is nothing a chart could draw as zero.
 
 /** A series AMP cannot draw, and why. Never zeros — see plant_board.py. */
+import { parseApiDate } from "./apiDate";
+
 export type UnavailableSeries = {
   available: false;
   reason: string;
@@ -82,6 +84,183 @@ export type PlantBoardMonth = {
   power: UnavailableSeries;
   packing: UnavailableSeries;
 };
+
+/** One bucket of a period series. `kg` and `revenue` are null when nothing in
+ *  the whole window has a part spec (or a price): there is no weight to report,
+ *  and a flat line at zero would claim there was. */
+export type PeriodPoint = {
+  start: string;
+  parts: number;
+  good: number;
+  unassigned: number;
+  kg: number | null;
+  revenue: number | null;
+};
+
+/** Material received in the window. `kg` is filled in ONLY where the inventory
+ *  item is counted in kilograms — a receipt booked in bags is a count, and
+ *  adding it to a weight would print a number that is not a weight. */
+export type RmAdded = {
+  material: string;
+  quantity: number;
+  unit: string;
+  kg: number | null;
+};
+
+/** Added against consumed for one material. Either side may be null: the two
+ *  come from different vocabularies (the spec's material, the storekeeper's
+ *  item name) and "not received" and "received under another name" are
+ *  different facts this join cannot tell apart. */
+export type RmBalanceRow = {
+  material: string;
+  consumed_kg: number | null;
+  added_kg: number | null;
+  added_qty: number | null;
+  added_unit: string | null;
+};
+
+export type PlantBoardPeriod = {
+  from: string;
+  to: string;
+  bucket: Bucket;
+  hours: number;
+  series: PeriodPoint[];
+  itemwise_production: { part: string; total: number; good: number }[];
+  rm_consumption: { material: string; kg: number }[];
+  rm_added: RmAdded[];
+  rm_balance: RmBalanceRow[];
+  shift_rate_by_machine: { machine: string; revenue: number; rate_per_hour: number }[];
+  total_rate_per_hour: number;
+  total_revenue: number;
+  power: UnavailableSeries;
+  packing: UnavailableSeries;
+};
+
+export type Bucket = "hour" | "day" | "month";
+
+/** The windows the board offers, each relative to the date in the picker — so
+ *  "week" means the week containing that day, not only the current one. */
+export type Preset = "day" | "week" | "month" | "year" | "custom";
+
+export const PRESETS: { key: Preset; label: string }[] = [
+  { key: "day", label: "Day" },
+  { key: "week", label: "Week" },
+  { key: "month", label: "Month" },
+  { key: "year", label: "Year" },
+  { key: "custom", label: "Custom" },
+];
+
+const MONTH_SHORT = ["Jan", "Feb", "Mar", "Apr", "May", "Jun",
+                     "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+const MONTH_LONG = ["January", "February", "March", "April", "May", "June", "July",
+                    "August", "September", "October", "November", "December"];
+
+/**
+ * A calendar day as a LOCAL midnight Date, through the one sanctioned parser.
+ *
+ * lib/apiDate.ts owns this because the platform reads a bare date string as UTC
+ * midnight, which is the previous day for every viewer west of Greenwich —
+ * lib/date-parsing.test.ts fails the build on any other way of doing it.
+ */
+export function localDate(iso: string): Date {
+  const d = parseApiDate(iso);
+  if (!d) throw new Error("not a calendar day: " + iso);
+  return d;
+}
+
+export function isoOf(d: Date): string {
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return d.getFullYear() + "-" + pad(d.getMonth() + 1) + "-" + pad(d.getDate());
+}
+
+/** Calendar-correct day arithmetic: month lengths and leap years are the
+ *  platform's problem, not ours, so this goes through a Date and mutates it. */
+export function shiftDays(iso: string, days: number): string {
+  const d = localDate(iso);
+  d.setDate(d.getDate() + days);
+  return isoOf(d);
+}
+
+const pad2 = (n: number) => String(n).padStart(2, "0");
+
+/** The first of the month an ISO day falls in, by string surgery — no instant
+ *  is involved in "which month is this", so none is constructed. */
+function firstOfMonth(iso: string): string {
+  return iso.slice(0, 8) + "01";
+}
+
+function firstOfNextMonth(iso: string): string {
+  const y = Number(iso.slice(0, 4));
+  const m = Number(iso.slice(5, 7));
+  return (m === 12 ? y + 1 : y) + "-" + pad2(m === 12 ? 1 : m + 1) + "-01";
+}
+
+/**
+ * The [start, end) a preset means around an anchor day, as YYYY-MM-DD.
+ *
+ * `end` is EXCLUSIVE, matching the route, so one day is start=D end=D+1 and no
+ * record can land in two windows. The week starts on Monday, which is how a
+ * shop floor counts one.
+ */
+export function periodWindow(preset: Preset, anchor: string): { start: string; end: string } {
+  if (preset === "week") {
+    const back = (localDate(anchor).getDay() + 6) % 7;      // Monday = 0
+    const from = shiftDays(anchor, -back);
+    return { start: from, end: shiftDays(from, 7) };
+  }
+  if (preset === "month") {
+    return { start: firstOfMonth(anchor), end: firstOfNextMonth(anchor) };
+  }
+  if (preset === "year") {
+    const y = Number(anchor.slice(0, 4));
+    return { start: y + "-01-01", end: y + 1 + "-01-01" };
+  }
+  return { start: anchor, end: shiftDays(anchor, 1) };
+}
+
+/**
+ * What a bucket is called on an axis, read as TEXT.
+ *
+ * These are the PLANT's own wall-clock buckets: ai/plant_board.py floors a
+ * naive `created_at`, so "2026-10-07T14:00:00" means 2pm on the floor. Parsing
+ * it as an instant and re-rendering it in the viewer's zone would slide every
+ * label by the UTC offset — five and a half hours for the plant this was built
+ * for, which would put the night shift in the afternoon.
+ */
+export function bucketTick(iso: string, bucket: Bucket): string {
+  const [datePart, timePart = ""] = iso.split("T");
+  const [, m, d] = datePart.split("-");
+  if (bucket === "hour") return (timePart.slice(0, 2) || "00") + ":00";
+  if (bucket === "day") return String(Number(d));
+  return MONTH_SHORT[Number(m) - 1] ?? datePart;
+}
+
+/** The window in words, for the card hints: "7 Oct 2026", "October 2026",
+ *  "2026", or a plain from-to. `end` is exclusive, so the last day it covers
+ *  is end - 1, and printing `end` would claim a day the window excludes. */
+export function periodLabel(start: string, end: string): string {
+  const last = shiftDays(end, -1);
+  const pretty = (iso: string) =>
+    Number(iso.slice(8, 10)) + " " + MONTH_SHORT[Number(iso.slice(5, 7)) - 1] + " " + iso.slice(0, 4);
+
+  if (start === last) return pretty(start);
+  if (start === firstOfMonth(start) && end === firstOfNextMonth(start)) {
+    return MONTH_LONG[Number(start.slice(5, 7)) - 1] + " " + start.slice(0, 4);
+  }
+  if (start.endsWith("-01-01") && end === Number(start.slice(0, 4)) + 1 + "-01-01") {
+    return start.slice(0, 4);
+  }
+  return pretty(start) + " – " + pretty(last);
+}
+
+/** Total kilograms received, or null when nothing received is counted in
+ *  kilograms. Never 0: "nothing arrived" and "what arrived was booked in bags"
+ *  are different facts. */
+export function addedKgTotal(rows: RmAdded[]): number | null {
+  const kg = rows.filter((r) => r.kg !== null);
+  if (!kg.length) return null;
+  return Math.round(kg.reduce((s, r) => s + (r.kg ?? 0), 0) * 1000) / 1000;
+}
 
 export type PartSpec = {
   id: number;

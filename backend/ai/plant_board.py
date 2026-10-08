@@ -30,7 +30,6 @@ THE SPEC IN FORCE IS THE ONE FOR THE DAY BEING READ. PartSpec is effective-dated
 because price and cavity counts change. Reading today's price onto last month's
 output would restate a month already reported, so every lookup is as-of.
 """
-import calendar
 from collections import defaultdict
 from datetime import date, datetime, time, timedelta
 
@@ -186,15 +185,145 @@ def day(db, tenant, on: date):
     }
 
 
-def month(db, tenant, year: int, mon: int):
-    """The monthly tables, from the same inputs as the daily board."""
-    start = datetime(year, mon, 1)
-    end = datetime(year + (mon == 12), (mon % 12) + 1, 1)
+#: The time buckets a series can be drawn in. The board used to offer one
+#: shape only -- 24 hours of one day, and a month of totals with no shape at
+#: all -- so "how did last week go?" had no answer on the screen that answers
+#: "how did today go?".
+BUCKETS = ("hour", "day", "month")
+#: Units that ARE kilograms, written out because InventoryItem.unit is free
+#: text a person typed. Anything else is a count of something (bags, pieces,
+#: drums) and must not be added to a weight.
+KG_UNITS = frozenset({"kg", "kgs", "kilo", "kilos", "kilogram", "kilograms"})
+
+
+def auto_bucket(start: datetime, end: datetime) -> str:
+    """The bucket a window is naturally read in.
+
+    Chosen by span, not by what the caller asked for, so a year never arrives
+    as 8,760 hourly bars nobody can read and a single day never collapses to
+    one. The boundaries are generous: two days still reads hourly, a quarter
+    still reads daily.
+    """
+    span = end - start
+    if span <= timedelta(days=2):
+        return "hour"
+    if span <= timedelta(days=92):
+        return "day"
+    return "month"
+
+
+def _floor(when: datetime, bucket: str) -> datetime:
+    if bucket == "hour":
+        return when.replace(minute=0, second=0, microsecond=0)
+    if bucket == "day":
+        return datetime.combine(when.date(), time.min)
+    return datetime(when.year, when.month, 1)
+
+
+def _next(when: datetime, bucket: str) -> datetime:
+    if bucket == "hour":
+        return when + timedelta(hours=1)
+    if bucket == "day":
+        return when + timedelta(days=1)
+    return datetime(when.year + (when.month == 12), (when.month % 12) + 1, 1)
+
+
+def _edges(start: datetime, end: datetime, bucket: str) -> list:
+    """Every bucket in the window, including the ones with nothing in them.
+
+    An empty bucket is a REAL zero for a count: the window was watched and
+    nothing was made in it. That is not true of the conversions, which is why
+    kg and revenue go to None for the whole series when nothing in the window
+    has a spec -- see `period`.
+    """
+    out, cursor = [], _floor(start, bucket)
+    while cursor < end and len(out) < 1500:    # bounded: a decade of days
+        out.append(cursor)
+        cursor = _next(cursor, bucket)
+    return out
+
+
+def rm_added(db, tenant, start: datetime, end: datetime) -> list:
+    """Material RECEIVED in the window, from goods receipts that were taken in.
+
+    WHY THIS IS NOT JUST ADDED TO CONSUMPTION. Consumption is always kilograms
+    because it is DERIVED: parts x the spec's part weight. A receipt is whatever
+    the inventory item happens to be counted in -- `InventoryItem.unit` is free
+    text somebody typed, and a moulder books resin in bags as often as in
+    kilograms. Adding the two would put bags into a kilogram total and print a
+    number that is not a weight. So every material is reported in ITS OWN unit,
+    and `kg` is filled in only where that unit says kilograms.
+
+    Draft receipts are excluded: material nobody has accepted yet is not on the
+    floor. `accepted_qty` is the quantity taken in, which is already net of
+    whatever was rejected at inspection.
+    """
+    rows = (db.query(models.GRNItem, models.InventoryItem)
+              .join(models.GoodsReceiptNote, models.GRNItem.grn_id == models.GoodsReceiptNote.id)
+              .join(models.InventoryItem, models.GRNItem.item_id == models.InventoryItem.id)
+              .filter(models.GRNItem.tenant_code == tenant,
+                      models.GoodsReceiptNote.tenant_code == tenant,
+                      models.InventoryItem.tenant_code == tenant,
+                      models.GoodsReceiptNote.status != "Draft",
+                      models.GoodsReceiptNote.created_at >= start,
+                      models.GoodsReceiptNote.created_at < end)
+              .all())
+    totals = defaultdict(float)
+    for line, item in rows:
+        totals[(item.item_name, (item.unit or "").strip())] += float(line.accepted_qty or 0)
+    out = []
+    for (name, unit), qty in sorted(totals.items(), key=lambda kv: -kv[1]):
+        is_kg = unit.lower() in KG_UNITS
+        out.append({"material": name, "quantity": round(qty, 3), "unit": unit or "(no unit)",
+                    "kg": round(qty, 3) if is_kg else None})
+    return out
+
+
+def _balance(consumed: list, added: list) -> list:
+    """Added against consumed, per material, and honest about the join.
+
+    The two come from different vocabularies: consumption is keyed by
+    `PartSpec.material` (what the mould makes it from) and a receipt by
+    `InventoryItem.item_name` (what the storekeeper books it as). They are
+    matched on the name, case- and space-insensitively, and a material that
+    appears on only one side still gets a row with the other side left None --
+    never zero, because "nothing was received" and "received under a different
+    name" are different facts and this join cannot tell them apart.
+    """
+    key = lambda s: " ".join((s or "").split()).lower()    # noqa: E731
+    rows = {}
+    for c in consumed:
+        rows[key(c["material"])] = {"material": c["material"], "consumed_kg": c["kg"],
+                                    "added_kg": None, "added_qty": None, "added_unit": None}
+    for a in added:
+        k = key(a["material"])
+        row = rows.setdefault(k, {"material": a["material"], "consumed_kg": None,
+                                  "added_kg": None, "added_qty": None, "added_unit": None})
+        row["added_kg"] = a["kg"]
+        row["added_qty"] = a["quantity"]
+        row["added_unit"] = a["unit"]
+    return sorted(rows.values(),
+                  key=lambda r: -((r["consumed_kg"] or 0) + (r["added_kg"] or 0)))
+
+
+def period(db, tenant, start: datetime, end: datetime, bucket: str = ""):
+    """The board over ANY window, bucketed, plus the totals for that window.
+
+    `day` answers one day in hours and `month` answered one month in totals;
+    everything between -- a shift, a week, a quarter -- had no answer at all.
+    This is the same arithmetic over an arbitrary [start, end) and one bucket
+    size, so the screen can ask for the period a person actually means.
+
+    THE SPEC IN FORCE IS STILL THE ONE FOR THE PERIOD READ, taken as of its last
+    day, for the reason the module docstring gives: reading today's price onto
+    last month's output restates a month already reported.
+    """
+    bucket = bucket if bucket in BUCKETS else auto_bucket(start, end)
     machines = {m.id: m for m in db.query(models.Machine)
                 .filter(models.Machine.tenant_code == tenant).all()}
     records = _records(db, tenant, start, end)
 
-    as_of = date(year, mon, calendar.monthrange(year, mon)[1])
+    as_of = (end - timedelta(microseconds=1)).date()
     specs = {}
     for mid in machines:
         code, _ = part_on_machine(db, tenant, mid)
@@ -202,31 +331,61 @@ def month(db, tenant, year: int, mon: int):
 
     by_part, by_material, by_machine = defaultdict(int), defaultdict(float), defaultdict(float)
     good_by_part = defaultdict(int)
+    buckets = _edges(start, end, bucket)
+    index = {b: i for i, b in enumerate(buckets)}
+    series = [{"start": b.isoformat(), "parts": 0, "good": 0, "unassigned": 0,
+               "kg": 0.0, "revenue": 0.0} for b in buckets]
+    any_spec = any_price = False
+
     for r in records:
         spec = specs.get(r.machine_id)
         parts = int(r.total_count or 0)
+        good = int(r.good_count or 0)
+        slot = series[index[_floor(r.created_at, bucket)]] if r.created_at and \
+            _floor(r.created_at, bucket) in index else None
+        if slot is not None:
+            slot["parts"] += parts
+            slot["good"] += good
         if spec:
+            any_spec = True
             by_part[spec.part_name] += parts
-            good_by_part[spec.part_name] += int(r.good_count or 0)
+            good_by_part[spec.part_name] += good
             by_material[spec.material] += parts * float(spec.part_weight_g) / 1000.0
-            by_machine[r.machine_id] += parts * float(spec.price_per_piece or 0)
+            price = float(spec.price_per_piece or 0)
+            any_price = any_price or price > 0
+            by_machine[r.machine_id] += parts * price
+            if slot is not None:
+                slot["kg"] += parts * float(spec.part_weight_g) / 1000.0
+                slot["revenue"] += parts * price
         else:
             by_part["(no part assigned)"] += parts
-            good_by_part["(no part assigned)"] += int(r.good_count or 0)
+            good_by_part["(no part assigned)"] += good
+            if slot is not None:
+                slot["unassigned"] += parts
 
-    # Hours in the month, for the shift-rate denominator.
-    hours = (end - start).days * HOURS
+    for s in series:
+        # Nothing in the window has a spec (or a price), so there is no weight
+        # (or value) to report -- and a flat line at zero would say there was.
+        s["kg"] = round(s["kg"], 3) if any_spec else None
+        s["revenue"] = round(s["revenue"], 2) if any_price else None
+
+    hours = (end - start).total_seconds() / 3600.0
     machine_rates = [{"machine": machines[mid].name,
                       "revenue": round(rev, 2),
                       "rate_per_hour": round(rev / hours, 2) if hours else 0.0}
-                     for mid, rev in sorted(by_machine.items(),
-                                            key=lambda kv: -kv[1])]
+                     for mid, rev in sorted(by_machine.items(), key=lambda kv: -kv[1])]
+    consumption = [{"material": mat, "kg": round(kg, 3)}
+                   for mat, kg in sorted(by_material.items(), key=lambda kv: -kv[1])]
+    received = rm_added(db, tenant, start, end)
     return {
-        "year": year, "month": mon,
+        "from": start.isoformat(), "to": end.isoformat(), "bucket": bucket,
+        "hours": round(hours, 2),
+        "series": series,
         "itemwise_production": [{"part": p, "total": t, "good": good_by_part[p]}
                                 for p, t in sorted(by_part.items(), key=lambda kv: -kv[1])],
-        "rm_consumption": [{"material": mat, "kg": round(kg, 3)}
-                           for mat, kg in sorted(by_material.items(), key=lambda kv: -kv[1])],
+        "rm_consumption": consumption,
+        "rm_added": received,
+        "rm_balance": _balance(consumption, received),
         "shift_rate_by_machine": machine_rates,
         "total_rate_per_hour": round(sum(r["rate_per_hour"] for r in machine_rates), 2),
         "total_revenue": round(sum(r["revenue"] for r in machine_rates), 2),
@@ -235,3 +394,17 @@ def month(db, tenant, year: int, mon: int):
         "packing": _unavailable("Nothing records packed quantities.",
                                 "A packing entry screen or a weighing scale."),
     }
+
+
+def month(db, tenant, year: int, mon: int):
+    """The monthly tables: one calendar month of `period`, bucketed by day.
+
+    Kept as its own entry point because the month is what the board opens on
+    and what /analytics/plant-board/month has always returned; `year` and
+    `month` stay in the payload so nothing that reads it has to change.
+    """
+    start = datetime(year, mon, 1)
+    end = datetime(year + (mon == 12), (mon % 12) + 1, 1)
+    out = period(db, tenant, start, end, "day")
+    out["year"], out["month"] = year, mon
+    return out

@@ -1,7 +1,7 @@
 import { render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import type { PlantBoardDay, PlantBoardMonth } from "../lib/plant-board";
+import type { PlantBoardDay, PlantBoardPeriod } from "../lib/plant-board";
 
 /**
  * The board's job is to be POINTED AT in a room with a customer, so the things
@@ -72,11 +72,19 @@ function day(over: Partial<PlantBoardDay> = {}): PlantBoardDay {
   };
 }
 
-function month(over: Partial<PlantBoardMonth> = {}): PlantBoardMonth {
+function period(over: Partial<PlantBoardPeriod> = {}): PlantBoardPeriod {
   return {
-    year: 2026, month: 10,
+    from: "2026-10-01T00:00:00", to: "2026-11-01T00:00:00", bucket: "day", hours: 744,
+    series: [
+      { start: "2026-10-06T00:00:00", parts: 0, good: 0, unassigned: 0, kg: 0, revenue: 0 },
+      { start: "2026-10-07T00:00:00", parts: 432000, good: 428000, unassigned: 0,
+        kg: 142.56, revenue: 1400000 },
+    ],
     itemwise_production: [{ part: "Ele clip", total: 432000, good: 428000 }],
     rm_consumption: [{ material: "PP H 110", kg: 142.56 }],
+    rm_added: [],
+    rm_balance: [{ material: "PP H 110", consumed_kg: 142.56, added_kg: null,
+                   added_qty: null, added_unit: null }],
     shift_rate_by_machine: [{ machine: "IMM-01", revenue: 1400000, rate_per_hour: 1882 }],
     total_rate_per_hour: 1882,
     total_revenue: 1400000,
@@ -86,9 +94,9 @@ function month(over: Partial<PlantBoardMonth> = {}): PlantBoardMonth {
   };
 }
 
-function serve(d: PlantBoardDay, m: PlantBoardMonth) {
+function serve(d: PlantBoardDay, m: PlantBoardPeriod) {
   apiGet.mockImplementation((path: string) =>
-    Promise.resolve(path.includes("/month") ? m : d));
+    Promise.resolve(path.includes("/period") ? m : d));
 }
 
 beforeEach(() => {
@@ -97,7 +105,7 @@ beforeEach(() => {
 
 describe("the two series with no source", () => {
   it("state the gap and the fix, and draw no number", async () => {
-    serve(day(), month());
+    serve(day(), period());
     render(<PlantBoardSection isAdmin />);
 
     await screen.findByText("No energy meter is installed on any machine.");
@@ -121,7 +129,7 @@ describe("a machine nobody has specified", () => {
                       points: [] }],
         shift_rate: [{ machine_id: 1, machine: "IMM-01", priced: false, points: [] }],
       }),
-      month({ itemwise_production: [], rm_consumption: [], shift_rate_by_machine: [],
+      period({ itemwise_production: [], rm_consumption: [], shift_rate_by_machine: [],
               total_revenue: 0, total_rate_per_hour: 0 }),
     );
     render(<PlantBoardSection isAdmin />);
@@ -145,7 +153,7 @@ describe("a machine nobody has specified", () => {
         rm_status: [{ machine_id: 1, machine: "IMM-01", material: null, kg_total: 0, points: [] }],
         shift_rate: [{ machine_id: 1, machine: "IMM-01", priced: false, points: [] }],
       }),
-      month({ shift_rate_by_machine: [], total_revenue: 0, total_rate_per_hour: 0 }),
+      period({ shift_rate_by_machine: [], total_revenue: 0, total_rate_per_hour: 0 }),
     );
     render(<PlantBoardSection isAdmin />);
 
@@ -155,8 +163,8 @@ describe("a machine nobody has specified", () => {
 });
 
 describe("the figures a customer would check", () => {
-  it("groups a month's revenue in lakhs, as their own ledger does", async () => {
-    serve(day(), month());
+  it("groups the window's revenue in lakhs, as their own ledger does", async () => {
+    serve(day(), period());
     render(<PlantBoardSection isAdmin />);
     // 1400000 -> 14,00,000, not 1,400,000.
     await waitFor(() =>
@@ -165,7 +173,7 @@ describe("the figures a customer would check", () => {
   });
 
   it("names the material and the day's consumption", async () => {
-    serve(day(), month());
+    serve(day(), period());
     render(<PlantBoardSection isAdmin />);
     await waitFor(() => expect(screen.getAllByText(/4\.75 kg/).length).toBeGreaterThan(0));
   });
@@ -177,5 +185,81 @@ describe("when the request fails", () => {
     render(<PlantBoardSection isAdmin />);
     await screen.findByText("the workspace has no machines");
     expect(screen.getByText("Try again")).toBeTruthy();
+  });
+});
+
+/**
+ * The window, and the two figures the customer's sheet asked for that the board
+ * could not answer: what material came IN, and the plant's shift-hour rate.
+ */
+describe("the period control", () => {
+  it("asks the backend for the window the preset names, not a fixed month", async () => {
+    serve(day(), period());
+    render(<PlantBoardSection isAdmin={false} />);
+    await screen.findByText("Plant Board");
+    await waitFor(() => expect(apiGet).toHaveBeenCalled());
+
+    const asked = () => apiGet.mock.calls.map((c) => String(c[0]));
+    await waitFor(() =>
+      expect(asked().some((u) => u.includes("/analytics/plant-board/period?start="))).toBe(true));
+
+    apiGet.mockClear();
+    screen.getByRole("button", { name: "Day" }).click();
+    // A day is [D, D+1): one day wide, and never two windows holding one record.
+    await waitFor(() => {
+      const url = asked().find((u) => u.includes("/period?"));
+      expect(url).toBeTruthy();
+      const from = new URL("http://x" + (url ?? "")).searchParams;
+      const start = new Date(String(from.get("start")));
+      const end = new Date(String(from.get("end")));
+      expect((end.getTime() - start.getTime()) / 86400000).toBe(1);
+    });
+  });
+
+  it("offers a custom range only when custom is chosen", async () => {
+    serve(day(), period());
+    render(<PlantBoardSection isAdmin={false} />);
+    await screen.findByText("Plant Board");
+    expect(screen.queryByText("From")).toBeNull();
+    screen.getByRole("button", { name: "Custom" }).click();
+    await screen.findByText("From");
+    expect(screen.getByText("To")).toBeTruthy();
+  });
+});
+
+describe("material received", () => {
+  it("shows the plant's shift-hour rate, not only its revenue", async () => {
+    serve(day(), period());
+    render(<PlantBoardSection isAdmin={false} />);
+    // The rate was computed and returned all along; the screen only ever
+    // printed the revenue beside it.
+    await screen.findByText(/₹1,882\/hr/);
+  });
+
+  it("keeps a receipt booked in bags out of the kilogram total", async () => {
+    serve(day(), period({
+      rm_added: [
+        { material: "PP H 110", quantity: 500, unit: "kg", kg: 500 },
+        { material: "Masterbatch", quantity: 4, unit: "bags", kg: null },
+      ],
+      rm_balance: [
+        { material: "PP H 110", consumed_kg: 142.56, added_kg: 500, added_qty: 500, added_unit: "kg" },
+        { material: "Masterbatch", consumed_kg: null, added_kg: null, added_qty: 4, added_unit: "bags" },
+      ],
+    }));
+    render(<PlantBoardSection isAdmin={false} />);
+    // 500 kg received — the 4 bags are NOT added to it, because bags are a
+    // count and the total is a weight.
+    await screen.findByText(/500 kg received/);
+    expect(screen.getByText(/Masterbatch 4 bags/)).toBeTruthy();
+    expect(screen.queryByText(/504 kg/)).toBeNull();
+  });
+
+  it("says so when nothing received was booked in kilograms", async () => {
+    serve(day(), period({
+      rm_added: [{ material: "Masterbatch", quantity: 4, unit: "bags", kg: null }],
+    }));
+    render(<PlantBoardSection isAdmin={false} />);
+    await screen.findByText(/nothing received was booked in kilograms/);
   });
 });

@@ -10,6 +10,12 @@ import {
   plantHourly,
   shiftLabel,
   type MachineProduction,
+  addedKgTotal,
+  bucketTick,
+  isoOf,
+  localDate,
+  periodLabel,
+  periodWindow,
 } from "./plant-board";
 
 /**
@@ -174,5 +180,88 @@ describe("which hour a chart click means", () => {
     expect(hourFromClick({ hour: 24 })).toBeNull();
     expect(hourFromClick({ hour: -1 })).toBeNull();
     expect(hourFromClick({ hour: 9.5 })).toBeNull();
+  });
+});
+
+/**
+ * The window a preset means.
+ *
+ * `end` is EXCLUSIVE everywhere — the route, the read-model and here — so a
+ * record can never fall in two windows and a day is exactly one day wide. The
+ * dates are built from local parts rather than parsed from the ISO string,
+ * because `new Date("2026-10-07")` is UTC midnight and would move the whole
+ * board back a day for anyone west of Greenwich.
+ */
+describe("periodWindow", () => {
+  it("makes a day one day wide, end exclusive", () => {
+    expect(periodWindow("day", "2026-10-07")).toEqual({ start: "2026-10-07", end: "2026-10-08" });
+  });
+
+  it("starts a week on the Monday the day falls in", () => {
+    // 2026-10-07 is a Wednesday.
+    expect(periodWindow("week", "2026-10-07")).toEqual({ start: "2026-10-05", end: "2026-10-12" });
+    // ...and a Monday is its own week's start, not the previous one's.
+    expect(periodWindow("week", "2026-10-05").start).toBe("2026-10-05");
+    // A Sunday belongs to the week that began six days earlier.
+    expect(periodWindow("week", "2026-10-11")).toEqual({ start: "2026-10-05", end: "2026-10-12" });
+  });
+
+  it("covers the whole calendar month, including a short one", () => {
+    expect(periodWindow("month", "2026-10-07")).toEqual({ start: "2026-10-01", end: "2026-11-01" });
+    expect(periodWindow("month", "2026-02-15")).toEqual({ start: "2026-02-01", end: "2026-03-01" });
+    // December rolls the year, which is where an off-by-one would show.
+    expect(periodWindow("month", "2026-12-20")).toEqual({ start: "2026-12-01", end: "2027-01-01" });
+  });
+
+  it("covers the whole year", () => {
+    expect(periodWindow("year", "2026-06-30")).toEqual({ start: "2026-01-01", end: "2027-01-01" });
+  });
+
+  it("does not drift a day in a timezone behind UTC", () => {
+    // The bug this guards: parsing "2026-10-07" as UTC midnight is 6 Oct in
+    // the Americas, so every window would start a day early there.
+    expect(periodWindow("day", "2026-01-01")).toEqual({ start: "2026-01-01", end: "2026-01-02" });
+    expect(isoOf(localDate("2026-03-01"))).toBe("2026-03-01");
+  });
+});
+
+describe("periodLabel", () => {
+  it("names one day, one month and one year in the words a person uses", () => {
+    expect(periodLabel("2026-10-07", "2026-10-08")).toMatch(/2026/);
+    expect(periodLabel("2026-10-01", "2026-11-01")).toMatch(/October/);
+    expect(periodLabel("2026-01-01", "2027-01-01")).toBe("2026");
+  });
+
+  it("shows an arbitrary range as its real last day, not the exclusive end", () => {
+    // end is 2026-10-12, so the last day covered is the 11th. Printing the
+    // 12th would claim a day the window does not include.
+    const label = periodLabel("2026-10-05", "2026-10-12");
+    expect(label).toMatch(/11/);
+    expect(label).not.toMatch(/12/);
+  });
+});
+
+describe("addedKgTotal", () => {
+  it("totals only what was booked in kilograms", () => {
+    expect(addedKgTotal([
+      { material: "PP", quantity: 500, unit: "kg", kg: 500 },
+      { material: "MB", quantity: 4, unit: "bags", kg: null },
+      { material: "PE", quantity: 25.5, unit: "kg", kg: 25.5 },
+    ])).toBe(525.5);
+  });
+
+  it("is null, never 0, when nothing received is a weight", () => {
+    // "Nothing arrived" and "what arrived was counted in bags" are different
+    // facts; a 0 kg total would state the first when the second is true.
+    expect(addedKgTotal([{ material: "MB", quantity: 4, unit: "bags", kg: null }])).toBeNull();
+    expect(addedKgTotal([])).toBeNull();
+  });
+});
+
+describe("bucketTick", () => {
+  it("labels a bucket by what distinguishes it inside its window", () => {
+    expect(bucketTick("2026-10-07T14:00:00", "hour")).toBe("14:00");
+    expect(bucketTick("2026-10-07T00:00:00", "day")).toBe("7");
+    expect(bucketTick("2026-10-01T00:00:00", "month")).toMatch(/Oct/);
   });
 });

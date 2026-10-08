@@ -67,6 +67,12 @@ _EXPECTED_VIEWS = {
     # bind you cannot sit behind a paywall. /service-contracts is not in any
     # gated pack's routes, so the plan gate never blocks it (pinned below).
     "contracts": "core",
+    # CORE, not Admin. Every plan sells user seats, so every plan needs the
+    # screen that creates them -- Starter advertises "up to 5 users" and had no
+    # way to make one. The routes were never gated (admin carries gated=false
+    # and an empty `routes` list, so plan_gate never sees them), which is what
+    # made this a nav bug rather than a licensing one.
+    "users": "core",
     "workorders": "operations", "planning": "operations", "scheduling": "operations",
     "operator": "operations", "orders": "operations",
     "maintenance_ai": "factory", "cmms": "factory", "quality": "factory",
@@ -76,7 +82,7 @@ _EXPECTED_VIEWS = {
     "copilot": "intelligence", "inbox": "intelligence", "agentactivity": "intelligence",
     "roi": "intelligence", "executive": "intelligence", "escalations": "intelligence",
     "notifications": "intelligence",
-    "documents": "admin", "saas": "admin", "users": "admin", "costing": "admin",
+    "documents": "admin", "saas": "admin", "costing": "admin",
     "enterprise": "admin",
 }
 
@@ -90,6 +96,43 @@ def test_manifest_views_reproduce_the_frontend_nav():
             seen[v["key"]] = pack["id"]
     assert seen == _EXPECTED_VIEWS, seen
     print("PASS manifest views reproduce the dashboard nav exactly (view -> pack pinned)")
+
+
+# Capabilities the PRICING PAGE sells on a plan, and the view each one needs.
+# frontend/app/page.tsx is the source: Starter advertises "Up to 5 users", Growth
+# "Up to 15 users". A plan that sells seats must ship the screen that creates
+# them.
+_SOLD_ON_EVERY_PLAN = {
+    "users": 'every tier\'s feature list sells a user count ("Up to 5 users" on '
+             'Starter), and seats nobody can create are not a feature',
+}
+
+
+def test_a_plan_can_reach_every_capability_it_is_sold():
+    """A plan that is sold a capability must be able to open it.
+
+    `users` sat in the `admin` pack, which only Enterprise bundles. So a Starter
+    customer bought "up to 5 users" and got no screen to make one — while the
+    API had never blocked them: `admin` carries gated=false and an empty
+    `routes` list, so plan_gate never built a rule for /users at all. The nav was
+    hiding a door that was never locked, which is why nothing caught it.
+
+    Pinned per PLAN rather than per pack, because the pack a view lives in is an
+    implementation detail and the promise on the pricing page is not.
+    """
+    for plan in module_manifest.plan_bundles():
+        packs = module_manifest.plan_modules(plan).split(",")
+        reachable = {v["key"]
+                     for p in module_manifest.packs_for_tenant(packs)
+                     if p["enabled"]
+                     for v in p["views"]}
+        for view, why in _SOLD_ON_EVERY_PLAN.items():
+            assert view in reachable, (
+                f"the {plan!r} plan cannot reach {view!r}: {why}. "
+                f"It bundles {packs}; move the view into a pack every plan has, "
+                f"or stop selling it on this plan.")
+    print(f"PASS every plan can reach the {len(_SOLD_ON_EVERY_PLAN)} capability "
+          f"its price list sells")
 
 
 def test_pack_for_path_routes_unchanged():
@@ -200,6 +243,7 @@ def test_toggle_pack_via_patch_sets_modules_and_is_founder_only():
 if __name__ == "__main__":
     test_manifest_reproduces_the_plan_gate_route_map()
     test_manifest_views_reproduce_the_frontend_nav()
+    test_a_plan_can_reach_every_capability_it_is_sold()
     test_pack_for_path_routes_unchanged()
     test_packs_for_tenant_marks_enablement_and_carries_views()
     test_modules_endpoint_reflects_tenant_subscription()

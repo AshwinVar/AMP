@@ -51,6 +51,7 @@ function day(over: Partial<PlantBoardDay> = {}): PlantBoardDay {
     production: [{
       machine_id: 1, machine: "IMM-01", part: "Ele clip", part_code: "ELE-CLIP",
       tool: "MLD-ELE", ideal_per_hour: 14400, average_per_hour: 600, total: 14400,
+      hours_known: true, hourly_total: 14400,
       points: hours(14400, 14400, "ok"),
     }],
     rm_status: [{
@@ -59,7 +60,7 @@ function day(over: Partial<PlantBoardDay> = {}): PlantBoardDay {
     }],
     shift_rate: [{
       machine_id: 1, machine: "IMM-01", priced: true,
-      points: [
+    points: [
         { shift: 1, from_hour: 0, to_hour: 8, parts: 0, revenue: 0, rate_per_hour: 0 },
         { shift: 2, from_hour: 8, to_hour: 16, parts: 14400, revenue: 1296, rate_per_hour: 162 },
         { shift: 3, from_hour: 16, to_hour: 24, parts: 0, revenue: 0, rate_per_hour: 0 },
@@ -115,10 +116,11 @@ describe("a machine nobody has specified", () => {
         production: [{
           machine_id: 1, machine: "IMM-01", part: null, part_code: null, tool: null,
           ideal_per_hour: 0, average_per_hour: 208.3, total: 5000,
+          hours_known: true, hourly_total: 5000,
           points: hours(5000, 0, "unrated"),
         }],
         rm_status: [{ machine_id: 1, machine: "IMM-01", material: null, kg_total: 0,
-                      points: [] }],
+    points: [] }],
         shift_rate: [{ machine_id: 1, machine: "IMM-01", priced: false, points: [] }],
       }),
       month({ itemwise_production: [], rm_consumption: [], shift_rate_by_machine: [],
@@ -140,6 +142,7 @@ describe("a machine nobody has specified", () => {
         production: [{
           machine_id: 1, machine: "IMM-01", part: null, part_code: null, tool: null,
           ideal_per_hour: 0, average_per_hour: 0, total: 5000,
+          hours_known: true, hourly_total: 5000,
           points: hours(5000, 0, "unrated"),
         }],
         rm_status: [{ machine_id: 1, machine: "IMM-01", material: null, kg_total: 0, points: [] }],

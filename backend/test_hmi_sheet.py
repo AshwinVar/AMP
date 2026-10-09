@@ -1,0 +1,426 @@
+"""Guards for figures transcribed off an HMI screen.
+
+THE TWO DEFECTS THESE EXIST TO CATCH, both of which flatter the plant:
+
+  1. A DAY COUNTED TWICE. The same day can reach AMP as a photograph of the
+     MONTH page, a photograph of the HOUR PROD. page, and the controller's own
+     USB export. Stored naively all three ADD, and a day of 5,000 shots becomes
+     a day of 13,000. The direction matters: nobody questions a number that
+     makes them look good.
+
+  2. A DAY DRAWN AS AN HOUR. A MONTH-page figure has no hour in it. Stamped at
+     midnight and bucketed by hour, a full day's output becomes one bar at 00:00
+     followed by twenty-three empty hours -- a plant that ran three shifts shown
+     as one that stopped before one o'clock.
+
+Run: python backend/test_hmi_sheet.py
+"""
+import os
+import sys
+from datetime import date, datetime
+
+sys.stdout.reconfigure(encoding="utf-8")
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
+os.environ.setdefault("DATABASE_URL", "sqlite:///./ci_hmi_sheet.db")
+
+import hmi_sheet  # noqa: E402
+import models  # noqa: E402
+from ai import plant_board  # noqa: E402
+from database import Base, SessionLocal, engine  # noqa: E402
+
+TENANT = "HMITEST"
+FAILURES = []
+
+
+def check(label, ok, detail=""):
+    print(("  PASS  " if ok else "  FAIL  ") + label + (f"  -- {detail}" if detail and not ok else ""))
+    if not ok:
+        FAILURES.append(label)
+
+
+def fresh():
+    """A workspace with two presses and nothing recorded."""
+    db = SessionLocal()
+    for model in (models.ProductionRecord, models.Machine):
+        db.query(model).filter(model.tenant_code == TENANT).delete()
+    db.commit()
+    made = {}
+    for name in ("IMM-01", "IMM-02"):
+        m = models.Machine(tenant_code=TENANT, name=name, status="running")
+        db.add(m)
+        made[name] = m
+    db.commit()
+    return db, made
+
+
+def write(tmp, name, text):
+    path = os.path.join(tmp, name)
+    with open(path, "w", encoding="utf-8", newline="") as fh:
+        fh.write(text)
+    return path
+
+
+def rows_for(db, machine_id):
+    return (db.query(models.ProductionRecord)
+              .filter(models.ProductionRecord.tenant_code == TENANT,
+                      models.ProductionRecord.machine_id == machine_id)
+              .all())
+
+
+# ── The reader refuses rather than guesses ───────────────────────────────────
+
+def test_reader(tmp):
+    bad = [
+        ("a missing column", "machine,date\nIMM-01,2026-10-09\n", "shots"),
+        ("a date nobody can parse",
+         "machine,date,shots\nIMM-01,Tuesday,5\n", "not a date"),
+        ("shots that are not a number",
+         "machine,date,shots\nIMM-01,2026-10-09,lots\n", "not a number"),
+        ("a counter that went backwards",
+         "machine,date,shots\nIMM-01,2026-10-09,-5\n", "does not go back"),
+        ("a meter that went backwards",
+         "machine,date,shots,kwh\nIMM-01,2026-10-09,5,-1\n", "does not go back"),
+        ("a header and no rows", "machine,date,shots\n", "no rows"),
+        ("a nameless machine",
+         "machine,date,shots\n,2026-10-09,5\n", "machine is empty"),
+    ]
+    for label, text, wanted in bad:
+        path = write(tmp, "bad.csv", text)
+        try:
+            hmi_sheet.read_sheet(path, "hmi-day")
+            check(f"refuses {label}", False, "it was accepted")
+        except hmi_sheet.HmiSheetError as exc:
+            check(f"refuses {label}", wanted in str(exc), f"said {exc!r}")
+
+    path = write(tmp, "h.csv", "machine,date,hour,shots\nIMM-01,2026-10-09,24,5\n")
+    try:
+        hmi_sheet.read_sheet(path, "hmi-hour")
+        check("refuses hour 24", False, "it was accepted")
+    except hmi_sheet.HmiSheetError as exc:
+        check("refuses hour 24", "hours 0..23" in str(exc), f"said {exc!r}")
+
+
+def test_blank_kwh_is_not_zero(tmp):
+    """The defect this is the whole point of: a blank must survive as None.
+
+    IMM-12 on the Shrinidhi floor prints an energy column of 0.0 for a day it
+    made 3,658 shots, because its ENERGY PULSE KWh constant is 000.0. Its kWh
+    cells are left blank here. If a blank became 0.0 the board would draw a bar
+    saying the machine ran all day and drew no power.
+    """
+    path = write(tmp, "blank.csv",
+                 "machine,date,shots,kwh\nIMM-01,2026-10-09,100,\n")
+    rows = hmi_sheet.read_sheet(path, "hmi-day")
+    check("a blank kwh reads as None, not 0.0",
+          rows[0]["kwh"] is None, f"got {rows[0]['kwh']!r}")
+
+    planned = hmi_sheet.plan(rows, "hmi-day")
+    check("and survives planning as None",
+          planned[0]["energy_kwh"] is None, f"got {planned[0]['energy_kwh']!r}")
+
+
+def test_zero_shots_are_not_stored(tmp):
+    path = write(tmp, "z.csv", "machine,date,hour,shots\n"
+                 "IMM-01,2026-10-09,0,0\nIMM-01,2026-10-09,1,50\n")
+    planned = hmi_sheet.plan(hmi_sheet.read_sheet(path, "hmi-hour"), "hmi-hour")
+    check("an hour that made nothing is not written as a record of zero",
+          len(planned) == 1 and planned[0]["total_count"] == 50,
+          f"planned {len(planned)} rows")
+
+
+# ── Precedence: one machine-day has exactly one source ───────────────────────
+
+def test_a_better_source_replaces_a_weaker_one(tmp):
+    db, made = fresh()
+    day_path = write(tmp, "d.csv",
+                     "machine,date,shots,kwh\nIMM-01,2026-10-09,5000,90.0\n")
+    hmi_sheet.import_sheet(db, TENANT, made, day_path, "hmi-day")
+    check("the MONTH page lands", len(rows_for(db, made["IMM-01"].id)) == 1)
+
+    hour_path = write(tmp, "h.csv", "machine,date,hour,shots,kwh\n"
+                      + "".join(f"IMM-01,2026-10-09,{h},200,3.5\n" for h in range(24)))
+    out = hmi_sheet.import_sheet(db, TENANT, made, hour_path, "hmi-hour")
+
+    rows = rows_for(db, made["IMM-01"].id)
+    check("the HOUR PROD. page replaces it rather than adding to it",
+          len(rows) == 24, f"{len(rows)} rows remain")
+    check("and says how many it replaced", out["rows_replaced"] == 1,
+          f"reported {out['rows_replaced']}")
+    check("so the day is counted once",
+          sum(r.total_count for r in rows) == 4800,
+          f"day totals {sum(r.total_count for r in rows)}")
+    db.close()
+
+
+def test_a_weaker_source_never_overwrites_a_better_one(tmp):
+    db, made = fresh()
+    hour_path = write(tmp, "h.csv", "machine,date,hour,shots\n"
+                      + "".join(f"IMM-01,2026-10-09,{h},200\n" for h in range(24)))
+    hmi_sheet.import_sheet(db, TENANT, made, hour_path, "hmi-hour")
+
+    day_path = write(tmp, "d.csv",
+                     "machine,date,shots\nIMM-01,2026-10-09,9999\n")
+    out = hmi_sheet.import_sheet(db, TENANT, made, day_path, "hmi-day")
+
+    rows = rows_for(db, made["IMM-01"].id)
+    check("the MONTH page does not overwrite the hours",
+          len(rows) == 24 and sum(r.total_count for r in rows) == 4800,
+          f"{len(rows)} rows totalling {sum(r.total_count for r in rows)}")
+    check("and the person is told which days were kept",
+          out["days_kept_from_a_better_source"].get("IMM-01") == ["2026/10/09"],
+          f"reported {out['days_kept_from_a_better_source']!r}")
+    check("and the summary counts only what was stored", out["shots"] == 0,
+          f"claimed {out['shots']} shots")
+    db.close()
+
+
+def test_a_transcription_never_deletes_the_controllers_own_export(tmp):
+    """The mutant that found this deleted UPWARDS: `weaker = everything else`.
+
+    Nothing in the suite imported a photograph over an existing USB export, so
+    a supersede that wiped the export instead of being blocked by it survived.
+    An export is the best source there is; a photograph arriving afterwards
+    must leave it entirely alone.
+    """
+    db, made = fresh()
+    machine = made["IMM-01"]
+    for hour in range(24):
+        db.add(models.ProductionRecord(
+            tenant_code=TENANT, machine_id=machine.id,
+            source_record_id=f"arico:IMM-01:2026/10/09:{hour:02d}",
+            planned_minutes=60, runtime_minutes=60,
+            ideal_cycle_time_seconds=15, total_count=250, good_count=250,
+            rejected_count=0, energy_kwh=4.0,
+            created_at=datetime(2026, 10, 9, hour)))
+    db.commit()
+
+    hour_path = write(tmp, "h.csv", "machine,date,hour,shots\n"
+                      + "".join(f"IMM-01,2026-10-09,{h},999\n" for h in range(24)))
+    out = hmi_sheet.import_sheet(db, TENANT, made, hour_path, "hmi-hour")
+
+    rows = rows_for(db, machine.id)
+    check("a photographed hour does not delete the exported one",
+          len(rows) == 24, f"{len(rows)} rows remain")
+    check("and does not overwrite its figures",
+          sum(r.total_count for r in rows) == 6000,
+          f"totals {sum(r.total_count for r in rows)}")
+    check("the export is still the source of every row",
+          all((r.source_record_id or "").startswith("arico:") for r in rows))
+    check("and the person is told the day was kept",
+          out["days_kept_from_a_better_source"].get("IMM-01") == ["2026/10/09"],
+          f"reported {out['days_kept_from_a_better_source']!r}")
+    db.close()
+
+
+def test_rank_puts_an_unknown_source_last(tmp):
+    """`rank` is the whole precedence order; an unknown kind must be weakest.
+
+    A mutant made it strongest (-1), which would let any typo in a `kind`
+    delete every real row it touched. Nothing reached it through import_sheet,
+    because that validates the kind first -- so the contract is pinned here,
+    where it is actually stated.
+    """
+    check("the export outranks both photographs",
+          hmi_sheet.rank("arico") < hmi_sheet.rank("hmi-hour")
+          < hmi_sheet.rank("hmi-day"))
+    check("an unknown kind outranks nothing",
+          hmi_sheet.rank("nonsense") > hmi_sheet.rank("hmi-day"))
+
+    db, made = fresh()
+    day_path = write(tmp, "d.csv", "machine,date,shots\nIMM-01,2026-10-09,5000\n")
+    hmi_sheet.import_sheet(db, TENANT, made, day_path, "hmi-day")
+    removed = hmi_sheet.supersede(db, TENANT, "IMM-01", ["2026/10/09"], "nonsense")
+    db.commit()
+    check("so a source nobody recognises deletes nothing",
+          removed == 0 and len(rows_for(db, made["IMM-01"].id)) == 1,
+          f"removed {removed}")
+    db.close()
+
+
+def test_precedence_only_touches_the_same_machine_and_day(tmp):
+    db, made = fresh()
+    day_path = write(tmp, "d.csv", "machine,date,shots\n"
+                     "IMM-01,2026-10-08,4000\nIMM-02,2026-10-09,4000\n")
+    hmi_sheet.import_sheet(db, TENANT, made, day_path, "hmi-day")
+
+    hour_path = write(tmp, "h.csv", "machine,date,hour,shots\n"
+                      + "".join(f"IMM-01,2026-10-09,{h},100\n" for h in range(24)))
+    hmi_sheet.import_sheet(db, TENANT, made, hour_path, "hmi-hour")
+
+    check("another day on the same machine is left alone",
+          any(r.planned_minutes == hmi_sheet.MINUTES_IN_DAY
+              for r in rows_for(db, made["IMM-01"].id)))
+    check("another machine on the same day is left alone",
+          len(rows_for(db, made["IMM-02"].id)) == 1)
+    db.close()
+
+
+def test_reimporting_the_same_sheet_changes_nothing(tmp):
+    db, made = fresh()
+    path = write(tmp, "d.csv", "machine,date,shots,kwh\n"
+                 "IMM-01,2026-10-09,5000,90.0\nIMM-01,2026-10-08,4000,80.0\n")
+    first = hmi_sheet.import_sheet(db, TENANT, made, path, "hmi-day")
+    second = hmi_sheet.import_sheet(db, TENANT, made, path, "hmi-day")
+
+    rows = rows_for(db, made["IMM-01"].id)
+    check("a re-import creates nothing",
+          second["rows_written"] == 0 and first["rows_written"] == 2,
+          f"wrote {second['rows_written']} the second time")
+    check("it updates in place instead", second["rows_updated"] == 2)
+    check("and the plant's output has not doubled",
+          sum(r.total_count for r in rows) == 9000,
+          f"totals {sum(r.total_count for r in rows)}")
+    db.close()
+
+
+def test_a_machine_is_never_invented(tmp):
+    db, made = fresh()
+    path = write(tmp, "d.csv", "machine,date,shots\nIMM-99,2026-10-09,100\n")
+    try:
+        hmi_sheet.import_sheet(db, TENANT, made, path, "hmi-day")
+        check("a sheet naming an unknown machine is refused", False,
+              "it was accepted")
+    except hmi_sheet.HmiSheetError as exc:
+        check("a sheet naming an unknown machine is refused",
+              "IMM-99" in str(exc), f"said {exc!r}")
+    check("and no machine was created for it",
+          db.query(models.Machine).filter(
+              models.Machine.tenant_code == TENANT).count() == 2)
+    db.close()
+
+
+# ── A day is never drawn as an hour ──────────────────────────────────────────
+
+def test_a_day_total_is_not_drawn_at_midnight(tmp):
+    db, made = fresh()
+    day_path = write(tmp, "d.csv",
+                     "machine,date,shots,kwh\nIMM-01,2026-10-09,5000,90.0\n")
+    hmi_sheet.import_sheet(db, TENANT, made, day_path, "hmi-day")
+
+    board = plant_board.day(db, TENANT, date(2026, 10, 9))
+    row = next(p for p in board["production"] if p["machine"] == "IMM-01")
+
+    midnight = next(p for p in row["points"] if p["hour"] == 0)
+    check("the day's shots do not appear as a bar at 00:00",
+          midnight["parts"] == 0, f"drew {midnight['parts']} at midnight")
+    check("no hour carries the day",
+          max(p["parts"] for p in row["points"]) == 0,
+          f"peak hour has {max(p['parts'] for p in row['points'])}")
+    check("but the day's real total is still reported",
+          row["total"] == 5000, f"reported {row['total']}")
+    check("and the board says the hours are not known",
+          row["hours_known"] is False, f"claimed hours_known={row['hours_known']}")
+
+    power = board["power"]
+    check("the day's kWh is in the total", power.get("total") == 90.0,
+          f"reported {power.get('total')}")
+    check("and the power chart admits it has no hours",
+          power.get("hours_known") is False or not power.get("available"),
+          f"claimed hours_known={power.get('hours_known')}")
+    # The mutant that found this fed the DAY record to _energy_hours. The total
+    # stayed right and hours_known stayed False, so every assertion above still
+    # passed -- while the chart drew 90 kWh at midnight. The points are the
+    # thing being lied about, so the points are what has to be checked.
+    drawn = power.get("points") or []
+    check("and draws no kWh at midnight either",
+          all((p["kwh"] or 0) == 0 for p in drawn),
+          f"drew {[p for p in drawn if (p['kwh'] or 0)][:2]}")
+    db.close()
+
+
+def test_an_hourly_day_still_draws_and_adds_up(tmp):
+    db, made = fresh()
+    hour_path = write(tmp, "h.csv", "machine,date,hour,shots,kwh\n"
+                      + "".join(f"IMM-01,2026-10-09,{h},200,3.5\n" for h in range(24)))
+    hmi_sheet.import_sheet(db, TENANT, made, hour_path, "hmi-hour")
+
+    board = plant_board.day(db, TENANT, date(2026, 10, 9))
+    row = next(p for p in board["production"] if p["machine"] == "IMM-01")
+    check("an hourly day draws every hour",
+          all(p["parts"] == 200 for p in row["points"]),
+          f"points {[p['parts'] for p in row['points']][:3]}...")
+    check("its total matches its hours", row["total"] == 4800)
+    check("and it does not claim its hours are unknown",
+          row["hours_known"] is True)
+    check("the power chart draws, and its total matches",
+          board["power"]["available"] and board["power"]["total"] == 84.0,
+          f"reported {board['power'].get('total')}")
+    db.close()
+
+
+def test_a_mixed_plant_keeps_both_honest(tmp):
+    """One machine reports hours, the other only a day. Both must be right."""
+    db, made = fresh()
+    hour_path = write(tmp, "h.csv", "machine,date,hour,shots\n"
+                      + "".join(f"IMM-01,2026-10-09,{h},100\n" for h in range(24)))
+    hmi_sheet.import_sheet(db, TENANT, made, hour_path, "hmi-hour")
+    day_path = write(tmp, "d.csv", "machine,date,shots\nIMM-02,2026-10-09,7000\n")
+    hmi_sheet.import_sheet(db, TENANT, made, day_path, "hmi-day")
+
+    board = plant_board.day(db, TENANT, date(2026, 10, 9))
+    one = next(p for p in board["production"] if p["machine"] == "IMM-01")
+    two = next(p for p in board["production"] if p["machine"] == "IMM-02")
+    check("the metered machine keeps its hours",
+          one["hours_known"] is True and one["total"] == 2400)
+    check("the photographed machine keeps its day",
+          two["hours_known"] is False and two["total"] == 7000)
+    check("and the day machine contributes nothing to any hour",
+          all(p["parts"] == 0 for p in two["points"]))
+    db.close()
+
+
+def test_hourly_only_is_what_does_it():
+    """The helper itself, so a caller that forgets it is the only way to regress."""
+    class R:
+        def __init__(self, minutes):
+            self.planned_minutes = minutes
+    kept = hmi_sheet.MINUTES_IN_HOUR
+    check("an hour is kept",
+          len(plant_board.hourly_only([R(kept)])) == 1)
+    check("a day is dropped",
+          plant_board.hourly_only([R(hmi_sheet.MINUTES_IN_DAY)]) == [])
+    check("a shift is dropped too",
+          plant_board.hourly_only([R(480)]) == [])
+
+
+def main():
+    Base.metadata.create_all(bind=engine)
+    tmp = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                       "_hmi_sheet_tmp")
+    os.makedirs(tmp, exist_ok=True)
+    try:
+        print("the reader refuses rather than guesses")
+        test_reader(tmp)
+        test_blank_kwh_is_not_zero(tmp)
+        test_zero_shots_are_not_stored(tmp)
+        print("\none machine-day has exactly one source")
+        test_a_better_source_replaces_a_weaker_one(tmp)
+        test_a_transcription_never_deletes_the_controllers_own_export(tmp)
+        test_rank_puts_an_unknown_source_last(tmp)
+        test_a_weaker_source_never_overwrites_a_better_one(tmp)
+        test_precedence_only_touches_the_same_machine_and_day(tmp)
+        test_reimporting_the_same_sheet_changes_nothing(tmp)
+        test_a_machine_is_never_invented(tmp)
+        print("\na day is never drawn as an hour")
+        test_a_day_total_is_not_drawn_at_midnight(tmp)
+        test_an_hourly_day_still_draws_and_adds_up(tmp)
+        test_a_mixed_plant_keeps_both_honest(tmp)
+        test_hourly_only_is_what_does_it()
+    finally:
+        for f in os.listdir(tmp):
+            os.remove(os.path.join(tmp, f))
+        os.rmdir(tmp)
+
+    print()
+    if FAILURES:
+        print(f"{len(FAILURES)} FAILED:")
+        for f in FAILURES:
+            print("  -", f)
+        return 1
+    print("all checks passed")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

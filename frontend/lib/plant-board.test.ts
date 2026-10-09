@@ -6,8 +6,10 @@ import {
   hasTarget,
   hourFromClick,
   hourLabel,
+  dayOnlyMachines,
   missingLinks,
   plantHourly,
+  powerMode,
   shiftLabel,
   type MachineProduction,
 } from "./plant-board";
@@ -28,6 +30,8 @@ function machine(over: Partial<MachineProduction> = {}): MachineProduction {
     ideal_per_hour: 14400,
     average_per_hour: 600,
     total: 14400,
+    hours_known: true,
+    hourly_total: 14400,
     points: Array.from({ length: 24 }, (_, h) => ({
       hour: h,
       parts: h === 9 ? 14400 : 0,
@@ -174,5 +178,89 @@ describe("which hour a chart click means", () => {
     expect(hourFromClick({ hour: 24 })).toBeNull();
     expect(hourFromClick({ hour: -1 })).toBeNull();
     expect(hourFromClick({ hour: 9.5 })).toBeNull();
+  });
+});
+
+describe("powerMode", () => {
+  // THE DEFECT: two states where there are three. A meter that reports a day's
+  // total and no hours is not "no meter" and is not "24 bars" — rendered as the
+  // first it denies a measurement AMP is holding; rendered as the second it
+  // stacks a whole day onto midnight.
+  const unavailable = {
+    available: false as const,
+    reason: "no meter",
+    fix: "fit one",
+    points: [] as [],
+  };
+  const hourly = {
+    available: true as const,
+    unit: "kWh",
+    total: 48.9,
+    points: [{ hour: 0, kwh: 3.4 }],
+    hours_known: true,
+  };
+
+  it("draws nothing when nothing measured", () => {
+    expect(powerMode(unavailable)).toBe("unavailable");
+  });
+
+  it("draws the hours when the hours are known", () => {
+    expect(powerMode(hourly)).toBe("hourly");
+  });
+
+  it("draws the total, not the hours, when only the day was measured", () => {
+    expect(powerMode({ ...hourly, hours_known: false })).toBe("day-only");
+    expect(powerMode({ ...hourly, points: null })).toBe("day-only");
+  });
+
+  it("never calls a measured day unavailable", () => {
+    // The direction that matters: a moulder told his machine has no meter
+    // while AMP holds the kilowatt-hours that machine measured.
+    expect(powerMode({ ...hourly, hours_known: false })).not.toBe("unavailable");
+  });
+});
+
+describe("dayOnlyMachines", () => {
+  const press = (over: Partial<MachineProduction>): MachineProduction => ({
+    machine_id: 1,
+    machine: "IMM-01",
+    part: null,
+    part_code: null,
+    tool: null,
+    ideal_per_hour: 0,
+    average_per_hour: 0,
+    total: 0,
+    hours_known: true,
+    hourly_total: 0,
+    points: [],
+    ...over,
+  });
+
+  it("names a machine whose day is real but whose hours are not", () => {
+    expect(
+      dayOnlyMachines([press({ machine: "IMM-02", total: 5050, hours_known: false })]),
+    ).toEqual(["IMM-02"]);
+  });
+
+  it("says nothing about a machine that reports hours", () => {
+    expect(
+      dayOnlyMachines([press({ machine: "IMM-03", total: 2228, hourly_total: 2228 })]),
+    ).toEqual([]);
+  });
+
+  it("says nothing about a machine that made nothing", () => {
+    // A press that stood idle has no hours either, but naming it would read as
+    // "data is missing" when the truth is simply that it did not run.
+    expect(dayOnlyMachines([press({ total: 0, hours_known: false })])).toEqual([]);
+  });
+
+  it("names every such machine, in the order they are given", () => {
+    expect(
+      dayOnlyMachines([
+        press({ machine: "IMM-01", total: 2456, hours_known: false }),
+        press({ machine: "IMM-03", total: 2228 }),
+        press({ machine: "IMM-06", total: 2131, hours_known: false }),
+      ]),
+    ).toEqual(["IMM-01", "IMM-06"]);
   });
 });

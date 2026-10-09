@@ -22,12 +22,16 @@ import {
   hasTarget,
   hourFromClick,
   hourLabel,
+  type MeasuredSeries,
   missingLinks,
   plantHourly,
+  powerMode,
+  type Series,
   shiftLabel,
   type HourStatus,
   type PlantBoardDay,
   type PlantBoardMonth,
+  dayOnlyMachines,
   todayLocalIso,
   type UnavailableSeries,
 } from "../lib/plant-board";
@@ -67,6 +71,9 @@ function numberOf(v: unknown): number {
 }
 
 const fmtCount = (v: unknown) => numberOf(v).toLocaleString();
+// Recharts 3 types a tick/label formatter's argument as ReactNode, not
+// number, so hourLabel cannot be passed directly (same trap as fmtCount).
+const fmtHour = (v: unknown) => hourLabel(numberOf(v));
 const fmtKg = (v: unknown) => numberOf(v).toFixed(3) + " kg";
 const fmtMoney = (v: unknown) => money(Math.round(numberOf(v)));
 
@@ -111,6 +118,66 @@ function NoSource({ title, series }: { title: string; series: UnavailableSeries 
           indistinguishable from a plant that consumed nothing.
         </p>
       </div>
+    </Card>
+  );
+}
+
+/**
+ * Electricity, drawn only to the resolution it was measured at.
+ *
+ * Three states, because there are three (see `powerMode`). The middle one is
+ * the one that did not exist until machines started arriving by photograph: a
+ * meter that reports a day's total and no hours. Its number is real and its
+ * chart is not, so the number is shown and the chart is not drawn.
+ */
+function PowerCard({ series }: { series: Series }) {
+  const mode = powerMode(series);
+  if (mode === "unavailable") {
+    return <NoSource title="Power consumption" series={series as UnavailableSeries} />;
+  }
+  const measured = series as MeasuredSeries;
+  const total = `${fmtCount(measured.total)} ${measured.unit}`;
+
+  if (mode === "day-only") {
+    return (
+      <Card title="Power consumption" hint="Measured per day">
+        <p className="text-3xl font-semibold text-emerald-300">{total}</p>
+        <div className="mt-4 rounded-xl border border-dashed border-slate-700 bg-slate-950/40 p-4">
+          <p className="text-sm text-slate-300">
+            This came off the controller&apos;s month page, which records a day
+            at a time. The day&apos;s figure is the machine&apos;s own; the hours
+            inside it were never stored.
+          </p>
+          <p className="mt-3 text-xs uppercase tracking-wide text-slate-500">
+            To see it by the hour
+          </p>
+          <p className="mt-1 text-sm text-slate-400">
+            Press EXPORT DATA on the machine&apos;s HOUR PROD. page with a USB
+            stick fitted, or connect the machine to AMP.
+          </p>
+        </div>
+      </Card>
+    );
+  }
+
+  return (
+    <Card title="Power consumption" hint={total}>
+      <ResponsiveContainer width="100%" height={200}>
+        <BarChart data={measured.points ?? []}>
+          <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" />
+          <XAxis dataKey="hour" stroke="#64748b" fontSize={10} tickFormatter={fmtHour} />
+          <YAxis stroke="#64748b" fontSize={10} />
+          <Tooltip
+            contentStyle={{ background: "#0f172a", border: "1px solid #334155" }}
+            labelFormatter={fmtHour}
+            formatter={fmtCount}
+          />
+          {/* An hour with no measurement is null and leaves a gap. Recharts
+              draws no bar for null, which is the point — a zero bar would say
+              the machine ran that hour and drew nothing. */}
+          <Bar dataKey="kwh" name={measured.unit} fill="#34d399" />
+        </BarChart>
+      </ResponsiveContainer>
     </Card>
   );
 }
@@ -167,6 +234,7 @@ export default function PlantBoardSection({ isAdmin }: { isAdmin: boolean }) {
 
   const plant = useMemo(() => plantHourly(production), [production]);
   const plantTarget = plant[0]?.ideal ?? 0;
+  const dayOnly = useMemo(() => dayOnlyMachines(production), [production]);
 
   // Who was making what at the clicked hour. This is the drill-in: a bar on the
   // plant chart is a question, and this is the answer.
@@ -344,6 +412,19 @@ export default function PlantBoardSection({ isAdmin }: { isAdmin: boolean }) {
                 ) : null}
               </BarChart>
             </ResponsiveContainer>
+
+            {/* A machine read off a MONTH page has a real day and no hours. Its
+                24 zero bars are already excluded from the plant total above, so
+                without this line the plant would simply look quieter than it
+                was, with nothing on screen to say why. */}
+            {dayOnly.length ? (
+              <p className="mt-3 rounded-lg border border-amber-900/50 bg-amber-950/20 px-3 py-2 text-xs text-amber-200/80">
+                These bars leave out {dayOnly.join(", ")}: {dayOnly.length === 1 ? "its" : "their"}{" "}
+                output was read off a month page, which records a day at a time.{" "}
+                {dayOnly.length === 1 ? "That day is" : "Those days are"} counted in the
+                machine table below, not in the hours here.
+              </p>
+            ) : null}
 
             <div className="mt-3 flex flex-wrap gap-4 text-xs text-slate-400">
               {(["ok", "low", "unrated"] as const).map((k) => (
@@ -579,9 +660,9 @@ export default function PlantBoardSection({ isAdmin }: { isAdmin: boolean }) {
             </div>
           ) : null}
 
-          {/* ── The two series with no source ─────────────────────── */}
+          {/* ── Power, in whichever of its three states is true ────── */}
           <div className="grid gap-4 lg:grid-cols-2">
-            <NoSource title="Power consumption" series={day.power} />
+            <PowerCard series={day.power} />
             <NoSource title="Packing" series={day.packing} />
           </div>
 

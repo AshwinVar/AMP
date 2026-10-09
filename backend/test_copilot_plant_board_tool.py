@@ -309,9 +309,53 @@ def main():   # noqa: C901 - one section per pinned property, read top to bottom
         check("it carries no figure of any kind",
               not [f for f in p.facts if isinstance(f.value, (int, float))],
               str([f.key for f in p.facts if isinstance(f.value, (int, float))]))
+        # Asserts the PROPERTY the label claims, not one phrasing of it. This
+        # pinned the literal "no energy meter", which stopped being the wording
+        # the moment power became measurable -- a test of a sentence rather than
+        # of a behaviour.
+        said = p.summary.lower()
         check("the sentence says why, and what would measure it",
-              "no energy meter" in p.summary.lower() and "meter" in p.summary.lower(), p.summary)
+              "power" in said and "meter" in said and "cannot report" in said, p.summary)
         check("it is grounded", grounding.check(p.summary, p.to_dict()["facts"]).passed, p.summary)
+
+        section("9b. WHEN A MACHINE DOES MEASURE POWER, THE COPILOT REPORTS IT")
+        # The board and the copilot must not disagree about the same fact. Power
+        # was unavailable by construction until a controller turned out to have
+        # been counting kWh per hour for fourteen months; a copilot still saying
+        # "AMP cannot report power" beside a chart drawing it is worse than
+        # either surface being silent.
+        setup(db)
+        metered = db.query(models.Machine).filter(
+            models.Machine.tenant_code == T, models.Machine.name == "IMM-01").first()
+        # get_plant_power asks the board about TODAY, so the fixture has to be
+        # today -- seeding it on DAY would test an empty board and pass for the
+        # wrong reason.
+        today = datetime.utcnow().date()
+        for hour, kwh in ((9, 3.8), (10, 3.6)):
+            db.add(models.ProductionRecord(
+                tenant_code=T, machine_id=metered.id, total_count=200, good_count=200,
+                rejected_count=0, planned_minutes=60, runtime_minutes=60,
+                ideal_cycle_time_seconds=14, energy_kwh=kwh,
+                created_at=datetime.combine(today, datetime.min.time())
+                + timedelta(hours=hour)))
+        db.commit()
+
+        q = ask(db, "get_plant_power")
+        QF = facts_of(q)
+        check("power comes back MEASURED, not unknown",
+              QF["board.power"].value == 7.4, str(QF["board.power"].value))
+        check("...with the kWh unit kept", QF["board.power"].unit == "kWh",
+              str(QF["board.power"].unit))
+        check("...and the sentence states the figure",
+              "7.4" in q.summary and "kwh" in q.summary.lower(), q.summary)
+        check("...no longer claiming AMP cannot report it",
+              "cannot report power" not in q.summary.lower(), q.summary)
+        check("PACKING is still honestly unknown beside it",
+              unknown(QF["board.packing"]), str(QF["board.packing"].value))
+        check("...so the state says part of the answer is missing",
+              q.state == ev.PARTIAL_DATA, str(q.state))
+        check("it is grounded", grounding.check(q.summary, q.to_dict()["facts"]).passed,
+              q.summary)
 
         section("10. THE MONTH TABLES KEEP THE SAME PROPERTY")
         setup(db)

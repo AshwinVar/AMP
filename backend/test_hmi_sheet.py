@@ -402,6 +402,94 @@ def case_hourly_only_is_what_does_it():
           len(plant_board.hourly_only([R(None)])) == 1)
 
 
+def case_the_remaining_refusals(tmp):
+    """The refusal paths the happy-path cases never walk.
+
+    Each one is a sentence somebody on a shop floor has to be able to act on,
+    so each is asserted by its wording rather than by its exception type.
+    """
+    try:
+        hmi_sheet.read_sheet(write(tmp, "k.csv", "machine,date,shots\n"),
+                             "hmi-week")
+        check("an unknown sheet kind is refused", False, "it was accepted")
+    except hmi_sheet.HmiSheetError as exc:
+        check("an unknown sheet kind is refused",
+              "not a sheet kind" in str(exc), f"said {exc!r}")
+
+    try:
+        hmi_sheet.read_sheet(os.path.join(tmp, "nope.csv"), "hmi-day")
+        check("a missing file is refused", False, "it was accepted")
+    except hmi_sheet.HmiSheetError as exc:
+        check("a missing file is refused",
+              "does not exist" in str(exc), f"said {exc!r}")
+
+    try:
+        hmi_sheet.read_sheet(
+            write(tmp, "e.csv",
+                  "machine,date,hour,shots\nIMM-01,2026-10-09,,5\n"),
+            "hmi-hour")
+        check("an empty hour is refused, not read as midnight", False,
+              "it was accepted")
+    except hmi_sheet.HmiSheetError as exc:
+        check("an empty hour is refused, not read as midnight",
+              "is empty" in str(exc), f"said {exc!r}")
+
+    db, made = fresh()
+    stranger = models.Machine(tenant_code="SOMEONE-ELSE", name="IMM-01",
+                              status="running")
+    db.add(stranger)
+    db.commit()
+    path = write(tmp, "x.csv", "machine,date,shots\nIMM-01,2026-10-09,100\n")
+    try:
+        hmi_sheet.import_sheet(db, TENANT, {"IMM-01": stranger}, path,
+                               "hmi-day")
+        check("a sheet cannot be imported into another workspace", False,
+              "it was accepted")
+    except hmi_sheet.HmiSheetError as exc:
+        check("a sheet cannot be imported into another workspace",
+              "workspace" in str(exc), f"said {exc!r}")
+    db.query(models.Machine).filter(
+        models.Machine.tenant_code == "SOMEONE-ELSE").delete()
+    db.commit()
+    db.close()
+
+
+def case_the_command_line(tmp):
+    """The CLI is a real entry point, with a refusal path people will hit.
+
+    It takes the tenant as an argument and hardcodes none -- AMP is a
+    multi-tenant platform, and the plant that happened to need this first is
+    still just one tenant. Pinned here so a later convenience cannot quietly
+    bake one in.
+    """
+    db, made = fresh()
+    machine_id = made["IMM-01"].id
+    db.close()
+    path = write(tmp, "cli.csv",
+                 "machine,date,shots,kwh\nIMM-01,2026-10-09,5000,90.0\n")
+
+    rc = hmi_sheet.main(["--tenant", TENANT, "--kind", "hmi-day",
+                         "--file", path])
+    check("the CLI imports a sheet", rc == 0, f"exited {rc}")
+
+    db = SessionLocal()
+    rows = rows_for(db, machine_id)
+    check("and the row is actually there",
+          len(rows) == 1 and rows[0].total_count == 5000, f"{len(rows)} rows")
+    db.close()
+
+    rc = hmi_sheet.main(["--tenant", "NO-SUCH-TENANT", "--kind", "hmi-day",
+                         "--file", path])
+    check("a workspace with no machines is refused, not invented", rc == 1,
+          f"exited {rc}")
+
+    bad = write(tmp, "bad-cli.csv", "machine,date\nIMM-01,2026-10-09\n")
+    rc = hmi_sheet.main(["--tenant", TENANT, "--kind", "hmi-day",
+                         "--file", bad])
+    check("a malformed sheet makes the CLI exit non-zero", rc == 1,
+          f"exited {rc}")
+
+
 def main():
     Base.metadata.create_all(bind=engine)
     tmp = os.path.join(os.path.dirname(os.path.abspath(__file__)),
@@ -425,6 +513,9 @@ def main():
         case_an_hourly_day_still_draws_and_adds_up(tmp)
         case_a_mixed_plant_keeps_both_honest(tmp)
         case_hourly_only_is_what_does_it()
+        print("\nthe refusals, and the command line")
+        case_the_remaining_refusals(tmp)
+        case_the_command_line(tmp)
     finally:
         for f in os.listdir(tmp):
             os.remove(os.path.join(tmp, f))

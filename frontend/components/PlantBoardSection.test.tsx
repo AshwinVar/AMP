@@ -75,6 +75,7 @@ function day(over: Partial<PlantBoardDay> = {}): PlantBoardDay {
 
 function month(over: Partial<PlantBoardMonth> = {}): PlantBoardMonth {
   return {
+    daily: [],
     year: 2026, month: 10,
     itemwise_production: [{ part: "Ele clip", total: 432000, good: 428000 }],
     rm_consumption: [{ material: "PP H 110", kg: 142.56 }],

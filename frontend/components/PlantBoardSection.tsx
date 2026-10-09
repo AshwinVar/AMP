@@ -21,6 +21,7 @@ import {
   HOUR_LABEL,
   hasTarget,
   hourFromClick,
+  machineFromClick,
   hourLabel,
   type MeasuredSeries,
   missingLinks,
@@ -35,6 +36,12 @@ import {
   todayLocalIso,
   type UnavailableSeries,
 } from "../lib/plant-board";
+import {
+  type Cell as CsvCell,
+  downloadCsv,
+  exportFilename,
+  toCsv,
+} from "../lib/chart-export";
 import PartMasterCard from "./PartMasterCard";
 
 /**
@@ -77,16 +84,60 @@ const fmtHour = (v: unknown) => hourLabel(numberOf(v));
 const fmtKg = (v: unknown) => numberOf(v).toFixed(3) + " kg";
 const fmtMoney = (v: unknown) => money(Math.round(numberOf(v)));
 
+/**
+ * Download this chart's data. On EVERY chart, for EVERY user.
+ *
+ * Deliberately not admin-gated. The person who needs yesterday's hourly
+ * production in a spreadsheet is the supervisor who has to explain it, not the
+ * administrator, and an export behind a role is an export nobody uses.
+ *
+ * It exports the rows the chart DREW, so a gap in the chart is a gap in the
+ * file — see lib/chart-export.ts for why that matters more than it sounds.
+ */
+function ExportButton({
+  chart,
+  on,
+  headers,
+  rows,
+}: {
+  chart: string;
+  on: string;
+  headers: string[];
+  rows: Record<string, CsvCell>[];
+}) {
+  const [said, setSaid] = useState("");
+  if (!rows.length) return null;
+  return (
+    <button
+      type="button"
+      onClick={() => {
+        const ok = downloadCsv(exportFilename(chart, on), toCsv(headers, rows));
+        // A download that silently did not happen is worse than an error: the
+        // person waits, then looks in a Downloads folder that has nothing.
+        setSaid(ok ? "Saved" : "Could not save");
+        setTimeout(() => setSaid(""), 2500);
+      }}
+      className="shrink-0 rounded-lg border border-slate-700 px-2.5 py-1 text-xs
+                 text-slate-300 hover:border-slate-500 hover:text-slate-100"
+      title={`Download the ${rows.length} rows behind this chart as a CSV`}
+    >
+      {said || "Export"}
+    </button>
+  );
+}
+
 function Card({
   title,
   hint,
   children,
   right,
+  exportAs,
 }: {
   title: string;
   hint?: string;
   children: React.ReactNode;
   right?: React.ReactNode;
+  exportAs?: { on: string; headers: string[]; rows: Record<string, CsvCell>[] };
 }) {
   return (
     <div className="rounded-2xl border border-slate-800 bg-slate-900/60 p-5">
@@ -95,7 +146,17 @@ function Card({
           <h3 className="text-sm font-semibold uppercase tracking-wide text-slate-300">{title}</h3>
           {hint ? <p className="mt-1 text-xs text-slate-500">{hint}</p> : null}
         </div>
-        {right}
+        <div className="flex shrink-0 items-center gap-2">
+          {right}
+          {exportAs ? (
+            <ExportButton
+              chart={title}
+              on={exportAs.on}
+              headers={exportAs.headers}
+              rows={exportAs.rows}
+            />
+          ) : null}
+        </div>
       </div>
       <div className="mt-4">{children}</div>
     </div>
@@ -161,7 +222,18 @@ function PowerCard({ series }: { series: Series }) {
   }
 
   return (
-    <Card title="Power consumption" hint={total}>
+    <Card
+      title="Power consumption"
+      hint={total}
+      exportAs={{
+        on: "day",
+        headers: ["hour", "kwh"],
+        rows: (measured.points ?? []).map((pt) => ({
+          hour: hourLabel(pt.hour),
+          kwh: pt.kwh,
+        })),
+      }}
+    >
       <ResponsiveContainer width="100%" height={200}>
         <BarChart data={measured.points ?? []}>
           <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" />
@@ -190,6 +262,7 @@ export default function PlantBoardSection({ isAdmin }: { isAdmin: boolean }) {
   const [loading, setLoading] = useState(true);
   const [machineId, setMachineId] = useState<number | null>(null);
   const [hour, setHour] = useState<number | null>(null);
+  const [period, setPeriod] = useState<"hourly" | "daily" | "monthly">("hourly");
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -275,8 +348,33 @@ export default function PlantBoardSection({ isAdmin }: { isAdmin: boolean }) {
           </p>
         </div>
         <div className="flex items-end gap-3">
+          {/* PERIOD. Three resolutions, and which ones are HONEST depends on
+              the data: a machine read off a month page has a real day and no
+              hours, so "Hourly" would draw it as zero. See `dayOnly`. */}
+          <div className="text-xs text-slate-400">
+            <span className="block mb-1">Show</span>
+            <div className="flex overflow-hidden rounded-lg border border-slate-700">
+              {(["hourly", "daily", "monthly"] as const).map((p) => (
+                <button
+                  key={p}
+                  type="button"
+                  onClick={() => setPeriod(p)}
+                  className={
+                    "px-3 py-2 text-sm capitalize " +
+                    (period === p
+                      ? "bg-slate-700 text-white"
+                      : "bg-slate-950 text-slate-400 hover:text-slate-200")
+                  }
+                >
+                  {p}
+                </button>
+              ))}
+            </div>
+          </div>
           <label className="text-xs text-slate-400">
-            <span className="block mb-1">Day</span>
+            <span className="block mb-1">
+              {period === "monthly" || period === "daily" ? "Month of" : "Day"}
+            </span>
             <input
               type="date"
               value={on}
@@ -366,6 +464,15 @@ export default function PlantBoardSection({ isAdmin }: { isAdmin: boolean }) {
                 ? "The dashed line is the plant's target for an hour, from the cycle times entered. Click a bar for the machine-by-machine split."
                 : "No cycle time has been entered for any fitted mould, so there is no target to draw. The bars are real counts."
             }
+            exportAs={{
+              on: day.date,
+              headers: ["hour", "parts", "target_per_hour"],
+              rows: plant.map((p) => ({
+                hour: hourLabel(p.hour),
+                parts: p.parts,
+                target_per_hour: p.ideal > 0 ? p.ideal : null,
+              })),
+            }}
           >
             <ResponsiveContainer width="100%" height={260}>
               <BarChart
@@ -494,10 +601,78 @@ export default function PlantBoardSection({ isAdmin }: { isAdmin: boolean }) {
             ) : null}
           </Card>
 
-          {/* ── Per-machine table, the way into one machine's day ─── */}
+          {/* ── Per-machine, as BARS. The way into one machine's day. ─ */}
           <Card
-            title="By machine"
-            hint="Click a row to see that machine's hourly production, material and shift rate."
+            title="Parts today, by machine"
+            hint="Click a bar for that machine's hourly production, material and shift rate."
+            exportAs={{
+              on: day.date,
+              headers: ["machine", "parts_today", "target_per_hour",
+                        "average_per_hour", "mould", "part", "hours_known"],
+              rows: production.map((p) => ({
+                machine: p.machine,
+                parts_today: p.total,
+                target_per_hour: hasTarget(p) ? p.ideal_per_hour : null,
+                average_per_hour: p.average_per_hour,
+                mould: p.tool,
+                part: p.part,
+                hours_known: p.hours_known,
+              })),
+            }}
+          >
+            <ResponsiveContainer width="100%" height={Math.max(180, production.length * 30)}>
+              <BarChart
+                data={production.map((p) => ({
+                  machine: p.machine,
+                  parts: p.total,
+                  machine_id: p.machine_id,
+                }))}
+                layout="vertical"
+                margin={{ left: 8, right: 24, top: 4, bottom: 18 }}
+              >
+                <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" />
+                <XAxis
+                  type="number"
+                  stroke="#64748b"
+                  fontSize={11}
+                  label={{ value: "Parts made today", position: "insideBottom",
+                           offset: -8, fill: "#64748b", fontSize: 11 }}
+                />
+                <YAxis type="category" dataKey="machine" stroke="#64748b"
+                       fontSize={11} width={78} />
+                <Tooltip
+                  contentStyle={{ background: "#0f172a", border: "1px solid #334155" }}
+                  formatter={fmtCount}
+                />
+                <Bar dataKey="parts" name="Parts" cursor="pointer"
+                     onClick={(entry: unknown) => {
+                       const id = machineFromClick(entry);
+                       if (id != null) setMachineId(machineId === id ? null : id);
+                     }}>
+                  {production.map((p) => (
+                    <Cell
+                      key={p.machine_id}
+                      fill={
+                        !hasTarget(p)
+                          ? HOUR_FILL.unrated
+                          : p.average_per_hour >= p.ideal_per_hour * (day.acceptable_fraction ?? 0.8)
+                            ? HOUR_FILL.ok
+                            : HOUR_FILL.low
+                      }
+                      stroke={machineId === p.machine_id ? "#e2e8f0" : undefined}
+                      strokeWidth={machineId === p.machine_id ? 2 : 0}
+                    />
+                  ))}
+                </Bar>
+              </BarChart>
+            </ResponsiveContainer>
+          </Card>
+
+          {/* ── The same machines as a table, for the detail a bar cannot
+                carry: the mould, the part, and what each one still needs. ── */}
+          <Card
+            title="By machine — detail"
+            hint="The same machines. A bar shows how much; this shows what of, and what is missing."
           >
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
@@ -556,6 +731,16 @@ export default function PlantBoardSection({ isAdmin }: { isAdmin: boolean }) {
               <Card
                 title={selected.machine + " — parts per hour"}
                 hint={selected.part ? "Making " + selected.part : "No part assigned"}
+                exportAs={{
+                  on: day.date + "-" + selected.machine,
+                  headers: ["hour", "parts", "target_per_hour", "status"],
+                  rows: selected.points.map((p) => ({
+                    hour: hourLabel(p.hour),
+                    parts: p.parts,
+                    target_per_hour: p.ideal > 0 ? p.ideal : null,
+                    status: p.status,
+                  })),
+                }}
                 right={
                   <button
                     type="button"
@@ -593,6 +778,18 @@ export default function PlantBoardSection({ isAdmin }: { isAdmin: boolean }) {
 
               <Card
                 title="Material consumed"
+                exportAs={
+                  selectedRm
+                    ? {
+                        on: day.date + "-" + selected.machine,
+                        headers: ["hour", "kg"],
+                        rows: selectedRm.points.map((p) => ({
+                          hour: hourLabel(p.hour),
+                          kg: p.kg,
+                        })),
+                      }
+                    : undefined
+                }
                 hint={
                   selectedRm?.material
                     ? selectedRm.material + " — " + selectedRm.kg_total.toFixed(2) + " kg today"
@@ -627,6 +824,23 @@ export default function PlantBoardSection({ isAdmin }: { isAdmin: boolean }) {
 
               <Card
                 title="Shift rate"
+                exportAs={
+                  selectedShift
+                    ? {
+                        on: day.date + "-" + selected.machine,
+                        headers: ["shift", "from_hour", "to_hour", "parts",
+                                  "revenue", "rate_per_hour"],
+                        rows: selectedShift.points.map((b) => ({
+                          shift: b.shift,
+                          from_hour: hourLabel(b.from_hour),
+                          to_hour: hourLabel(b.to_hour),
+                          parts: b.parts,
+                          revenue: selectedShift.priced ? b.revenue : null,
+                          rate_per_hour: selectedShift.priced ? b.rate_per_hour : null,
+                        })),
+                      }
+                    : undefined
+                }
                 hint={
                   selectedShift?.priced
                     ? "Value produced per hour, averaged over each 8-hour block"
@@ -665,6 +879,58 @@ export default function PlantBoardSection({ isAdmin }: { isAdmin: boolean }) {
             <PowerCard series={day.power} />
             <NoSource title="Packing" series={day.packing} />
           </div>
+
+          {/* ── DAILY: the month, day by day. The middle resolution, and
+                the only one a machine read off a MONTH page can answer. ── */}
+          {period === "daily" && month ? (
+            <Card
+              title="Production per day — whole plant"
+              hint={
+                (month.daily?.length ?? 0) > 0
+                  ? "Every day this month that produced anything. A day the plant did not run is absent, not zero."
+                  : "Nothing recorded this month."
+              }
+              exportAs={{
+                on: month.year + "-" + String(month.month).padStart(2, "0"),
+                headers: ["day", "parts", "kg", "revenue"],
+                rows: (month.daily ?? []).map((d) => ({
+                  day: d.day,
+                  parts: d.parts,
+                  kg: d.kg,
+                  revenue: d.revenue,
+                })),
+              }}
+            >
+              {(month.daily?.length ?? 0) > 0 ? (
+                <ResponsiveContainer width="100%" height={260}>
+                  <BarChart data={month.daily ?? []}
+                            margin={{ left: 8, right: 16, top: 4, bottom: 20 }}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" />
+                    <XAxis
+                      dataKey="day"
+                      stroke="#64748b"
+                      fontSize={10}
+                      tickFormatter={(v: unknown) => String(v).slice(8)}
+                      label={{ value: "Day of month", position: "insideBottom",
+                               offset: -10, fill: "#64748b", fontSize: 11 }}
+                    />
+                    <YAxis stroke="#64748b" fontSize={11}
+                           label={{ value: "Parts", angle: -90, position: "insideLeft",
+                                    fill: "#64748b", fontSize: 11 }} />
+                    <Tooltip
+                      contentStyle={{ background: "#0f172a", border: "1px solid #334155" }}
+                      formatter={fmtCount}
+                    />
+                    <Bar dataKey="parts" name="Parts" fill={HOUR_FILL.ok} />
+                  </BarChart>
+                </ResponsiveContainer>
+              ) : (
+                <p className="py-12 text-center text-sm text-slate-500">
+                  No production recorded this month.
+                </p>
+              )}
+            </Card>
+          ) : null}
 
           {/* ── The month ─────────────────────────────────────────── */}
           {month ? (

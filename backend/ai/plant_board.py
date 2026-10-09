@@ -369,8 +369,39 @@ def month(db, tenant, year: int, mon: int):
     month_energy = [{"day": d.isoformat(), "kwh": round(k, 2)}
                     for d, k in sorted(by_day.items())]
 
+    # THE MONTH, DAY BY DAY -- the middle resolution, between an hour and a
+    # month, and the one a plant manager actually asks for: "how did we do last
+    # week". It reads EVERY record regardless of window length, unlike the
+    # hourly series, because a day is exactly the resolution a whole-day record
+    # already has. That is the whole reason day-level transcriptions are worth
+    # storing: they cannot answer an hour and they answer this perfectly.
+    #
+    # A day with no record is ABSENT, not zero. A plant that did not run on a
+    # Sunday and a plant whose gateway was offline on Sunday look identical as
+    # a zero, and only one of them is a story about production.
+    parts_by_day, kg_by_day, money_by_day = (defaultdict(int), defaultdict(float),
+                                             defaultdict(float))
+    for r in records:
+        if not r.created_at:
+            continue
+        d = r.created_at.date()
+        parts = int(r.total_count or 0)
+        parts_by_day[d] += parts
+        spec = specs.get(r.machine_id)
+        if spec:
+            kg_by_day[d] += parts * float(spec.part_weight_g) / 1000.0
+            money_by_day[d] += parts * float(spec.price_per_piece or 0)
+    daily = [{"day": d.isoformat(),
+              "parts": parts_by_day[d],
+              # None, not 0.0: a day whose machines have no part spec has an
+              # unknown weight and an unknown value, not a weight of nothing.
+              "kg": round(kg_by_day[d], 3) if d in kg_by_day else None,
+              "revenue": round(money_by_day[d], 2) if d in money_by_day else None}
+             for d in sorted(parts_by_day)]
+
     return {
         "year": year, "month": mon,
+        "daily": daily,
         "itemwise_production": [{"part": p, "total": t, "good": good_by_part[p]}
                                 for p, t in sorted(by_part.items(), key=lambda kv: -kv[1])],
         "rm_consumption": [{"material": mat, "kg": round(kg, 3)}

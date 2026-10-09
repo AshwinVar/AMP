@@ -96,9 +96,19 @@ export type PlantBoardDay = {
   packing: UnavailableSeries;
 };
 
+export type MonthDay = {
+  day: string;
+  parts: number;
+  /** null when no part spec declares a weight — never 0 for "unknown". */
+  kg: number | null;
+  revenue: number | null;
+};
+
 export type PlantBoardMonth = {
   year: number;
   month: number;
+  /** Every day that produced anything. A day with no record is ABSENT. */
+  daily: MonthDay[];
   itemwise_production: { part: string; total: number; good: number }[];
   rm_consumption: { material: string; kg: number }[];
   shift_rate_by_machine: { machine: string; revenue: number; rate_per_hour: number }[];
@@ -279,4 +289,21 @@ export function powerMode(series: Series): "unavailable" | "hourly" | "day-only"
  */
 export function dayOnlyMachines(production: MachineProduction[]): string[] {
   return production.filter((m) => !m.hours_known && m.total > 0).map((m) => m.machine);
+}
+
+/**
+ * The machine_id behind a clicked bar, or null.
+ *
+ * The same trap as `hourFromClick`, and it cost a day the first time: Recharts
+ * hands the handler either the datum or a wrapper with `payload`, and a missed
+ * click hands it null. `Number(null)` is 0, and 0 is a plausible-looking id —
+ * so a click that resolved to nothing used to drill into whichever machine
+ * happened to be first. Null has to mean null.
+ */
+export function machineFromClick(entry: unknown): number | null {
+  const node = entry as
+    | { machine_id?: unknown; payload?: { machine_id?: unknown } }
+    | null;
+  const raw = node?.machine_id ?? node?.payload?.machine_id;
+  return typeof raw === "number" && Number.isInteger(raw) && raw > 0 ? raw : null;
 }

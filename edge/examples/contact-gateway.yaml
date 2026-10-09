@@ -1,0 +1,122 @@
+# AMP Edge — four presses, one USB-serial adapter, no I/O module.
+#
+# For a machine whose controller cannot be asked anything: no Ethernet, serial
+# ports that load firmware rather than report production, no register map
+# because there is no protocol. Measured on a real moulding floor: thirteen
+# presses, three controller brands, not one of them pollable.
+#
+# WIRING, per machine:
+#
+#     machine cycle output  ->  opto-isolator  ->  one serial input line
+#
+# The cycle output is whatever the controller energises once per cycle -- the
+# ejector solenoid is the usual choice, because it fires once and only once.
+# The serial input lines are CTS, DSR, CD and RI, which is why one adapter
+# covers four machines.
+#
+# THE OPTO-ISOLATOR IS NOT OPTIONAL. Wiring a press's 24 V straight into a
+# laptop's serial port puts the machine and the PC on the same electrical
+# reference: a fault on either travels to the other, and a wiring slip
+# energises something in a live control cabinet. An opto costs about ten rupees
+# and passes no current at all, only light.
+#
+# COMMISSIONING, and do not skip it:
+#
+#     python -m ampedge watch examples/contact-gateway.yaml --machine PRESS-01
+#
+# That prints the count climbing and a parts-per-hour figure. Hold it against
+# the number on the machine's own screen:
+#
+#     the same          the right terminal; nothing else needs proving
+#     about double      contact bounce -- raise debounce_ms
+#     about half        the sensor sees one edge per two cycles; move it
+#     not moving        wrong terminal, or the opto is in backwards
+#
+# Guessing instead produces a plausible wrong number, which is the one failure
+# nobody catches.
+
+amp:
+  host: broker.amp.example.com
+  port: 8883
+  tls: true
+  ca_cert: /etc/amp/ca.crt
+  tenant: ACME
+  site: plant-1
+  username_env: AMP_MQTT_USERNAME
+  password_env: AMP_MQTT_PASSWORD
+
+gateway:
+  id: gw-acme-plant1-04
+  key_env: AMP_GATEWAY_KEY
+
+machines:
+  - name: PRESS-01
+    protocol: contact
+    # Polling is slow ON PURPOSE. The adapter samples the line continuously at
+    # 50 Hz in the background and keeps a running total, so a poll every five
+    # seconds loses nothing -- it just collects what has already been counted.
+    poll_interval: 5.0
+    connection:
+      serial_port: COM4          # /dev/ttyUSB0 on Linux
+      # 25 ms swallows contact bounce and is far shorter than any real cycle.
+      # Raise it only if `watch` shows roughly double the machine's own rate.
+      debounce_ms: 25
+    tags:
+      - tag: cycles
+        address: cts
+        signal: part_count
+        datatype: int
+        counter_mode: cumulative
+
+  - name: PRESS-02
+    protocol: contact
+    poll_interval: 5.0
+    connection:
+      serial_port: COM4          # THE SAME PORT -- opened once, shared
+      debounce_ms: 25
+    tags:
+      - tag: cycles
+        address: dsr
+        signal: part_count
+        datatype: int
+        counter_mode: cumulative
+
+  - name: PRESS-03
+    protocol: contact
+    poll_interval: 5.0
+    connection:
+      serial_port: COM4
+      debounce_ms: 25
+    tags:
+      - tag: cycles
+        address: cd
+        signal: part_count
+        datatype: int
+        counter_mode: cumulative
+
+  - name: PRESS-04
+    protocol: contact
+    poll_interval: 5.0
+    connection:
+      serial_port: COM4
+      debounce_ms: 25
+    tags:
+      - tag: cycles
+        address: ri
+        signal: part_count
+        datatype: int
+        counter_mode: cumulative
+
+# WHAT THIS CANNOT TELL YOU, and AMP will keep saying so rather than guessing:
+#
+#   * A pulse is a CYCLE, not a good part. A reject, a short shot and a part
+#     the operator bins all make the same pulse. good_count and reject_count
+#     stay unmeasured until a second source exists -- an operator entry, a
+#     weighing scale, or the controller's own FAIL counter read another way.
+#   * On a multi-cavity mould, cycles are not pieces. AMP multiplies by the
+#     cavity count only where a part spec declares one, and reports cycles
+#     otherwise, because a blocked cavity would never show up in the
+#     multiplication.
+#   * Energy is not here. There is no canonical energy signal on the gateway
+#     path yet; see examples/pulse-counter-gateway.yaml for what that would
+#     take.

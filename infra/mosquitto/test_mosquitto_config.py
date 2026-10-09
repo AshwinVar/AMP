@@ -326,8 +326,27 @@ for line in log_m.splitlines():
         passwd_users.add(parts[-1])
 check("every user in the ACL has a password file entry",
       acl_users == passwd_users, f"acl={sorted(acl_users)} passwd={sorted(passwd_users)}")
+# COUNT THE FLAG, NOT THE SUBSTRING. This was `log_m.count("-c") == 1`, and the
+# log contains the full path of every file the fake mosquitto_passwd was handed
+# -- all of them under tempfile.mkdtemp(prefix="amp-mosq-"). When mkdtemp's
+# random suffix happens to start with a "c", the directory is called
+# `amp-mosq-cyjr31sk` and the PATH contains "-c". Every logged line then adds
+# one to the count and the check fails, roughly once in every few dozen CI runs,
+# on a commit that touched nothing near it. That is the worst kind of red: it
+# blames whoever pushed next.
+#
+# `-c` as a whole argument cannot appear by accident in a path, so the question
+# "how many invocations created the file" is asked of the arguments.
+created = sum(1 for line in log_m.splitlines() if "-c" in line.split())
 check("the password file is created once and appended to after that",
-      log_m.count("-c") == 1, log_m)
+      created == 1, log_m)
+# And the counter must survive the path that broke it, or the next person to
+# simplify this back to a substring count will not find out until CI reddens on
+# somebody else's change.
+_hostile = "-c -b /tmp/amp-mosq-cyjr31sk/passwd.tmp gw1\n-b /tmp/amp-mosq-cyjr31sk/passwd.tmp gw2\n"
+check("...and counting it is immune to a temp path containing '-c'",
+      sum(1 for line in _hostile.splitlines() if "-c" in line.split()) == 1,
+      _hostile)
 check("no password reached the fixture's log",
       "p1" not in log_m and "p2" not in log_m, log_m)
 

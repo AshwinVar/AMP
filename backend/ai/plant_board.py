@@ -51,10 +51,17 @@ HOURS = 24
 SHIFT_HOURS = 8
 SHIFTS = HOURS // SHIFT_HOURS
 
-#: The longest window a record may cover and still be an hour on the chart. A
-#: record wider than this describes a day (or a shift) and is never drawn as an
-#: hour -- see `hourly_only`.
-HOUR_MINUTES = 60
+#: A record covering this many minutes or more describes a WHOLE DAY and is
+#: never drawn as an hour -- see `hourly_only`.
+#:
+#: Deliberately 1440 and not 60. Most of AMP writes planned_minutes=480: the
+#: factory simulator, reset_factory, onboard_tenant, the copilot eval fixtures.
+#: Those shift-length records have always been bucketed by the hour of their
+#: created_at and this is not the change that revisits it -- excluding them
+#: would blank the board for every tenant that has ever been seeded. The defect
+#: being fixed here is narrower and provable: a record that carries an entire
+#: day, which has no hour in it at all.
+DAY_MINUTES = 24 * 60
 
 #: Below this fraction of the ideal rate an hour is drawn red. The customer's
 #: own wording: "Red being less than acceptable level and green being acceptable
@@ -188,7 +195,7 @@ def _records(db, tenant, start, end):
 def hourly_only(records):
     """Just the records that describe a single hour.
 
-    A DAY-LEVEL record -- one transcribed off a controller's MONTH page, which
+    A WHOLE-DAY record -- one transcribed off a controller's MONTH page, which
     prints a day's shots and nothing finer -- carries the whole day and is
     stamped at midnight, because midnight is the only honest stamp for a figure
     with no hour in it. Bucketing it by created_at.hour would draw a full day's
@@ -200,8 +207,11 @@ def hourly_only(records):
     still taken from everything (see `day`), and the month view groups by day
     and reads these records correctly -- it is the hour axis, and only the hour
     axis, that they cannot answer.
+
+    Shift-length records (planned_minutes=480), which most of AMP writes,
+    are NOT excluded -- see DAY_MINUTES for why that is deliberate.
     """
-    return [r for r in records if (r.planned_minutes or 0) <= HOUR_MINUTES]
+    return [r for r in records if (r.planned_minutes or 0) < DAY_MINUTES]
 
 
 def day(db, tenant, on: date):

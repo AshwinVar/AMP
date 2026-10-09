@@ -371,17 +371,35 @@ def test_a_mixed_plant_keeps_both_honest(tmp):
 
 
 def test_hourly_only_is_what_does_it():
-    """The helper itself, so a caller that forgets it is the only way to regress."""
+    """The helper itself, so a caller that forgets it is the only way to regress.
+
+    THE SHIFT CASE IS THE IMPORTANT ONE, and it caught a real regression. This
+    filter was first written as `<= 60`, which looks obviously right and is not:
+    most of AMP writes planned_minutes=480 -- the factory simulator,
+    reset_factory, onboard_tenant, the copilot eval fixtures -- so a 60-minute
+    rule silently drops nearly every record AMP has ever stored and blanks the
+    plant board for every seeded tenant. test_copilot_eval.py failed with board
+    figures of 0.0 and that is how it was found.
+
+    The defect being fixed is narrower and provable: a record carrying an ENTIRE
+    DAY, which has no hour in it at all. Shift records keep the behaviour they
+    have always had.
+    """
     class R:
         def __init__(self, minutes):
             self.planned_minutes = minutes
-    kept = hmi_sheet.MINUTES_IN_HOUR
     check("an hour is kept",
-          len(plant_board.hourly_only([R(kept)])) == 1)
-    check("a day is dropped",
+          len(plant_board.hourly_only([R(hmi_sheet.MINUTES_IN_HOUR)])) == 1)
+    check("a shift is kept -- 480 is what most of AMP writes",
+          len(plant_board.hourly_only([R(480)])) == 1)
+    check("so is anything short of a whole day",
+          len(plant_board.hourly_only([R(plant_board.DAY_MINUTES - 1)])) == 1)
+    check("a whole day is dropped",
           plant_board.hourly_only([R(hmi_sheet.MINUTES_IN_DAY)]) == [])
-    check("a shift is dropped too",
-          plant_board.hourly_only([R(480)]) == [])
+    check("and so is anything longer",
+          plant_board.hourly_only([R(plant_board.DAY_MINUTES * 2)]) == [])
+    check("a record with no window at all is kept, not silently dropped",
+          len(plant_board.hourly_only([R(None)])) == 1)
 
 
 def main():

@@ -85,8 +85,14 @@ MUTATIONS = [
 
     # ── A day is never drawn as an hour ──────────────────────────────────
     ("a day-level record is let into the hourly bucket", B,
-     "    return [r for r in records if (r.planned_minutes or 0) <= HOUR_MINUTES]",
+     "    return [r for r in records if (r.planned_minutes or 0) < DAY_MINUTES]",
      "    return list(records)"),
+    # The regression this guards against: narrowing the rule to 60 minutes
+    # looks right and drops the 480-minute records most of AMP writes,
+    # blanking the board for every seeded tenant.
+    ("the filter narrows to an hour and drops every shift record", B,
+     "    return [r for r in records if (r.planned_minutes or 0) < DAY_MINUTES]",
+     "    return [r for r in records if (r.planned_minutes or 0) <= 60]"),
     ("the hourly series is built from every record again", B,
      "    hourly = hourly_only(records)",
      "    hourly = list(records)"),

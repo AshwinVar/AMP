@@ -339,3 +339,57 @@ def import_sheet(db, tenant, machines, path, kind, ideal_cycle_time_seconds=0):
                                    if r["energy_kwh"] is None),
         "days_kept_from_a_better_source": skipped,
     }
+
+
+def main(argv=None):
+    """Import a sheet from the command line, into any workspace.
+
+    Deliberately takes the tenant as an argument and hardcodes none: AMP is a
+    multi-tenant platform and a plant that happens to be the first to need this
+    is still just one tenant.
+
+        python backend/hmi_sheet.py --tenant SHRINIDHI --kind hmi-day \
+            --file backend/data/shrinidhi-2026-10-day.csv
+    """
+    import argparse
+
+    import database
+
+    ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    ap.add_argument("--tenant", required=True, help="workspace code")
+    ap.add_argument("--kind", required=True, choices=("hmi-day", "hmi-hour"),
+                    help="which screen the figures were read off")
+    ap.add_argument("--file", required=True, help="the transcription sheet")
+    ap.add_argument("--cycle-seconds", type=int, default=0,
+                    help="ideal cycle time, if the controller showed one")
+    args = ap.parse_args(argv)
+
+    db = database.SessionLocal()
+    try:
+        machines = {m.name: m for m in db.query(models.Machine)
+                    .filter(models.Machine.tenant_code == args.tenant).all()}
+        if not machines:
+            print(f"{args.tenant} has no machines. Seed the workspace first.")
+            return 1
+        out = import_sheet(db, args.tenant, machines, args.file, args.kind,
+                           ideal_cycle_time_seconds=args.cycle_seconds)
+    except HmiSheetError as exc:
+        print(f"refused: {exc}")
+        return 1
+    finally:
+        db.close()
+
+    print(f"{out['kind']}: {', '.join(out['machines'])}")
+    print(f"  wrote {out['rows_written']}, updated {out['rows_updated']}, "
+          f"replaced {out['rows_replaced']}")
+    print(f"  {out['shots']:,} shots, {out['kwh']:,} kWh, "
+          f"{out['rows_without_energy']} rows with no energy measured")
+    for machine, days in sorted(out["days_kept_from_a_better_source"].items()):
+        print(f"  {machine}: {len(days)} day(s) kept from a better source "
+              f"-- the controller's own export already covers them")
+    return 0
+
+
+if __name__ == "__main__":
+    import sys as _sys
+    _sys.exit(main())

@@ -390,6 +390,29 @@ EOF
     echo "amp-mosquitto: ---- copy the block below to each gateway as ca.crt ----"
     cat "$TLS_DIR/ca.crt"
     echo "amp-mosquitto: ---- end ca.crt ----"
+    # AND THE SAME CERTIFICATE ON ONE LINE, because the block above cannot be
+    # relied on to arrive.
+    #
+    # Measured, not theorised: on 2026-10-09 this CA reached both `railway
+    # logs` and the Railway dashboard with NINE LINES MISSING from the middle —
+    # 876 bytes of a certificate whose own DER header declares 1308. Every line
+    # that did arrive was intact at exactly 64 characters, and the same lines
+    # were lost on three separate captures. The platform's log ingestion drops
+    # whole lines; it does not truncate within one.
+    #
+    # So the recovery is to make it ONE line. A certificate that cannot be
+    # copied out of the log is a gateway that cannot be commissioned, and the
+    # only alternatives were giving up TLS verification or regenerating the CA
+    # — the first is never acceptable and the second silently breaks every
+    # gateway already pinning this one.
+    #
+    # Reassemble with:
+    #   python -c "import base64,sys;d=base64.b64decode(sys.argv[1]);
+    #   open('ca.crt','wb').write(d)" <the-string>
+    # or: echo <the-string> | base64 -d > ca.crt
+    echo "amp-mosquitto: ca.crt as one base64 line (survives log line-dropping):"
+    echo "amp-mosquitto: CA_B64 $(base64 -w 0 < "$TLS_DIR/ca.crt" 2>/dev/null \
+        || base64 < "$TLS_DIR/ca.crt" | tr -d '\n')"
 else
     echo "amp-mosquitto: MQTT_TLS_SAN is not set, so there is no TLS listener and no gateway outside Railway can connect. This is the safe default: exposing 1883 through a TCP proxy would put every gateway credential on the public internet in clear text."
 fi

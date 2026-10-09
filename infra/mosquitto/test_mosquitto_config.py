@@ -351,6 +351,46 @@ check("no password reached the fixture's log",
       "p1" not in log_m and "p2" not in log_m, log_m)
 
 
+# ── 9. the CA can actually be got OUT of the container ────────────────
+section("9. The CA survives a log pipeline that drops lines")
+
+# WHY THIS IS A TEST AND NOT A COMMENT. On 2026-10-09 this broker's CA reached
+# both `railway logs` and the Railway dashboard with NINE LINES MISSING from
+# the middle -- 876 bytes of a certificate whose DER header declares 1308 --
+# and the same lines were lost on three separate captures. A gateway cannot be
+# commissioned without the CA, the container has no shell access, and the only
+# other ways out were disabling TLS verification (never) or regenerating the CA
+# (silently breaks every gateway already pinning it).
+#
+# So the entrypoint also prints it as ONE base64 line. Whole lines are what the
+# platform drops; one line is what survives.
+with open(ENTRYPOINT) as fh:
+    entry_src = fh.read()
+
+check("the entrypoint prints the CA as a single base64 line",
+      "CA_B64" in entry_src, "no CA_B64 marker")
+check("...and that line is produced with no wrapping",
+      "base64 -w 0" in entry_src and "tr -d" in entry_src,
+      "no unwrapped base64 invocation")
+check("...with a fallback for a base64 that has no -w flag",
+      entry_src.count("base64") >= 2, "only one base64 invocation")
+check("the human-readable block is still printed too",
+      "copy the block below" in entry_src,
+      "the pretty block was removed; keep both")
+check("the CA KEY is never printed",
+      "ca.key" not in entry_src.split("CA_B64")[-1][:400],
+      "a ca.key reference appears next to the public output")
+
+# Round-trip: the recovery instruction must actually recover a certificate.
+import base64 as _b64
+_sample = b"-----BEGIN CERTIFICATE-----\nQUJD\n-----END CERTIFICATE-----\n"
+_one = _b64.b64encode(_sample).decode()
+check("a single base64 line round-trips to the exact bytes",
+      _b64.b64decode(_one) == _sample, "round-trip changed the bytes")
+check("...and the single line contains no newline to be dropped",
+      "\n" not in _one, "the encoded form still has newlines")
+
+
 # ── 8. the charset has not drifted from AMP's ──────────────────────────
 section("8. The broker and the backend agree on what an identifier is")
 

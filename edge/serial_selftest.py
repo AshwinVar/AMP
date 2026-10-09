@@ -251,8 +251,14 @@ def main(argv=None):
         # retries until it sees the bytes come back, so you can wiggle the clip
         # and watch the line change.
         print(f"\nwatching {port}. Two independent loopbacks -- bridge EITHER:")
-        print("    DATA       pins 2 + 3   (top row, adjacent)")
-        print("    HANDSHAKE  pins 7 + 8   (bottom row, adjacent)")
+        print("    DATA       pins 2 + 3   top row, 2nd and 3rd from the pin-1")
+        print("                            end -- and WHICH end that is flips")
+        print("                            between a plug and a socket.")
+        print("    HANDSHAKE  pins 7 + 8   THE MIDDLE TWO OF THE BOTTOM ROW.")
+        print("                            The bottom row is 6 7 8 9 one way")
+        print("                            and 9 8 7 6 the other, so the middle")
+        print("                            two are 7 and 8 EITHER WAY. This is")
+        print("                            the one pair you cannot get wrong.")
         print()
         print("  RUN THIS ONCE WITH NOTHING BRIDGED FIRST, and read what it")
         print("  says. A result only means something if you know what the")

@@ -355,15 +355,27 @@ def main(argv=None, db=None):
     importing several sheets in one transaction. Left None it opens its own and
     closes it, which is what the command line does.
 
-    WHY IT IS A PARAMETER AT ALL. The test for this used to create machines in
-    one session and rely on the session main() opened for itself to see them.
-    That held under `python test_hmi_sheet.py` and failed in the coverage job,
-    where a thousand tests share one process and one SQLite file -- "HMITEST has
-    no machines" from a query run moments after two were committed. Whatever
-    that interaction is, it belongs to the harness and not to this module, and a
-    CLI that cannot be handed a session is a CLI that can only be tested through
-    it. Everything this function is actually responsible for -- the arguments,
-    the refusals, the exit code, the summary -- is now testable directly.
+    WHY IT IS A PARAMETER AT ALL, and the answer is not "for tidiness".
+
+    This used to resolve `database.SessionLocal` itself, at call time. Under
+    `python test_hmi_sheet.py` that is fine. In the coverage job, where every
+    backend suite shares one process, it reported "HMITEST has no machines" from
+    a query run moments after two were committed.
+
+    The cause is that SEVERAL SUITES PERMANENTLY REBIND `database.SessionLocal`
+    to a sessionmaker on their own engine and never put it back --
+    test_connected_equipment.py and test_demo_reset_repeatable.py among them,
+    both of which sort before test_hmi_sheet.py. A module that captured the
+    factory by value at import time (`from database import SessionLocal`) keeps
+    the real one; a module that looks up `database.SessionLocal` when it runs
+    gets whichever suite last hijacked it. So the test created machines in one
+    database and this function queried another.
+
+    Taking the session as a parameter removes the lookup, and with it the
+    question of which database a caller meant. Everything this function is
+    actually responsible for -- the arguments, the refusals, the exit code, the
+    summary -- is testable directly. Any module that resolves
+    `database.SessionLocal` at call time has the same exposure.
     """
     import argparse
 

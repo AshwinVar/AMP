@@ -463,12 +463,15 @@ def case_the_command_line(tmp):
     bake one in.
 
     THE SESSION IS PASSED IN, and that is the point of `db` being a parameter.
-    This case used to let main() open its own and trust it to see machines
-    another session had just committed. It held standalone and failed the
-    coverage job -- "HMITEST has no machines" from a query moments after two
-    were committed, in a process where a thousand tests share one SQLite file.
-    That interaction belongs to the harness; everything main() is responsible
-    for is exercised here regardless of it.
+    This case used to let main() resolve database.SessionLocal for itself. It
+    passed standalone and failed the coverage job with "HMITEST has no
+    machines" -- because test_connected_equipment.py and
+    test_demo_reset_repeatable.py, which both sort before this file, rebind
+    database.SessionLocal to their own engine and never put it back. The
+    machines went into one database and main() looked in another.
+
+    Passing the session removes the lookup. Everything main() is responsible
+    for is exercised here, and none of it depends on which suite ran first.
     """
     db, made = fresh()
     machine_id = made["IMM-01"].id

@@ -70,7 +70,7 @@ def rows_for(db, machine_id):
 
 # ── The reader refuses rather than guesses ───────────────────────────────────
 
-def test_reader(tmp):
+def case_reader(tmp):
     bad = [
         ("a missing column", "machine,date\nIMM-01,2026-10-09\n", "shots"),
         ("a date nobody can parse",
@@ -101,7 +101,7 @@ def test_reader(tmp):
         check("refuses hour 24", "hours 0..23" in str(exc), f"said {exc!r}")
 
 
-def test_blank_kwh_is_not_zero(tmp):
+def case_blank_kwh_is_not_zero(tmp):
     """The defect this is the whole point of: a blank must survive as None.
 
     IMM-12 on the Shrinidhi floor prints an energy column of 0.0 for a day it
@@ -120,7 +120,7 @@ def test_blank_kwh_is_not_zero(tmp):
           planned[0]["energy_kwh"] is None, f"got {planned[0]['energy_kwh']!r}")
 
 
-def test_zero_shots_are_not_stored(tmp):
+def case_zero_shots_are_not_stored(tmp):
     path = write(tmp, "z.csv", "machine,date,hour,shots\n"
                  "IMM-01,2026-10-09,0,0\nIMM-01,2026-10-09,1,50\n")
     planned = hmi_sheet.plan(hmi_sheet.read_sheet(path, "hmi-hour"), "hmi-hour")
@@ -131,7 +131,7 @@ def test_zero_shots_are_not_stored(tmp):
 
 # ── Precedence: one machine-day has exactly one source ───────────────────────
 
-def test_a_better_source_replaces_a_weaker_one(tmp):
+def case_a_better_source_replaces_a_weaker_one(tmp):
     db, made = fresh()
     day_path = write(tmp, "d.csv",
                      "machine,date,shots,kwh\nIMM-01,2026-10-09,5000,90.0\n")
@@ -153,7 +153,7 @@ def test_a_better_source_replaces_a_weaker_one(tmp):
     db.close()
 
 
-def test_a_weaker_source_never_overwrites_a_better_one(tmp):
+def case_a_weaker_source_never_overwrites_a_better_one(tmp):
     db, made = fresh()
     hour_path = write(tmp, "h.csv", "machine,date,hour,shots\n"
                       + "".join(f"IMM-01,2026-10-09,{h},200\n" for h in range(24)))
@@ -175,7 +175,7 @@ def test_a_weaker_source_never_overwrites_a_better_one(tmp):
     db.close()
 
 
-def test_a_transcription_never_deletes_the_controllers_own_export(tmp):
+def case_a_transcription_never_deletes_the_controllers_own_export(tmp):
     """The mutant that found this deleted UPWARDS: `weaker = everything else`.
 
     Nothing in the suite imported a photograph over an existing USB export, so
@@ -213,7 +213,7 @@ def test_a_transcription_never_deletes_the_controllers_own_export(tmp):
     db.close()
 
 
-def test_rank_puts_an_unknown_source_last(tmp):
+def case_rank_puts_an_unknown_source_last(tmp):
     """`rank` is the whole precedence order; an unknown kind must be weakest.
 
     A mutant made it strongest (-1), which would let any typo in a `kind`
@@ -238,7 +238,7 @@ def test_rank_puts_an_unknown_source_last(tmp):
     db.close()
 
 
-def test_precedence_only_touches_the_same_machine_and_day(tmp):
+def case_precedence_only_touches_the_same_machine_and_day(tmp):
     db, made = fresh()
     day_path = write(tmp, "d.csv", "machine,date,shots\n"
                      "IMM-01,2026-10-08,4000\nIMM-02,2026-10-09,4000\n")
@@ -256,7 +256,7 @@ def test_precedence_only_touches_the_same_machine_and_day(tmp):
     db.close()
 
 
-def test_reimporting_the_same_sheet_changes_nothing(tmp):
+def case_reimporting_the_same_sheet_changes_nothing(tmp):
     db, made = fresh()
     path = write(tmp, "d.csv", "machine,date,shots,kwh\n"
                  "IMM-01,2026-10-09,5000,90.0\nIMM-01,2026-10-08,4000,80.0\n")
@@ -274,7 +274,7 @@ def test_reimporting_the_same_sheet_changes_nothing(tmp):
     db.close()
 
 
-def test_a_machine_is_never_invented(tmp):
+def case_a_machine_is_never_invented(tmp):
     db, made = fresh()
     path = write(tmp, "d.csv", "machine,date,shots\nIMM-99,2026-10-09,100\n")
     try:
@@ -292,7 +292,7 @@ def test_a_machine_is_never_invented(tmp):
 
 # ── A day is never drawn as an hour ──────────────────────────────────────────
 
-def test_a_day_total_is_not_drawn_at_midnight(tmp):
+def case_a_day_total_is_not_drawn_at_midnight(tmp):
     db, made = fresh()
     day_path = write(tmp, "d.csv",
                      "machine,date,shots,kwh\nIMM-01,2026-10-09,5000,90.0\n")
@@ -329,7 +329,7 @@ def test_a_day_total_is_not_drawn_at_midnight(tmp):
     db.close()
 
 
-def test_an_hourly_day_still_draws_and_adds_up(tmp):
+def case_an_hourly_day_still_draws_and_adds_up(tmp):
     db, made = fresh()
     hour_path = write(tmp, "h.csv", "machine,date,hour,shots,kwh\n"
                       + "".join(f"IMM-01,2026-10-09,{h},200,3.5\n" for h in range(24)))
@@ -349,7 +349,7 @@ def test_an_hourly_day_still_draws_and_adds_up(tmp):
     db.close()
 
 
-def test_a_mixed_plant_keeps_both_honest(tmp):
+def case_a_mixed_plant_keeps_both_honest(tmp):
     """One machine reports hours, the other only a day. Both must be right."""
     db, made = fresh()
     hour_path = write(tmp, "h.csv", "machine,date,hour,shots\n"
@@ -370,7 +370,7 @@ def test_a_mixed_plant_keeps_both_honest(tmp):
     db.close()
 
 
-def test_hourly_only_is_what_does_it():
+def case_hourly_only_is_what_does_it():
     """The helper itself, so a caller that forgets it is the only way to regress.
 
     THE SHIFT CASE IS THE IMPORTANT ONE, and it caught a real regression. This
@@ -409,22 +409,22 @@ def main():
     os.makedirs(tmp, exist_ok=True)
     try:
         print("the reader refuses rather than guesses")
-        test_reader(tmp)
-        test_blank_kwh_is_not_zero(tmp)
-        test_zero_shots_are_not_stored(tmp)
+        case_reader(tmp)
+        case_blank_kwh_is_not_zero(tmp)
+        case_zero_shots_are_not_stored(tmp)
         print("\none machine-day has exactly one source")
-        test_a_better_source_replaces_a_weaker_one(tmp)
-        test_a_transcription_never_deletes_the_controllers_own_export(tmp)
-        test_rank_puts_an_unknown_source_last(tmp)
-        test_a_weaker_source_never_overwrites_a_better_one(tmp)
-        test_precedence_only_touches_the_same_machine_and_day(tmp)
-        test_reimporting_the_same_sheet_changes_nothing(tmp)
-        test_a_machine_is_never_invented(tmp)
+        case_a_better_source_replaces_a_weaker_one(tmp)
+        case_a_transcription_never_deletes_the_controllers_own_export(tmp)
+        case_rank_puts_an_unknown_source_last(tmp)
+        case_a_weaker_source_never_overwrites_a_better_one(tmp)
+        case_precedence_only_touches_the_same_machine_and_day(tmp)
+        case_reimporting_the_same_sheet_changes_nothing(tmp)
+        case_a_machine_is_never_invented(tmp)
         print("\na day is never drawn as an hour")
-        test_a_day_total_is_not_drawn_at_midnight(tmp)
-        test_an_hourly_day_still_draws_and_adds_up(tmp)
-        test_a_mixed_plant_keeps_both_honest(tmp)
-        test_hourly_only_is_what_does_it()
+        case_a_day_total_is_not_drawn_at_midnight(tmp)
+        case_an_hourly_day_still_draws_and_adds_up(tmp)
+        case_a_mixed_plant_keeps_both_honest(tmp)
+        case_hourly_only_is_what_does_it()
     finally:
         for f in os.listdir(tmp):
             os.remove(os.path.join(tmp, f))
@@ -438,6 +438,28 @@ def main():
         return 1
     print("all checks passed")
     return 0
+
+
+
+
+# ── Collected by pytest as well as run as a script ────────────────────
+#
+# EVERY CASE ABOVE IS NAMED case_*, NOT test_*, AND ON PURPOSE. They take a
+# `tmp` argument, and pytest resolves a test function's arguments as FIXTURES --
+# so named test_* they collect as 13 errors reading "fixture 'tmp' not found"
+# while `python test_hmi_sheet.py` passes all 44 checks. The suite looked green
+# locally and failed the coverage job, which runs every backend suite in one
+# pytest process. See docs/TESTING.md and test_arico_import.py, which is laid
+# out the same way for the same reason.
+def test_everything():
+    """The whole suite as one case, failing with whatever it recorded."""
+    code = None
+    try:
+        code = main()
+    except SystemExit as exc:
+        code = exc.code
+    assert not FAILURES, "\n  " + "\n  ".join(str(f) for f in FAILURES)
+    assert code in (0, None), f"the suite exited with {code}"
 
 
 if __name__ == "__main__":

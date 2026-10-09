@@ -165,14 +165,33 @@ class ModbusAdapter(base.Adapter):
     # -- lifecycle -----------------------------------------------------
     async def connect(self):
         self.state = base.CONNECTING
-        if self.is_serial:
-            client = AsyncModbusSerialClient(
-                port=self.serial_port, baudrate=self.baudrate, parity=self.parity,
-                bytesize=self.bytesize, stopbits=self.stopbits,
-                timeout=self.timeout, retries=1)
-        else:
-            client = AsyncModbusTcpClient(self.host, port=self.port, timeout=self.timeout,
-                                          retries=1)
+        # BUILDING THE CLIENT IS INSIDE THE ERROR HANDLING, because for a serial
+        # line it can fail on its own. A TCP client is just an address until it
+        # connects, but a serial one resolves the device as it is constructed --
+        # so a mistyped port raises HERE, before connect() is ever reached.
+        #
+        # Found by CI and not on the machine that wrote it: Windows tolerated a
+        # nonexistent COM name until the open, Linux did not, and the raw
+        # exception escaped with last_error never set. A gateway that crashes
+        # instead of saying which port it could not find is the one failure this
+        # adapter's diagnostics exist to prevent.
+        try:
+            if self.is_serial:
+                client = AsyncModbusSerialClient(
+                    port=self.serial_port, baudrate=self.baudrate, parity=self.parity,
+                    bytesize=self.bytesize, stopbits=self.stopbits,
+                    timeout=self.timeout, retries=1)
+            else:
+                client = AsyncModbusTcpClient(self.host, port=self.port,
+                                              timeout=self.timeout, retries=1)
+        except Exception as e:                       # noqa: BLE001
+            self.state = base.ERROR
+            self.last_error = (
+                f"could not open {self.endpoint()}: {type(e).__name__}. "
+                + ("Check the port name (`serial_listen.py --ports` lists what this "
+                   "computer can see) and that the USB adapter's driver is installed."
+                   if self.is_serial else "Check the host and port."))
+            raise base.AdapterError(self.last_error)
         try:
             await asyncio.wait_for(client.connect(), timeout=self.timeout + 2)
         except asyncio.TimeoutError:

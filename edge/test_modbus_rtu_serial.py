@@ -96,7 +96,11 @@ def main():
     # about an IP. Which failure branch fires depends on the machine running the
     # test, so this asserts the vocabulary rather than one sentence.
     import asyncio
-    SERIAL_WORDS = ("baud", "parity", "driver", "port exists")
+    # Which branch fires is platform-dependent -- Windows tolerates a
+    # nonexistent COM name until the open, Linux refuses at construction -- so
+    # the vocabulary is what is asserted, not one sentence. CI found this
+    # difference; the machine that wrote the code could not have.
+    SERIAL_WORDS = ("baud", "parity", "driver", "port exists", "port name")
     TCP_WORDS = ("firewall", "ip", "modbus enabled")
 
     serial = modbus.ModbusAdapter({"serial_port": "COM-NOPE", "timeout": 0.2})
@@ -119,6 +123,43 @@ def main():
     check("...and gives network advice", any(w in tmsg for w in TCP_WORDS), tmsg[:110])
     check("...and never mentions baud or parity",
           "baud" not in tmsg and "parity" not in tmsg, tmsg[:110])
+
+    section("3b. A CLIENT THAT FAILS TO BUILD IS STILL A DIAGNOSTIC")
+    # THE BUG THIS PINS. The client was constructed OUTSIDE the error handling.
+    # A TCP client is just an address until it connects, but a serial one
+    # resolves the device as it is built -- so a mistyped port raises there,
+    # before connect() is reached, and the raw exception escaped with
+    # last_error never set. Windows tolerated a nonexistent COM name until the
+    # open and Linux did not, so it passed locally and failed in CI.
+    #
+    # Forced here rather than left to the platform, so this means the same thing
+    # on every machine.
+    real = modbus.AsyncModbusSerialClient
+
+    def explodes(*a, **k):
+        raise OSError("no such device")
+
+    modbus.AsyncModbusSerialClient = explodes
+    try:
+        boom = modbus.ModbusAdapter({"serial_port": "COM-NOPE"})
+        raised = None
+        try:
+            asyncio.run(boom.connect())
+        except base.AdapterError as e:
+            raised = str(e)
+        except Exception as e:                   # noqa: BLE001
+            raised = f"WRONG TYPE: {type(e).__name__}"
+        check("a client that cannot be built raises AdapterError, not a raw OSError",
+              raised is not None and not str(raised).startswith("WRONG TYPE"), str(raised))
+        check("...and last_error is set rather than left empty",
+              bool(boom.last_error), repr(boom.last_error))
+        check("...naming the port and how to list the real ones",
+              "COM-NOPE" in (boom.last_error or "")
+              and "port name" in (boom.last_error or "").lower(), boom.last_error)
+        check("...and the adapter is left in ERROR, not CONNECTING",
+              boom.state == base.ERROR, str(boom.state))
+    finally:
+        modbus.AsyncModbusSerialClient = real
 
     section("4. THE CONFIG LOADER ACCEPTS A SERIAL CONNECTION")
     # Driven through validate(), the public entry point, so a renamed private

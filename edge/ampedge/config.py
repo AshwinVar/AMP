@@ -31,7 +31,7 @@ except ImportError:                      # pragma: no cover
     yaml = None
     YAML = False
 
-PROTOCOLS = ("opcua", "modbus", "focas")
+PROTOCOLS = ("opcua", "modbus", "focas", "contact")
 
 # Keys that must never hold a value in the file itself. The `_env` form of each
 # is the supported way to say where the value lives.
@@ -177,6 +177,20 @@ def _machine(entry, i, problems) -> dict:
             problems.append(
                 f"{where}.connection: modbus was given both `host` and `serial_port`. "
                 f"One connection is one wire -- give whichever this machine is on.")
+    # A dry contact on a serial control line. No protocol at all: the machine
+    # closes a relay once per cycle and the adapter counts it, which is the only
+    # route into a press whose controller cannot be asked anything.
+    if protocol == "contact":
+        if not str(connection.get("serial_port") or "").strip():
+            problems.append(
+                f"{where}.connection.serial_port: required for contact, e.g. COM4 "
+                f"or /dev/ttyUSB0 -- the USB-serial adapter the machine's cycle "
+                f"output is wired to through an opto-isolator")
+        for key in ("host", "url"):
+            if connection.get(key):
+                problems.append(
+                    f"{where}.connection.{key}: a contact is a wire, not a network "
+                    f"address. Remove it, or use a protocol that has one.")
     if protocol == "focas" and not connection.get("host"):
         problems.append(f"{where}.connection.host: required for focas, e.g. 192.168.1.1 "
                         f"(the address on the control's SYSTEM -> EMBED PORT screen)")

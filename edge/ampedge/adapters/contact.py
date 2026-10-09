@@ -1,0 +1,307 @@
+"""Count cycles from a dry contact, using the USB-serial adapter you already own.
+
+WHY THIS EXISTS. Most machines on an SME shop floor cannot be asked anything.
+Measured on a real moulding floor: thirteen presses, three controller brands,
+and not one with a data port a gateway could poll -- no Ethernet, serial ports
+that load firmware rather than report production, no register map because there
+is no protocol.
+
+Those machines still COUNT. Every cycle energises a solenoid, closes a relay,
+drives a counter. That is a dry contact, and a dry contact needs no protocol.
+
+THE PART THAT SURPRISES PEOPLE: no I/O module is required. An ordinary
+USB-to-serial adapter has four INPUT lines that software can read directly --
+CTS, DSR, CD and RI -- and nothing says they must carry handshaking. Feed one
+from the machine's cycle output through an opto-isolator and the adapter is a
+four-channel counter. The bill of materials per machine is an opto-isolator and
+two wires; per four machines, one adapter that a commissioning engineer is
+already carrying.
+
+    machine output -> opto-isolator -> CTS / DSR / CD / RI -> this adapter
+
+THE OPTO IS NOT OPTIONAL and this file will not pretend otherwise. Wiring a
+machine's 24 V directly to a laptop's serial port puts the press and the PC on
+the same electrical reference: a fault on either travels to the other, and a
+wiring mistake energises something in a live control cabinet. An opto-isolator
+costs about ten rupees and there is no electrical connection at all through it,
+only light. Anyone reading this for the quick version: fit the opto.
+
+SAMPLING IS NOT POLLING, and conflating them loses parts. A cycle output is
+brief -- 0.40 s on the press this was written for -- while a gateway's
+poll_interval is a second or more. Reading the line when the runner happens to
+ask would miss most pulses and, worse, would miss them irregularly, so the
+count would look plausible and be wrong. So the port is sampled continuously in
+the background at `sample_hz`, edges are counted there, and `read()` returns the
+running total. A slow poll then costs nothing: the total is still complete.
+
+ONE PORT, FOUR MACHINES. A serial port can only be opened once, so the open
+handle and its sampler are shared between every machine configured on the same
+port (see `_PortWatcher`). Four presses on one adapter is the normal case, not
+an exotic one.
+
+WHAT A PULSE IS NOT. It is a CYCLE, not a good part. A reject, a short shot and
+a part the operator throws away all produce exactly the same pulse. So this
+reports `part_count` and nothing else; good/reject needs a second source, and
+until there is one AMP must keep reporting them as unmeasured rather than
+quietly reporting zero rejects.
+"""
+import asyncio
+import time
+
+from . import base
+from .base import AdapterError, Reading, no_data
+
+try:
+    import serial
+except ImportError:                      # pragma: no cover - import guard
+    serial = None
+
+#: The input lines a serial port exposes, and the pyserial attribute for each.
+#: These are the ONLY four; there is no fifth, and a typo must be refused rather
+#: than silently read as never-asserted.
+LINES = {"cts": "cts", "dsr": "dsr", "cd": "cd", "dcd": "cd", "ri": "ri"}
+
+#: How often the background sampler looks at the lines. 50 Hz catches a 0.4 s
+#: pulse about twenty times over, and costs four attribute reads per tick.
+DEFAULT_SAMPLE_HZ = 50.0
+
+#: A mechanical contact bounces for a few milliseconds on close, and each bounce
+#: is an edge. Counting them would multiply a shift's output by a random small
+#: integer -- the kind of error that looks like good news. Ignore any change
+#: within this window of the last accepted one.
+DEFAULT_DEBOUNCE_MS = 25.0
+
+#: Refuse a debounce long enough to swallow real cycles. A press at 4 s/cycle is
+#: fast for injection moulding; anything approaching that is a configuration
+#: mistake, not a tuning choice.
+MAX_DEBOUNCE_MS = 2000.0
+
+
+class _PortWatcher:
+    """One open serial port, sampled continuously, shared by its machines.
+
+    Holds the edge counts. Nothing here knows what a machine or a signal is --
+    it counts transitions on four lines and says when it last managed to look.
+    """
+
+    def __init__(self, port, sample_hz, debounce_ms):
+        self.port = port
+        self.sample_hz = sample_hz
+        self.debounce_s = debounce_ms / 1000.0
+        self._con = None
+        self._task = None
+        self._refs = 0
+        #: line -> count of accepted LOW->HIGH transitions since this opened.
+        self.counts = {name: 0 for name in ("cts", "dsr", "cd", "ri")}
+        self._last = {name: None for name in self.counts}
+        self._changed_at = {name: 0.0 for name in self.counts}
+        self.last_sample_at = None
+        self.error = ""
+
+    def open(self):
+        if self._con is not None:
+            return
+        if serial is None:
+            raise AdapterError("pyserial is not installed. pip install pyserial")
+        try:
+            # Baud is irrelevant -- no bytes are sent or received. The port is
+            # opened only so the control lines can be read.
+            self._con = serial.Serial(port=self.port, baudrate=9600, timeout=0)
+        except Exception as exc:         # noqa: BLE001 - reported, never raised blind
+            self.error = f"could not open {self.port}: {exc}"
+            raise AdapterError(self.error)
+        self.error = ""
+
+    def close(self):
+        if self._task is not None:
+            self._task.cancel()
+            self._task = None
+        if self._con is not None:
+            try:
+                self._con.close()
+            finally:
+                self._con = None
+
+    def sample_once(self, now=None):
+        """Read the four lines and count accepted rising edges. Returns ok."""
+        if self._con is None:
+            return False
+        now = time.time() if now is None else now
+        try:
+            states = {"cts": bool(self._con.cts), "dsr": bool(self._con.dsr),
+                      "cd": bool(self._con.cd), "ri": bool(self._con.ri)}
+        except Exception as exc:         # noqa: BLE001
+            # A yanked USB adapter. Say so; do not invent a state, because a
+            # line that reads False forever is indistinguishable from a machine
+            # that stopped.
+            self.error = f"{self.port} stopped answering: {exc}"
+            return False
+        for name, now_high in states.items():
+            was = self._last[name]
+            if was is None:
+                # FIRST SAMPLE IS A BASELINE, NEVER AN EDGE. A line already
+                # high when the gateway starts is not a cycle that just
+                # happened; counting it would add one phantom part per restart.
+                self._last[name] = now_high
+                self._changed_at[name] = now
+                continue
+            if now_high == was:
+                continue
+            if now - self._changed_at[name] < self.debounce_s:
+                continue                 # contact bounce, not a second cycle
+            self._last[name] = now_high
+            self._changed_at[name] = now
+            if now_high:
+                self.counts[name] += 1
+        self.last_sample_at = now
+        self.error = ""
+        return True
+
+    async def run(self):
+        interval = 1.0 / self.sample_hz
+        while True:
+            self.sample_once()
+            await asyncio.sleep(interval)
+
+    def start(self):
+        if self._task is None:
+            self._task = asyncio.ensure_future(self.run())
+
+
+#: port -> _PortWatcher. Module level because the sharing is a property of the
+#: HOST, not of any one machine's configuration.
+_WATCHERS = {}
+
+
+def watcher_for(port, sample_hz, debounce_ms):
+    """The watcher for this port, created once and shared after that."""
+    w = _WATCHERS.get(port)
+    if w is None:
+        w = _PortWatcher(port, sample_hz, debounce_ms)
+        _WATCHERS[port] = w
+    return w
+
+
+def reset_watchers():
+    """Drop every watcher. For tests, and for a clean gateway restart."""
+    for w in list(_WATCHERS.values()):
+        w.close()
+    _WATCHERS.clear()
+
+
+class ContactAdapter(base.Adapter):
+    """Cycles counted off a serial control line.
+
+    Addresses are line names: cts, dsr, cd (or dcd), ri. One machine normally
+    has exactly one, and the value returned is a cumulative count -- so the
+    mapping must declare `counter_mode: cumulative`, which validate() already
+    enforces for any counter signal.
+    """
+
+    protocol = "contact"
+
+    def __init__(self, settings):
+        super().__init__(settings)
+        self.port = str(self.settings.get("serial_port") or "").strip()
+        if not self.port:
+            raise AdapterError(
+                "a contact connection needs `serial_port` -- the USB-serial "
+                "adapter the machine's cycle output is wired to, e.g. COM4 or "
+                "/dev/ttyUSB0.")
+        self.sample_hz = float(self.settings.get("sample_hz") or DEFAULT_SAMPLE_HZ)
+        if self.sample_hz <= 0:
+            raise AdapterError("sample_hz must be greater than zero.")
+        self.debounce_ms = float(
+            self.settings.get("debounce_ms") or DEFAULT_DEBOUNCE_MS)
+        if self.debounce_ms < 0:
+            raise AdapterError("debounce_ms cannot be negative.")
+        if self.debounce_ms > MAX_DEBOUNCE_MS:
+            raise AdapterError(
+                f"debounce_ms is {self.debounce_ms:g}, which is long enough to "
+                f"swallow real cycles. The limit is {MAX_DEBOUNCE_MS:g} ms.")
+        self._watcher = None
+
+    def endpoint(self):
+        return f"{self.port} @ {self.sample_hz:g}Hz"
+
+    async def connect(self):
+        self.state = base.CONNECTING
+        w = watcher_for(self.port, self.sample_hz, self.debounce_ms)
+        try:
+            w.open()
+        except AdapterError as exc:
+            self.state = base.ERROR
+            self.last_error = str(exc)
+            raise
+        w.start()
+        w._refs += 1
+        self._watcher = w
+        self.state = base.CONNECTED
+        self.connected_at = time.time()
+        self.last_error = ""
+
+    async def disconnect(self):
+        w, self._watcher = self._watcher, None
+        if w is not None:
+            w._refs -= 1
+            # The LAST machine on a port closes it. Closing on the first
+            # disconnect would stop counting for every other machine sharing
+            # the adapter, and they would report a flat line rather than an
+            # error -- which is the failure this whole package exists to avoid.
+            if w._refs <= 0:
+                w.close()
+                _WATCHERS.pop(w.port, None)
+        self.state = base.DISCONNECTED
+
+    async def read(self, addresses):
+        out = []
+        w = self._watcher
+        for address in addresses:
+            tag = str(address)
+            key = LINES.get(tag.strip().lower())
+            if key is None:
+                out.append(no_data(
+                    tag, f"{tag!r} is not a serial input line. Use one of "
+                         f"cts, dsr, cd, ri."))
+                continue
+            if w is None or w._con is None:
+                out.append(no_data(tag, w.error if w else "not connected"))
+                continue
+            if w.last_sample_at is None:
+                out.append(no_data(
+                    tag, "the port has not been sampled yet; the next read "
+                         "carries the count"))
+                continue
+            if w.error:
+                # The sampler is failing. The count we hold is STALE, not
+                # current, and a stale count republished looks like a machine
+                # that stopped making parts.
+                out.append(no_data(tag, w.error))
+                continue
+            out.append(Reading(tag=tag, value=int(w.counts[key]),
+                               quality=base.GOOD, source_time=False))
+        self.last_read_at = time.time()
+        return out
+
+    async def browse(self, root=None):
+        """The four lines, with their live counts -- the whole address space.
+
+        Unlike Modbus, this protocol CAN say what is readable, because there are
+        exactly four things. A commissioning engineer running `preview` sees all
+        four counts at once, which is how you find which terminal you have
+        actually wired without a meter: the one that climbs once per cycle.
+        """
+        w = self._watcher
+        return [{"address": name,
+                 "count": (w.counts[name] if w else None),
+                 "signal": "part_count"}
+                for name in ("cts", "dsr", "cd", "ri")]
+
+    def describe(self):
+        d = super().describe()
+        w = self._watcher
+        d["counts"] = dict(w.counts) if w else {}
+        d["last_sample_at"] = w.last_sample_at if w else None
+        d["sample_hz"] = self.sample_hz
+        d["debounce_ms"] = self.debounce_ms
+        return d

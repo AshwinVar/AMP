@@ -4,10 +4,21 @@
 # without internet beyond the broker, and every dependency is a thing that can
 # fail an install on a locked-down Windows box six months from now.
 asyncua>=1.1,<3          # OPC UA client
-pymodbus>=3.6,<4         # Modbus TCP client
+pymodbus>=3.6,<4         # Modbus TCP *and* RTU client
+pyserial>=3.5,<4         # the serial line itself — see below
 paho-mqtt>=2.0,<3        # the one outbound connection
 PyYAML>=6.0,<7           # so a config can be YAML instead of JSON
 pyfocas>=0.1,<1          # FANUC FOCAS, over a plain socket
+
+# WHY pyserial IS LISTED SEPARATELY, when pymodbus is already here. pymodbus
+# declares pyserial as an OPTIONAL EXTRA: `pyserial>=3.5; extra == "serial"`.
+# Plain `pip install pymodbus` does not bring it, so ModbusSerialClient raises
+# on a fresh plant PC and Modbus RTU — the only route into a controller with no
+# Ethernet — fails at the customer's site rather than here. Every machine on
+# the first moulding floor AMP is going into is exactly that: two DB9 ports and
+# no network page in the HMI. serial_listen.py imports pyserial directly as
+# well, independent of pymodbus, which is the other reason it is named here
+# rather than written as pymodbus[serial].
 
 # WHY pyfocas AND NOT FANUC'S OWN LIBRARY. The normal way to read a FANUC is
 # `fwlib`, which is licensed software, ships as a 32-bit DLL, and would put a

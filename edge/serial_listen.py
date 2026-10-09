@@ -47,16 +47,43 @@ FRAMES = ((8, "N", 1), (8, "E", 1), (7, "E", 1), (8, "O", 1), (8, "N", 2))
 
 
 def ports():
+    """Print what is plugged in. Returns the device names found."""
     found = list(list_ports.comports())
     if not found:
         print("No serial ports found. Is the USB adapter plugged in, and did "
               "Windows install a driver for it? Check Device Manager -> Ports.")
-        return
+        return []
     print(f"{len(found)} serial port(s):\n")
     for p in found:
         print(f"  {p.device:<8} {p.description}")
         if p.hwid:
             print(f"           {p.hwid}")
+    return [p.device for p in found]
+
+
+def choose_port(named):
+    """The port to work on, or None with a sentence saying why not.
+
+    THE DEFECT THIS FIXES. `--sweep` with no `--port` used to print the port
+    list and exit 0, so it looked like it had run and found nothing. On a floor,
+    with one adapter plugged into one machine, that is the whole command being
+    silently a no-op -- and a sweep that produces no output is indistinguishable
+    from a port that said nothing, which is the one answer this tool exists to
+    tell apart.
+
+    With exactly one port there is nothing to choose, so it is chosen.
+    """
+    found = ports()
+    if named:
+        return named
+    if len(found) == 1:
+        print(f"\nno --port given and only {found[0]} is present, so using it.")
+        return found[0]
+    if not found:
+        return None
+    print("\nSeveral ports are present. Name one with --port, e.g. "
+          f"--port {found[0]}")
+    return None
 
 
 def _render(chunk):
@@ -141,17 +168,23 @@ def main(argv=None):
     ap.add_argument("--sweep", action="store_true", help="try the likely settings in turn")
     args = ap.parse_args(argv)
 
-    if args.ports or not args.port:
+    if args.ports:
         ports()
         return 0
+
+    port = choose_port(args.port)
+    if port is None:
+        return 1
+
     if args.sweep:
-        sweep(args.port, max(3, min(args.seconds, 20)))
+        print()
+        sweep(port, max(3, min(args.seconds, 20)))
         return 0
 
     frame = (args.bytesize, args.parity, args.stopbits)
-    print(f"listening on {args.port} at {args.baud} "
+    print(f"\nlistening on {port} at {args.baud} "
           f"{frame[0]}{frame[1]}{frame[2]} for {args.seconds}s -- Ctrl+C to stop\n")
-    listen(args.port, args.baud, frame, args.seconds)
+    listen(port, args.baud, frame, args.seconds)
     return 0
 
 

@@ -115,6 +115,45 @@ def loopback(port, baud, seconds=3.0):
     return len(PROBE), got, "CAME BACK CHANGED"
 
 
+def handshake_loopback(port, baud):
+    """A SECOND loopback, on different pins, that needs no data at all.
+
+    RTS (pin 7) and CTS (pin 8) are adjacent on the bottom row, and the driver
+    can drive one and read the other directly. Short them and toggling RTS
+    moves CTS; leave them open and CTS does not follow.
+
+    WHY BOTHER WHEN 2-3 EXISTS. It isolates the adapter from the bridging. If
+    7-8 follows and 2-3 never does, the adapter and its driver are working and
+    the problem is the short on 2-3, or those two pins specifically. If NEITHER
+    follows while you are certain the metal is bridged, the adapter is the
+    suspect. One paperclip answers a different question depending on where you
+    put it, and that is worth more than running the same test harder.
+
+    Returns (followed, detail). `followed` is True only when CTS tracked RTS in
+    BOTH directions -- a CTS stuck high would otherwise read as a pass.
+    """
+    try:
+        con = serial.Serial(port=port, baudrate=baud, timeout=0.2,
+                            rtscts=False, dsrdtr=False)
+    except Exception as exc:             # noqa: BLE001
+        return False, f"could not open: {exc}"
+    try:
+        seen = []
+        for state in (True, False, True):
+            con.rts = state
+            time.sleep(0.08)
+            seen.append(con.cts)
+        if seen == [True, False, True]:
+            return True, "CTS followed RTS both ways"
+        if len(set(seen)) == 1:
+            return False, f"CTS stuck {'high' if seen[0] else 'low'}"
+        return False, f"CTS moved but did not track ({seen})"
+    except Exception as exc:             # noqa: BLE001
+        return False, f"could not drive the lines: {exc}"
+    finally:
+        con.close()
+
+
 def report(port, baud, sent, got, verdict):
     print(f"\n  sent {sent} bytes at {baud} 8N1, got {len(got)} back: {verdict}")
     if got and verdict != "EXACT MATCH":
@@ -211,22 +250,41 @@ def main(argv=None):
         # attempt means putting the clip down, which is when it moves. This
         # retries until it sees the bytes come back, so you can wiggle the clip
         # and watch the line change.
-        print(f"\nwatching {port} -- short pins 2 and 3 and hold them.")
+        print(f"\nwatching {port}. Two independent loopbacks -- bridge EITHER:")
+        print("    DATA       pins 2 + 3   (top row, adjacent)")
+        print("    HANDSHAKE  pins 7 + 8   (bottom row, adjacent)")
         print("Ctrl+C to stop.\n")
         tries = 0
+        hand_ok = False
         try:
             while True:
                 tries += 1
                 sent, got, verdict = loopback(port, args.baud, 0.6)
+                followed, detail = handshake_loopback(port, args.baud)
+                hand_ok = hand_ok or followed
                 mark = "OK  " if verdict == "EXACT MATCH" else "    "
-                print(f"  {mark}try {tries:<4} {len(got):>3} of {sent} bytes "
-                      f"back: {verdict}")
+                print(f"  {mark}try {tries:<4} data: {len(got):>3}/{sent} "
+                      f"{verdict:<20} handshake: "
+                      f"{'FOLLOWED' if followed else detail}")
                 if verdict == "EXACT MATCH":
                     print()
                     return report(port, args.baud, sent, got, verdict)
                 time.sleep(1.0)
         except KeyboardInterrupt:
-            print("\n  stopped -- it never came back.")
+            print("\n  stopped -- the data loopback never came back.")
+            if hand_ok:
+                print()
+                print("  BUT THE HANDSHAKE LOOPBACK DID FOLLOW at least once.")
+                print("  That means the adapter and its driver are working: it")
+                print("  drove RTS and read it back on CTS. So the fault is in")
+                print("  the bridge on pins 2 and 3, or in those two pins -- it")
+                print("  is NOT a dead adapter.")
+            else:
+                print()
+                print("  AND THE HANDSHAKE LOOPBACK NEVER FOLLOWED EITHER. If")
+                print("  you are confident metal was bridging a pair, that")
+                print("  points at the adapter rather than at your technique.")
+                print("  Try another USB port, then another adapter.")
             return 1
 
     print(f"\nloopback self-test on {port} -- pins 2 and 3 must be shorted")

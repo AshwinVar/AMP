@@ -61,12 +61,32 @@ machines:
       # 25 ms swallows contact bounce and is far shorter than any real cycle.
       # Raise it only if `watch` shows roughly double the machine's own rate.
       debounce_ms: 25
+      # A press that has not completed a cycle in this long has stopped. Set it
+      # to two or three times the machine's real cycle time -- 15-20 s here, so
+      # 60 s. Too short and it flickers to Idle between shots; too long and a
+      # stopped press reads as running for a minute after it stopped.
+      idle_after_s: 60
     tags:
       - tag: cycles
         address: cts
         signal: part_count
         datatype: int
         counter_mode: cumulative
+
+      # THE SAME WIRE, READ A SECOND WAY, AND THIS IS THE TAG THAT TURNS A
+      # COUNT INTO A DASHBOARD. `.running` is derived from when the last pulse
+      # arrived: a press that cycled ten seconds ago, on a fifteen-second
+      # cycle, is running. Without it AMP has a production count and no machine
+      # STATUS -- and because the gateway cannot then measure runtime either,
+      # availability falls back to the whole window and OEE reads 100% for a
+      # press that stood still all afternoon.
+      #
+      # Before the first pulse it is NOT false. A gateway started during a tea
+      # break has observed nothing, not a stopped machine.
+      - tag: running
+        address: cts.running
+        signal: running
+        datatype: bool
 
   - name: PRESS-02
     protocol: contact

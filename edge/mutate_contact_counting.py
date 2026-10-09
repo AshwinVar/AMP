@@ -92,6 +92,26 @@ MUTATIONS = [
      '        self.counts = dict.fromkeys(("cts", "dsr", "cd", "ri"), 0)\n'
      '        self.counts = _SHARED'),
 
+    # ── The derived run state ────────────────────────────────────────
+    ("a machine that has not cycled for an hour still reads as running", C,
+     "                    value=bool(time.time() - last <= self.idle_after_s),",
+     "                    value=True,"),
+    ("a running machine reads as stopped, so the board shows a dead plant", C,
+     "                    value=bool(time.time() - last <= self.idle_after_s),",
+     "                    value=False,"),
+    ("a machine never seen cycling is reported Idle rather than unknown", C,
+     "                if last is None:",
+     "                if False:"),
+    ("an idle window shorter than a cycle is accepted", C,
+     "        if self.idle_after_s < MIN_IDLE_AFTER_S:",
+     "        if False:"),
+    ("asking for the run state returns the count instead", C,
+     "            running = want.endswith(RUNNING_SUFFIX)",
+     "            running = False"),
+    ("the edge time is never recorded, so nothing ever reads as running", C,
+     "                self.last_edge_at[name] = now",
+     "                pass"),
+
     # ── The config refuses what cannot work ──────────────────────────
     ("a contact with no wire is accepted and silently counts nothing", G,
      '        if not str(connection.get("serial_port") or "").strip():',

@@ -61,6 +61,21 @@ except ImportError:                      # pragma: no cover - import guard
 #: than silently read as never-asserted.
 LINES = {"cts": "cts", "dsr": "dsr", "cd": "cd", "dcd": "cd", "ri": "ri"}
 
+#: Suffix that asks for the DERIVED run state instead of the count: `cts.running`.
+RUNNING_SUFFIX = ".running"
+
+#: A machine that has not completed a cycle within this many seconds is not
+#: running. There is no universally right value -- it belongs to the machine --
+#: so it is a setting, and this default suits an injection press whose cycle is
+#: 15-20 s. Too short and a slow machine flickers to Idle between shots; too
+#: long and a stopped press reads as running for a minute after it stopped.
+#: Two to three times the real cycle time is the rule.
+DEFAULT_IDLE_AFTER_S = 60.0
+
+#: Below this, the derivation is noise: no press cycles faster than a few
+#: seconds, so an idle window under it would report Idle mid-cycle, constantly.
+MIN_IDLE_AFTER_S = 3.0
+
 #: How often the background sampler looks at the lines. 50 Hz catches a 0.4 s
 #: pulse about twenty times over, and costs four attribute reads per tick.
 DEFAULT_SAMPLE_HZ = 50.0
@@ -95,6 +110,10 @@ class _PortWatcher:
         self.counts = {name: 0 for name in ("cts", "dsr", "cd", "ri")}
         self._last = {name: None for name in self.counts}
         self._changed_at = {name: 0.0 for name in self.counts}
+        #: When each line last COMPLETED a cycle. The run state is derived
+        #: from this and nothing else: a press that finished a shot ten
+        #: seconds ago, on a fifteen-second cycle, is running.
+        self.last_edge_at = {name: None for name in self.counts}
         self.last_sample_at = None
         self.error = ""
 
@@ -153,6 +172,7 @@ class _PortWatcher:
             self._changed_at[name] = now
             if now_high:
                 self.counts[name] += 1
+                self.last_edge_at[name] = now
         self.last_sample_at = now
         self.error = ""
         return True
@@ -219,6 +239,14 @@ class ContactAdapter(base.Adapter):
             raise AdapterError(
                 f"debounce_ms is {self.debounce_ms:g}, which is long enough to "
                 f"swallow real cycles. The limit is {MAX_DEBOUNCE_MS:g} ms.")
+        self.idle_after_s = float(
+            self.settings.get("idle_after_s") or DEFAULT_IDLE_AFTER_S)
+        if self.idle_after_s < MIN_IDLE_AFTER_S:
+            raise AdapterError(
+                f"idle_after_s is {self.idle_after_s:g}s, shorter than any real "
+                f"moulding cycle, so the machine would read Idle between every "
+                f"shot. The minimum is {MIN_IDLE_AFTER_S:g}s; two to three times "
+                f"the machine's cycle time is the rule.")
         self._watcher = None
 
     def endpoint(self):
@@ -258,11 +286,17 @@ class ContactAdapter(base.Adapter):
         w = self._watcher
         for address in addresses:
             tag = str(address)
-            key = LINES.get(tag.strip().lower())
+            want = tag.strip().lower()
+            # `cts.running` asks for the DERIVED run state; `cts` for the count.
+            running = want.endswith(RUNNING_SUFFIX)
+            if running:
+                want = want[: -len(RUNNING_SUFFIX)]
+            key = LINES.get(want)
             if key is None:
                 out.append(no_data(
                     tag, f"{tag!r} is not a serial input line. Use one of "
-                         f"cts, dsr, cd, ri."))
+                         f"cts, dsr, cd, ri -- optionally with '{RUNNING_SUFFIX}' "
+                         f"for the run state derived from the same pulses."))
                 continue
             if w is None or w._con is None:
                 out.append(no_data(tag, w.error if w else "not connected"))
@@ -278,6 +312,28 @@ class ContactAdapter(base.Adapter):
                 # that stopped making parts.
                 out.append(no_data(tag, w.error))
                 continue
+            if running:
+                # DERIVED, AND SAYING SO. A press that completed a cycle within
+                # idle_after_s is running; one that has not, has stopped. That
+                # is a measurement of the machine, not a guess about it -- the
+                # pulse either arrived or it did not.
+                #
+                # Before the FIRST pulse there is nothing to derive from. Not
+                # "False": a gateway started during a tea break has not
+                # observed a stopped machine, it has observed nothing, and
+                # reporting Idle would put a machine on the board as stopped on
+                # the strength of never having looked.
+                last = w.last_edge_at[key]
+                if last is None:
+                    out.append(no_data(
+                        tag, "no cycle seen yet, so the run state is not known. "
+                             "It becomes known at the first pulse."))
+                    continue
+                out.append(Reading(
+                    tag=tag,
+                    value=bool(time.time() - last <= self.idle_after_s),
+                    quality=base.GOOD, source_time=False))
+                continue
             out.append(Reading(tag=tag, value=int(w.counts[key]),
                                quality=base.GOOD, source_time=False))
         self.last_read_at = time.time()
@@ -292,10 +348,15 @@ class ContactAdapter(base.Adapter):
         actually wired without a meter: the one that climbs once per cycle.
         """
         w = self._watcher
-        return [{"address": name,
-                 "count": (w.counts[name] if w else None),
-                 "signal": "part_count"}
-                for name in ("cts", "dsr", "cd", "ri")]
+        out = []
+        for name in ("cts", "dsr", "cd", "ri"):
+            out.append({"address": name,
+                        "count": (w.counts[name] if w else None),
+                        "signal": "part_count"})
+            out.append({"address": name + RUNNING_SUFFIX,
+                        "count": None,
+                        "signal": "running"})
+        return out
 
     def describe(self):
         d = super().describe()
@@ -304,4 +365,6 @@ class ContactAdapter(base.Adapter):
         d["last_sample_at"] = w.last_sample_at if w else None
         d["sample_hz"] = self.sample_hz
         d["debounce_ms"] = self.debounce_ms
+        d["idle_after_s"] = self.idle_after_s
+        d["last_edge_at"] = dict(w.last_edge_at) if w else {}
         return d

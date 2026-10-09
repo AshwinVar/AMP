@@ -26,6 +26,7 @@ Run: python edge/test_contact_counting.py
 import asyncio
 import os
 import sys
+import time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
@@ -249,6 +250,93 @@ def test_an_unknown_line_is_refused_not_read_as_never_asserted():
     asyncio.get_event_loop().run_until_complete(run())
 
 
+# ── 3b. Run state, derived from the same pulses ──────────────────────
+
+def test_running_is_derived_from_the_last_cycle():
+    """Status without a second wire, and without inventing anything.
+
+    A press that completed a cycle ten seconds ago, on a fifteen-second cycle,
+    IS running. One that has not completed a cycle in two minutes has stopped.
+    That is a measurement -- the pulse arrived or it did not -- and it is the
+    difference between AMP showing a live machine status and showing nothing.
+    """
+    async def run():
+        fake = FakePort()
+        a = contact.ContactAdapter({"serial_port": "FAKE1", "idle_after_s": 60})
+        w = watcher_on(fake)
+        contact._WATCHERS["FAKE1"] = w
+        a._watcher = w
+        w.sample_once(now=0.0)
+
+        got = (await a.read(["cts.running"]))[0]
+        check("before the first cycle the run state is UNKNOWN, not Idle",
+              not got.is_usable and got.quality == base.NO_DATA, repr(got))
+        check("...and it says when it becomes known",
+              "first pulse" in got.detail, got.detail)
+
+        # A cycle just completed.
+        fake.cts = True
+        w.sample_once(now=time.time())
+        fake.cts = False
+        w.sample_once(now=time.time() + 0.4)
+        got = (await a.read(["cts.running"]))[0]
+        check("a press that just cycled reads as RUNNING",
+              got.is_usable and got.value is True, repr(got))
+
+        # Wind the last edge back past the idle window.
+        w.last_edge_at["cts"] = time.time() - 120.0
+        got = (await a.read(["cts.running"]))[0]
+        check("a press that has not cycled for two minutes reads as STOPPED",
+              got.is_usable and got.value is False, repr(got))
+
+        # And just inside the window is still running.
+        w.last_edge_at["cts"] = time.time() - 30.0
+        got = (await a.read(["cts.running"]))[0]
+        check("one still inside the idle window is running",
+              got.is_usable and got.value is True, repr(got))
+
+        # The count and the run state come off the SAME line, independently.
+        got = (await a.read(["cts"]))[0]
+        check("the count is unaffected by asking for the run state",
+              got.is_usable and got.value == 1, repr(got))
+        contact.reset_watchers()
+    asyncio.get_event_loop().run_until_complete(run())
+
+
+def test_an_idle_window_shorter_than_a_cycle_is_refused():
+    """The misconfiguration that would flicker every machine to Idle mid-shot."""
+    try:
+        contact.ContactAdapter({"serial_port": "COM9", "idle_after_s": 1})
+        check("an idle window under a real cycle is refused", False,
+              "it was accepted")
+    except base.AdapterError as exc:
+        check("an idle window under a real cycle is refused",
+              "shorter than any real" in str(exc), str(exc))
+        check("...and the message gives the rule",
+              "two to three times" in str(exc), str(exc))
+
+
+def test_browse_lists_both_the_count_and_the_run_state():
+    async def run():
+        fake = FakePort()
+        a = contact.ContactAdapter({"serial_port": "FAKE1"})
+        w = watcher_on(fake)
+        contact._WATCHERS["FAKE1"] = w
+        a._watcher = w
+        rows = await a.browse()
+        addrs = [r["address"] for r in rows]
+        check("browse offers all four counts", 
+              all(n in addrs for n in ("cts", "dsr", "cd", "ri")), str(addrs))
+        check("and the derived run state for each",
+              all(n + ".running" in addrs for n in ("cts", "dsr", "cd", "ri")),
+              str(addrs))
+        check("the run state is offered as the `running` signal",
+              {r["signal"] for r in rows} == {"part_count", "running"},
+              str({r["signal"] for r in rows}))
+        contact.reset_watchers()
+    asyncio.get_event_loop().run_until_complete(run())
+
+
 # ── 4. Four machines, one adapter ────────────────────────────────────
 
 def test_four_lines_count_independently():
@@ -398,6 +486,10 @@ def main():
     test_a_dead_port_is_not_a_stopped_machine()
     test_a_port_never_sampled_reports_so()
     test_an_unknown_line_is_refused_not_read_as_never_asserted()
+    section("3b. RUN STATE, DERIVED FROM THE SAME PULSES")
+    test_running_is_derived_from_the_last_cycle()
+    test_an_idle_window_shorter_than_a_cycle_is_refused()
+    test_browse_lists_both_the_count_and_the_run_state()
     section("4. FOUR MACHINES, ONE ADAPTER")
     test_four_lines_count_independently()
     test_one_port_means_one_watcher()

@@ -31,6 +31,7 @@ is the one thing nobody should do by accident, so this refuses to run until you
 say the lead is disconnected.
 
     python edge/serial_selftest.py --disconnected
+    python edge/serial_selftest.py --disconnected --watch
     python edge/serial_selftest.py --disconnected --port COM4 --baud 9600
 """
 import argparse
@@ -131,14 +132,33 @@ def report(port, baud, sent, got, verdict):
 
     if verdict == "NOTHING CAME BACK":
         print("  THE LOOPBACK IS NOT CLOSED, or the kit is faulty. In order:")
-        print("    1. Is pin 2 actually shorted to pin 3? They are the second")
-        print("       and third pins on the long row, from the pin-1 end.")
-        print("    2. If you shorted them on the far end of a LEAD rather than")
-        print("       on the adapter itself, the lead may have no pin 2 or 3 --")
-        print("       many moulded 'serial' leads are wired for three signals")
-        print("       and some for none. Short the ADAPTER's own pins to rule")
-        print("       the lead out, then put the lead back and repeat.")
-        print("    3. Try the adapter in a different USB port.")
+        print()
+        print("    1. FIND PINS 2 AND 3. The numbering MIRRORS between a plug")
+        print("       and a socket, which is what catches everybody. Hold the")
+        print("       connector with the D-shape's WIDE edge up, looking")
+        print("       straight at the pins or holes:")
+        print()
+        print("         a PLUG   (pins)  top row, left to right: 1 2 3 4 5")
+        print("         a SOCKET (holes) top row, left to right: 5 4 3 2 1")
+        print()
+        print("       So on a plug they are the 2nd and 3rd from the LEFT; on a")
+        print("       socket, the 2nd and 3rd from the RIGHT. Most connectors")
+        print("       have 1, 5, 6 and 9 moulded beside the end pins -- find a")
+        print("       number before trusting the count.")
+        print()
+        print("    2. SHORT THE ADAPTER'S OWN PINS FIRST, with nothing else")
+        print("       attached. That tests the adapter alone. If it passes,")
+        print("       fit the lead and short the FAR end -- the end that goes")
+        print("       into the machine. Passing that proves the adapter, the")
+        print("       lead and both connectors, end to end, which is the whole")
+        print("       chain you care about.")
+        print()
+        print("    3. A paperclip must touch METAL. On a plug, press it down")
+        print("       into the gap so it bears on the sides of both pins; on a")
+        print("       socket it has to go INTO both holes, which a thick clip")
+        print("       will not do -- use a bent staple or a jumper wire.")
+        print()
+        print("    4. Try a different USB port, then a different adapter.")
         return 1
 
     if verdict == "ONLY ZEROS CAME BACK":
@@ -165,6 +185,8 @@ def main(argv=None):
     ap.add_argument("--port")
     ap.add_argument("--baud", type=int, default=9600)
     ap.add_argument("--seconds", type=float, default=3.0)
+    ap.add_argument("--watch", action="store_true",
+                    help="retry until the bytes come back")
     ap.add_argument("--disconnected", action="store_true",
                     help="confirm the lead is NOT plugged into a machine")
     args = ap.parse_args(argv)
@@ -183,6 +205,29 @@ def main(argv=None):
     port = choose_port(args.port)
     if port is None:
         return 1
+
+    if args.watch:
+        # ONE HAND IS HOLDING THE PAPERCLIP. Re-running a command between every
+        # attempt means putting the clip down, which is when it moves. This
+        # retries until it sees the bytes come back, so you can wiggle the clip
+        # and watch the line change.
+        print(f"\nwatching {port} -- short pins 2 and 3 and hold them.")
+        print("Ctrl+C to stop.\n")
+        tries = 0
+        try:
+            while True:
+                tries += 1
+                sent, got, verdict = loopback(port, args.baud, 0.6)
+                mark = "OK  " if verdict == "EXACT MATCH" else "    "
+                print(f"  {mark}try {tries:<4} {len(got):>3} of {sent} bytes "
+                      f"back: {verdict}")
+                if verdict == "EXACT MATCH":
+                    print()
+                    return report(port, args.baud, sent, got, verdict)
+                time.sleep(1.0)
+        except KeyboardInterrupt:
+            print("\n  stopped -- it never came back.")
+            return 1
 
     print(f"\nloopback self-test on {port} -- pins 2 and 3 must be shorted")
     sent, got, verdict = loopback(port, args.baud, args.seconds)

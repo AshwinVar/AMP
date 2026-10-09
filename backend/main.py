@@ -316,6 +316,11 @@ _ensure_column("machine_installations", "last_service_at",
 # nobody chose.
 _ensure_column("tool_assets", "part_code",
                "ALTER TABLE tool_assets ADD COLUMN part_code VARCHAR")
+# Same class again, from alembic 0016. Nullable with no default, exactly as
+# the migration argues -- NULL means "nobody measured the energy for this
+# hour", and a default of 0 would claim a machine ran and drew no power.
+_ensure_column("production_records", "energy_kwh",
+               "ALTER TABLE production_records ADD COLUMN energy_kwh FLOAT")
 # The windowed read-models filter these by created_at in SQL — index them so the
 # window stays fast as the tables grow.
 _ensure_index("production_records", "created_at")

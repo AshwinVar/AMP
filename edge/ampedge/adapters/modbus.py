@@ -36,15 +36,32 @@ import time
 from . import base
 
 try:                                    # pragma: no cover - import guard
-    from pymodbus.client import AsyncModbusTcpClient
+    from pymodbus.client import AsyncModbusSerialClient, AsyncModbusTcpClient
     AVAILABLE = True
 except ImportError:                     # pragma: no cover
-    AsyncModbusTcpClient = None
+    AsyncModbusTcpClient = AsyncModbusSerialClient = None
     AVAILABLE = False
 
 DEFAULT_PORT = 502
 DEFAULT_TIMEOUT = 5.0
 DEFAULT_UNIT = 1
+
+# ---- RS-485 / RS-232, for controllers with no Ethernet at all ----------
+#
+# Modbus RTU is the SAME protocol over a different wire, so everything below
+# this point -- addressing, the register map, quality, the bad-tag set -- is
+# unchanged. Only the client differs, which is why this is a branch in connect()
+# and not a second adapter.
+#
+# It earns its place on a real floor: an injection moulding plant's fourteen
+# controllers have no Ethernet port between them. Without serial here, reading
+# them means buying an RTU-to-TCP gateway per bus before anyone knows whether
+# the controller answers Modbus at all. With it, a USB-to-serial lead and a
+# laptop answer that question for the price of the lead.
+DEFAULT_BAUD = 9600
+DEFAULT_PARITY = "N"
+DEFAULT_BYTESIZE = 8
+DEFAULT_STOPBITS = 1
 
 COIL = "coil"
 DISCRETE = "discrete"
@@ -107,29 +124,84 @@ class ModbusAdapter(base.Adapter):
             raise base.AdapterError(
                 "the `pymodbus` package is not installed, so this gateway cannot speak Modbus "
                 "TCP. Install the edge requirements (pip install -r edge/requirements.txt).")
+        # A `serial_port` chooses RTU; a `host` chooses TCP. Naming the wire
+        # rather than carrying a mode flag means a config cannot say "rtu" and
+        # then give an IP address.
+        self.serial_port = str(self.settings.get("serial_port") or "").strip()
         self.host = str(self.settings.get("host") or "")
-        if not self.host:
-            raise base.AdapterError("modbus needs a `host`, e.g. 192.168.1.20")
+        if self.serial_port and self.host:
+            raise base.AdapterError(
+                "modbus was given both a `serial_port` and a `host`. One connection is one "
+                "wire: give `serial_port` (e.g. COM3 or /dev/ttyUSB0) for RTU, or `host` for "
+                "TCP, not both.")
+        if not self.serial_port and not self.host:
+            raise base.AdapterError(
+                "modbus needs either a `host` (e.g. 192.168.1.20) for Modbus TCP, or a "
+                "`serial_port` (e.g. COM3 or /dev/ttyUSB0) for Modbus RTU over RS-485/RS-232.")
         self.port = int(self.settings.get("port") or DEFAULT_PORT)
         self.unit_id = int(self.settings.get("unit_id", self.settings.get("slave", DEFAULT_UNIT)))
         self.timeout = float(self.settings.get("timeout") or DEFAULT_TIMEOUT)
+        self.baudrate = int(self.settings.get("baudrate") or DEFAULT_BAUD)
+        self.parity = str(self.settings.get("parity") or DEFAULT_PARITY).upper()[:1]
+        if self.parity not in ("N", "E", "O"):
+            raise base.AdapterError(
+                f"modbus `parity` is {self.settings.get('parity')!r}; it must be N, E or O. "
+                f"A serial line that disagrees about parity reads as rubbish, not as silence.")
+        self.bytesize = int(self.settings.get("bytesize") or DEFAULT_BYTESIZE)
+        self.stopbits = int(self.settings.get("stopbits") or DEFAULT_STOPBITS)
         self._client = None
         self.bad_tags = set()
 
+    @property
+    def is_serial(self) -> bool:
+        return bool(self.serial_port)
+
     def endpoint(self) -> str:
+        if self.is_serial:
+            return (f"{self.serial_port} {self.baudrate} "
+                    f"{self.bytesize}{self.parity}{self.stopbits} unit {self.unit_id}")
         return f"{self.host}:{self.port} unit {self.unit_id}"
 
     # -- lifecycle -----------------------------------------------------
     async def connect(self):
         self.state = base.CONNECTING
-        client = AsyncModbusTcpClient(self.host, port=self.port, timeout=self.timeout,
-                                      retries=1)
+        # BUILDING THE CLIENT IS INSIDE THE ERROR HANDLING, because for a serial
+        # line it can fail on its own. A TCP client is just an address until it
+        # connects, but a serial one resolves the device as it is constructed --
+        # so a mistyped port raises HERE, before connect() is ever reached.
+        #
+        # Found by CI and not on the machine that wrote it: Windows tolerated a
+        # nonexistent COM name until the open, Linux did not, and the raw
+        # exception escaped with last_error never set. A gateway that crashes
+        # instead of saying which port it could not find is the one failure this
+        # adapter's diagnostics exist to prevent.
+        try:
+            if self.is_serial:
+                client = AsyncModbusSerialClient(
+                    port=self.serial_port, baudrate=self.baudrate, parity=self.parity,
+                    bytesize=self.bytesize, stopbits=self.stopbits,
+                    timeout=self.timeout, retries=1)
+            else:
+                client = AsyncModbusTcpClient(self.host, port=self.port,
+                                              timeout=self.timeout, retries=1)
+        except Exception as e:                       # noqa: BLE001
+            self.state = base.ERROR
+            self.last_error = (
+                f"could not open {self.endpoint()}: {type(e).__name__}. "
+                + ("Check the port name (`serial_listen.py --ports` lists what this "
+                   "computer can see) and that the USB adapter's driver is installed."
+                   if self.is_serial else "Check the host and port."))
+            raise base.AdapterError(self.last_error)
         try:
             await asyncio.wait_for(client.connect(), timeout=self.timeout + 2)
         except asyncio.TimeoutError:
             self.state = base.ERROR
-            self.last_error = (f"no answer from {self.endpoint()} within {self.timeout:.0f}s "
-                               f"(check the IP, the port and the firewall)")
+            self.last_error = (
+                f"no answer from {self.endpoint()} within {self.timeout:.0f}s "
+                + ("(check the baud rate, parity and unit id -- a serial line that "
+                   "disagrees about any of them is silent, not wrong; and check the "
+                   "A/B pair is not swapped)" if self.is_serial
+                   else "(check the IP, the port and the firewall)"))
             raise base.AdapterError(self.last_error)
         except Exception as e:                       # noqa: BLE001
             self.state = base.ERROR
@@ -137,9 +209,13 @@ class ModbusAdapter(base.Adapter):
             raise base.AdapterError(self.last_error)
         if not client.connected:
             self.state = base.ERROR
-            self.last_error = (f"{self.endpoint()} did not accept a Modbus TCP connection. "
-                               f"Many PLCs need Modbus enabled explicitly in the controller "
-                               f"configuration.")
+            self.last_error = (
+                f"{self.endpoint()} did not open. "
+                + ("The port exists but would not open: another program may hold it "
+                   "(close any terminal emulator), or the USB adapter's driver is not "
+                   "installed." if self.is_serial
+                   else "Many PLCs need Modbus enabled explicitly in the controller "
+                        "configuration."))
             raise base.AdapterError(self.last_error)
         self._client = client
         self.state = base.CONNECTED

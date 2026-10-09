@@ -1059,13 +1059,29 @@ def _board_rows(board):
 
 
 def _unavailable_facts(prefix, board, window):
-    """The two series with no source, as UNKNOWN facts carrying the builder's own
-    reason and fix. Never zeros, and never omitted: a reader who asked for the
-    board is owed the fact that two of its five graphs cannot be drawn."""
+    """Power and packing, each as the board reports it.
+
+    MEASURED OR NOT IS A PROPERTY OF THE DATA, not of this function. Both series
+    were once unavailable by construction, and this returned two UNKNOWNs. Then
+    a controller turned out to have been counting kWh per hour for fourteen
+    months, and an UNKNOWN here would have had the copilot say "AMP cannot
+    report power consumed" while the board beside it drew the chart. Two
+    surfaces disagreeing about the same fact is worse than either being silent.
+
+    So: a series with data comes back MEASURED with its total, and one without
+    comes back UNKNOWN carrying the builder's own reason and fix. Never zeros,
+    and never omitted -- a reader who asked for the board is owed the fact that
+    a graph cannot be drawn."""
     out = []
     for key, unit, label in (("power", "kWh", "Power consumed"),
                              ("packing", "parts", "Quantity packed")):
         series = board.get(key) or {}
+        if series.get("available") and series.get("total") is not None:
+            out.append(_fact(f"{prefix}.{key}", label, series["total"], M, unit,
+                             "production_records", window,
+                             detail="summed from what the machines reported; hours "
+                                    "nothing measured are absent, not zero"))
+            continue
         out.append(_fact(f"{prefix}.{key}", label, None, U, unit, "no source is connected", window,
                          detail=f"{series.get('reason', '')} {series.get('fix', '')}".strip()
                                 + " -- reported as unavailable, not as 0"))
@@ -1329,10 +1345,10 @@ def _say_month(window, parts, unassigned, materials, machines, m):
 
 
 @tool("get_plant_power",
-      "Whether AMP can report power or packed quantities at all. It cannot: no "
-      "energy meter is fitted on this floor and nothing records packing, so this "
-      "says so and what fitting a source would take. Use for power, energy, kWh, "
-      "electricity and packed-quantity questions, which have no measured answer.",
+      "Today's electricity and packed quantities for the plant. Reports the kWh "
+      "the machines measured, and for anything nothing measured says so and what "
+      "a source would take -- never a zero. Use for power, energy, kWh, "
+      "electricity and packed-quantity questions.",
       mirrors="/analytics/plant-board", view=BOARD_VIEW, domain="production")
 def get_plant_power(db, tenant):
     from ai import plant_board            # lazy: the board pulls in the models layer
@@ -1342,9 +1358,36 @@ def get_plant_power(db, tenant):
     board = plant_board.day(db, tenant, datetime.utcnow().date())
     power, packing = board["power"], board["packing"]
     facts = _unavailable_facts("board", board, "now")
-    said = (f"AMP cannot report power consumed: {power['reason']} Nor packed quantities: "
-            f"{packing['reason']} Neither is reported as zero, because no meter and no consumption "
-            f"are different facts. To measure power: {power['fix']}")
-    return _result("get_plant_power", ev.NOT_MEASURED, (said, BOARD_VIEW), facts,
+
+    parts = []
+    if power.get("available") and power.get("total") is not None:
+        # HOW MANY HOURS the figure covers, as a fact and not just a phrase. A
+        # total over two measured hours and one over twenty-four are different
+        # claims about the same day, and the grounding guard refuses a number in
+        # the sentence that no fact backs -- correctly.
+        hours = len([p for p in power.get("points", []) if p.get("kwh")])
+        facts.append(_fact("board.power_hours", "Hours of power measured", hours, M,
+                           "hours", "production_records", "today",
+                           detail="hours with a reported kWh figure; the rest were "
+                                  "not measured and are not counted as zero"))
+        parts.append(f"The plant drew {power['total']:,} kWh today, measured by the machines "
+                     f"themselves across {hours} hour{'' if hours == 1 else 's'}.")
+    else:
+        parts.append(f"AMP cannot report power consumed: {power['reason']} "
+                     f"To measure it: {power['fix']}")
+    if packing.get("available") and packing.get("total") is not None:
+        parts.append(f"{packing['total']:,} were packed.")
+    else:
+        parts.append(f"Packed quantities are not reported: {packing['reason']}")
+    parts.append("Nothing unmeasured is reported as zero, because no source and no "
+                 "consumption are different facts.")
+    said = " ".join(parts)
+
+    # OK only when everything asked for was measured; otherwise the state says
+    # part of the answer is missing, which is what NOT_MEASURED is for.
+    measured = [s.get("available") for s in (power, packing)]
+    state = ev.OK if all(measured) else (ev.PARTIAL_DATA if any(measured)
+                                         else ev.NOT_MEASURED)
+    return _result("get_plant_power", state, (said, BOARD_VIEW), facts,
                    notes=["Nothing is estimated in place of a missing meter: an inferred kWh figure "
                           "would read exactly like a measured one."])

@@ -102,6 +102,12 @@ class ProductionRecord(Base):
     total_count = Column(Integer, nullable=False)
     good_count = Column(Integer, nullable=False)
     rejected_count = Column(Integer, nullable=False)
+    # Electricity drawn over the SAME window as the counts beside it (0016).
+    # NULL means the source did not report energy -- which is every row written
+    # before this column existed, and every machine without a meter. It is not
+    # zero: a zero says the machine ran this hour and drew no power, and a
+    # reader would draw that as a bar.
+    energy_kwh = Column(Float, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow, index=True)
 
     machine = relationship("Machine", back_populates="production_records")

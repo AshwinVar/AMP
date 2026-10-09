@@ -163,8 +163,20 @@ def _machine(entry, i, problems) -> dict:
         connection = {}
     if protocol == "opcua" and not connection.get("url"):
         problems.append(f"{where}.connection.url: required for opcua, e.g. opc.tcp://10.0.0.5:4840")
-    if protocol == "modbus" and not connection.get("host"):
-        problems.append(f"{where}.connection.host: required for modbus, e.g. 10.0.0.5")
+    # Modbus speaks over Ethernet (TCP) or a serial line (RTU). One wire per
+    # connection: `host` for TCP, `serial_port` for RTU. Naming the wire rather
+    # than carrying a mode flag means a config cannot claim RTU and give an IP.
+    if protocol == "modbus":
+        has_host = bool(connection.get("host"))
+        has_serial = bool(str(connection.get("serial_port") or "").strip())
+        if not has_host and not has_serial:
+            problems.append(
+                f"{where}.connection: modbus needs either `host` (Modbus TCP, e.g. 10.0.0.5) "
+                f"or `serial_port` (Modbus RTU over RS-485/RS-232, e.g. COM3 or /dev/ttyUSB0)")
+        elif has_host and has_serial:
+            problems.append(
+                f"{where}.connection: modbus was given both `host` and `serial_port`. "
+                f"One connection is one wire -- give whichever this machine is on.")
     if protocol == "focas" and not connection.get("host"):
         problems.append(f"{where}.connection.host: required for focas, e.g. 192.168.1.1 "
                         f"(the address on the control's SYSTEM -> EMBED PORT screen)")

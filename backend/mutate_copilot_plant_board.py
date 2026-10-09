@@ -86,9 +86,17 @@ MUTATIONS = [
     ("a month with no conversions at all calls itself OK", F,
      'ev.NOT_MEASURED if not materials and not machines',
      'ev.OK if True'),
+    # Re-anchored when get_plant_power stopped being unconditionally
+    # NOT_MEASURED: power became measurable, so the state is now computed from
+    # what the board actually reported. The mutation is the same claim -- force
+    # OK and a completely unmeasured answer calls itself complete.
     ("the power answer calls itself OK, so 'not measured' stops being the answer", F,
-     '"get_plant_power", ev.NOT_MEASURED',
-     '"get_plant_power", ev.OK'),
+     '    state = ev.OK if all(measured) else (ev.PARTIAL_DATA if any(measured)\n'
+     '                                         else ev.NOT_MEASURED)',
+     '    state = ev.OK'),
+    ("a partly-measured answer calls itself complete, hiding the missing half", F,
+     'ev.PARTIAL_DATA if any(measured)',
+     'ev.OK if any(measured)'),
 ]
 
 

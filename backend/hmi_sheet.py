@@ -341,7 +341,7 @@ def import_sheet(db, tenant, machines, path, kind, ideal_cycle_time_seconds=0):
     }
 
 
-def main(argv=None):
+def main(argv=None, db=None):
     """Import a sheet from the command line, into any workspace.
 
     Deliberately takes the tenant as an argument and hardcodes none: AMP is a
@@ -350,10 +350,22 @@ def main(argv=None):
 
         python backend/hmi_sheet.py --tenant SHRINIDHI --kind hmi-day \
             --file backend/data/shrinidhi-2026-10-day.csv
+
+    `db` is for the caller that already has a session -- a test, or a script
+    importing several sheets in one transaction. Left None it opens its own and
+    closes it, which is what the command line does.
+
+    WHY IT IS A PARAMETER AT ALL. The test for this used to create machines in
+    one session and rely on the session main() opened for itself to see them.
+    That held under `python test_hmi_sheet.py` and failed in the coverage job,
+    where a thousand tests share one process and one SQLite file -- "HMITEST has
+    no machines" from a query run moments after two were committed. Whatever
+    that interaction is, it belongs to the harness and not to this module, and a
+    CLI that cannot be handed a session is a CLI that can only be tested through
+    it. Everything this function is actually responsible for -- the arguments,
+    the refusals, the exit code, the summary -- is now testable directly.
     """
     import argparse
-
-    import database
 
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--tenant", required=True, help="workspace code")
@@ -364,7 +376,10 @@ def main(argv=None):
                     help="ideal cycle time, if the controller showed one")
     args = ap.parse_args(argv)
 
-    db = database.SessionLocal()
+    owned = db is None
+    if owned:
+        import database
+        db = database.SessionLocal()
     try:
         machines = {m.name: m for m in db.query(models.Machine)
                     .filter(models.Machine.tenant_code == args.tenant).all()}
@@ -377,7 +392,8 @@ def main(argv=None):
         print(f"refused: {exc}")
         return 1
     finally:
-        db.close()
+        if owned:
+            db.close()
 
     print(f"{out['kind']}: {', '.join(out['machines'])}")
     print(f"  wrote {out['rows_written']}, updated {out['rows_updated']}, "

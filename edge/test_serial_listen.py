@@ -234,6 +234,71 @@ def test_every_third_party_import_is_declared():
           len(shipped) >= 5, f"{len(shipped)} files")
 
 
+def test_the_writer_is_quarantined():
+    """The one tool that transmits must stay separate, and stay gated.
+
+    serial_selftest.py exists because a sweep full of 0x00 cannot tell "the
+    machine is silent" from "your lead has no pin 2", and a loopback settles it
+    in thirty seconds. It cannot be read-only -- a loopback has to send -- so it
+    is a FILE OF ITS OWN rather than a flag on the listener. That only means
+    anything if the listener cannot reach it, and if the writer cannot fire by
+    accident.
+    """
+    writer = os.path.join(HERE, "serial_selftest.py")
+    check("the writer exists as its own file", os.path.exists(writer))
+    if not os.path.exists(writer):
+        return
+
+    listener = ast.parse(io.open(SOURCE, encoding="utf-8").read())
+    imported = set()
+    for node in ast.walk(listener):
+        if isinstance(node, ast.Import):
+            imported.update(a.name.split(".")[0] for a in node.names)
+        elif isinstance(node, ast.ImportFrom) and node.module:
+            imported.add(node.module.split(".")[0])
+    check("the read-only listener cannot reach the writer",
+          "serial_selftest" not in imported,
+          f"it imports {sorted(imported)}")
+
+    # The gate: --disconnected is required before a byte is sent. Asserted by
+    # DRIVING main(), not by reading for the string, because a flag that is
+    # parsed and then ignored would read exactly the same in the source.
+    sys.path.insert(0, HERE)
+    import serial_selftest
+
+    fired = []
+    real = serial_selftest.loopback
+    try:
+        serial_selftest.loopback = lambda *a, **k: (
+            fired.append(a) or (0, b"", "NOTHING CAME BACK"))
+        rc = serial_selftest.main([])
+        check("without --disconnected it refuses and sends nothing",
+              not fired and rc == 1, f"fired={fired}, exited {rc}")
+
+        real_ports = serial_selftest.ports
+        try:
+            serial_selftest.ports = lambda: []
+            rc = serial_selftest.main(["--disconnected"])
+            check("with --disconnected but no port it still sends nothing",
+                  not fired and rc == 1, f"fired={fired}, exited {rc}")
+
+            serial_selftest.ports = lambda: ["COM4"]
+            rc = serial_selftest.main(["--disconnected"])
+            check("with --disconnected and a port it DOES send",
+                  len(fired) == 1, f"fired={fired}")
+        finally:
+            serial_selftest.ports = real_ports
+    finally:
+        serial_selftest.loopback = real
+
+    # The probe must be able to expose a stuck line: all-zeros and all-ones are
+    # both what a BROKEN line produces, so neither may be the probe itself.
+    probe = serial_selftest.PROBE
+    check("the probe is not something a dead line could fake",
+          len(set(probe)) > 8 and set(probe) not in ({0}, {255}),
+          f"{len(set(probe))} distinct bytes")
+
+
 def main():
     print("=" * 74)
     print("THE SERIAL LISTENER IS READ-ONLY, AND NEVER A SILENT NO-OP")
@@ -242,6 +307,7 @@ def main():
     test_sweep_without_a_port_is_not_a_no_op()
     test_main_exits_non_zero_when_it_did_nothing()
     test_every_third_party_import_is_declared()
+    test_the_writer_is_quarantined()
     print()
     print("=" * 74)
     if failures:

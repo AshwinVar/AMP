@@ -461,33 +461,43 @@ def case_the_command_line(tmp):
     multi-tenant platform, and the plant that happened to need this first is
     still just one tenant. Pinned here so a later convenience cannot quietly
     bake one in.
+
+    THE SESSION IS PASSED IN, and that is the point of `db` being a parameter.
+    This case used to let main() open its own and trust it to see machines
+    another session had just committed. It held standalone and failed the
+    coverage job -- "HMITEST has no machines" from a query moments after two
+    were committed, in a process where a thousand tests share one SQLite file.
+    That interaction belongs to the harness; everything main() is responsible
+    for is exercised here regardless of it.
     """
     db, made = fresh()
     machine_id = made["IMM-01"].id
-    db.close()
     path = write(tmp, "cli.csv",
                  "machine,date,shots,kwh\nIMM-01,2026-10-09,5000,90.0\n")
 
     rc = hmi_sheet.main(["--tenant", TENANT, "--kind", "hmi-day",
-                         "--file", path])
+                         "--file", path], db=db)
     check("the CLI imports a sheet", rc == 0, f"exited {rc}")
 
-    db = SessionLocal()
     rows = rows_for(db, machine_id)
     check("and the row is actually there",
           len(rows) == 1 and rows[0].total_count == 5000, f"{len(rows)} rows")
-    db.close()
 
     rc = hmi_sheet.main(["--tenant", "NO-SUCH-TENANT", "--kind", "hmi-day",
-                         "--file", path])
+                         "--file", path], db=db)
     check("a workspace with no machines is refused, not invented", rc == 1,
           f"exited {rc}")
 
     bad = write(tmp, "bad-cli.csv", "machine,date\nIMM-01,2026-10-09\n")
     rc = hmi_sheet.main(["--tenant", TENANT, "--kind", "hmi-day",
-                         "--file", bad])
+                         "--file", bad], db=db)
     check("a malformed sheet makes the CLI exit non-zero", rc == 1,
           f"exited {rc}")
+
+    # The session was LENT, not surrendered: a caller that passes one keeps it.
+    check("a borrowed session is left open for its owner",
+          db.is_active and rows_for(db, machine_id) is not None)
+    db.close()
 
 
 def main():

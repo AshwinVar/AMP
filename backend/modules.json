@@ -23,7 +23,8 @@
         {"key": "trends", "label": "Trends", "icon": "▨"},
         {"key": "timeline", "label": "Timeline", "icon": "↔"},
         {"key": "connected", "label": "Connected Equipment", "icon": "◈"},
-        {"key": "contracts", "label": "Service Contracts", "icon": "§"}
+        {"key": "contracts", "label": "Service Contracts", "icon": "§"},
+        {"key": "users", "label": "User Management", "icon": "◔"}
       ]
     },
     {
@@ -107,7 +108,6 @@
       "views": [
         {"key": "documents", "label": "Documents", "icon": "▱"},
         {"key": "saas", "label": "SaaS Admin", "icon": "◌"},
-        {"key": "users", "label": "User Management", "icon": "◔"},
         {"key": "costing", "label": "Costing", "icon": "₹"},
         {"key": "enterprise", "label": "Enterprise Polish", "icon": "◆"}
       ]

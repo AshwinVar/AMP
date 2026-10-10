@@ -31,8 +31,20 @@ USAGE
 If you do not know the slave/station address, --probe tries 1..8.
 """
 import argparse
+import logging
 import sys
 import time
+
+# QUIET THE LIBRARY, BECAUSE ITS NOISE HIDES THE ANSWER.
+#
+# pymodbus logs "Cleanup recv buffer before send: 0x0 0x0 0x0 ..." for every
+# retry of every address at every line setting. On a floating line that is
+# hundreds of lines of zeros per setting, and the one line that matters --
+# "ANSWERED" or "silent" -- scrolls past in the middle of it. A commissioning
+# tool whose output cannot be read on a shop floor has failed at its job.
+#
+# ERROR, not CRITICAL: a genuine library error still gets through.
+logging.getLogger("pymodbus").setLevel(logging.ERROR)
 
 try:
     from pymodbus.client import ModbusSerialClient

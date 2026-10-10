@@ -126,6 +126,26 @@ class _PortWatcher:
             # Baud is irrelevant -- no bytes are sent or received. The port is
             # opened only so the control lines can be read.
             self._con = serial.Serial(port=self.port, baudrate=9600, timeout=0)
+            # RTS HIGH, EXPLICITLY, because on some machines it is the only
+            # power supply in the circuit.
+            #
+            # The usual wiring feeds CTS from an opto driven by the machine's
+            # own 24 V. But a plant that will not allow anything wired into a
+            # running control cabinet -- which is a reasonable thing for a
+            # plant to say -- can instead tape an LDR over the output's
+            # indicator LED and wire it RTS -> LDR -> CTS. Nothing touches the
+            # machine; the serial port supplies the ~12 V itself and the LDR's
+            # resistance falls when the LED lights.
+            #
+            # pyserial asserts RTS on open by default, but a default is not a
+            # guarantee: it is a constructor argument on some versions and a
+            # property on others, and a driver that opens with RTS low turns
+            # this into a port that reads a running machine as permanently
+            # stopped. Setting it here costs nothing and removes the question.
+            try:
+                self._con.rts = True
+            except Exception:                # noqa: BLE001 - not every port has it
+                pass
         except Exception as exc:         # noqa: BLE001 - reported, never raised blind
             self.error = f"could not open {self.port}: {exc}"
             raise AdapterError(self.error)

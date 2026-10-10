@@ -14,7 +14,24 @@
 # The serial input lines are CTS, DSR, CD and RI, which is why one adapter
 # covers four machines.
 #
-# THE OPTO-ISOLATOR IS NOT OPTIONAL. Wiring a press's 24 V straight into a
+# IF THE PLANT WILL NOT ALLOW ANYTHING WIRED INTO THE CABINET -- which is a
+# reasonable thing for a plant running unattended machines to say -- there is a
+# route that touches nothing at all:
+#
+#     adapter RTS (pin 7) -> LDR taped over the output's indicator LED
+#                         -> adapter CTS (pin 8)
+#
+# Almost every PLC output has an indicator LED beside it. An LDR over that LED
+# sees it light, and the serial port supplies its own ~12 V on RTS, so the
+# circuit is complete without touching the machine's wiring, its 24 V, or any
+# terminal. It peels off in five seconds and cannot disturb a running press
+# because it is not connected to one.
+#
+# Slower than an opto -- an LDR takes tens of milliseconds -- which is
+# irrelevant against a pulse measured in seconds. Pick an output whose LED is
+# lit for a good fraction of a second; a 20 ms blink is too fast for an LDR.
+#
+# THE OPTO-ISOLATOR IS NOT OPTIONAL when you DO wire to a terminal. Wiring a press's 24 V straight into a
 # laptop's serial port puts the machine and the PC on the same electrical
 # reference: a fault on either travels to the other, and a wiring slip
 # energises something in a live control cabinet. An opto costs about ten rupees

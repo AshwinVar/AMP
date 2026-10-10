@@ -326,10 +326,69 @@ for line in log_m.splitlines():
         passwd_users.add(parts[-1])
 check("every user in the ACL has a password file entry",
       acl_users == passwd_users, f"acl={sorted(acl_users)} passwd={sorted(passwd_users)}")
+# COUNT THE FLAG, NOT THE SUBSTRING. This was `log_m.count("-c") == 1`, and the
+# log contains the full path of every file the fake mosquitto_passwd was handed
+# -- all of them under tempfile.mkdtemp(prefix="amp-mosq-"). When mkdtemp's
+# random suffix happens to start with a "c", the directory is called
+# `amp-mosq-cyjr31sk` and the PATH contains "-c". Every logged line then adds
+# one to the count and the check fails, roughly once in every few dozen CI runs,
+# on a commit that touched nothing near it. That is the worst kind of red: it
+# blames whoever pushed next.
+#
+# `-c` as a whole argument cannot appear by accident in a path, so the question
+# "how many invocations created the file" is asked of the arguments.
+created = sum(1 for line in log_m.splitlines() if "-c" in line.split())
 check("the password file is created once and appended to after that",
-      log_m.count("-c") == 1, log_m)
+      created == 1, log_m)
+# And the counter must survive the path that broke it, or the next person to
+# simplify this back to a substring count will not find out until CI reddens on
+# somebody else's change.
+_hostile = "-c -b /tmp/amp-mosq-cyjr31sk/passwd.tmp gw1\n-b /tmp/amp-mosq-cyjr31sk/passwd.tmp gw2\n"
+check("...and counting it is immune to a temp path containing '-c'",
+      sum(1 for line in _hostile.splitlines() if "-c" in line.split()) == 1,
+      _hostile)
 check("no password reached the fixture's log",
       "p1" not in log_m and "p2" not in log_m, log_m)
+
+
+# ── 9. the CA can actually be got OUT of the container ────────────────
+section("9. The CA survives a log pipeline that drops lines")
+
+# WHY THIS IS A TEST AND NOT A COMMENT. On 2026-10-09 this broker's CA reached
+# both `railway logs` and the Railway dashboard with NINE LINES MISSING from
+# the middle -- 876 bytes of a certificate whose DER header declares 1308 --
+# and the same lines were lost on three separate captures. A gateway cannot be
+# commissioned without the CA, the container has no shell access, and the only
+# other ways out were disabling TLS verification (never) or regenerating the CA
+# (silently breaks every gateway already pinning it).
+#
+# So the entrypoint also prints it as ONE base64 line. Whole lines are what the
+# platform drops; one line is what survives.
+with open(ENTRYPOINT) as fh:
+    entry_src = fh.read()
+
+check("the entrypoint prints the CA as a single base64 line",
+      "CA_B64" in entry_src, "no CA_B64 marker")
+check("...and that line is produced with no wrapping",
+      "base64 -w 0" in entry_src and "tr -d" in entry_src,
+      "no unwrapped base64 invocation")
+check("...with a fallback for a base64 that has no -w flag",
+      entry_src.count("base64") >= 2, "only one base64 invocation")
+check("the human-readable block is still printed too",
+      "copy the block below" in entry_src,
+      "the pretty block was removed; keep both")
+check("the CA KEY is never printed",
+      "ca.key" not in entry_src.split("CA_B64")[-1][:400],
+      "a ca.key reference appears next to the public output")
+
+# Round-trip: the recovery instruction must actually recover a certificate.
+import base64 as _b64
+_sample = b"-----BEGIN CERTIFICATE-----\nQUJD\n-----END CERTIFICATE-----\n"
+_one = _b64.b64encode(_sample).decode()
+check("a single base64 line round-trips to the exact bytes",
+      _b64.b64decode(_one) == _sample, "round-trip changed the bytes")
+check("...and the single line contains no newline to be dropped",
+      "\n" not in _one, "the encoded form still has newlines")
 
 
 # ── 8. the charset has not drifted from AMP's ──────────────────────────

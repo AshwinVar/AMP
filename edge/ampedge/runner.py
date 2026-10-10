@@ -73,6 +73,12 @@ def build_adapter(machine: dict):
     if protocol == "focas":
         from .adapters.focas import FocasAdapter
         return FocasAdapter(machine["connection"])
+    if protocol == "contact":
+        from .adapters.contact import ContactAdapter
+        return ContactAdapter(machine["connection"])
+    if protocol == "camera":
+        from .adapters.camera import CameraAdapter
+        return CameraAdapter(machine["connection"])
     raise config_mod.ConfigError(
         f"{machine.get('name')}: AMP Edge does not speak {protocol!r}. "
         f"Supported: {', '.join(config_mod.PROTOCOLS)}.")

@@ -15,6 +15,25 @@ export type UnavailableSeries = {
   points: [];
 };
 
+/**
+ * A series AMP CAN draw, in whichever of its two measured states is true.
+ *
+ * `hours_known: false` is the one worth explaining. A controller's MONTH page
+ * gives a day's kilowatt-hours with no hour in it. The meter exists and it
+ * reported — what is missing is the hour axis, not the measurement. So the
+ * total is real and `points` must not be drawn: a day's 90 kWh bucketed by
+ * hour lands entirely on midnight and reads as a plant that ran for an hour.
+ */
+export type MeasuredSeries = {
+  available: true;
+  unit: string;
+  total: number;
+  points: { hour: number; kwh: number | null }[] | null;
+  hours_known: boolean;
+};
+
+export type Series = UnavailableSeries | MeasuredSeries;
+
 export type HourStatus = "ok" | "low" | "unrated";
 
 export type ProductionPoint = {
@@ -32,7 +51,13 @@ export type MachineProduction = {
   tool: string | null;
   ideal_per_hour: number;
   average_per_hour: number;
+  /** The day's output from EVERY source, hourly or not. */
   total: number;
+  /** True when the hours below account for `total`. False means the day came
+   *  from a source with no hour in it, so the bars are not the day. */
+  hours_known: boolean;
+  /** What the hourly points add up to. Equals `total` when hours_known. */
+  hourly_total: number;
   points: ProductionPoint[];
 };
 
@@ -67,19 +92,29 @@ export type PlantBoardDay = {
   production: MachineProduction[];
   rm_status: MachineRm[];
   shift_rate: MachineShiftRate[];
-  power: UnavailableSeries;
+  power: Series;
   packing: UnavailableSeries;
+};
+
+export type MonthDay = {
+  day: string;
+  parts: number;
+  /** null when no part spec declares a weight — never 0 for "unknown". */
+  kg: number | null;
+  revenue: number | null;
 };
 
 export type PlantBoardMonth = {
   year: number;
   month: number;
+  /** Every day that produced anything. A day with no record is ABSENT. */
+  daily: MonthDay[];
   itemwise_production: { part: string; total: number; good: number }[];
   rm_consumption: { material: string; kg: number }[];
   shift_rate_by_machine: { machine: string; revenue: number; rate_per_hour: number }[];
   total_rate_per_hour: number;
   total_revenue: number;
-  power: UnavailableSeries;
+  power: Series;
   packing: UnavailableSeries;
 };
 
@@ -229,4 +264,46 @@ export function plantHourly(production: MachineProduction[]): { hour: number; pa
     // plant with half its moulds unspecified is not measured against half a bar.
     ideal: production.reduce((sum, m) => sum + (hasTarget(m) ? m.ideal_per_hour : 0), 0),
   }));
+}
+
+/**
+ * What the power card should do with a series — the three states, named.
+ *
+ * Collapsing these to two is how the card lies, in one direction or the other:
+ * "day-only" rendered as "unavailable" tells a moulder his machine has no meter
+ * while AMP holds the kilowatt-hours that machine measured; "day-only" rendered
+ * as "hourly" draws a day's consumption as a single bar at midnight.
+ */
+export function powerMode(series: Series): "unavailable" | "hourly" | "day-only" {
+  if (!series.available) return "unavailable";
+  return series.hours_known && series.points !== null ? "hourly" : "day-only";
+}
+
+/**
+ * The machines whose day is known but whose hours are not.
+ *
+ * These are the presses read off a MONTH page: the day's figure is real, the
+ * 24 bars under it are all zero and mean nothing. The board names them rather
+ * than drawing flat lines, because a flat line is indistinguishable from a
+ * machine that stood idle all day.
+ */
+export function dayOnlyMachines(production: MachineProduction[]): string[] {
+  return production.filter((m) => !m.hours_known && m.total > 0).map((m) => m.machine);
+}
+
+/**
+ * The machine_id behind a clicked bar, or null.
+ *
+ * The same trap as `hourFromClick`, and it cost a day the first time: Recharts
+ * hands the handler either the datum or a wrapper with `payload`, and a missed
+ * click hands it null. `Number(null)` is 0, and 0 is a plausible-looking id —
+ * so a click that resolved to nothing used to drill into whichever machine
+ * happened to be first. Null has to mean null.
+ */
+export function machineFromClick(entry: unknown): number | null {
+  const node = entry as
+    | { machine_id?: unknown; payload?: { machine_id?: unknown } }
+    | null;
+  const raw = node?.machine_id ?? node?.payload?.machine_id;
+  return typeof raw === "number" && Number.isInteger(raw) && raw > 0 ? raw : null;
 }

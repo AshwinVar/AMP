@@ -31,7 +31,7 @@ except ImportError:                      # pragma: no cover
     yaml = None
     YAML = False
 
-PROTOCOLS = ("opcua", "modbus", "focas")
+PROTOCOLS = ("opcua", "modbus", "focas", "contact", "camera")
 
 # Keys that must never hold a value in the file itself. The `_env` form of each
 # is the supported way to say where the value lives.
@@ -177,6 +177,35 @@ def _machine(entry, i, problems) -> dict:
             problems.append(
                 f"{where}.connection: modbus was given both `host` and `serial_port`. "
                 f"One connection is one wire -- give whichever this machine is on.")
+    # A dry contact on a serial control line. No protocol at all: the machine
+    # closes a relay once per cycle and the adapter counts it, which is the only
+    # route into a press whose controller cannot be asked anything.
+    if protocol == "contact":
+        if not str(connection.get("serial_port") or "").strip():
+            problems.append(
+                f"{where}.connection.serial_port: required for contact, e.g. COM4 "
+                f"or /dev/ttyUSB0 -- the USB-serial adapter the machine's cycle "
+                f"output is wired to through an opto-isolator")
+        for key in ("host", "url"):
+            if connection.get(key):
+                problems.append(
+                    f"{where}.connection.{key}: a contact is a wire, not a network "
+                    f"address. Remove it, or use a protocol that has one.")
+    # A camera watching an indicator LED. No wire at all: the route for a
+    # plant that will allow nothing attached, or an engineer nowhere near a
+    # shop that sells an opto.
+    if protocol == "camera":
+        if not str(connection.get("device") or "").strip():
+            problems.append(
+                f"{where}.connection.device: required for camera -- the "
+                f"camera's name as the OS reports it. `python "
+                f"edge/camera_aim.py --list` prints them.")
+        box = connection.get("region")
+        if not (isinstance(box, (list, tuple)) and len(box) == 4):
+            problems.append(
+                f"{where}.connection.region: required for camera, as "
+                f"[x, y, w, h] in pixels -- the patch of frame the LED "
+                f"occupies. `camera_aim.py --scan` finds it.")
     if protocol == "focas" and not connection.get("host"):
         problems.append(f"{where}.connection.host: required for focas, e.g. 192.168.1.1 "
                         f"(the address on the control's SYSTEM -> EMBED PORT screen)")

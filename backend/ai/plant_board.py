@@ -51,6 +51,18 @@ HOURS = 24
 SHIFT_HOURS = 8
 SHIFTS = HOURS // SHIFT_HOURS
 
+#: A record covering this many minutes or more describes a WHOLE DAY and is
+#: never drawn as an hour -- see `hourly_only`.
+#:
+#: Deliberately 1440 and not 60. Most of AMP writes planned_minutes=480: the
+#: factory simulator, reset_factory, onboard_tenant, the copilot eval fixtures.
+#: Those shift-length records have always been bucketed by the hour of their
+#: created_at and this is not the change that revisits it -- excluding them
+#: would blank the board for every tenant that has ever been seeded. The defect
+#: being fixed here is narrower and provable: a record that carries an entire
+#: day, which has no hour in it at all.
+DAY_MINUTES = 24 * 60
+
 #: Below this fraction of the ideal rate an hour is drawn red. The customer's
 #: own wording: "Red being less than acceptable level and green being acceptable
 #: level." The threshold is a plant policy, not a law, so it is named here and
@@ -102,6 +114,43 @@ def _energy_hours(records, hours):
             for h in range(hours)]
 
 
+def _power(records, energy_points):
+    """The day's electricity, in whichever of its three states is true.
+
+    There are THREE, and collapsing them to two is how this card lies:
+
+      nothing measured        no meter reported anything -> unavailable, with
+                              the sentence that says what would fix it.
+      measured, by the hour   the usual case -> a total and 24 bars.
+      measured, by the DAY    a MONTH page gives a day's kWh with no hour in
+                              it. There IS a meter and it DID report; what is
+                              missing is the hour axis, not the measurement.
+
+    The third state used to fall through to "no source is connected", which
+    told a moulder his machine had no meter while AMP was holding the number
+    that machine had measured. Reporting the total with `hours_known: false`
+    says the true thing: we know the day, we cannot draw the hours.
+    """
+    measured = [r for r in records if r.energy_kwh is not None]
+    if not measured:
+        return _unavailable(*NO_ENERGY)
+    return {
+        "available": True,
+        "unit": "kWh",
+        # Every measured kWh, hourly or not -- never shrunk to fit the chart.
+        "total": round(sum(float(r.energy_kwh) for r in measured), 2),
+        "points": energy_points,
+        # The same test the production rows use: do the hours account for the
+        # day? Asking it as a sum rather than as "were all the records hourly"
+        # means an hour that got lost on the way to the chart -- a record with
+        # no timestamp, say -- also reads as unknown, instead of being quietly
+        # dropped from a chart that still calls itself complete.
+        "hours_known": energy_points is not None and round(
+            sum(p["kwh"] or 0 for p in energy_points), 2) == round(
+                sum(float(r.energy_kwh) for r in measured), 2),
+    }
+
+
 def spec_for(db, tenant, part_code, as_of):
     """The PartSpec in force for this part on this date, or None.
 
@@ -143,6 +192,28 @@ def _records(db, tenant, start, end):
               .all())
 
 
+def hourly_only(records):
+    """Just the records that describe a single hour.
+
+    A WHOLE-DAY record -- one transcribed off a controller's MONTH page, which
+    prints a day's shots and nothing finer -- carries the whole day and is
+    stamped at midnight, because midnight is the only honest stamp for a figure
+    with no hour in it. Bucketing it by created_at.hour would draw a full day's
+    output as one bar at 00:00 with twenty-three empty hours after it: a plant
+    that worked three shifts shown as a plant that stopped before one o'clock.
+    That is a worse lie than an empty chart, because it looks like data.
+
+    So the hourly series is built from hourly records only. The day total is
+    still taken from everything (see `day`), and the month view groups by day
+    and reads these records correctly -- it is the hour axis, and only the hour
+    axis, that they cannot answer.
+
+    Shift-length records (planned_minutes=480), which most of AMP writes,
+    are NOT excluded -- see DAY_MINUTES for why that is deliberate.
+    """
+    return [r for r in records if (r.planned_minutes or 0) < DAY_MINUTES]
+
+
 def day(db, tenant, on: date):
     """Everything the board shows for one day."""
     start = datetime.combine(on, time.min)
@@ -152,16 +223,25 @@ def day(db, tenant, on: date):
                   .order_by(models.Machine.name.asc()).all())
     by_id = {m.id: m for m in machines}
     records = _records(db, tenant, start, end)
+    hourly = hourly_only(records)
 
-    # hour -> machine_id -> parts
+    # hour -> machine_id -> parts, from HOURLY records only.
     made = defaultdict(lambda: defaultdict(int))
     good = defaultdict(lambda: defaultdict(int))
-    for r in records:
+    for r in hourly:
         if r.machine_id not in by_id or not r.created_at:
             continue
         h = r.created_at.hour
         made[h][r.machine_id] += int(r.total_count or 0)
         good[h][r.machine_id] += int(r.good_count or 0)
+
+    # machine_id -> the day's output from EVERYTHING, hourly or not. A machine
+    # whose only source is a MONTH page has a real day total and no hours; the
+    # chart must not report its day as zero just because it cannot draw it.
+    day_total = defaultdict(int)
+    for r in records:
+        if r.machine_id in by_id:
+            day_total[r.machine_id] += int(r.total_count or 0)
 
     specs, tools = {}, {}
     for m in machines:
@@ -188,7 +268,12 @@ def day(db, tenant, on: date):
             series.append({"hour": h, "parts": parts, "ideal": ideal, "status": status})
             grams = parts * float(spec.part_weight_g) if spec else 0.0
             rm_series.append({"hour": h, "kg": round(grams / 1000.0, 3)})
-        total = sum(p["parts"] for p in series)
+        hourly_total = sum(p["parts"] for p in series)
+        total = day_total.get(m.id, 0)
+        # True when the hours account for the day. False means the day's figure
+        # came from a source with no hour in it, so the bars below are not the
+        # day -- and the caller has to say so instead of drawing a flat line.
+        hours_known = total == hourly_total
         production.append({
             "machine_id": m.id, "machine": m.name,
             "part": spec.part_name if spec else None,
@@ -197,6 +282,8 @@ def day(db, tenant, on: date):
             "ideal_per_hour": ideal,
             "average_per_hour": round(total / HOURS, 1),
             "total": total,
+            "hours_known": hours_known,
+            "hourly_total": hourly_total,
             "points": series,
         })
         rm.append({"machine_id": m.id, "machine": m.name,
@@ -219,7 +306,9 @@ def day(db, tenant, on: date):
                       "points": blocks})
 
     # Measured electricity, or nothing at all -- never zeros (_energy_hours).
-    energy_points = _energy_hours(records, HOURS)
+    # Hourly records only: a day's kWh spread over no hours would stack onto
+    # midnight exactly as a day's shots would.
+    energy_points = _energy_hours(hourly, HOURS)
 
     return {
         "date": on.isoformat(),
@@ -228,10 +317,7 @@ def day(db, tenant, on: date):
         "production": production,
         "rm_status": rm,
         "shift_rate": shift,
-        "power": (
-            {"available": True, "unit": "kWh", "points": energy_points,
-             "total": round(sum(p["kwh"] or 0 for p in energy_points), 2)}
-            if energy_points else _unavailable(*NO_ENERGY)),
+        "power": _power(records, energy_points),
         "packing": _unavailable(
             "Nothing records packed quantities.",
             "A packing entry screen, a weighing scale, or a count off the "
@@ -283,8 +369,39 @@ def month(db, tenant, year: int, mon: int):
     month_energy = [{"day": d.isoformat(), "kwh": round(k, 2)}
                     for d, k in sorted(by_day.items())]
 
+    # THE MONTH, DAY BY DAY -- the middle resolution, between an hour and a
+    # month, and the one a plant manager actually asks for: "how did we do last
+    # week". It reads EVERY record regardless of window length, unlike the
+    # hourly series, because a day is exactly the resolution a whole-day record
+    # already has. That is the whole reason day-level transcriptions are worth
+    # storing: they cannot answer an hour and they answer this perfectly.
+    #
+    # A day with no record is ABSENT, not zero. A plant that did not run on a
+    # Sunday and a plant whose gateway was offline on Sunday look identical as
+    # a zero, and only one of them is a story about production.
+    parts_by_day, kg_by_day, money_by_day = (defaultdict(int), defaultdict(float),
+                                             defaultdict(float))
+    for r in records:
+        if not r.created_at:
+            continue
+        d = r.created_at.date()
+        parts = int(r.total_count or 0)
+        parts_by_day[d] += parts
+        spec = specs.get(r.machine_id)
+        if spec:
+            kg_by_day[d] += parts * float(spec.part_weight_g) / 1000.0
+            money_by_day[d] += parts * float(spec.price_per_piece or 0)
+    daily = [{"day": d.isoformat(),
+              "parts": parts_by_day[d],
+              # None, not 0.0: a day whose machines have no part spec has an
+              # unknown weight and an unknown value, not a weight of nothing.
+              "kg": round(kg_by_day[d], 3) if d in kg_by_day else None,
+              "revenue": round(money_by_day[d], 2) if d in money_by_day else None}
+             for d in sorted(parts_by_day)]
+
     return {
         "year": year, "month": mon,
+        "daily": daily,
         "itemwise_production": [{"part": p, "total": t, "good": good_by_part[p]}
                                 for p, t in sorted(by_part.items(), key=lambda kv: -kv[1])],
         "rm_consumption": [{"material": mat, "kg": round(kg, 3)}

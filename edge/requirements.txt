@@ -9,6 +9,7 @@ pyserial>=3.5,<4         # the serial line itself — see below
 paho-mqtt>=2.0,<3        # the one outbound connection
 PyYAML>=6.0,<7           # so a config can be YAML instead of JSON
 pyfocas>=0.1,<1          # FANUC FOCAS, over a plain socket
+imageio-ffmpeg>=0.4,<1   # the camera adapter reads frames through ffmpeg
 
 # WHY pyserial IS LISTED SEPARATELY, when pymodbus is already here. pymodbus
 # declares pyserial as an OPTIONAL EXTRA: `pyserial>=3.5; extra == "serial"`.
@@ -26,3 +27,15 @@ pyfocas>=0.1,<1          # FANUC FOCAS, over a plain socket
 # reimplements the wire protocol on an ordinary socket, so a FANUC gateway
 # installs with pip like everything else. It covers four FOCAS functions; the
 # adapter documents which, and what that costs.
+
+# WHY imageio-ffmpeg IS DECLARED AND NOT LEFT OPTIONAL. It is only needed by
+# the `camera` adapter -- the route for a plant that will allow nothing wired
+# into a running cabinet -- and it bundles an ffmpeg binary, so it is the
+# largest thing in this file by a wide margin.
+#
+# It is declared anyway. An undeclared import is a gateway that installs
+# cleanly here and raises at the customer's site, on the machine nobody can
+# SSH into; that is exactly the failure pyserial produced before it was listed,
+# and test_serial_listen.py now refuses any third-party import in the shipped
+# gateway code that is not in this file. A one-time download is cheaper than a
+# site visit.

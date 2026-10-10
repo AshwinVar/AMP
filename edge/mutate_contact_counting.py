@@ -120,8 +120,8 @@ MUTATIONS = [
      '        for key in ("host", "url"):',
      "        for key in ():"),
     ("'contact' is dropped from the supported protocols", G,
-     'PROTOCOLS = ("opcua", "modbus", "focas", "contact")',
-     'PROTOCOLS = ("opcua", "modbus", "focas")'),
+     'PROTOCOLS = ("opcua", "modbus", "focas", "contact", "camera")',
+     'PROTOCOLS = ("opcua", "modbus", "focas", "camera")'),
 ]
 
 

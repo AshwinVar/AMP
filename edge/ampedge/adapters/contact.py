@@ -92,6 +92,19 @@ DEFAULT_DEBOUNCE_MS = 25.0
 MAX_DEBOUNCE_MS = 2000.0
 
 
+
+def _setting(settings, key, default):
+    """A setting's value, where an explicit 0 means 0.
+
+    `settings.get(key) or default` is the obvious spelling and it is wrong:
+    0 is falsy, so a config that explicitly disables debouncing gets the
+    default instead -- silently, and with both numbers looking plausible. The
+    same shape of bug as an ORM column where None takes the DEFAULT.
+    """
+    value = settings.get(key)
+    return default if value is None else value
+
+
 class _PortWatcher:
     """One open serial port, sampled continuously, shared by its machines.
 
@@ -248,11 +261,12 @@ class ContactAdapter(base.Adapter):
                 "a contact connection needs `serial_port` -- the USB-serial "
                 "adapter the machine's cycle output is wired to, e.g. COM4 or "
                 "/dev/ttyUSB0.")
-        self.sample_hz = float(self.settings.get("sample_hz") or DEFAULT_SAMPLE_HZ)
+        self.sample_hz = float(
+            _setting(self.settings, "sample_hz", DEFAULT_SAMPLE_HZ))
         if self.sample_hz <= 0:
             raise AdapterError("sample_hz must be greater than zero.")
         self.debounce_ms = float(
-            self.settings.get("debounce_ms") or DEFAULT_DEBOUNCE_MS)
+            _setting(self.settings, "debounce_ms", DEFAULT_DEBOUNCE_MS))
         if self.debounce_ms < 0:
             raise AdapterError("debounce_ms cannot be negative.")
         if self.debounce_ms > MAX_DEBOUNCE_MS:
@@ -260,7 +274,7 @@ class ContactAdapter(base.Adapter):
                 f"debounce_ms is {self.debounce_ms:g}, which is long enough to "
                 f"swallow real cycles. The limit is {MAX_DEBOUNCE_MS:g} ms.")
         self.idle_after_s = float(
-            self.settings.get("idle_after_s") or DEFAULT_IDLE_AFTER_S)
+            _setting(self.settings, "idle_after_s", DEFAULT_IDLE_AFTER_S))
         if self.idle_after_s < MIN_IDLE_AFTER_S:
             raise AdapterError(
                 f"idle_after_s is {self.idle_after_s:g}s, shorter than any real "

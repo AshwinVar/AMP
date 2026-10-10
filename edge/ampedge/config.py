@@ -31,7 +31,7 @@ except ImportError:                      # pragma: no cover
     yaml = None
     YAML = False
 
-PROTOCOLS = ("opcua", "modbus", "focas", "contact")
+PROTOCOLS = ("opcua", "modbus", "focas", "contact", "camera")
 
 # Keys that must never hold a value in the file itself. The `_env` form of each
 # is the supported way to say where the value lives.
@@ -191,6 +191,21 @@ def _machine(entry, i, problems) -> dict:
                 problems.append(
                     f"{where}.connection.{key}: a contact is a wire, not a network "
                     f"address. Remove it, or use a protocol that has one.")
+    # A camera watching an indicator LED. No wire at all: the route for a
+    # plant that will allow nothing attached, or an engineer nowhere near a
+    # shop that sells an opto.
+    if protocol == "camera":
+        if not str(connection.get("device") or "").strip():
+            problems.append(
+                f"{where}.connection.device: required for camera -- the "
+                f"camera's name as the OS reports it. `python "
+                f"edge/camera_aim.py --list` prints them.")
+        box = connection.get("region")
+        if not (isinstance(box, (list, tuple)) and len(box) == 4):
+            problems.append(
+                f"{where}.connection.region: required for camera, as "
+                f"[x, y, w, h] in pixels -- the patch of frame the LED "
+                f"occupies. `camera_aim.py --scan` finds it.")
     if protocol == "focas" and not connection.get("host"):
         problems.append(f"{where}.connection.host: required for focas, e.g. 192.168.1.1 "
                         f"(the address on the control's SYSTEM -> EMBED PORT screen)")

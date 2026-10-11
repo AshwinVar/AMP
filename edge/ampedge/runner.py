@@ -79,6 +79,9 @@ def build_adapter(machine: dict):
     if protocol == "camera":
         from .adapters.camera import CameraAdapter
         return CameraAdapter(machine["connection"])
+    if protocol == "gpio":
+        from .adapters.gpio import GpioAdapter
+        return GpioAdapter(machine["connection"])
     raise config_mod.ConfigError(
         f"{machine.get('name')}: AMP Edge does not speak {protocol!r}. "
         f"Supported: {', '.join(config_mod.PROTOCOLS)}.")

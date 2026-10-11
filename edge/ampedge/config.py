@@ -31,7 +31,7 @@ except ImportError:                      # pragma: no cover
     yaml = None
     YAML = False
 
-PROTOCOLS = ("opcua", "modbus", "focas", "contact", "camera")
+PROTOCOLS = ("opcua", "modbus", "focas", "contact", "camera", "gpio")
 
 # Keys that must never hold a value in the file itself. The `_env` form of each
 # is the supported way to say where the value lives.
@@ -206,6 +206,19 @@ def _machine(entry, i, problems) -> dict:
                 f"{where}.connection.region: required for camera, as "
                 f"[x, y, w, h] in pixels -- the patch of frame the LED "
                 f"occupies. `camera_aim.py --scan` finds it.")
+    # A Raspberry Pi's GPIO pins, fed by an opto isolation board. The
+    # permanent installation, as opposed to the field expedients above.
+    if protocol == "gpio":
+        for key in ("host", "url", "serial_port", "device"):
+            if connection.get(key):
+                problems.append(
+                    f"{where}.connection.{key}: a GPIO pin is not a network "
+                    f"address, a serial port or a camera. Remove it, or use "
+                    f"the protocol that has one.")
+        chip = connection.get("chip")
+        if chip is not None and not isinstance(chip, int):
+            problems.append(f"{where}.connection.chip must be a whole number "
+                            f"(the gpiochip index, usually 0)")
     if protocol == "focas" and not connection.get("host"):
         problems.append(f"{where}.connection.host: required for focas, e.g. 192.168.1.1 "
                         f"(the address on the control's SYSTEM -> EMBED PORT screen)")

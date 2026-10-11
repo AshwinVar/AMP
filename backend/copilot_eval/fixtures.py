@@ -308,21 +308,32 @@ def oracle(tenant):
     # The board cases ask for yesterday because the fixture writes production for
     # days 1..5 back, so day 1 always has rows and the answer never depends on
     # the hour the suite runs at.
-    yday = [r for rs in PRODUCTION[tenant].values() for r in rs if r[0] == 1]
-    out["board.parts"] = sum(r[4] for r in yday)
     spec = PART_SPECS.get(tenant)
+    on_machine = spec[0] if spec else None
+    cav = spec[5] if spec else 1
+    # A PRODUCTION ROW HOLDS SHOTS, NOT PIECES, and only a spec can convert
+    # them: r[4] becomes total_count, which every writer fills with a machine's
+    # cycle count. A machine with no spec has no cavity count, so its shots
+    # stay shots and are summed as they are.
+    #
+    # This oracle used to multiply cavities into the TARGET and not into the
+    # parts, which is the same inconsistency the board itself carried -- so it
+    # agreed with the bug instead of catching it. Keeping the formulae written
+    # out here rather than imported is what makes that recoverable.
+    out["board.parts"] = sum(
+        r[4] * (cav if m == on_machine else 1)
+        for m, rs in PRODUCTION[tenant].items() for r in rs if r[0] == 1)
     # A machine is unspecified unless a fitted tool names a part with a spec.
     out["board.unspecified"] = len(machines) - (1 if spec else 0)
     if spec:
-        on_machine, _code, _pname, _material, weight, cav, cycle, price = spec
-        made = sum(r[4] for r in PRODUCTION[tenant].get(on_machine, []) if r[0] == 1)
-        # parts x active cavities / the declared cycle: the board's own formulae,
-        # written out here rather than imported from the code under test.
+        _on, _code, _pname, _material, weight, _cav, cycle, price = spec
+        shots = sum(r[4] for r in PRODUCTION[tenant].get(on_machine, []) if r[0] == 1)
+        pieces = shots * cav
         out["board.machine_1.target"] = round(3600.0 / cycle * cav)
-        out["board.kg"] = round(made * weight / 1000.0, 3)
+        out["board.kg"] = round(pieces * weight / 1000.0, 3)
         if price:
             # The fixture writes at hour 10, so one 8-hour block holds all of it.
-            out["board.revenue"] = round(made * price, 2)
-            out["board.best_rate"] = round(made * price / 8, 2)
+            out["board.revenue"] = round(pieces * price, 2)
+            out["board.best_rate"] = round(pieces * price / 8, 2)
     out["priced"] = UNIT_VALUE[tenant] is not None
     return out

@@ -168,6 +168,32 @@ def spec_for(db, tenant, part_code, as_of):
               .first())
 
 
+def shots_to_parts(shots, spec):
+    """A SHOT IS NOT A PART, and this module's own docstring says so.
+
+    `parts = shots x ACTIVE cavities` has been the stated contract at the top
+    of this file since it was written, and the code did not do it: every
+    reader assigned `parts = r.total_count` and multiplied nothing. A machine
+    counts CYCLES -- one pulse when the mould opens -- and a 56-cavity mould
+    makes 56 pieces on each of them. So every parts figure, and the kilograms
+    and the rupees derived from them, were out by the cavity count.
+
+    It was not merely a small number. `PartSpec.ideal_parts_per_hour` DOES
+    multiply by parts_per_shot, and the hourly chart draws that ideal as the
+    green line against these bars -- so the target sat 56x above the actual and
+    every hour of a perfectly healthy shift was rated "low".
+
+    WITHOUT A SPEC THERE IS NO CONVERSION, and this returns the shot count
+    unchanged. That is not parts and the caller must not label it as such;
+    `counts_are_parts` on each machine row says which unit its numbers are in,
+    because a chart mixing a converted machine with an unconverted one on one
+    axis is worse than either alone.
+    """
+    if spec is None:
+        return int(shots)
+    return int(shots) * spec.parts_per_shot
+
+
 def part_on_machine(db, tenant, machine_id):
     """The part a machine is making, via the tool fitted to it.
 
@@ -255,7 +281,7 @@ def day(db, tenant, on: date):
         ideal = round(spec.ideal_parts_per_hour) if spec else 0
         series, rm_series = [], []
         for h in range(HOURS):
-            parts = made[h].get(m.id, 0)
+            parts = shots_to_parts(made[h].get(m.id, 0), spec)
             # An hour with no ideal declared has no acceptable level, so it is
             # neither green nor red -- it is unrated. Colouring it green would
             # claim a standard nobody set.
@@ -269,7 +295,7 @@ def day(db, tenant, on: date):
             grams = parts * float(spec.part_weight_g) if spec else 0.0
             rm_series.append({"hour": h, "kg": round(grams / 1000.0, 3)})
         hourly_total = sum(p["parts"] for p in series)
-        total = day_total.get(m.id, 0)
+        total = shots_to_parts(day_total.get(m.id, 0), spec)
         # True when the hours account for the day. False means the day's figure
         # came from a source with no hour in it, so the bars below are not the
         # day -- and the caller has to say so instead of drawing a flat line.
@@ -282,6 +308,10 @@ def day(db, tenant, on: date):
             "ideal_per_hour": ideal,
             "average_per_hour": round(total / HOURS, 1),
             "total": total,
+            # Which UNIT the numbers above are in. True once a spec gave us a
+            # cavity count; False means these are SHOTS and the screen has to
+            # say so rather than calling them parts.
+            "counts_are_parts": spec is not None,
             "hours_known": hours_known,
             "hourly_total": hourly_total,
             "points": series,
@@ -295,7 +325,8 @@ def day(db, tenant, on: date):
         blocks = []
         for s in range(SHIFTS):
             lo, hi = s * SHIFT_HOURS, (s + 1) * SHIFT_HOURS
-            parts = sum(made[h].get(m.id, 0) for h in range(lo, hi))
+            parts = shots_to_parts(sum(made[h].get(m.id, 0)
+                                       for h in range(lo, hi)), spec)
             revenue = parts * float(spec.price_per_piece) if spec else 0.0
             blocks.append({"shift": s + 1, "from_hour": lo, "to_hour": hi,
                            "parts": parts,
@@ -343,10 +374,13 @@ def month(db, tenant, year: int, mon: int):
     good_by_part = defaultdict(int)
     for r in records:
         spec = specs.get(r.machine_id)
-        parts = int(r.total_count or 0)
+        parts = shots_to_parts(r.total_count or 0, spec)
         if spec:
             by_part[spec.part_name] += parts
-            good_by_part[spec.part_name] += int(r.good_count or 0)
+            # The good count is in shots too, so it scales by the same cavity
+            # count. Leaving it unconverted while `parts` is converted would
+            # put a yield of 1/56 on a line that scrapped nothing.
+            good_by_part[spec.part_name] += shots_to_parts(r.good_count or 0, spec)
             by_material[spec.material] += parts * float(spec.part_weight_g) / 1000.0
             by_machine[r.machine_id] += parts * float(spec.price_per_piece or 0)
         else:
@@ -385,9 +419,9 @@ def month(db, tenant, year: int, mon: int):
         if not r.created_at:
             continue
         d = r.created_at.date()
-        parts = int(r.total_count or 0)
-        parts_by_day[d] += parts
         spec = specs.get(r.machine_id)
+        parts = shots_to_parts(r.total_count or 0, spec)
+        parts_by_day[d] += parts
         if spec:
             kg_by_day[d] += parts * float(spec.part_weight_g) / 1000.0
             money_by_day[d] += parts * float(spec.price_per_piece or 0)

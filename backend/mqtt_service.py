@@ -453,7 +453,11 @@ def get_or_create_machine(db, route, name: str):
         site=route.site,
         name=name,
         status="Idle",
-        utilization=0,
+        # NULL, not 0. A machine AMP has just heard of has not reported a
+        # utilization, and 0 is a measurement -- one that reads as a dead
+        # machine and trips the "critically low" alert on its first message.
+        # The NULL-skip guards downstream exist for exactly this row.
+        utilization=None,
         downtime="0 min",
     )
 
@@ -722,7 +726,27 @@ def on_message(client, userdata, msg):
         new_status = normalize_machine_status(payload.get("status", "Idle"))
         status = new_status if new_status is not None else old_status
 
-        clamped_utilization = clamp_utilization(payload.get("utilization", 0))
+        # NO DEFAULT HERE, AND THE DEFAULT IS THE WHOLE BUG. `payload.get(
+        # "utilization", 0)` turned "the gateway said nothing about utilization"
+        # into "the gateway measured zero", and clamp_utilization(0) returns 0
+        # rather than None, so the "leave the last good value alone" branch
+        # below could never fire. Every message hard-wrote 0.
+        #
+        # That is not a cosmetic zero. A machine with no utilization signal --
+        # which is EVERY machine fed by a cycle-pulse gateway, because
+        # payload.py deliberately declines to invent one from a single run bit
+        # -- showed 0% on its card, dragged the plant average to 0%, and raised
+        # a HIGH "utilization is critically low at 0%" alert against a press
+        # that was running normally. Worse, because the column held an integer
+        # rather than NULL, the coverage fields built to catch exactly this
+        # reported `utilization_measured: true` for all of them: the guard
+        # asserted full confidence in a number nobody measured.
+        #
+        # Absent now means absent. clamp_utilization(None) returns None, so the
+        # machine keeps whatever it last had -- NULL for a pulse-fed machine --
+        # and the existing NULL-skip guards in analytics_engine and
+        # analytics_routes finally engage.
+        clamped_utilization = clamp_utilization(payload.get("utilization"))
         utilization = clamped_utilization if clamped_utilization is not None else old_utilization
 
         machine.status = status

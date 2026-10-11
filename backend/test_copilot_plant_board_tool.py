@@ -110,9 +110,16 @@ def fit(db, tenant, m, spec, tool_no):
                             part_code=spec["part_code"], status="Active"))
 
 
-def produce(db, tenant, m, hour, parts):
+def produce(db, tenant, m, hour, shots):
+    """One hour of output, IN SHOTS — total_count is a cycle count.
+
+    Both importers and the edge gateway write shots here, so the board's job is
+    to multiply by the active cavities. IMM-01 below has 56 of them, IMM-02 has
+    one (shots == parts), and IMM-03 has no spec at all (no conversion is
+    possible, so its figure stays in shots).
+    """
     db.add(models.ProductionRecord(
-        tenant_code=tenant, machine_id=m.id, total_count=parts, good_count=parts,
+        tenant_code=tenant, machine_id=m.id, total_count=shots, good_count=shots,
         rejected_count=0, planned_minutes=60, runtime_minutes=55, ideal_cycle_time_seconds=14,
         created_at=datetime.combine(DAY, datetime.min.time()) + timedelta(hours=hour)))
     db.commit()
@@ -133,7 +140,7 @@ def setup(db):
     fit(db, T, one, PRICED, "MLD-ELE")
     fit(db, T, two, UNPRICED, "MLD-CAP")
     db.commit()
-    produce(db, T, one, 9, 14400)
+    produce(db, T, one, 9, 250)         # 250 shots x 56 cavities = 14,000 parts
     produce(db, T, two, 9, 400)
     produce(db, T, two, 10, 400)
     produce(db, T, three, 9, 1000)
@@ -177,26 +184,30 @@ def main():   # noqa: C901 - one section per pinned property, read top to bottom
               F["board.machine_1.target"].provenance == ev.DERIVED)
         check("IMM-01 is the machine with the most parts",
               F["board.machine_1"].value == "IMM-01", str(F["board.machine_1"].value))
-        check("its parts are a MEASURED count",
-              F["board.machine_1.parts"].value == 14400
-              and F["board.machine_1.parts"].provenance == ev.MEASURED)
-        # 14,400 x 0.33 g = 4,752 g = 4.752 kg
-        check("14,400 parts at 0.33 g is 4.752 kg", F["board.machine_1.kg"].value == 4.752,
+        # 250 shots x 56 active cavities = 14,000 pieces. The MEASURED thing is
+        # the shot count; the cavities are configuration, and the product of
+        # the two is still reported as measured because the multiplier is exact.
+        check("its parts are a MEASURED count, converted from shots",
+              F["board.machine_1.parts"].value == 14000
+              and F["board.machine_1.parts"].provenance == ev.MEASURED,
+              str(F.get("board.machine_1.parts")))
+        # 14,000 x 0.33 g = 4,620 g = 4.62 kg
+        check("14,000 parts at 0.33 g is 4.62 kg", F["board.machine_1.kg"].value == 4.62,
               str(F["board.machine_1.kg"].value))
-        # 14,400 x Rs 0.09 = Rs 1,296 in one 8-hour block = Rs 162 an hour
+        # 14,000 x Rs 0.09 = Rs 1,260 in one 8-hour block = Rs 157.50 an hour
         check("the shift-hour rate is the block's revenue over its 8 hours",
-              F["board.machine_1.rate"].value == 162.0, str(F["board.machine_1.rate"].value))
+              F["board.machine_1.rate"].value == 157.5, str(F["board.machine_1.rate"].value))
         check("...carried in the platform's currency",
               F["board.machine_1.rate"].unit == CURRENCY, F["board.machine_1.rate"].unit)
         check("the plant's best rate names where it was",
-              F["board.best_rate"].value == 162.0
+              F["board.best_rate"].value == 157.5
               and F["board.best_rate_where"].value == "IMM-01 shift 2",
               f"{F['board.best_rate'].value} at {F['board.best_rate_where'].value}")
-        check("the day's revenue is priced output only", F["board.revenue"].value == 1296.0,
+        check("the day's revenue is priced output only", F["board.revenue"].value == 1260.0,
               str(F["board.revenue"].value))
-        # 4.752 (IMM-01) + 0.4 (IMM-02); IMM-03 contributes nothing because
+        # 4.62 (IMM-01) + 0.4 (IMM-02); IMM-03 contributes nothing because
         # nothing about it is known, which is not the same as contributing zero.
-        check("plant kilograms add up the specced machines", F["board.kg"].value == 5.152,
+        check("plant kilograms add up the specced machines", F["board.kg"].value == 5.02,
               str(F["board.kg"].value))
         check("...and say what they do NOT cover",
               "not a plant total" in F["board.kg"].detail, F["board.kg"].detail)
@@ -216,7 +227,7 @@ def main():   # noqa: C901 - one section per pinned property, read top to bottom
         check("the board counts the machines it cannot convert",
               F["board.unspecified"].value == 1, str(F["board.unspecified"].value))
         check("...and every machine's parts are still in the plant total",
-              F["board.parts"].value == 14400 + 800 + 1000, str(F["board.parts"].value))
+              F["board.parts"].value == 14000 + 800 + 1000, str(F["board.parts"].value))
 
         section("3. THE THREE CONVERSIONS ARE INDEPENDENT")
         # IMM-02 has a weight and a cycle but no price. Kilograms and a target
@@ -274,7 +285,7 @@ def main():   # noqa: C901 - one section per pinned property, read top to bottom
               "999999" not in str(res.to_dict()) and "999,999" not in res.summary)
         other = ask(db, "get_plant_board", {"on": day}, tenant=OTHER)
         check("...and that tenant sees its own figure instead",
-              facts_of(other)["board.parts"].value == 999999,
+              facts_of(other)["board.parts"].value == 999999 * 56,
               str(facts_of(other)["board.parts"].value))
 
         section("8. NOTHING SPECCED AT ALL: UNKNOWN EVERYWHERE, AND NO MONEY WORD")
@@ -366,16 +377,16 @@ def main():   # noqa: C901 - one section per pinned property, read top to bottom
         check("every fact names the month", not [k for k, f in MF.items() if f.window != window],
               str([k for k, f in MF.items() if f.window != window][:4]))
         check("the month totals every part made",
-              MF["month.parts"].value == 14400 + 800 + 1000, str(MF["month.parts"].value))
-        # 14,400 x 0.33 g + 800 x 0.5 g = 4.752 + 0.4 kg
-        check("kilograms are the sum over the materials", MF["month.kg"].value == 5.152,
+              MF["month.parts"].value == 14000 + 800 + 1000, str(MF["month.parts"].value))
+        # 14,000 x 0.33 g + 800 x 0.5 g = 4.62 + 0.4 kg
+        check("kilograms are the sum over the materials", MF["month.kg"].value == 5.02,
               str(MF["month.kg"].value))
         check("output with no spec is counted and named as such",
               MF["month.unassigned"].value == 1000, str(MF["month.unassigned"].value))
         check("...and is not silently folded into a part's total",
               all(MF[k].value != _bucket() for k in MF if k.endswith(("part_1", "part_2", "part_3"))),
               "a named part row carried the unassigned bucket's label")
-        check("the month's money is priced output only", MF["month.revenue"].value == 1296.0,
+        check("the month's money is priced output only", MF["month.revenue"].value == 1260.0,
               str(MF["month.revenue"].value))
         for key in ("power", "packing"):
             check(f"the month's {key} is UNKNOWN too", unknown(MF[f"month.{key}"]),

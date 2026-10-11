@@ -150,6 +150,61 @@ def test_out_of_range_utilization_is_clamped():
     print("PASS MQTT clamps utilization into [0, 100] and keeps the last value on garbage")
 
 
+def test_absent_utilization_stays_null_and_never_becomes_zero():
+    """A gateway that never measured utilization must not have one invented.
+
+    THE BUG THIS PINS. The handler read `payload.get("utilization", 0)`, and
+    clamp_utilization(0) returns 0 rather than None, so the "keep the last good
+    value" branch could never fire and every message hard-wrote a zero.
+
+    It mattered because the machines this is being built for CANNOT report it:
+    a cycle-pulse gateway deliberately declines to invent a utilization from a
+    single run bit. So twelve running presses showed 0%, the plant average read
+    0%, each raised a HIGH "utilization is critically low at 0%" alert, and --
+    worst of all -- because the column held an integer instead of NULL, the
+    coverage fields reported `utilization_measured: true` for all of them. The
+    guard built to catch an unmeasured zero certified it instead.
+
+    Note the existing clamp test passes both before and after this fix: it only
+    ever sends payloads that HAVE the key. The defect lived entirely in the
+    absent case, which nothing exercised.
+    """
+    Session = _setup()
+    with redirect_stdout(io.StringIO()):
+        mqtt_service.on_message(None, None, _Msg(
+            {"machine": "PRESS-01", "status": "Running",
+             "total_count": 120, "good_count": 120, "rejected_count": 0,
+             "planned_minutes": 5, "runtime_minutes": 5}))
+
+    machine = _machine(Session)
+    assert machine is not None, "the machine was not created at all"
+    assert machine.utilization is None, (
+        f"utilization is {machine.utilization!r}, not None — a machine that "
+        f"never reported one has had a number invented for it")
+
+    # The absent key must not cost the message: the count still has to land.
+    db = Session()
+    try:
+        rec = db.query(models.ProductionRecord).first()
+        assert rec is not None and rec.total_count == 120, (
+            "dropping the utilization default must not drop the production row")
+    finally:
+        db.close()
+
+    # A message that DOES carry one still sets it...
+    _send("Running", utilization=64)
+    assert _machine(Session).utilization == 64, _machine(Session).utilization
+
+    # ...and a later message without the key must not wipe it back to zero.
+    with redirect_stdout(io.StringIO()):
+        mqtt_service.on_message(None, None, _Msg(
+            {"machine": "PRESS-01", "status": "Running"}))
+    assert _machine(Session).utilization == 64, (
+        f"an absent utilization overwrote a measured one with "
+        f"{_machine(Session).utilization!r}")
+    print("PASS MQTT leaves utilization NULL when nothing ever reported one")
+
+
 def test_valid_production_counts_are_recorded():
     # Positive path — a physically-valid reading (good + rejected == total, all
     # non-negative) IS recorded, so the guard below can't be a blanket reject.
@@ -265,6 +320,7 @@ if __name__ == "__main__":
     test_lowercase_breakdown_is_canonicalised_and_logs_downtime()
     test_unrecognised_status_leaves_machine_untouched()
     test_out_of_range_utilization_is_clamped()
+    test_absent_utilization_stays_null_and_never_becomes_zero()
     test_valid_production_counts_are_recorded()
     test_negative_counts_skip_production_but_keep_status()
     test_non_numeric_count_skips_production_not_the_whole_message()

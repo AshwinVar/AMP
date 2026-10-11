@@ -8,7 +8,7 @@ import { LiveInput } from "../lib/useLiveField";
 // (ai/workforce.py counts it as such) but not a state anyone picks by hand.
 const JOB_STATUSES = ["Started", "Paused", "Completed"];
 
-type Machine = { id: number; name: string; status: string; utilization: number; downtime: string; };
+type Machine = { id: number; name: string; status: string; utilization: number | null; downtime: string; };
 
 export default function OperatorTerminalSection({ machines, workOrders, productionPlans, executions, analytics, form, setForm, createExecution, updateExecution, deleteExecution, getMachineName }: {
   machines: Machine[]; workOrders: WorkOrder[]; productionPlans: ProductionPlan[]; executions: OperatorJobExecution[]; analytics: OperatorAnalytics | null; form:any; setForm:(v:any)=>void; createExecution:(e:React.FormEvent)=>void; updateExecution:(id:number,status:string,good:number,reject:number)=>void; deleteExecution?:(id:number)=>void; getMachineName:(id:number)=>string;

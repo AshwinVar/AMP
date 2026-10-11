@@ -30,6 +30,7 @@ function machine(over: Partial<MachineProduction> = {}): MachineProduction {
     ideal_per_hour: 14400,
     average_per_hour: 600,
     total: 14400,
+    counts_are_parts: true,
     hours_known: true,
     hourly_total: 14400,
     points: Array.from({ length: 24 }, (_, h) => ({
@@ -230,6 +231,7 @@ describe("dayOnlyMachines", () => {
     ideal_per_hour: 0,
     average_per_hour: 0,
     total: 0,
+    counts_are_parts: false,
     hours_known: true,
     hourly_total: 0,
     points: [],

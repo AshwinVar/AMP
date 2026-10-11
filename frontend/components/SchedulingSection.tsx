@@ -2,7 +2,7 @@ import type { WorkOrder } from "../lib/phase9-types";
 import type { ProductionPlan } from "../lib/phase11-types";
 import type { ProductionSchedule, ScheduleAnalytics } from "../lib/mega-pack1-types";
 
-type Machine = { id: number; name: string; status: string; utilization: number; downtime: string; };
+type Machine = { id: number; name: string; status: string; utilization: number | null; downtime: string; };
 
 export default function SchedulingSection({ machines, workOrders, productionPlans, schedules, analytics, form, setForm, createSchedule, updateSchedule, deleteSchedule, getMachineName }: {
   machines: Machine[]; workOrders: WorkOrder[]; productionPlans: ProductionPlan[]; schedules: ProductionSchedule[]; analytics: ScheduleAnalytics | null; form: any; setForm: (value:any)=>void; createSchedule: (e:React.FormEvent)=>void; updateSchedule: (id:number,status:string,priority?:string)=>void; deleteSchedule?:(id:number)=>void; getMachineName:(id:number)=>string;

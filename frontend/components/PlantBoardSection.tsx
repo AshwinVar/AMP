@@ -666,6 +666,23 @@ export default function PlantBoardSection({ isAdmin }: { isAdmin: boolean }) {
                 </Bar>
               </BarChart>
             </ResponsiveContainer>
+            {/* TWO UNITS ON ONE AXIS, NAMED. A machine with a part spec has
+                its shots multiplied by the mould's active cavities; one
+                without has no cavity count, so its bar is still a raw shot
+                count. Both are correct and they are NOT comparable — a
+                56-cavity press legitimately towers over an unconverted one,
+                and a reader would call that a production gap. Naming the
+                unconverted machines is cheaper than a wrong conclusion. */}
+            {production.some((p) => !p.counts_are_parts) && (
+              <p className="mt-3 text-xs text-slate-500">
+                Shown in shots, not parts:{" "}
+                {production
+                  .filter((p) => !p.counts_are_parts)
+                  .map((p) => p.machine)
+                  .join(", ")}
+                . Fit a mould with a part spec to convert these to pieces.
+              </p>
+            )}
           </Card>
 
           {/* ── The same machines as a table, for the detail a bar cannot

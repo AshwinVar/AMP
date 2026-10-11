@@ -51,7 +51,7 @@ function day(over: Partial<PlantBoardDay> = {}): PlantBoardDay {
     production: [{
       machine_id: 1, machine: "IMM-01", part: "Ele clip", part_code: "ELE-CLIP",
       tool: "MLD-ELE", ideal_per_hour: 14400, average_per_hour: 600, total: 14400,
-      hours_known: true, hourly_total: 14400,
+      counts_are_parts: true, hours_known: true, hourly_total: 14400,
       points: hours(14400, 14400, "ok"),
     }],
     rm_status: [{
@@ -117,7 +117,7 @@ describe("a machine nobody has specified", () => {
         production: [{
           machine_id: 1, machine: "IMM-01", part: null, part_code: null, tool: null,
           ideal_per_hour: 0, average_per_hour: 208.3, total: 5000,
-          hours_known: true, hourly_total: 5000,
+          counts_are_parts: true, hours_known: true, hourly_total: 5000,
           points: hours(5000, 0, "unrated"),
         }],
         rm_status: [{ machine_id: 1, machine: "IMM-01", material: null, kg_total: 0,
@@ -143,7 +143,7 @@ describe("a machine nobody has specified", () => {
         production: [{
           machine_id: 1, machine: "IMM-01", part: null, part_code: null, tool: null,
           ideal_per_hour: 0, average_per_hour: 0, total: 5000,
-          hours_known: true, hourly_total: 5000,
+          counts_are_parts: true, hours_known: true, hourly_total: 5000,
           points: hours(5000, 0, "unrated"),
         }],
         rm_status: [{ machine_id: 1, machine: "IMM-01", material: null, kg_total: 0, points: [] }],

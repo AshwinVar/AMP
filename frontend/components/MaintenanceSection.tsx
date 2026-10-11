@@ -4,7 +4,7 @@ import { statusOptions } from "../lib/status-vocab";
 import { LiveInput } from "../lib/useLiveField";
 import AwaitingApprovalNotice from "./AwaitingApprovalNotice";
 
-type Machine = { id: number; name: string; status: string; utilization: number; downtime: string; };
+type Machine = { id: number; name: string; status: string; utilization: number | null; downtime: string; };
 
 export default function MaintenanceSection({ machines, tasks, analytics, form, setForm, createTask, updateTask, deleteTask, generateOverdueEscalations, getMachineName }: {
   machines: Machine[]; tasks: MaintenanceTask[]; analytics: MaintenanceAnalytics | null; form: any; setForm: (value: any) => void; createTask: (e: React.FormEvent) => void; updateTask: (id: number, status: string, downtime?: number) => void; deleteTask?: (id: number) => void; generateOverdueEscalations: () => void; getMachineName: (id: number) => string;

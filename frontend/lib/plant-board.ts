@@ -53,6 +53,17 @@ export type MachineProduction = {
   average_per_hour: number;
   /** The day's output from EVERY source, hourly or not. */
   total: number;
+  /**
+   * WHICH UNIT the numbers on this row are in. True once a part spec supplied
+   * a cavity count and the backend multiplied shots by it; false means these
+   * are raw SHOTS and no conversion was possible.
+   *
+   * It matters because both land on the same chart. A machine running a
+   * 56-cavity mould legitimately shows 56x the figure of an unconverted one,
+   * and a reader comparing the bars would call that a production gap. The
+   * screen has to say which rows are shots.
+   */
+  counts_are_parts: boolean;
   /** True when the hours below account for `total`. False means the day came
    *  from a source with no hour in it, so the bars are not the day. */
   hours_known: boolean;

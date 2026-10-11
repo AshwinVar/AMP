@@ -39,7 +39,23 @@ class Machine(Base):
     site = Column(String, nullable=False, default="", server_default="")
     name = Column(String, nullable=False)
     status = Column(String, nullable=False)
-    utilization = Column(Integer, default=0)
+    #: NO `default=0`, DELIBERATELY. The ORM default is applied to any insert
+    #: that OMITS the field -- and, worse, to one that passes None explicitly,
+    #: so `Machine(utilization=None)` wrote a 0. That turned "nobody has
+    #: measured this" into "measured, and it is zero", which is a different
+    #: and much worse claim.
+    #:
+    #: It is not hypothetical. A machine fed by a cycle-pulse gateway can never
+    #: report a utilization -- the edge deliberately declines to invent one
+    #: from a single run bit -- so every such press showed 0% on its card, sank
+    #: the plant average, and raised a HIGH "utilization is critically low at
+    #: 0%" alert against a press running perfectly well.
+    #:
+    #: NULL is already the understood "no reading" value here: every reader
+    #: guards for it (analytics_engine:501, analytics_routes:120) and
+    #: factory_simulator.drift_utilization documents why a row can hold one.
+    #: This only makes the model agree with them.
+    utilization = Column(Integer)
     downtime = Column(String, default="0 min")
     line = Column(String, default="")                          # production line, e.g. "SMT" | "IC"
 

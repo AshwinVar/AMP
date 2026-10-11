@@ -6,6 +6,15 @@ Rs 0.09 a piece. Round numbers hide the arithmetic errors that matter; 0.33 g
 and 0.09 do not.
 
 WHAT IS PINNED:
+  * ProductionRecord.total_count IS A SHOT COUNT. arico_import and hmi_sheet
+    both write a machine's own cycle counter into it, and the edge gateway
+    publishes cycles. The board's job is to MULTIPLY it by the active cavities;
+    it used to echo it, so every parts, kilogram and rupee figure was out by the
+    cavity count — and because ideal_parts_per_hour did multiply, the target
+    line sat 56x above the bars and rated healthy hours "low". The fixtures
+    below therefore speak in shots and the expectations in parts
+  * a machine with NO spec has no cavity count, so its figure stays in shots and
+    carries counts_are_parts=False — two units on one axis is worse than either
   * active cavities, not cavities, convert shots to parts — a 56-cavity tool run
     with 4 blocked makes 52 a shot, and collapsing the two overstates output by
     8% forever
@@ -72,11 +81,20 @@ def setup(db, *, active_cavities=56, price=0.09, weight=0.33, cycle=14.0,
     return m
 
 
-def produce(db, machine, hour, parts, good=None):
+def produce(db, machine, hour, shots, good=None):
+    """One hour of output, IN SHOTS.
+
+    The parameter is named `shots` because that is what the column holds:
+    arico_import.py and hmi_sheet.py both write a machine's cycle count into
+    total_count, and the edge gateway publishes cycles. It was previously named
+    `parts`, and that single word was the whole defect -- it made every
+    expectation below read as though the board's job were to echo the column
+    rather than multiply it by the cavities.
+    """
     db.add(models.ProductionRecord(
-        tenant_code=T, machine_id=machine.id, total_count=parts,
-        good_count=parts if good is None else good,
-        rejected_count=0 if good is None else parts - good,
+        tenant_code=T, machine_id=machine.id, total_count=shots,
+        good_count=shots if good is None else good,
+        rejected_count=0 if good is None else shots - good,
         planned_minutes=60, runtime_minutes=55, ideal_cycle_time_seconds=14,
         created_at=datetime.combine(DAY, datetime.min.time()) + timedelta(hours=hour)))
     db.commit()
@@ -105,10 +123,13 @@ def main():
               f"got {prod['ideal_per_hour']}; using all 56 would give 14400")
 
         section("3. GREEN, RED, AND UNRATED")
+        # The ideal is 14,400 PARTS/hr, so the shot counts below are that
+        # target divided by the 56 active cavities. Shots, not parts, because
+        # shots are what a machine's counter actually produces.
         m = setup(db)
-        produce(db, m, 9, 14400)            # exactly ideal
-        produce(db, m, 10, 11000)           # 76% — below the 80% line
-        produce(db, m, 11, 12000)           # 83% — acceptable
+        produce(db, m, 9, 257)              # 257 x 56 = 14,392 — 99.9% of ideal
+        produce(db, m, 10, 196)             # 10,976 parts = 76% — below the line
+        produce(db, m, 11, 214)             # 11,984 parts = 83% — acceptable
         pts = {p["hour"]: p for p in plant_board.day(db, T, DAY)["production"][0]["points"]}
         check("an hour at the ideal is ok", pts[9]["status"] == "ok", pts[9]["status"])
         check("76% of ideal is low", pts[10]["status"] == "low", pts[10]["status"])
@@ -117,23 +138,31 @@ def main():
               pts[0]["status"] == "low", pts[0]["status"])
 
         m = setup(db, cycle=0)              # no ideal declared
-        produce(db, m, 9, 5000)
+        produce(db, m, 9, 250)
         pts = {p["hour"]: p for p in plant_board.day(db, T, DAY)["production"][0]["points"]}
         check("with NO declared cycle every hour is UNRATED, never green",
               {p["status"] for p in pts.values()} == {"unrated"},
               str({p["status"] for p in pts.values()}))
 
-        section("4. KILOGRAMS AND RUPEES")
+        section("4. SHOTS BECOME PARTS, AND ONLY THEN KILOGRAMS AND RUPEES")
         m = setup(db)
-        produce(db, m, 9, 10000)
+        produce(db, m, 9, 1000)             # 1,000 SHOTS
         board = plant_board.day(db, T, DAY)
+        prod = board["production"][0]
+        # THE CONVERSION ITSELF, pinned before anything derived from it:
+        # 1,000 shots on a 56-active-cavity mould is 56,000 pieces.
+        check("1,000 shots on 56 active cavities is 56,000 parts",
+              prod["total"] == 56000, str(prod["total"]))
+        check("...and the board says these numbers ARE parts",
+              prod["counts_are_parts"] is True, str(prod["counts_are_parts"]))
         rm = board["rm_status"][0]
-        # 10,000 x 0.33 g = 3,300 g = 3.3 kg
-        check("10,000 parts at 0.33 g is 3.3 kg", rm["kg_total"] == 3.3, str(rm["kg_total"]))
+        # 56,000 x 0.33 g = 18,480 g = 18.48 kg
+        check("56,000 parts at 0.33 g is 18.48 kg",
+              rm["kg_total"] == 18.48, str(rm["kg_total"]))
         shift = board["shift_rate"][0]["points"][1]       # hours 8-16
-        # 10,000 x 0.09 = Rs 900 over 8 hours = Rs 112.50/hr
+        # 56,000 x 0.09 = Rs 5,040 over 8 hours = Rs 630/hr
         check("shift-hour rate is revenue over the 8-hour block",
-              shift["revenue"] == 900.0 and shift["rate_per_hour"] == 112.5,
+              shift["revenue"] == 5040.0 and shift["rate_per_hour"] == 630.0,
               f"{shift['revenue']} / {shift['rate_per_hour']}")
         check("...and the shift is marked priced", board["shift_rate"][0]["priced"])
 
@@ -154,47 +183,58 @@ def main():
             part_weight_g=0.33, cavities=56, active_cavities=56, ideal_cycle_time_s=14.0,
             price_per_piece=0.50, effective_from=date(2026, 12, 1)))   # a FUTURE rise
         db.commit()
-        produce(db, m, 9, 10000)
+        produce(db, m, 9, 1000)
         shift = plant_board.day(db, T, DAY)["shift_rate"][0]["points"][1]
         check("a price rise dated in the future does not restate today",
-              shift["revenue"] == 900.0,
-              f"got {shift['revenue']}; the Dec price would give 5000.0")
+              shift["revenue"] == 5040.0,
+              f"got {shift['revenue']}; the Dec price would give 28000.0")
 
-        section("7. COUNTED WITHOUT A SPEC, NEVER PRICED WRONGLY")
+        section("7. COUNTED WITHOUT A SPEC — AS SHOTS, AND LABELLED AS SHOTS")
         m = setup(db, fit_tool=False)       # output, but no tool and so no part
-        produce(db, m, 9, 10000)
+        produce(db, m, 9, 1000)
         board = plant_board.day(db, T, DAY)
         prod, rm = board["production"][0], board["rm_status"][0]
-        check("parts are still counted with no tool fitted",
-              prod["total"] == 10000, str(prod["total"]))
+        # NO SPEC MEANS NO CAVITY COUNT, so there is nothing to multiply by and
+        # the figure stays the raw shot count. The flag is what stops the
+        # screen calling it parts and plotting it on one axis beside a machine
+        # whose numbers WERE converted -- two units on one chart is worse than
+        # either unit alone.
+        check("with no tool fitted the count stays in SHOTS, unconverted",
+              prod["total"] == 1000, str(prod["total"]))
+        check("...and the board says so, so the screen cannot call them parts",
+              prod["counts_are_parts"] is False, str(prod["counts_are_parts"]))
         check("...but no part is claimed", prod["part"] is None, str(prod["part"]))
         check("...no kilograms are invented", rm["kg_total"] == 0.0, str(rm["kg_total"]))
         check("...and the shift is marked NOT priced",
               board["shift_rate"][0]["priced"] is False)
 
         m = setup(db, part_code=None)       # a tool that names no part
-        produce(db, m, 9, 10000)
+        produce(db, m, 9, 1000)
         board = plant_board.day(db, T, DAY)
         check("a tool naming no part counts but does not price",
-              board["production"][0]["total"] == 10000
+              board["production"][0]["total"] == 1000
               and board["shift_rate"][0]["priced"] is False)
 
         section("8. THE MONTHLY TABLES")
         m = setup(db)
         for h in (9, 10, 11):
-            produce(db, m, h, 10000, good=9800)
+            produce(db, m, h, 1000, good=980)
         mon = plant_board.month(db, T, DAY.year, DAY.month)
-        check("item-wise production totals the month",
+        # 3,000 shots x 56 = 168,000 parts; 2,940 good shots x 56 = 164,640.
+        check("item-wise production totals the month, in parts",
               mon["itemwise_production"][0]["part"] == "Ele clip"
-              and mon["itemwise_production"][0]["total"] == 30000,
+              and mon["itemwise_production"][0]["total"] == 168000,
               str(mon["itemwise_production"][:1]))
-        check("...and carries good separately from total",
-              mon["itemwise_production"][0]["good"] == 29400,
+        # The good count is in shots too, so it scales by the same cavity
+        # count. Converting one and not the other would put a yield of 1/56 on
+        # a line that scrapped 2%.
+        check("...and carries good separately, scaled by the same cavities",
+              mon["itemwise_production"][0]["good"] == 164640,
               str(mon["itemwise_production"][0]))
-        check("material consumption is 30,000 x 0.33 g = 9.9 kg",
-              mon["rm_consumption"][0]["kg"] == 9.9, str(mon["rm_consumption"]))
-        check("revenue is 30,000 x Rs 0.09 = Rs 2,700",
-              mon["shift_rate_by_machine"][0]["revenue"] == 2700.0,
+        check("material consumption is 168,000 x 0.33 g = 55.44 kg",
+              mon["rm_consumption"][0]["kg"] == 55.44, str(mon["rm_consumption"]))
+        check("revenue is 168,000 x Rs 0.09 = Rs 15,120",
+              mon["shift_rate_by_machine"][0]["revenue"] == 15120.0,
               str(mon["shift_rate_by_machine"]))
         check("monthly power and packing are unavailable too",
               mon["power"]["available"] is False and mon["packing"]["available"] is False)

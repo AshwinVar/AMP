@@ -155,6 +155,30 @@ STDLIB = set(sys.stdlib_module_names) | {"__future__"}
 UNDECLARED_OK = {
     # The gateway's own packages and test helpers.
     "ampedge",
+
+    # lgpio, DELIBERATELY NOT IN requirements.txt, and this is the one
+    # exception the rule below should tolerate.
+    #
+    # It is a Linux-on-ARM C extension for a Raspberry Pi's GPIO chip. It
+    # cannot install on Windows, where the gateway currently runs from a
+    # laptop, and CI installs this same file on an x86_64 Linux runner
+    # (.github/workflows/ci.yml:141) where it has nothing to bind to. So
+    # declaring it would break `pip install -r requirements.txt` on both of
+    # the hosts that actually run it, to serve a third that does not exist
+    # yet.
+    #
+    # WHAT MAKES THAT SAFE, and it is the whole reason this guard exists: the
+    # failure mode the rule protects against is a SILENT one at a customer's
+    # site. gpio.py does not fail silently. Its import sits inside
+    # _Lines.open() behind a try/except that raises an AdapterError naming
+    # both install routes ("sudo apt install python3-lgpio, or pip install
+    # lgpio. This adapter only runs on a Pi."). A commissioner reading that
+    # knows exactly what to do; that is not the pyserial defect, which gave
+    # them an ImportError from inside a library they had never heard of.
+    #
+    # If a second Pi-only dependency ever appears, declare them both with a
+    # platform marker instead of growing this list.
+    "lgpio",
 }
 
 

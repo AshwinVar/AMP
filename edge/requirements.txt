@@ -28,6 +28,20 @@ imageio-ffmpeg>=0.4,<1   # the camera adapter reads frames through ffmpeg
 # installs with pip like everything else. It covers four FOCAS functions; the
 # adapter documents which, and what that costs.
 
+# WHY lgpio IS *NOT* HERE, although ampedge/adapters/gpio.py imports it. It is
+# a Linux-on-ARM C extension that binds a Raspberry Pi's GPIO chip. It cannot
+# install on Windows -- where the gateway runs today, from a laptop -- and CI
+# installs this file on an x86_64 Linux runner, where it has no chip to bind
+# to. Listing it would fail the install on both hosts that actually use this
+# file, to serve one that does not exist yet.
+#
+# ON A PI, INSTALL IT YOURSELF, and the adapter says so if you forget:
+#     sudo apt install python3-lgpio          # the packaged route, preferred
+#     pip install lgpio                       # builds from source
+#
+# This is the one undeclared import in the gateway and test_serial_listen.py
+# names it explicitly, with the reasoning, rather than weakening the rule.
+
 # WHY imageio-ffmpeg IS DECLARED AND NOT LEFT OPTIONAL. It is only needed by
 # the `camera` adapter -- the route for a plant that will allow nothing wired
 # into a running cabinet -- and it bundles an ffmpeg binary, so it is the

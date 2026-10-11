@@ -277,7 +277,12 @@ def test_an_explicit_zero_is_not_the_default():
     a = adapter(FakeLines(), debounce_ms=0)
     check("debounce_ms: 0 means 0, not the default",
           a.debounce_ms == 0, str(a.debounce_ms))
-    a = adapter(FakeLines())
+    # NOT `adapter(FakeLines())` -- that helper injects debounce_ms=0 so the
+    # counting tests can work in synthetic time, so "omitting it" through the
+    # helper omits nothing and the assertion was testing the helper's default
+    # rather than the adapter's. Build it directly, with the key genuinely
+    # absent, which is the only thing that exercises _setting()'s None branch.
+    a = gpio.GpioAdapter({"idle_after_s": 60}, lines=FakeLines())
     check("and omitting it gives the default",
           a.debounce_ms == gpio.DEFAULT_DEBOUNCE_MS, str(a.debounce_ms))
     a = adapter(FakeLines(), active_low=False)

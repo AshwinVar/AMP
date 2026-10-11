@@ -254,7 +254,8 @@ class CameraAdapter(base.Adapter):
 
     async def read(self, addresses):
         out = []
-        for address in addresses:
+        for entry in addresses:
+            address = base.address_of(entry)
             tag = str(address)
             want = tag.strip().lower()
             running = want.endswith(".running")

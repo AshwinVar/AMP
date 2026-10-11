@@ -318,7 +318,11 @@ class ContactAdapter(base.Adapter):
     async def read(self, addresses):
         out = []
         w = self._watcher
-        for address in addresses:
+        for entry in addresses:
+            # The caller passes the whole mapping spec, not a bare
+            # address -- see base.address_of for why, and for what this
+            # adapter did before it unwrapped it.
+            address = base.address_of(entry)
             tag = str(address)
             want = tag.strip().lower()
             # `cts.running` asks for the DERIVED run state; `cts` for the count.

@@ -262,7 +262,8 @@ class GpioAdapter(base.Adapter):
 
     async def read(self, addresses):
         out = []
-        for address in addresses:
+        for entry in addresses:
+            address = base.address_of(entry)
             tag = str(address)
             bcm, running = self.parse(tag)
             if bcm is None:

@@ -87,6 +87,33 @@ class Reading:
         return f"<Reading {self.tag} {self.quality}: {self.detail or 'no detail'}>"
 
 
+def address_of(entry):
+    """The address out of a mapping, whether it arrives bare or as the spec.
+
+    WHAT CALLERS ACTUALLY PASS. Both the runner (runner.py:109) and `watch`
+    (__main__.py) hand `read()` the WHOLE mapping dict, and deliberately: a
+    Modbus register number carries none of what is needed to read it -- type,
+    width, word order -- so the adapter has to see the spec, not just a number.
+
+    THE DEFECT THIS EXISTS TO END. opcua.py and modbus.py each unwrapped that
+    dict inline, and the three adapters written for machines with NO data port
+    -- contact, camera, gpio -- did not. They called str() on the dict, so a
+    perfectly valid `address: cts` was reported as:
+
+        "{'tag': 'cycles', 'address': 'cts', ...}" is not a serial input line
+
+    and EVERY tag failed, in `watch` and in `run` alike. The dry-contact route
+    could not read a single cycle. It was found by running the gateway against
+    a bare jumper on a desk, which is exactly what that rehearsal is for.
+
+    One helper rather than a fourth inline copy, so the next adapter inherits
+    the right behaviour instead of re-learning this.
+    """
+    if isinstance(entry, dict):
+        return entry.get("address")
+    return entry
+
+
 def no_data(tag: str, detail: str) -> Reading:
     """The only correct way to say 'we did not get this one'.
 

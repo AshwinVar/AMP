@@ -252,6 +252,71 @@ def test_an_unknown_line_is_refused_not_read_as_never_asserted():
 
 # ── 3b. Run state, derived from the same pulses ──────────────────────
 
+def test_the_mapping_spec_is_accepted_the_way_the_runner_sends_it():
+    """read() is given the WHOLE mapping, not a bare address. Pin that.
+
+    THE DEFECT THIS CAUGHT, and it was total. Both the runner
+    (runner.py:109 `[m.raw for m in spec["mappings"]]`) and `watch` hand read()
+    the entire mapping dict, and deliberately: a Modbus register number carries
+    none of what is needed to read it. opcua.py and modbus.py each unwrapped
+    that inline. contact, camera and gpio did not -- they called str() on the
+    dict, so a correct `address: cts` came back as
+
+        "{'tag': 'cycles', 'address': 'cts', ...}" is not a serial input line
+
+    for EVERY tag, in `watch` and in `run` alike. The dry-contact route could
+    not read one cycle.
+
+    WHY NOTHING CAUGHT IT. Every test in this file passed a bare "cts", which
+    is the one shape the real callers never send. It surfaced only when the
+    gateway was run end to end against a jumper on a desk -- the rehearsal
+    that exists precisely so this is found here and not in a cabinet.
+    """
+    async def run():
+        fake = FakePort()
+        a = contact.ContactAdapter({"serial_port": "FAKE1", "idle_after_s": 60})
+        w = watcher_on(fake)
+        contact._WATCHERS["FAKE1"] = w
+        a._watcher = w
+        w.sample_once(now=0.0)
+        # Pulse on the REAL clock, not synthetic time: `.running` compares the
+        # last edge against time.time(), so a cycle stamped at t=1.0 reads as
+        # fifty-odd years ago and the run state is correctly False.
+        fake.cts = True
+        w.sample_once(now=time.time())
+        fake.cts = False
+        w.sample_once(now=time.time() + 0.4)
+
+        # EXACTLY what config.load() builds and the runner passes through.
+        spec = {"tag": "cycles", "address": "cts", "signal": "part_count",
+                "datatype": "int", "counter_mode": "cumulative"}
+        got = (await a.read([spec]))[0]
+        check("the mapping spec is read, not rejected as an address",
+              got.is_usable and int(got.value) == 1,
+              f"{got.quality}: {got.detail or got.value!r}")
+
+        run_spec = dict(spec, address="cts.running", signal="running",
+                        datatype="bool", counter_mode=None)
+        got = (await a.read([run_spec]))[0]
+        check("...and so is the derived run state",
+              got.is_usable and got.value is True, repr(got))
+
+        # A bare string must keep working: `preview` and the tests use it.
+        got = (await a.read(["cts"]))[0]
+        check("a bare address still works alongside it",
+              got.is_usable and int(got.value) == 1, repr(got))
+
+        # A spec naming a line that does not exist must STILL be refused --
+        # unwrapping must not turn the guard off.
+        bad = dict(spec, address="rts")
+        got = (await a.read([bad]))[0]
+        check("a spec naming a non-input line is still refused",
+              not got.is_usable and "not a serial input line" in got.detail,
+              repr(got))
+    asyncio.get_event_loop().run_until_complete(run())
+    contact._WATCHERS.pop("FAKE1", None)
+
+
 def test_running_is_derived_from_the_last_cycle():
     """Status without a second wire, and without inventing anything.
 
@@ -487,6 +552,7 @@ def main():
     test_a_port_never_sampled_reports_so()
     test_an_unknown_line_is_refused_not_read_as_never_asserted()
     section("3b. RUN STATE, DERIVED FROM THE SAME PULSES")
+    test_the_mapping_spec_is_accepted_the_way_the_runner_sends_it()
     test_running_is_derived_from_the_last_cycle()
     test_an_idle_window_shorter_than_a_cycle_is_refused()
     test_browse_lists_both_the_count_and_the_run_state()

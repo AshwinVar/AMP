@@ -87,3 +87,16 @@ ci_edge.db-shm
 # (DATABASE_URL="sqlite:///./ci_x.db"). backend/*.db already covers
 # the ones created from inside backend/.
 /ci*.db
+
+# A CUSTOMER'S COMMISSIONING FOLDER. site/ is where the gateway's live
+# credentials are assembled before a site visit: the broker CA, the gateway
+# signing key AMP issued, the MQTT password, and a yaml naming the broker host,
+# the tenant and the gateway id. All of it is per-customer secret, it is created
+# by following the commissioning procedure, and the procedure's own first step
+# puts it INSIDE this working tree -- one `git add -A` away from a public
+# commit. The key and cert patterns are separate from the directory on purpose:
+# the next site will be assembled somewhere else and must be covered anyway.
+site/
+*.crt
+*.pem
+*.key

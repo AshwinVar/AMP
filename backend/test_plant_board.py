@@ -155,6 +155,14 @@ def main():
               prod["total"] == 56000, str(prod["total"]))
         check("...and the board says these numbers ARE parts",
               prod["counts_are_parts"] is True, str(prod["counts_are_parts"]))
+        # THE SHOT COUNT IS CARRIED TOO, unconverted. It is the only figure on
+        # the board a customer can check against their own HMI counter, so it
+        # must survive the conversion rather than be replaced by it.
+        check("the raw shot count is carried beside the parts",
+              prod["shots"] == 1000, str(prod.get("shots")))
+        check("...and on every hour, so a rate chart can be drawn in shots",
+              [x["shots"] for x in prod["points"] if x["shots"]] == [1000],
+              str([(x["hour"], x["shots"]) for x in prod["points"] if x["shots"]]))
         rm = board["rm_status"][0]
         # 56,000 x 0.33 g = 18,480 g = 18.48 kg
         check("56,000 parts at 0.33 g is 18.48 kg",
@@ -201,6 +209,8 @@ def main():
         # either unit alone.
         check("with no tool fitted the count stays in SHOTS, unconverted",
               prod["total"] == 1000, str(prod["total"]))
+        check("...and shots equals total, because there is nothing to multiply by",
+              prod["shots"] == prod["total"], f"{prod['shots']} vs {prod['total']}")
         check("...and the board says so, so the screen cannot call them parts",
               prod["counts_are_parts"] is False, str(prod["counts_are_parts"]))
         check("...but no part is claimed", prod["part"] is None, str(prod["part"]))

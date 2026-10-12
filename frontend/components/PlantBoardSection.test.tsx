@@ -38,6 +38,7 @@ function hours(parts: number, ideal: number, status: "ok" | "low" | "unrated") {
   return Array.from({ length: 24 }, (_, h) => ({
     hour: h,
     parts: h === 9 ? parts : 0,
+    shots: h === 9 ? parts : 0,
     ideal,
     status: h === 9 ? status : status === "unrated" ? ("unrated" as const) : ("low" as const),
   }));
@@ -51,7 +52,7 @@ function day(over: Partial<PlantBoardDay> = {}): PlantBoardDay {
     production: [{
       machine_id: 1, machine: "IMM-01", part: "Ele clip", part_code: "ELE-CLIP",
       tool: "MLD-ELE", ideal_per_hour: 14400, average_per_hour: 600, total: 14400,
-      counts_are_parts: true, hours_known: true, hourly_total: 14400,
+      counts_are_parts: true, shots: 14400, hours_known: true, hourly_total: 14400,
       points: hours(14400, 14400, "ok"),
     }],
     rm_status: [{
@@ -97,16 +98,30 @@ beforeEach(() => {
   apiGet.mockReset();
 });
 
-describe("the two series with no source", () => {
-  it("state the gap and the fix, and draw no number", async () => {
+describe("power and packing", () => {
+  /**
+   * THESE CARDS WERE REMOVED ON PURPOSE, at the customer's request on
+   * 2026-10-12. They previously rendered "Not measured" with the gap and the
+   * fix named, which was the right behaviour while they were on the board --
+   * a flat line at zero looks exactly like a chart with data.
+   *
+   * This test is kept, inverted, so that re-adding them is a deliberate act
+   * rather than something that drifts back in. The backend still returns both
+   * series with `available: false`; the board simply does not draw them, and
+   * a card that only ever says "no source" is one more thing to explain in a
+   * room with a customer.
+   */
+  it("are not on the board, and not as a zero either", async () => {
     serve(day(), month());
     render(<PlantBoardSection isAdmin />);
+    await screen.findByText("IMM-01");
 
-    await screen.findByText("No energy meter is installed on any machine.");
-    expect(screen.getByText("Nothing records packed quantities.")).toBeTruthy();
-    expect(screen.getByText("A 3-phase Modbus meter per machine.")).toBeTruthy();
-    // Both cards say what they are rather than showing a value.
-    expect(screen.getAllByText("Not measured")).toHaveLength(2);
+    expect(screen.queryByText("Power consumption")).toBeNull();
+    expect(screen.queryByText("Packing")).toBeNull();
+    // The point of removing them is that nothing is claimed, so no zero may
+    // appear in their place either.
+    expect(screen.queryByText("No energy meter is installed on any machine.")).toBeNull();
+    expect(screen.queryByText("Nothing records packed quantities.")).toBeNull();
   });
 });
 
@@ -117,7 +132,7 @@ describe("a machine nobody has specified", () => {
         production: [{
           machine_id: 1, machine: "IMM-01", part: null, part_code: null, tool: null,
           ideal_per_hour: 0, average_per_hour: 208.3, total: 5000,
-          counts_are_parts: true, hours_known: true, hourly_total: 5000,
+          counts_are_parts: true, shots: 14400, hours_known: true, hourly_total: 5000,
           points: hours(5000, 0, "unrated"),
         }],
         rm_status: [{ machine_id: 1, machine: "IMM-01", material: null, kg_total: 0,
@@ -143,7 +158,7 @@ describe("a machine nobody has specified", () => {
         production: [{
           machine_id: 1, machine: "IMM-01", part: null, part_code: null, tool: null,
           ideal_per_hour: 0, average_per_hour: 0, total: 5000,
-          counts_are_parts: true, hours_known: true, hourly_total: 5000,
+          counts_are_parts: true, shots: 14400, hours_known: true, hourly_total: 5000,
           points: hours(5000, 0, "unrated"),
         }],
         rm_status: [{ machine_id: 1, machine: "IMM-01", material: null, kg_total: 0, points: [] }],

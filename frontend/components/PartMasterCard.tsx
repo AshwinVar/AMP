@@ -147,7 +147,59 @@ export default function PartMasterCard({
     [draft.ideal_cycle_time_s, draft.active_cavities, draft.cavities],
   );
 
+  // A revision is simply a code the table already has. Typing an existing code
+  // into a blank form is a revision too, and should say so rather than looking
+  // like a new part right up until it supersedes one.
+  const revising = useMemo(
+    () => draft.part_code.trim() !== ""
+          && specs.some((s) => s.part_code === draft.part_code.trim()),
+    [draft.part_code, specs],
+  );
+
   const set = (k: keyof Draft) => (v: string) => setDraft((d) => ({ ...d, [k]: v }));
+
+  /**
+   * REVISE A PART — and note what this deliberately is not.
+   *
+   * It does not edit the row in place. A PartSpec is effective-dated on
+   * purpose: the reader picks the spec that was in force on the day it is
+   * reading, so overwriting one would retrospectively restate every month
+   * already reported. Last year's revenue would move because this year's price
+   * did, and nobody would be able to say why.
+   *
+   * So a revision is a NEW row dated from today, and the old one keeps
+   * describing the period it was true for. What this removes is only the
+   * retyping: revising a price meant re-entering all eight fields from
+   * scratch, which is both tedious and the likeliest way to get a cavity count
+   * wrong -- and a wrong cavity count is invisible afterwards because every
+   * downstream figure scales with it.
+   *
+   * The material needs the dropdown-or-free-text treatment on the way back in:
+   * a grade the plant typed once is in `materials` now, so it belongs in the
+   * select; one that somehow is not must still land in the text box rather
+   * than silently resetting to nothing.
+   */
+  function revise(s: PartSpec) {
+    const known = materials.includes(s.material);
+    setDraft({
+      part_code: s.part_code,
+      part_name: s.part_name,
+      material: known ? s.material : OTHER,
+      materialOther: known ? "" : s.material,
+      part_weight_g: String(s.part_weight_g ?? ""),
+      cavities: String(s.cavities ?? ""),
+      active_cavities: String(s.active_cavities ?? ""),
+      ideal_cycle_time_s: String(s.ideal_cycle_time_s ?? ""),
+      price_per_piece: s.price_per_piece > 0 ? String(s.price_per_piece) : "",
+      // TODAY, not the spec's own date. Reusing the original would collide with
+      // it on (tenant, part_code, effective_from) and be refused -- and would
+      // mean overwriting history, which is the thing this avoids.
+      effective_from: todayLocalIso(),
+    });
+    setError("");
+    setSaved("");
+    setOpen(true);
+  }
 
   async function save() {
     setBusy(true);
@@ -206,7 +258,19 @@ export default function PartMasterCard({
         {isAdmin ? (
           <button
             type="button"
-            onClick={() => setOpen((v) => !v)}
+            onClick={() => {
+              // OPENING IS ALWAYS A FRESH PART. Without this, clicking "Add a
+              // part" after a revision reopens the form still holding the
+              // revised part's eight fields, and the likeliest outcome is a
+              // new part saved with another part's cavity count -- invisible
+              // afterwards, because every figure downstream scales with it.
+              if (!open) {
+                setDraft(blank());
+                setError("");
+                setSaved("");
+              }
+              setOpen((v) => !v);
+            }}
             className="rounded-lg border border-sky-500/40 bg-sky-500/10 px-4 py-2 text-sm text-sky-200 hover:bg-sky-500/20"
           >
             {open ? "Close" : "Add a part"}
@@ -227,6 +291,18 @@ export default function PartMasterCard({
 
       {open && isAdmin ? (
         <div className="mt-4 rounded-xl border border-slate-700 bg-slate-950/50 p-4">
+          {/* SAY WHICH IT IS. The form looks identical either way, and saving a
+              revision under a typo'd code silently creates a second part
+              instead of superseding the first -- so the code already in the
+              table is worth stating back. */}
+          {revising ? (
+            <p className="mb-3 rounded-lg border border-sky-500/30 bg-sky-500/5 p-3 text-xs text-sky-200">
+              Revising <span className="font-semibold">{draft.part_code}</span> from{" "}
+              {draft.effective_from}. The existing specification is kept and still
+              describes the period before this date, so figures already reported
+              do not change.
+            </p>
+          ) : null}
           <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
             <Field label="Part code">
               <input
@@ -377,6 +453,7 @@ export default function PartMasterCard({
                 <th className="py-2 text-right">Target/hr</th>
                 <th className="py-2 text-right">Price</th>
                 <th className="py-2">From</th>
+                {isAdmin ? <th className="py-2 text-right">Revise</th> : null}
               </tr>
             </thead>
             <tbody>
@@ -402,6 +479,21 @@ export default function PartMasterCard({
                     {s.price_per_piece > 0 ? CURRENCY + s.price_per_piece : "unpriced"}
                   </td>
                   <td className="py-2 text-slate-500">{s.effective_from ?? "—"}</td>
+                  {isAdmin ? (
+                    <td className="py-2 text-right">
+                      <button
+                        type="button"
+                        onClick={() => revise(s)}
+                        title={`Start a new ${s.part_code} specification from today, ` +
+                               `prefilled from this one. The existing row is kept, ` +
+                               `so months already reported do not change.`}
+                        className="rounded-lg border border-slate-700 px-3 py-1 text-xs
+                                   text-slate-300 hover:border-sky-500/40 hover:text-sky-200"
+                      >
+                        Revise
+                      </button>
+                    </td>
+                  ) : null}
                 </tr>
               ))}
             </tbody>

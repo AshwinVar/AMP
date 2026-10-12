@@ -41,6 +41,13 @@ RECONNECT_MIN_S = 2.0
 RECONNECT_MAX_S = 60.0
 DRAIN_BATCH = 50
 DRAIN_IDLE_S = 1.0
+# A gateway that was DOWN longer than this across a restart missed production it
+# cannot recover: the poll adapters count in RAM and reset to a baseline on
+# start. Below it, a restart is an ordinary bounce (a deploy, a service restart)
+# and flagging every one as a data gap would be noise; above it -- a power cut, a
+# crash loop, a host left off -- the next record is marked so the hole is visible
+# instead of drawn across. buffer.note_restart() owns the detection.
+RESTART_GAP_MIN_S = 120.0
 # THE PRODUCTION WINDOW MUST BE LONG ENOUGH TO CARRY A DUTY CYCLE.
 #
 # AMP's ProductionRecord stores planned_minutes and runtime_minutes as whole
@@ -227,6 +234,10 @@ class Gateway:
         self.buffer = buffer_mod.Buffer(
             buffer_settings.get("path") or "amp-edge-queue.db",
             max_records=buffer_settings.get("max_records") or buffer_mod.DEFAULT_MAX_RECORDS)
+        # If this queue ran before and the gateway was then DOWN past the
+        # threshold, arm a gap marker now -- before any reading is taken, so the
+        # first production record after the restart carries it.
+        self.buffer.note_restart(min_gap_s=RESTART_GAP_MIN_S)
         amp = dict(resolved.get("amp") or {})
         gateway = resolved.get("gateway") or {}
         if gateway.get("id"):
@@ -279,6 +290,10 @@ class Gateway:
         attempt = 0
         while not self.stopping:
             try:
+                # Heartbeat to disk: what note_restart() reads on the next start
+                # to tell an ordinary bounce from a real absence. Cheap (one meta
+                # UPSERT), and runs at least once per DRAIN_IDLE_S.
+                self.buffer.mark_alive()
                 if self.publisher.state != base.CONNECTED:
                     attempt += 1
                     try:

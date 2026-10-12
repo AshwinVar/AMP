@@ -72,10 +72,22 @@ class Buffer:
         payload = dict(payload)
         payload["record_id"] = record_id
         if self._gap_pending():
-            # The last thing that happened to this queue was a drop. Say so ON
-            # the next record rather than in a log nobody reads.
+            # The last thing that happened to this queue was a discontinuity: a
+            # drop, a corrupt row, or the gateway having been DOWN across a
+            # restart. Say so ON the next record rather than in a log nobody
+            # reads. A restart gap also carries the window it spans, so the far
+            # side can say "down from T1 to T2" instead of only "something is
+            # missing here". An overflow/corrupt gap has no window and sets none.
             payload["gap_before"] = True
+            gap_from = self._get_meta("gap_from")
+            gap_to = self._get_meta("gap_to")
+            if gap_from:
+                payload["gap_from"] = float(gap_from)
+            if gap_to:
+                payload["gap_to"] = float(gap_to)
             self._set_meta("gap_pending", "")
+            self._set_meta("gap_from", "")
+            self._set_meta("gap_to", "")
         self._db.execute("INSERT INTO outbound (record_id, queued_at, payload) VALUES (?, ?, ?)",
                          (record_id, now, json.dumps(payload, default=str)))
         self._enforce_bound()
@@ -165,6 +177,50 @@ class Buffer:
 
     def _gap_pending(self):
         return bool(self._get_meta("gap_pending"))
+
+    # ── liveness across restarts ─────────────────────────────────────
+    #
+    # The queue is the ONE thing that survives a restart -- it is on disk -- so it
+    # is the only place that can notice the gateway was gone. The poll adapters
+    # count edges in RAM and take their first post-restart reading as a baseline,
+    # so every cycle the machine ran while the gateway was down is lost with
+    # nothing to mark it: the board draws a straight line across the hole. These
+    # two methods turn that silent hole into a flagged one.
+
+    def mark_alive(self, now=None):
+        """Record that the gateway is running right now. Called from the drain
+        loop, so `alive_at` trails real time by at most one loop."""
+        self._set_meta("alive_at", str(time.time() if now is None else now))
+
+    def note_restart(self, now=None, min_gap_s=120.0):
+        """At startup, decide whether the gateway was DOWN long enough to have
+        missed production, and if so arm a gap marker for the next record.
+
+        A missing `alive_at` means this queue has never run -- a genuinely new
+        install, where nothing was lost because nothing came before. A gap
+        shorter than `min_gap_s` is an ordinary bounce (a deploy, a service
+        restart) where flagging every one would be noise. Only a real absence --
+        a power cut, a crash loop, a host that was off -- arms the marker,
+        carrying the window [alive_at, now] it could not see so the far side can
+        show the discontinuity instead of drawing across it.
+
+        Returns the (from, to) window when a gap was armed, else None.
+        """
+        now = time.time() if now is None else now
+        prev = self._get_meta("alive_at")
+        self._set_meta("alive_at", str(now))
+        if prev is None:
+            return None
+        try:
+            gap_from = float(prev)
+        except (TypeError, ValueError):
+            return None
+        if now - gap_from < min_gap_s:
+            return None
+        self._set_meta("gap_pending", "1")
+        self._set_meta("gap_from", str(gap_from))
+        self._set_meta("gap_to", str(now))
+        return (gap_from, now)
 
     def close(self):
         try:

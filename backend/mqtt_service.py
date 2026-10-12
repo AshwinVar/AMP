@@ -552,6 +552,50 @@ def on_connect(client, userdata, flags, rc):
         log.info("FastAPI MQTT connection failed")
 
 
+def _record_data_gap(db, tenant, machine, payload):
+    """Flag a discontinuity the gateway reported, so a hole in the history is
+    something an operator SEES rather than a straight line drawn across it.
+
+    The edge sets `gap_before` on the first record after it was down across a
+    restart (or after the queue overflowed), and carries the window it could not
+    see. The counts in that window were never taken -- the poll adapters count in
+    RAM and reset to a baseline on start -- so this does not invent production; it
+    says plainly that some is missing and when. Deduplicated on the title, like
+    the gateway refusal: a crash-looping gateway would otherwise raise it on every
+    restart.
+    """
+    if not (isinstance(payload, dict) and payload.get("gap_before")):
+        return
+    title = f"Data gap at {machine.name}"
+    existing = db.query(models.Notification).filter(
+        models.Notification.tenant_code == tenant,
+        models.Notification.title == title,
+        models.Notification.status != "Read").first()
+    if existing is not None:
+        return
+    window = " A break in the record means some production may be missing here."
+    try:
+        gap_from = payload.get("gap_from")
+        gap_to = payload.get("gap_to")
+        if gap_from and gap_to:
+            span = (f"between {datetime.utcfromtimestamp(float(gap_from)):%Y-%m-%d %H:%M} "
+                    f"and {datetime.utcfromtimestamp(float(gap_to)):%H:%M} UTC")
+            window = (f" The gateway was not reporting {span}, so production in that "
+                      f"window is not recorded.")
+    except (TypeError, ValueError, OSError, OverflowError):
+        pass
+    try:
+        db.add(models.Notification(
+            tenant_code=tenant, notification_type="data_gap",
+            severity="Warning", title=title, status="Unread",
+            message=(f"{machine.name} reported a gap in its data.{window} Counts resume "
+                     f"with the next reading; figures spanning the gap may read low.")))
+        db.commit()
+    except Exception:            # noqa: BLE001 - never let the record break the listener
+        db.rollback()
+        log.info("could not record the data gap for %s/%s", tenant, machine.name)
+
+
 def _record_installation_report(db, tenant, machine, payload):
     """Tell the OEM's installation record that its machine has reported.
 
@@ -754,6 +798,7 @@ def on_message(client, userdata, msg):
         machine.downtime = downtime_value
 
         _record_installation_report(db, route.tenant, machine, payload)
+        _record_data_gap(db, route.tenant, machine, payload)
 
         # ADR-0021: EVERY status-bearing message is a span of source "mqtt",
         # whether or not it changes Machine.status. The MachineEvent below is

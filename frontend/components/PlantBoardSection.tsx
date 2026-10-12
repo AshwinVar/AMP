@@ -386,6 +386,29 @@ export default function PlantBoardSection({ isAdmin }: { isAdmin: boolean }) {
 
   const plant = useMemo(() => plantHourly(production), [production]);
   const plantTarget = plant[0]?.ideal ?? 0;
+
+  /**
+   * The hourly target expressed in SHOTS, for the rate chart.
+   *
+   * `ideal_per_hour` is in parts, because that is what the business counts.
+   * Drawing it as a line across a chart of shots would put a target of 6,698
+   * above bars of 167 and rate every healthy hour red — the same mistake the
+   * cavity conversion fixed on the by-machine chart, in the other direction.
+   *
+   * So divide each machine's parts target by its own cavity count, which is
+   * exactly `total / shots` for that machine. A machine with no spec has
+   * parts == shots and contributes its target unchanged. Returns 0 when no
+   * machine has a target at all, so the chart draws no line rather than a
+   * line at zero.
+   */
+  const shotTarget = useMemo(
+    () => Math.round(production.reduce((sum, m) => {
+      if (!hasTarget(m)) return sum;
+      const perShot = m.shots > 0 ? m.total / m.shots : 1;
+      return sum + m.ideal_per_hour / (perShot > 0 ? perShot : 1);
+    }, 0)),
+    [production],
+  );
   const dayOnly = useMemo(() => dayOnlyMachines(production), [production]);
 
   // Who was making what at the clicked hour. This is the drill-in: a bar on the
@@ -536,20 +559,24 @@ export default function PlantBoardSection({ isAdmin }: { isAdmin: boolean }) {
           </div>
 
           {/* ── Production against target, by the hour ────────────── */}
+          {/* ── Production rate: SHOTS against time ──────────────────
+              In shots, not parts, and deliberately. A shot is what every
+              press counts and what its own HMI displays, so this is the one
+              chart on the board a customer can verify against their machine.
+              It also sums honestly across a mixed floor: a plant total in
+              parts adds converted and unconverted machines together, while
+              every machine counts shots the same way. Parts, which is what
+              the business sells, are on the by-machine chart below. */}
           <Card
-            title="Production per hour — whole plant"
-            hint={
-              plantTarget > 0
-                ? "The dashed line is the plant's target for an hour, from the cycle times entered. Click a bar for the machine-by-machine split."
-                : "No cycle time has been entered for any fitted mould, so there is no target to draw. The bars are real counts."
-            }
+            title="Production rate — shots per hour, whole plant"
+            hint="Shots, the figure each machine's own counter shows — so this chart can be checked against the presses. Click a bar for the machine-by-machine split."
             exportAs={{
               on: day.date,
-              headers: ["hour", "parts", "target_per_hour"],
+              headers: ["hour", "shots", "parts"],
               rows: plant.map((p) => ({
                 hour: hourLabel(p.hour),
+                shots: p.shots,
                 parts: p.parts,
-                target_per_hour: p.ideal > 0 ? p.ideal : null,
               })),
             }}
           >
@@ -562,11 +589,11 @@ export default function PlantBoardSection({ isAdmin }: { isAdmin: boolean }) {
                 <YAxis stroke="#64748b" fontSize={11} />
                 <Tooltip
                   {...TOOLTIP}
-                  formatter={(v: unknown) => [fmtCount(v), countLabel(plantCountsAreParts)]}
+                  formatter={(v: unknown) => [fmtCount(v), "Shots"]}
                 />
                 <Bar
-                  dataKey="parts"
-                  name="Parts"
+                  dataKey="shots"
+                  name="Shots"
                   cursor="pointer"
                   onClick={(entry: unknown) => {
                     const h = hourFromClick(entry);
@@ -577,9 +604,9 @@ export default function PlantBoardSection({ isAdmin }: { isAdmin: boolean }) {
                     <Cell
                       key={p.hour}
                       fill={
-                        plantTarget === 0
+                        shotTarget === 0
                           ? HOUR_FILL.unrated
-                          : p.parts >= plantTarget * (day.acceptable_fraction ?? 0.8)
+                          : p.shots >= shotTarget * (day.acceptable_fraction ?? 0.8)
                             ? HOUR_FILL.ok
                             : HOUR_FILL.low
                       }
@@ -588,9 +615,9 @@ export default function PlantBoardSection({ isAdmin }: { isAdmin: boolean }) {
                     />
                   ))}
                 </Bar>
-                {plantTarget > 0 ? (
+                {shotTarget > 0 ? (
                   <ReferenceLine
-                    y={plantTarget}
+                    y={shotTarget}
                     stroke="#38bdf8"
                     strokeDasharray="6 4"
                     label={{ value: "Target", fill: "#38bdf8", fontSize: 11, position: "right" }}
@@ -687,12 +714,11 @@ export default function PlantBoardSection({ isAdmin }: { isAdmin: boolean }) {
             exportAs={{
               on: day.date,
               headers: ["machine", "parts_today", "target_per_hour",
-                        "average_per_hour", "mould", "part", "hours_known"],
+                        "mould", "part", "hours_known"],
               rows: production.map((p) => ({
                 machine: p.machine,
                 parts_today: p.total,
                 target_per_hour: hasTarget(p) ? p.ideal_per_hour : null,
-                average_per_hour: p.average_per_hour,
                 mould: p.tool,
                 part: p.part,
                 hours_known: p.hours_known,
@@ -784,7 +810,6 @@ export default function PlantBoardSection({ isAdmin }: { isAdmin: boolean }) {
                     <th className="py-2">Part</th>
                     <th className="py-2 text-right">Parts today</th>
                     <th className="py-2 text-right">Target / hr</th>
-                    <th className="py-2 text-right">Avg / hr</th>
                     <th className="py-2">Needs</th>
                   </tr>
                 </thead>
@@ -811,9 +836,6 @@ export default function PlantBoardSection({ isAdmin }: { isAdmin: boolean }) {
                         </td>
                         <td className="py-2 text-right text-slate-400">
                           {hasTarget(p) ? p.ideal_per_hour.toLocaleString() : "not set"}
-                        </td>
-                        <td className="py-2 text-right text-slate-400">
-                          {p.average_per_hour.toLocaleString()}
                         </td>
                         <td className="py-2 text-xs text-amber-300/80">
                           {gaps.length ? gaps[0] : ""}
@@ -975,12 +997,6 @@ export default function PlantBoardSection({ isAdmin }: { isAdmin: boolean }) {
             </div>
           ) : null}
 
-          {/* ── Power, in whichever of its three states is true ────── */}
-          <div className="grid gap-4 lg:grid-cols-2">
-            <PowerCard series={day.power} />
-            <NoSource title="Packing" series={day.packing} />
-          </div>
-
           {/* ── DAILY: the month, day by day. The middle resolution, and
                 the only one a machine read off a MONTH page can answer. ── */}
           {period === "daily" && month ? (
@@ -1039,58 +1055,26 @@ export default function PlantBoardSection({ isAdmin }: { isAdmin: boolean }) {
               <Card title="Item-wise production this month">
                 {month.itemwise_production.length ? (
                   <ResponsiveContainer width="100%" height={220}>
-                    <BarChart data={month.itemwise_production} layout="vertical">
+                    {/* VERTICAL BARS, ONE SERIES. The good/total pair came off
+                        at the customer's request, and it was the right call: a
+                        cycle contact cannot tell a good shot from a reject, so
+                        "good" was always equal to "total" and the green bar
+                        implied a quality measurement nobody is making. */}
+                    <BarChart data={month.itemwise_production}>
                       <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" />
-                      <XAxis type="number" stroke="#64748b" fontSize={10} />
-                      <YAxis
-                        type="category"
-                        dataKey="part"
-                        stroke="#64748b"
-                        fontSize={10}
-                        width={110}
-                      />
+                      <XAxis dataKey="part" stroke="#64748b" fontSize={10}
+                             interval={0} angle={-20} textAnchor="end" height={56} />
+                      <YAxis stroke="#64748b" fontSize={10} />
                       <Tooltip
                         {...TOOLTIP}
-                        formatter={fmtCount}
+                        formatter={(v: unknown) => [fmtCount(v), "Produced"]}
                       />
-                      <Legend wrapperStyle={{ fontSize: 11 }} />
-                      <Bar dataKey="good" name="Good" fill="#34d399" />
-                      <Bar dataKey="total" name="Total" fill="#475569" />
+                      <Bar dataKey="total" name="Produced" fill="#38bdf8" />
                     </BarChart>
                   </ResponsiveContainer>
                 ) : (
                   <p className="py-12 text-center text-sm text-slate-500">
                     Nothing produced this month yet.
-                  </p>
-                )}
-              </Card>
-
-              <Card title="Raw material consumed this month">
-                {month.rm_consumption.length ? (
-                  <ResponsiveContainer width="100%" height={220}>
-                    {/* Horizontal, because a material name is a word and a
-                        vertical axis of them turns into unreadable 45-degree
-                        labels the moment a plant runs more than three grades. */}
-                    <BarChart data={month.rm_consumption} layout="vertical">
-                      <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" />
-                      <XAxis type="number" stroke="#64748b" fontSize={10} unit=" kg" />
-                      <YAxis
-                        type="category"
-                        dataKey="material"
-                        stroke="#64748b"
-                        fontSize={10}
-                        width={110}
-                      />
-                      <Tooltip
-                        {...TOOLTIP}
-                        formatter={fmtKg}
-                      />
-                      <Bar dataKey="kg" name="kg" fill="#a78bfa" />
-                    </BarChart>
-                  </ResponsiveContainer>
-                ) : (
-                  <p className="py-12 text-center text-sm text-slate-500">
-                    Needs a part weight against the parts being made.
                   </p>
                 )}
               </Card>

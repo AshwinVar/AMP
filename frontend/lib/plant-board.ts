@@ -41,6 +41,9 @@ export type ProductionPoint = {
   parts: number;
   ideal: number;
   status: HourStatus;
+  /** The unconverted machine count for this hour. parts == shots
+   *  where no spec supplies a cavity count. */
+  shots: number;
 };
 
 export type MachineProduction = {
@@ -63,6 +66,10 @@ export type MachineProduction = {
    * and a reader comparing the bars would call that a production gap. The
    * screen has to say which rows are shots.
    */
+  /** The day's unconverted shot count — what the machine's own
+   *  counter shows, and the only figure here a customer can check
+   *  against their HMI. */
+  shots: number;
   counts_are_parts: boolean;
   /** True when the hours below account for `total`. False means the day came
    *  from a source with no hour in it, so the bars are not the day. */
@@ -113,6 +120,8 @@ export type MonthDay = {
   /** null when no part spec declares a weight — never 0 for "unknown". */
   kg: number | null;
   revenue: number | null;
+  /** Unconverted shots for the day. */
+  shots: number;
 };
 
 export type PlantBoardMonth = {
@@ -266,11 +275,18 @@ export function missingLinks(
  * did this plant make at 10am" has one answer, and an average of per-machine
  * rates is not it.
  */
-export function plantHourly(production: MachineProduction[]): { hour: number; parts: number; ideal: number }[] {
+export function plantHourly(
+  production: MachineProduction[],
+): { hour: number; parts: number; shots: number; ideal: number }[] {
   const hours = production[0]?.points.length ?? 0;
   return Array.from({ length: hours }, (_, h) => ({
     hour: h,
     parts: production.reduce((sum, m) => sum + (m.points[h]?.parts ?? 0), 0),
+    // SHOTS SUM HONESTLY ACROSS MACHINES in a way parts do not: every machine
+    // counts shots the same way, whereas a plant total in parts adds converted
+    // and unconverted machines together. It is also the figure that can be
+    // checked against the presses' own counters.
+    shots: production.reduce((sum, m) => sum + (m.points[h]?.shots ?? 0), 0),
     // Only machines that HAVE a target contribute to the plant target, so a
     // plant with half its moulds unspecified is not measured against half a bar.
     ideal: production.reduce((sum, m) => sum + (hasTarget(m) ? m.ideal_per_hour : 0), 0),

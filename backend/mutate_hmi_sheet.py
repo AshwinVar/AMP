@@ -102,12 +102,13 @@ MUTATIONS = [
     ("a day whose hours are unknown claims they are known", B,
      "        hours_known = total == hourly_total",
      "        hours_known = True"),
-    # Re-anchored when shots_to_parts() landed: the day total is now converted
-    # to parts on the same line it is read, so the old anchor named nothing and
-    # the mutation silently stopped being applied. test_mutation_anchors_apply
-    # is what caught that.
+    # Re-anchored when shots_to_parts() landed, and again when the shot count
+    # was lifted onto its own `shots_total` line beside `total`: each refactor
+    # reworded the anchored line, so the old string named nothing and the
+    # mutation silently stopped being applied. test_mutation_anchors_apply is
+    # what caught both.
     ("the day total is taken from the hours, so a MONTH-page day reads zero", B,
-     "        total = shots_to_parts(day_total.get(m.id, 0), spec)",
+     "        total = shots_to_parts(shots_total, spec)",
      "        total = hourly_total"),
 
     # ── The third power state, which used to not exist ───────────────────

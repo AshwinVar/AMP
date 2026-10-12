@@ -291,11 +291,18 @@ def day(db, tenant, on: date):
                 status = "ok"
             else:
                 status = "low"
-            series.append({"hour": h, "parts": parts, "ideal": ideal, "status": status})
+            # SHOTS BESIDE PARTS, not instead of them. A shot is what the
+            # machine's own counter shows, so it is the only figure on this
+            # board a customer can check against their HMI; parts is what the
+            # business is actually making. The two answer different questions
+            # and the board draws both.
+            series.append({"hour": h, "parts": parts, "ideal": ideal,
+                           "shots": int(made[h].get(m.id, 0)), "status": status})
             grams = parts * float(spec.part_weight_g) if spec else 0.0
             rm_series.append({"hour": h, "kg": round(grams / 1000.0, 3)})
         hourly_total = sum(p["parts"] for p in series)
-        total = shots_to_parts(day_total.get(m.id, 0), spec)
+        shots_total = int(day_total.get(m.id, 0))
+        total = shots_to_parts(shots_total, spec)
         # True when the hours account for the day. False means the day's figure
         # came from a source with no hour in it, so the bars below are not the
         # day -- and the caller has to say so instead of drawing a flat line.
@@ -308,6 +315,10 @@ def day(db, tenant, on: date):
             "ideal_per_hour": ideal,
             "average_per_hour": round(total / HOURS, 1),
             "total": total,
+            # The unconverted count, always. parts == shots on a machine with
+            # no spec, and that is correct rather than a coincidence: with no
+            # cavity count there is nothing to multiply by.
+            "shots": shots_total,
             # Which UNIT the numbers above are in. True once a spec gave us a
             # cavity count; False means these are SHOTS and the screen has to
             # say so rather than calling them parts.
@@ -415,18 +426,22 @@ def month(db, tenant, year: int, mon: int):
     # a zero, and only one of them is a story about production.
     parts_by_day, kg_by_day, money_by_day = (defaultdict(int), defaultdict(float),
                                              defaultdict(float))
+    shots_by_day = defaultdict(int)
     for r in records:
         if not r.created_at:
             continue
         d = r.created_at.date()
         spec = specs.get(r.machine_id)
-        parts = shots_to_parts(r.total_count or 0, spec)
+        shots = int(r.total_count or 0)
+        parts = shots_to_parts(shots, spec)
+        shots_by_day[d] += shots
         parts_by_day[d] += parts
         if spec:
             kg_by_day[d] += parts * float(spec.part_weight_g) / 1000.0
             money_by_day[d] += parts * float(spec.price_per_piece or 0)
     daily = [{"day": d.isoformat(),
               "parts": parts_by_day[d],
+              "shots": shots_by_day[d],
               # None, not 0.0: a day whose machines have no part spec has an
               # unknown weight and an unknown value, not a weight of nothing.
               "kg": round(kg_by_day[d], 3) if d in kg_by_day else None,

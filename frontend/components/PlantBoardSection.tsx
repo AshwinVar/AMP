@@ -77,6 +77,38 @@ function numberOf(v: unknown): number {
   return Number.isFinite(n) ? n : 0;
 }
 
+/**
+ * Every chart tooltip's styling, in one place.
+ *
+ * THE BUG THIS FIXES. Each Tooltip set a dark `contentStyle` background and
+ * nothing else, so the label and the item text fell back to Recharts'
+ * defaults -- which are near-black. Black on #0f172a is invisible: the
+ * tooltip opened, sized itself correctly, and showed nothing readable. It
+ * looked like the hover was broken rather than like a colour was missing.
+ *
+ * Spread this into every Tooltip rather than repeating three style objects
+ * twelve times, so the next chart added to this file cannot reintroduce it.
+ */
+const TOOLTIP = {
+  contentStyle: {
+    background: "#0f172a",
+    border: "1px solid #334155",
+    borderRadius: 8,
+  },
+  labelStyle: { color: "#e2e8f0" },
+  itemStyle: { color: "#e2e8f0" },
+};
+
+/**
+ * What the count on a chart IS, for this machine.
+ *
+ * A machine with a part spec has had its shots multiplied by the mould's
+ * active cavities and the number really is pieces. One without has no cavity
+ * count, so the figure is still a raw SHOT count -- and calling it "Parts"
+ * was a lie of exactly the kind this board is supposed not to tell.
+ */
+const countLabel = (isParts: boolean) => (isParts ? "Parts" : "Shots");
+
 const fmtCount = (v: unknown) => numberOf(v).toLocaleString();
 // Recharts 3 types a tick/label formatter's argument as ReactNode, not
 // number, so hourLabel cannot be passed directly (same trap as fmtCount).
@@ -240,7 +272,7 @@ function PowerCard({ series }: { series: Series }) {
           <XAxis dataKey="hour" stroke="#64748b" fontSize={10} tickFormatter={fmtHour} />
           <YAxis stroke="#64748b" fontSize={10} />
           <Tooltip
-            contentStyle={{ background: "#0f172a", border: "1px solid #334155" }}
+            {...TOOLTIP}
             labelFormatter={fmtHour}
             formatter={fmtCount}
           />
@@ -298,6 +330,24 @@ export default function PlantBoardSection({ isAdmin }: { isAdmin: boolean }) {
   }, [load]);
 
   const production = useMemo(() => day?.production ?? [], [day]);
+
+  /**
+   * Can the whole-plant charts honestly say "Parts"?
+   *
+   * Only if EVERY machine contributing output has a part spec. One machine
+   * without a cavity count puts raw shots into the same total, and a label
+   * that averages two units is worse than the blunter one -- so the moment
+   * any machine is unconverted the plant charts say "Shots" and the footnote
+   * under the by-machine chart names which ones.
+   *
+   * Machines with no output at all are ignored: an absent machine cannot make
+   * the unit ambiguous.
+   */
+  const plantCountsAreParts = useMemo(
+    () => production.filter((p) => p.total > 0)
+                    .every((p) => p.counts_are_parts !== false),
+    [production],
+  );
   const selected = useMemo(
     () => production.find((p) => p.machine_id === machineId) ?? null,
     [production, machineId],
@@ -482,8 +532,8 @@ export default function PlantBoardSection({ isAdmin }: { isAdmin: boolean }) {
                 <XAxis dataKey="label" stroke="#64748b" fontSize={11} interval={1} />
                 <YAxis stroke="#64748b" fontSize={11} />
                 <Tooltip
-                  contentStyle={{ background: "#0f172a", border: "1px solid #334155" }}
-                  formatter={fmtCount}
+                  {...TOOLTIP}
+                  formatter={(v: unknown) => [fmtCount(v), countLabel(plantCountsAreParts)]}
                 />
                 <Bar
                   dataKey="parts"
@@ -577,7 +627,7 @@ export default function PlantBoardSection({ isAdmin }: { isAdmin: boolean }) {
                       width={110}
                     />
                     <Tooltip
-                      contentStyle={{ background: "#0f172a", border: "1px solid #334155" }}
+                      {...TOOLTIP}
                       formatter={fmtCount}
                     />
                     <Legend wrapperStyle={{ fontSize: 11 }} />
@@ -640,9 +690,14 @@ export default function PlantBoardSection({ isAdmin }: { isAdmin: boolean }) {
                 />
                 <YAxis type="category" dataKey="machine" stroke="#64748b"
                        fontSize={11} width={78} />
+                {/* PER-ROW LABEL. One Bar covers every machine, and they do
+                    not share a unit: a machine with a part spec shows pieces,
+                    one without shows raw shots. Recharts passes the row to the
+                    formatter, so each tooltip can name its own. */}
                 <Tooltip
-                  contentStyle={{ background: "#0f172a", border: "1px solid #334155" }}
-                  formatter={fmtCount}
+                  {...TOOLTIP}
+                  formatter={(v: unknown, _n: unknown, p: { payload?: { counts_are_parts?: boolean } }) =>
+                    [fmtCount(v), countLabel(p?.payload?.counts_are_parts !== false)]}
                 />
                 <Bar dataKey="parts" name="Parts" cursor="pointer"
                      onClick={(entry: unknown) => {
@@ -774,8 +829,8 @@ export default function PlantBoardSection({ isAdmin }: { isAdmin: boolean }) {
                     <XAxis dataKey="label" stroke="#64748b" fontSize={10} interval={3} />
                     <YAxis stroke="#64748b" fontSize={10} />
                     <Tooltip
-                      contentStyle={{ background: "#0f172a", border: "1px solid #334155" }}
-                      formatter={fmtCount}
+                      {...TOOLTIP}
+                      formatter={(v: unknown) => [fmtCount(v), countLabel(selected.counts_are_parts)]}
                     />
                     <Bar dataKey="parts" name="Parts">
                       {selected.points.map((p) => (
@@ -826,7 +881,7 @@ export default function PlantBoardSection({ isAdmin }: { isAdmin: boolean }) {
                       <XAxis dataKey="label" stroke="#64748b" fontSize={10} interval={3} />
                       <YAxis stroke="#64748b" fontSize={10} unit=" kg" />
                       <Tooltip
-                        contentStyle={{ background: "#0f172a", border: "1px solid #334155" }}
+                        {...TOOLTIP}
                         formatter={fmtKg}
                       />
                       <Bar dataKey="kg" name="kg" fill="#a78bfa" />
@@ -876,7 +931,7 @@ export default function PlantBoardSection({ isAdmin }: { isAdmin: boolean }) {
                       <XAxis dataKey="label" stroke="#64748b" fontSize={10} />
                       <YAxis stroke="#64748b" fontSize={10} />
                       <Tooltip
-                        contentStyle={{ background: "#0f172a", border: "1px solid #334155" }}
+                        {...TOOLTIP}
                         formatter={fmtMoney}
                       />
                       <Bar dataKey="rate_per_hour" name="Per hour" fill="#fbbf24" />
@@ -935,8 +990,8 @@ export default function PlantBoardSection({ isAdmin }: { isAdmin: boolean }) {
                            label={{ value: "Parts", angle: -90, position: "insideLeft",
                                     fill: "#64748b", fontSize: 11 }} />
                     <Tooltip
-                      contentStyle={{ background: "#0f172a", border: "1px solid #334155" }}
-                      formatter={fmtCount}
+                      {...TOOLTIP}
+                      formatter={(v: unknown) => [fmtCount(v), countLabel(plantCountsAreParts)]}
                     />
                     <Bar dataKey="parts" name="Parts" fill={HOUR_FILL.ok} />
                   </BarChart>
@@ -966,7 +1021,7 @@ export default function PlantBoardSection({ isAdmin }: { isAdmin: boolean }) {
                         width={110}
                       />
                       <Tooltip
-                        contentStyle={{ background: "#0f172a", border: "1px solid #334155" }}
+                        {...TOOLTIP}
                         formatter={fmtCount}
                       />
                       <Legend wrapperStyle={{ fontSize: 11 }} />
@@ -998,7 +1053,7 @@ export default function PlantBoardSection({ isAdmin }: { isAdmin: boolean }) {
                         width={110}
                       />
                       <Tooltip
-                        contentStyle={{ background: "#0f172a", border: "1px solid #334155" }}
+                        {...TOOLTIP}
                         formatter={fmtKg}
                       />
                       <Bar dataKey="kg" name="kg" fill="#a78bfa" />
@@ -1037,7 +1092,7 @@ export default function PlantBoardSection({ isAdmin }: { isAdmin: boolean }) {
                         width={110}
                       />
                       <Tooltip
-                        contentStyle={{ background: "#0f172a", border: "1px solid #334155" }}
+                        {...TOOLTIP}
                         formatter={(v: unknown, name: unknown) =>
                           fmtMoney(v) + (String(name).includes("hour") ? "/hr" : "")}
                       />

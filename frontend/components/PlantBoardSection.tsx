@@ -16,6 +16,7 @@ import {
 
 import { apiGet, errorDetail } from "../lib/api";
 import { money } from "../lib/money";
+import { usePolling } from "../lib/usePolling";
 import {
   HOUR_FILL,
   HOUR_LABEL,
@@ -296,8 +297,16 @@ export default function PlantBoardSection({ isAdmin }: { isAdmin: boolean }) {
   const [hour, setHour] = useState<number | null>(null);
   const [period, setPeriod] = useState<"hourly" | "daily" | "monthly">("hourly");
 
-  const load = useCallback(async () => {
-    setLoading(true);
+  /**
+   * `quiet` is a REFRESH, not a load.
+   *
+   * Setting `loading` on every poll would blank the charts to a spinner twice
+   * a minute on a board somebody is standing in front of. The first load shows
+   * the spinner because there is genuinely nothing to look at; a refresh keeps
+   * the old numbers on screen until the new ones arrive.
+   */
+  const load = useCallback(async (quiet = false) => {
+    if (!quiet) setLoading(true);
     setError("");
     const [y, m] = on.split("-");
     try {
@@ -310,7 +319,7 @@ export default function PlantBoardSection({ isAdmin }: { isAdmin: boolean }) {
     } catch (e) {
       setError(errorDetail(e));
     } finally {
-      setLoading(false);
+      if (!quiet) setLoading(false);
     }
   }, [on]);
 
@@ -328,6 +337,26 @@ export default function PlantBoardSection({ isAdmin }: { isAdmin: boolean }) {
       clearTimeout(first);
     };
   }, [load]);
+
+  /**
+   * KEEP THE BOARD LIVE. It did not refresh itself at all -- it loaded once
+   * and then showed whatever was true at mount until somebody reloaded the
+   * page. The machine cards above it poll every 3 s, so a plant manager
+   * watching a press go Running on one card would see the production chart
+   * beneath it stay frozen. Reported from a shop floor with a customer
+   * standing there.
+   *
+   * 30 s, not the dashboard's 3 s: the gateway publishes counts once per
+   * 5-minute window, and this endpoint reads every production record for the
+   * day plus the whole month. Polling it twenty times faster than the data can
+   * change would spend real backend capacity to show the same numbers.
+   *
+   * usePolling brings the two guards that matter for free: it skips a tick
+   * whose predecessor has not returned, and it stops entirely while the tab is
+   * hidden, refreshing the moment you come back -- which is exactly the case
+   * on a phone, where switching apps hides the tab.
+   */
+  usePolling(() => load(true), 30_000, !loading);
 
   const production = useMemo(() => day?.production ?? [], [day]);
 

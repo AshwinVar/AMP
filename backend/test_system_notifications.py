@@ -16,6 +16,7 @@ count, and dedup (a second run adds nothing while the notifications are unread).
 Run:  python backend/test_system_notifications.py     (exit 0 = pass)
 """
 import inspect
+from datetime import datetime, timedelta
 
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
@@ -193,6 +194,94 @@ def test_counts_done_in_sql_not_a_python_scan():
     print("PASS system-notification counts are bounded in SQL, not a Python scan")
 
 
+def _gateway(gateway_id, minutes_ago=None, tenant="DEFAULT", active=True, label=None):
+    """A registered gateway. minutes_ago=None means it has NEVER reported."""
+    seen = None if minutes_ago is None else datetime.utcnow() - timedelta(minutes=minutes_ago)
+    return models.GatewayCredential(
+        tenant_code=tenant, gateway_id=gateway_id, secret="s", label=label,
+        is_active=active, last_seen_at=seen,
+    )
+
+
+def test_a_silent_gateway_is_alerted():
+    """A gateway that reported before and has gone quiet past GATEWAY_SILENCE is
+    the 'node died' alert: one Critical notification naming it, so an operator is
+    TOLD, instead of finding out when the day's figures come up short."""
+    db = _fresh_session()
+    db.add(_gateway("gw-shrinidhi-01", minutes_ago=40))
+    db.commit()
+    result = _run(db)
+    n = _notif(db, "Gateway silent: gw-shrinidhi-01")
+    assert n is not None and n.severity == "Critical", n
+    assert "40 minutes ago" in n.message, n.message
+    assert result["created"] == 1, result
+    print("PASS a silent gateway raises one Critical alert")
+
+
+def test_a_recently_seen_gateway_is_not_alerted():
+    """Inside the window the last batch may simply be in flight; alerting there
+    would cry wolf on every slow upload."""
+    db = _fresh_session()
+    db.add(_gateway("gw-live", minutes_ago=3))
+    db.commit()
+    _run(db)
+    assert _notif(db, "Gateway silent: gw-live") is None
+    print("PASS a gateway seen within the window is not flagged")
+
+
+def test_a_never_seen_gateway_is_not_alerted():
+    """NULL last_seen_at means the gateway has never reported -- a provisioning
+    state, not a silence. Flagging it would alarm on every gateway the moment it
+    is registered, before it is even installed."""
+    db = _fresh_session()
+    db.add(_gateway("gw-unprovisioned", minutes_ago=None))
+    db.commit()
+    result = _run(db)
+    assert _notif(db, "Gateway silent: gw-unprovisioned") is None
+    assert result["created"] == 0, result
+    print("PASS a never-seen (NULL last_seen) gateway is not flagged")
+
+
+def test_a_revoked_gateway_is_not_alerted():
+    """A deactivated credential was taken out of service on purpose. Alerting that
+    it is silent would be alarming an operator about their own decision, forever."""
+    db = _fresh_session()
+    db.add(_gateway("gw-retired", minutes_ago=120, active=False))
+    db.commit()
+    _run(db)
+    assert _notif(db, "Gateway silent: gw-retired") is None
+    print("PASS a revoked (inactive) gateway is not flagged")
+
+
+def test_another_tenants_silent_gateway_is_not_my_alert():
+    """GatewayCredential is outside the scoping hook, so the read filters
+    tenant_code by hand. A silent gateway in ANOTHER workspace must never surface
+    as this tenant's alert -- the leak test_unscoped_model_reads guards against."""
+    db = _fresh_session()
+    db.add_all([
+        _gateway("gw-mine", minutes_ago=30, tenant="DEFAULT"),
+        _gateway("gw-theirs", minutes_ago=30, tenant="OTHERCO"),
+    ])
+    db.commit()
+    _run(db)
+    assert _notif(db, "Gateway silent: gw-mine") is not None
+    assert _notif(db, "Gateway silent: gw-theirs") is None, "crossed a tenant boundary"
+    print("PASS a silent gateway in another tenant is not this tenant's alert")
+
+
+def test_gateway_silence_alert_dedups():
+    """While unread, a second run must not pile on a duplicate -- the title is
+    stable per gateway, so the existing-unread guard holds (as for the summaries)."""
+    db = _fresh_session()
+    db.add(_gateway("gw-dup", minutes_ago=30))
+    db.commit()
+    assert _run(db)["created"] == 1
+    assert _run(db)["created"] == 0
+    assert db.query(models.Notification).filter(
+        models.Notification.title == "Gateway silent: gw-dup").count() == 1
+    print("PASS the silent-gateway alert does not duplicate while unread")
+
+
 if __name__ == "__main__":
     test_summary_counts_are_hand_derived()
     test_empty_factory_creates_nothing()
@@ -200,4 +289,10 @@ if __name__ == "__main__":
     test_dedup_second_run_adds_nothing()
     test_dedup_matches_a_null_status_notification()
     test_counts_done_in_sql_not_a_python_scan()
+    test_a_silent_gateway_is_alerted()
+    test_a_recently_seen_gateway_is_not_alerted()
+    test_a_never_seen_gateway_is_not_alerted()
+    test_a_revoked_gateway_is_not_alerted()
+    test_another_tenants_silent_gateway_is_not_my_alert()
+    test_gateway_silence_alert_dedups()
     print("ALL SYSTEM-NOTIFICATION TESTS PASSED")

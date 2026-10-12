@@ -700,6 +700,15 @@ def send_proactive(db: Session = Depends(_get_db),
     return ai.proactive.send_proactive(db, request_tenant(current_user))
 
 
+# How long a gateway may be quiet before it is treated as DOWN, not merely late.
+# Counts are batched into a 5-minute publish window (runner.PUBLISH_WINDOW_S) and
+# a state change publishes immediately, so a gateway with anything to say is heard
+# inside five minutes. Fifteen -- three windows -- is comfortably past "the last
+# batch is still in flight" and squarely into "this node has stopped talking",
+# without crying wolf over one slow upload.
+GATEWAY_SILENCE = timedelta(minutes=15)
+
+
 @router.post("/notifications/generate-system-notifications")
 def generate_system_notifications(db: Session = Depends(_get_db), current_user: dict = Depends(require_roles(["Admin", "Supervisor"]))):
     created = 0
@@ -771,6 +780,35 @@ def generate_system_notifications(db: Session = Depends(_get_db), current_user: 
     ) or 0
     if low_stock > 0:
         add_notification("Inventory", "Warning", "Low stock items detected", f"{low_stock} item(s) are below reorder level.")
+
+    # Gateways that were talking and went quiet. last_seen_at is written on every
+    # accepted packet (mqtt_service), so a gateway that reported before and has
+    # not in GATEWAY_SILENCE is dead, unplugged, or off the network -- and on an
+    # unattended box in a panel, nobody is watching the thing that watches the
+    # machine. This is the alert that makes a dead node something an operator is
+    # TOLD about, instead of something discovered when the day's figures come up
+    # short. A NULL last_seen_at means the gateway has NEVER reported, which is a
+    # provisioning state and not a silence, so it is excluded.
+    #
+    # GatewayCredential is intentionally outside the ADR-0002 scoping hook
+    # (ADR-0041: the gateway id is looked up before the tenant is known), so this
+    # read filters tenant_code BY HAND -- see test_unscoped_model_reads.
+    from tenancy import request_tenant
+    tenant = request_tenant(current_user)
+    cutoff = datetime.utcnow() - GATEWAY_SILENCE
+    silent = db.query(models.GatewayCredential).filter(
+        models.GatewayCredential.tenant_code == tenant,
+        models.GatewayCredential.is_active.is_(True),
+        models.GatewayCredential.last_seen_at.isnot(None),
+        models.GatewayCredential.last_seen_at < cutoff,
+    ).all()
+    for gw in silent:
+        name = gw.label or gw.gateway_id
+        quiet_min = int((datetime.utcnow() - gw.last_seen_at).total_seconds() // 60)
+        add_notification(
+            "Gateway", "Critical", f"Gateway silent: {name}",
+            f"{name} last reported {quiet_min} minutes ago. Check its power, its "
+            f"network, and that the amp-edge service is running.")
 
     db.commit()
     return {"created": created}

@@ -191,17 +191,39 @@ Description=AMP Edge Gateway
 After=network-online.target
 
 [Service]
-Type=simple
+Type=notify
+NotifyAccess=main
 User=ampedge
 WorkingDirectory=/opt/amp-edge
 EnvironmentFile=/opt/amp-edge/.env
 ExecStart=/usr/bin/python3 -m ampedge run /opt/amp-edge/gateway.yaml
 Restart=always
 RestartSec=10
+# Restart a HUNG gateway, not only a crashed one. The process checks in at half
+# this interval; miss the deadline -- because the event loop is wedged on a
+# blocking call or a deadlock -- and systemd kills and restarts it. Restart=
+# always on its own never catches a hang, because a hung process never exits.
+WatchdogSec=60
+# Let the clean shutdown flush the in-flight window to disk before systemd
+# escalates from SIGTERM to SIGKILL. The gateway catches SIGTERM for this.
+TimeoutStopSec=30
 
 [Install]
 WantedBy=multi-user.target
 ```
+
+`Type=notify` is not cosmetic: the gateway sends `READY=1` once its poll and
+drain loops are running, so systemd reports the service as started only when it
+truly is, and arms the `WatchdogSec` deadline from that point. It then sends
+`WATCHDOG=1` every half-interval for as long as its event loop keeps turning.
+None of this needs a Python package, and all of it is inert off systemd -- the
+same binary runs unchanged on a laptop or under Docker.
+
+That watchdog restarts the *process*. For the rarer case of the *kernel*
+hanging -- which no user-space watchdog can catch -- enable the board's hardware
+watchdog system-wide by setting `RuntimeWatchdogSec=20` in
+`/etc/systemd/system.conf`. A Raspberry Pi has a hardware watchdog on-chip;
+systemd pets it, and if the whole kernel stops, the board reboots itself.
 
 **Windows** — NSSM (`nssm install AMPEdge`) or Task Scheduler with "run whether
 the user is logged on or not". Set the working directory to the folder holding

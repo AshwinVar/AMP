@@ -32,6 +32,7 @@ from . import health
 from . import normalizer as normalizer_mod
 from . import payload as payload_mod
 from . import publisher as publisher_mod
+from . import sdnotify
 from .adapters import base
 
 log = logging.getLogger("ampedge")
@@ -242,10 +243,37 @@ class Gateway:
     async def run(self):
         self._tasks = [asyncio.create_task(w.run()) for w in self.workers]
         self._tasks.append(asyncio.create_task(self._drain()))
+        self._tasks.append(asyncio.create_task(self._watchdog()))
+        # READY=1 AFTER the loops are scheduled, not before: the unit is
+        # Type=notify, so systemd treats the service as "starting" until this
+        # arrives and only then arms the watchdog. Sending it earlier would tell
+        # systemd the gateway is up while its poll and drain loops do not yet
+        # exist. Inert off systemd (sd_notify is a no-op with no NOTIFY_SOCKET).
+        sdnotify.sd_notify("READY=1")
         try:
             await asyncio.gather(*self._tasks)
         except asyncio.CancelledError:
             pass
+
+    async def _watchdog(self):
+        """Feed the systemd watchdog for as long as the event loop is turning.
+
+        Absent off systemd: watchdog_interval() returns None when no
+        WATCHDOG_USEC is set, and this returns at once, so the task costs
+        nothing on a laptop or in a test.
+
+        Under systemd the signal it sends is "this loop still runs". It is an
+        ordinary coroutine sharing the one event loop with every poll and the
+        drain, so a blocking call that wedges the loop stops this check-in too,
+        and systemd restarts a gateway that `Restart=always` could never catch
+        because a hung process does not exit. See sdnotify.py.
+        """
+        interval = sdnotify.watchdog_interval()
+        if interval is None:
+            return
+        while not self.stopping:
+            sdnotify.sd_notify("WATCHDOG=1")
+            await asyncio.sleep(interval)
 
     async def _drain(self):
         attempt = 0
@@ -315,6 +343,10 @@ class Gateway:
 
     async def stop(self):
         self.stopping = True
+        # Tell systemd we are going down on purpose, so a clean stop is not read
+        # as a missed watchdog check-in and does not count against the restart
+        # limiter. Inert off systemd.
+        sdnotify.sd_notify("STOPPING=1")
         for worker in self.workers:
             await worker.stop()
         for task in self._tasks:

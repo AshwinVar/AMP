@@ -30,6 +30,7 @@ import asyncio
 import json
 import logging
 import os
+import signal
 import sys
 import time
 
@@ -411,19 +412,47 @@ def cmd_run(args):
 
 
 async def _run(gateway, args):
+    # Clean shutdown on the signals a service manager actually sends. systemd
+    # sends SIGTERM to stop OR restart the unit -- including after a missed
+    # watchdog check-in. Without catching it the process is killed where it
+    # stands and gateway.stop() never runs, so the flush of the in-flight window
+    # to disk (runner.py's "SHUTDOWN IS CLEAN OR IT IS NOT SHUTDOWN") is skipped
+    # and a restart during a shift silently drops every part made since the last
+    # publish. add_signal_handler is POSIX-only; on Windows there is no systemd,
+    # and Ctrl+C still arrives as the KeyboardInterrupt caught below.
+    stop_event = asyncio.Event()
+    loop = asyncio.get_running_loop()
+    for sig in (getattr(signal, "SIGTERM", None), getattr(signal, "SIGINT", None)):
+        if sig is None:
+            continue
+        try:
+            loop.add_signal_handler(sig, stop_event.set)
+        except (NotImplementedError, RuntimeError, ValueError):
+            pass
+
     async def heartbeat():
         while True:
             await asyncio.sleep(args.health_every)
             for line in health_mod.lines(gateway.health()):
                 print(line)
+
     beat = asyncio.create_task(heartbeat())
+    runner_task = asyncio.create_task(gateway.run())
+    stopper = asyncio.create_task(stop_event.wait())
     try:
-        await gateway.run()
+        await asyncio.wait({runner_task, stopper}, return_when=asyncio.FIRST_COMPLETED)
     except KeyboardInterrupt:
         pass
     finally:
         beat.cancel()
+        stopper.cancel()
         await gateway.stop()
+        # stop() cancels the gather inside gateway.run(); wait for it to unwind
+        # so the process does not exit with the run task still pending.
+        try:
+            await runner_task
+        except asyncio.CancelledError:
+            pass
     return 0
 
 

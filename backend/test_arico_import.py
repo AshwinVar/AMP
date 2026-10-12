@@ -212,6 +212,94 @@ def main():
             models.Machine.tenant_code == "SOMEONE-ELSE").delete()
         db.commit()
 
+        section("9. AN UNSCALED METER IS NOT A MEASUREMENT OF ZERO")
+        # FROM THE FLOOR, NOT INVENTED. IMM-12's own USB export covers 365
+        # days, 1,834,320 shots and exactly 0.0 kWh -- not one non-zero hour in
+        # fourteen months, from a press that never stopped. Its MASTER 1 page
+        # shows ENERGY PULSE KWh = 000.0: the controller counts meter pulses
+        # and multiplies them by nothing. Stored as measured zeros, those rows
+        # draw a flat line along the axis of the power chart and tell a moulder
+        # his busiest machine runs for free.
+        wipe(db)
+        m12 = models.Machine(tenant_code=T, site="", name="IMM-12", status="Idle")
+        db.add(m12)
+        db.commit()
+        unscaled = write("Z1.CSV", {"2026/10/09": [257.0] * 15 + [0.0] * 9})
+        zeros = write("Z2.CSV", {"2026/10/09": [0.0] * 24})
+        out = arico_import.import_export(db, T, m12, unscaled, zeros)
+
+        rows = db.query(models.ProductionRecord).filter(
+            models.ProductionRecord.tenant_code == T,
+            models.ProductionRecord.machine_id == m12.id).all()
+        check("the shots are imported", len(rows) == 15, f"{len(rows)} rows")
+        check("and not one hour claims a measured zero",
+              all(r.energy_kwh is None for r in rows),
+              f"{sum(1 for r in rows if r.energy_kwh == 0)} hours stored 0.0")
+        check("the summary says nothing was metered",
+              out["hours_metered"] == 0 and out["hours_unmetered"] == 15,
+              f"metered={out['hours_metered']} unmetered={out['hours_unmetered']}")
+        check("even though the energy file covered every day",
+              out["days_without_energy"] == [],
+              f"reported {out['days_without_energy']}")
+
+        # A machine that IS scaled must be unaffected -- the rule is about
+        # zeros, not about energy files.
+        wipe(db)
+        m11 = models.Machine(tenant_code=T, site="", name="IMM-11", status="Idle")
+        db.add(m11)
+        db.commit()
+        ran = write("Y1.CSV", {"2026/10/09": [225.0] * 16 + [0.0] * 8})
+        drew = write("Y2.CSV", {"2026/10/09": [3.3] * 16 + [0.0] * 8})
+        out = arico_import.import_export(db, T, m11, ran, drew)
+        rows = db.query(models.ProductionRecord).filter(
+            models.ProductionRecord.tenant_code == T,
+            models.ProductionRecord.machine_id == m11.id).all()
+        check("a metered machine keeps every one of its readings",
+              out["hours_metered"] == 16 and out["hours_unmetered"] == 0,
+              f"metered={out['hours_metered']}")
+        check("and its kWh survive unchanged",
+              sorted({round(r.energy_kwh, 1) for r in rows}) == [3.3],
+              f"stored {sorted({r.energy_kwh for r in rows})}")
+
+        section("10. THE EXPORT REPLACES THE PHOTOGRAPH OF THE SAME DAY")
+        # A machine photographed in the morning and exported in the evening
+        # delivers the same day twice, in two shapes. Stored together they ADD,
+        # and the error runs upward -- nobody audits the number that says they
+        # had a good day. The export is the better source, so it wins outright.
+        wipe(db)
+        m = models.Machine(tenant_code=T, site="", name="IMM-11", status="Idle")
+        db.add(m)
+        db.commit()
+        for hour in range(16):
+            db.add(models.ProductionRecord(
+                tenant_code=T, machine_id=m.id,
+                source_record_id=f"hmi-hour:IMM-11:2026/10/09:{hour:02d}",
+                planned_minutes=60, runtime_minutes=60,
+                ideal_cycle_time_seconds=16, total_count=222, good_count=222,
+                rejected_count=0, energy_kwh=3.4,
+                created_at=datetime(2026, 10, 9, hour)))
+        db.commit()
+        before = db.query(models.ProductionRecord).filter(
+            models.ProductionRecord.tenant_code == T).count()
+        check("the transcription is in place first", before == 16, f"{before} rows")
+
+        p1 = write("X1.CSV", {"2026/10/09": [225.0] * 16 + [0.0] * 8})
+        p2 = write("X2.CSV", {"2026/10/09": [3.3] * 16 + [0.0] * 8})
+        out = arico_import.import_export(db, T, m, p1, p2)
+
+        rows = db.query(models.ProductionRecord).filter(
+            models.ProductionRecord.tenant_code == T).all()
+        check("the day is not counted twice", len(rows) == 16, f"{len(rows)} rows")
+        check("every surviving row came from the export",
+              all((r.source_record_id or "").startswith("arico:") for r in rows),
+              f"{[r.source_record_id for r in rows if not (r.source_record_id or '').startswith('arico:')][:2]}")
+        check("and the import says how many it replaced",
+              out["transcribed_rows_replaced"] == 16,
+              f"reported {out['transcribed_rows_replaced']}")
+        check("so the day totals the exported figure, not the sum of both",
+              sum(r.total_count for r in rows) == 3600,
+              f"totals {sum(r.total_count for r in rows)}")
+
         wipe(db)
     finally:
         db.close()

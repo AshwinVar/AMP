@@ -16,7 +16,7 @@ export type ExecutiveMachineOee = {
   total_count: number;
   good_count: number;
   rejected_count: number;
-  utilization: number;
+  utilization: number | null;
 };
 
 export type DowntimeParetoRow = {

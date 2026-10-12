@@ -8,7 +8,7 @@ type Machine = {
   id: number;
   name: string;
   status: string;
-  utilization: number;
+  utilization: number | null;
   downtime: string;
 };
 

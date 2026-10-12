@@ -174,7 +174,13 @@ type Machine = {
   id: number;
   name: string;
   status: string;
-  utilization: number;
+  /**
+   * NULL when nothing has measured it. `Machine.utilization` is a nullable
+   * column and a cycle-pulse gateway never reports one, so this is the normal
+   * state for a machine read off a dry contact — not an edge case. Typing it
+   * `number` let `sum + m.utilization` produce NaN and `${u}%` render "null%".
+   */
+  utilization: number | null;
   downtime: string;
 };
 
@@ -1837,12 +1843,20 @@ export default function DashboardPage() {
   const running = machines.filter((m) => m.status === "Running").length;
   const breakdown = machines.filter((m) => m.status === "Breakdown").length;
 
+  // Averaged over the machines that ACTUALLY REPORTED one, and null when none
+  // did. Summing a null as zero dragged the plant average down by every
+  // unmeasured machine and, on a floor where none can report, printed a
+  // confident 0% for the whole plant.
+  const measuredUtilization = machines
+    .map((m) => m.utilization)
+    .filter((u): u is number => typeof u === "number" && Number.isFinite(u));
   const avgUtilization =
-    machines.length > 0
+    measuredUtilization.length > 0
       ? Math.round(
-          machines.reduce((sum, m) => sum + m.utilization, 0) / machines.length
+          measuredUtilization.reduce((sum, u) => sum + u, 0) /
+            measuredUtilization.length
         )
-      : 0;
+      : null;
 
   const totalDowntimeMinutes = downtimeLogs.reduce(
     (sum, log) => sum + parseDurationToMinutes(log.duration),
@@ -2330,7 +2344,10 @@ export default function DashboardPage() {
       <section className="grid grid-cols-1 md:grid-cols-3 xl:grid-cols-7 gap-4 mb-8">
         <KpiCard title="Running Machines" value={running} />
         <KpiCard title="Breakdowns" value={breakdown} />
-        <KpiCard title="Avg Utilization" value={`${avgUtilization}%`} />
+        <KpiCard
+          title="Avg Utilization"
+          value={avgUtilization === null ? "Not measured" : `${avgUtilization}%`}
+        />
         <KpiCard title="Downtime Events" value={downtimeLogs.length} />
         <KpiCard title="Total Downtime" value={`${totalDowntimeMinutes}m`} />
         <KpiCard
@@ -2473,14 +2490,25 @@ export default function DashboardPage() {
 
                   <div className="mt-6">
                     <p className="text-sm text-slate-400">Utilization</p>
-                    <div className="w-full bg-slate-800 rounded-full h-3 mt-2">
-                      <div
-                        className="bg-white h-3 rounded-full"
-                        style={{ width: `${machine.utilization}%` }}
-                      />
-                    </div>
-
-                    <p className="text-sm mt-2">{machine.utilization}%</p>
+                    {/* An unmeasured utilization gets NO BAR AT ALL, not a bar
+                        at zero. A zero-width bar is indistinguishable from a
+                        machine measured at 0% — which is the exact confusion
+                        that made every pulse-fed press look dead. */}
+                    {typeof machine.utilization === "number" ? (
+                      <>
+                        <div className="w-full bg-slate-800 rounded-full h-3 mt-2">
+                          <div
+                            className="bg-white h-3 rounded-full"
+                            style={{ width: `${machine.utilization}%` }}
+                          />
+                        </div>
+                        <p className="text-sm mt-2">{machine.utilization}%</p>
+                      </>
+                    ) : (
+                      <p className="text-sm mt-2 text-slate-500">
+                        Not measured
+                      </p>
+                    )}
 
                     <p className="text-sm text-slate-400 mt-3">
                       {oeeReading?.measured === false ? "Estimated OEE" : "OEE"}

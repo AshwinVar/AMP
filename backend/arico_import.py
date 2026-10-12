@@ -45,6 +45,7 @@ import os
 import re
 from datetime import datetime, timedelta
 
+import hmi_sheet
 import models
 
 # One row per day: a date, 24 hourly buckets, the day's total, then padding.
@@ -129,6 +130,30 @@ def _as_datetime(day, hour):
     return datetime.strptime(day, "%Y/%m/%d") + timedelta(hours=hour)
 
 
+def _energy(kwh, hour):
+    """One hour's kilowatt-hours, or None when the meter did not measure it.
+
+    A ZERO IN THIS COLUMN IS NOT A MEASUREMENT OF ZERO. Only hours that made
+    parts reach this function, so the machine was demonstrably running -- and a
+    running injection moulding machine, with its barrel heaters and its pump,
+    does not draw nothing. A 0.0 here means the controller counted meter pulses
+    and scaled them by its ENERGY PULSE KWh constant, which the factory leaves
+    at 000.0 until somebody sets it.
+
+    That is not a guess. IMM-12's own export covers 365 days, 1,834,320 shots
+    and exactly 0.0 kWh -- not one non-zero hour in fourteen months, from a
+    press that never stopped. Stored as measured zeros those rows would put a
+    flat line along the axis of the power chart and tell a moulder his busiest
+    machine was free to run.
+
+    So a zero becomes NULL, which the read-models already draw as a gap.
+    """
+    if hour >= len(kwh):
+        return None
+    value = float(kwh[hour])
+    return value if value > 0 else None
+
+
 def plan(production, energy, machine_name):
     """Every hour worth writing, as plain dicts. Pure: touches no database.
 
@@ -153,7 +178,7 @@ def plan(production, energy, machine_name):
                 # quality was not measured here, not that nothing failed.
                 "good_count": made,
                 "rejected_count": 0,
-                "energy_kwh": (float(kwh[hour]) if hour < len(kwh) else None),
+                "energy_kwh": _energy(kwh, hour),
             })
     return rows
 
@@ -176,6 +201,15 @@ def import_export(db, tenant, machine, production_path, energy_path=None,
 
     missing = sorted(set(production) - set(energy)) if energy else []
     rows = plan(production, energy, machine.name)
+
+    # The controller's own file outranks anything a person read off its screen,
+    # so every transcribed row for a day this export covers is deleted before a
+    # single row is written. Without this the two sources ADD: a day
+    # photographed at noon and exported at six is counted twice, and the error
+    # flatters the plant. hmi_sheet owns the precedence order; this is the other
+    # half of the same rule.
+    superseded = hmi_sheet.supersede(
+        db, tenant, machine.name, sorted(production), "arico")
 
     existing = {r.source_record_id: r for r in db.query(models.ProductionRecord)
                 .filter(models.ProductionRecord.tenant_code == tenant,
@@ -212,5 +246,16 @@ def import_export(db, tenant, machine, production_path, energy_path=None,
         "hours_written": created, "hours_updated": updated,
         "shots": sum(r["total_count"] for r in rows),
         "kwh": round(sum(r["energy_kwh"] or 0 for r in rows), 1),
+        # Days the ENERGY file never mentioned...
         "days_without_energy": missing,
+        # ...which is a different thing from hours it mentioned and
+        # measured nothing at. A controller whose pulse constant is
+        # unset writes a complete energy file full of zeros, so
+        # `days_without_energy` stays empty while NOTHING was metered.
+        # This is the figure that says so.
+        "hours_metered": sum(1 for r in rows
+                             if r["energy_kwh"] is not None),
+        "hours_unmetered": sum(1 for r in rows
+                               if r["energy_kwh"] is None),
+        "transcribed_rows_replaced": superseded,
     }

@@ -180,6 +180,94 @@ async def _preview(resolved, args):
     return 0
 
 
+def cmd_watch(args):
+    resolved = _load(args.config)
+    return asyncio.run(_watch(resolved, args))
+
+
+async def _watch(resolved, args):
+    """Read repeatedly and show counters climbing, with a rate per hour.
+
+    WHY `preview` IS NOT ENOUGH. A counter's first reading is a baseline and
+    produces no sample, so `preview` can only ever say "(baseline)" about the
+    one tag that matters. Commissioning a counter means watching it MOVE.
+
+    WHAT THIS IS FOR, concretely. Somebody has wired a sensor to a terminal and
+    does not know whether it is the right terminal. The machine's own HMI shows
+    a shot counter and a parts-per-hour figure. This prints the same two numbers
+    from what AMP is actually reading, so the two can be held side by side. A
+    rate of half the machine's is a sensor seeing one edge per two cycles; a
+    rate of double is bounce; a rate that matches is the right terminal and
+    nothing else needs proving.
+
+    That comparison is the whole commissioning step. Without it, wiring a
+    counter is guesswork that produces a plausible number, which is the failure
+    mode this entire package is built to refuse.
+    """
+    started = time.time()
+    first = {}
+    last = {}
+    for machine in resolved["machines"]:
+        if args.machine and machine["name"] != args.machine:
+            continue
+        print(f"\n{machine['name']}  ({machine['protocol']})")
+        try:
+            adapter = await _connect(machine)
+        except base.AdapterError as e:
+            print(f"  COULD NOT CONNECT: {e}")
+            return 1
+        counters = [m for m in machine["mappings"] if m.counter_mode]
+        if not counters:
+            print("  no counter tags on this machine -- `preview` is the command "
+                  "you want. `watch` exists to see a counter move.")
+            await adapter.disconnect()
+            return 1
+        print(f"  watching {len(counters)} counter(s) every {args.every:g}s. "
+              f"Ctrl+C to stop.")
+        print(f"  Compare the rate against the machine's own screen.\n")
+        print(f"  {'TIME':<10} {'ADDRESS':<14} {'COUNT':>12} {'+SINCE LAST':>12} "
+              f"{'PER HOUR':>10}")
+        try:
+            while True:
+                readings = await adapter.read([m.raw for m in counters])
+                stamp = time.strftime("%H:%M:%S")
+                for m, r in zip(counters, readings):
+                    key = f"{machine['name']}:{m.address}"
+                    if not r.is_usable:
+                        # NOT a zero and not the previous count: a tag that
+                        # stopped answering must not look like a machine that
+                        # stopped working.
+                        print(f"  {stamp:<10} {str(m.address):<14} "
+                              f"{'--':>12} {'--':>12} {'--':>10}  {r.detail}")
+                        continue
+                    value = int(r.value)
+                    prev = last.get(key)
+                    last[key] = value
+                    if key not in first:
+                        first[key] = (value, time.time())
+                        print(f"  {stamp:<10} {str(m.address):<14} {value:>12} "
+                              f"{'baseline':>12} {'--':>10}")
+                        continue
+                    base_value, base_at = first[key]
+                    elapsed = max(1e-9, time.time() - base_at)
+                    rate = (value - base_value) / elapsed * 3600.0
+                    delta = "--" if prev is None else f"{value - prev:+d}"
+                    print(f"  {stamp:<10} {str(m.address):<14} {value:>12} "
+                          f"{delta:>12} {rate:>10.0f}")
+                await asyncio.sleep(args.every)
+        except KeyboardInterrupt:
+            print("\n  stopped.")
+        finally:
+            await adapter.disconnect()
+
+    watched = time.time() - started
+    print(f"\n  watched for {watched:.0f}s.")
+    if watched < 60:
+        print("  A rate from under a minute is noise. Watch for at least a few "
+              "cycles before believing it.")
+    return 0
+
+
 def cmd_browse(args):
     resolved = _load(args.config)
     return asyncio.run(_browse(resolved, args))
@@ -382,6 +470,14 @@ def main(argv=None):
     p.add_argument("config")
     p.add_argument("--machine")
     p.set_defaults(func=cmd_preview)
+
+    p = sub.add_parser("watch", help="watch a counter CLIMB, and compare its rate "
+                                     "against the machine's own screen")
+    p.add_argument("config")
+    p.add_argument("--machine")
+    p.add_argument("--every", type=float, default=2.0,
+                   help="seconds between reads (default 2)")
+    p.set_defaults(func=cmd_watch)
 
     p = sub.add_parser("check-amp", help="test the AMP/broker connection without streaming")
     p.add_argument("config")

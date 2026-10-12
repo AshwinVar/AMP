@@ -32,7 +32,7 @@ type Detail = {
   name: string;
   line: string;
   status: string;
-  utilization: number;
+  utilization: number | null;
   downtime: string;
   health_score: number;
   health_band: string;

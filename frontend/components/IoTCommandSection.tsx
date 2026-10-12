@@ -1,6 +1,6 @@
 import type { IoTCommandCenter } from "../lib/mega-pack2-types";
 
-type Machine = { id: number; name: string; status: string; utilization: number; downtime: string; };
+type Machine = { id: number; name: string; status: string; utilization: number | null; downtime: string; };
 
 // The section shows /analytics/iot-command's latest_signals; it never took a
 // telemetry list of its own, and the 500-row page the dashboard fetched for

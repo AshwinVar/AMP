@@ -2,7 +2,7 @@ export type PredictiveRisk = {
   machine_id: number;
   machine_name: string;
   status: string;
-  utilization: number;
+  utilization: number | null;
   risk_score: number;
   risk_level: string;
   downtime_minutes: number;

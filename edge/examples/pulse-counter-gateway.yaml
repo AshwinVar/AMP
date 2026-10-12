@@ -1,0 +1,146 @@
+# AMP Edge — a machine with NO data port at all.
+#
+# THE CASE THIS EXISTS FOR, and it is the common one. Most machines on an SME
+# shop floor cannot be asked anything. The controller has no Ethernet, its
+# serial ports are for loading firmware rather than reading production, and
+# there is no register map because there is no protocol. Measured on a real
+# moulding floor: thirteen presses, three controller brands, and not one of
+# them with a data port a gateway could poll.
+#
+# A machine like that still COUNTS. Every cycle moves a ram, opens a mould and
+# ejects a part, and that motion can be sensed without asking the controller
+# for anything or connecting to it at all.
+#
+#     proximity sensor  ->  Modbus pulse-counter module  ->  AMP Edge
+#
+# The sensor sees the ejector or the moving platen. The module accumulates the
+# pulses in a register. AMP Edge reads that register and turns the increments
+# into production, exactly as it would a controller's own part counter -- it
+# cannot tell the difference, and there is no reason it should.
+#
+# WHY THIS BEATS A PROTOCOL, when there is a choice:
+#
+#   * It is vendor-proof. The same install works on ARICO, OTEK, SYSCOM, a
+#     1990s relay panel, or a press whose maker no longer exists. One pilot
+#     answers for the whole floor.
+#   * It cannot disturb the machine. Nothing is wired into the controller and
+#     nothing is transmitted to it. On a running production line that matters
+#     more than elegance.
+#   * It needs nobody's cooperation -- no vendor, no password, no register map.
+#
+# WHAT IT CANNOT TELL YOU, and this is the honest half. A pulse is a cycle, not
+# a good part: rejects, scrap and short shots all look identical to a sensor.
+# So `part_count` here is TOTAL cycles. Good/reject needs a second source --
+# an operator entry, a weighing scale, or the controller's own FAIL counter
+# read some other way -- and AMP must keep reporting it as unmeasured until it
+# has one, rather than quietly reporting rejects as zero.
+
+amp:
+  host: broker.amp.example.com
+  port: 8883
+  tls: true
+  ca_cert: /etc/amp/ca.crt
+  tenant: ACME
+  site: plant-1
+  username_env: AMP_MQTT_USERNAME
+  password_env: AMP_MQTT_PASSWORD
+
+gateway:
+  id: gw-acme-plant1-03
+  key_env: AMP_GATEWAY_KEY
+
+machines:
+  # ── Serial (RTU): one twisted pair daisy-chained down a row of presses ──
+  #
+  # One USB-RS485 adapter on the plant PC reaches every module on the line, so
+  # thirteen machines cost one adapter and thirteen unit_ids, not thirteen
+  # cables back to the office. `serial_port` is what chooses RTU over TCP.
+  - name: PRESS-01
+    protocol: modbus
+    poll_interval: 2.0
+    connection:
+      serial_port: /dev/ttyUSB0     # COM3 on Windows
+      baudrate: 9600
+      parity: N
+      stopbits: 1
+      unit_id: 1
+      timeout: 3
+    tags:
+      # THE ONE TAG THAT MATTERS. A hardware pulse counter accumulates in the
+      # module and is read as a running total, so a missed poll loses nothing:
+      # the next read still carries every pulse since the last one. Polling the
+      # input STATE instead would mean catching each pulse live, and a cycle
+      # that happened between two polls would simply never have existed.
+      #
+      # counter_mode is mandatory for a counter and has no default, because
+      # reading a cumulative counter as a per-cycle one reports a day's output
+      # on every single poll.
+      - tag: cycles
+        address: 40001              # holding 0..1 — a 32-bit accumulator
+        signal: part_count
+        datatype: int
+        modbus_type: uint32
+        word_order: big             # check against the module's own display
+        counter_mode: cumulative
+
+  # ── TCP: a module with an Ethernet port, where there is a network ──
+  - name: PRESS-02
+    protocol: modbus
+    poll_interval: 2.0
+    connection:
+      host: 192.168.10.51
+      port: 502
+      unit_id: 1
+      timeout: 5
+    tags:
+      - tag: cycles
+        address: 40001
+        signal: part_count
+        datatype: int
+        modbus_type: uint32
+        word_order: big
+        counter_mode: cumulative
+
+      # A SECOND SENSOR IS WORTH IT WHERE THE MOULD IS GATED. A photocell on
+      # the chute counts parts that actually fell, which on a multi-cavity
+      # mould is not the same number as cycles. Left out, AMP reports cycles
+      # and says so; it does not multiply by the cavity count and call the
+      # answer production, because a blocked cavity would never show up.
+      - tag: parts_dropped
+        address: 40003
+        signal: good_count
+        datatype: int
+        modbus_type: uint32
+        word_order: big
+        counter_mode: cumulative
+
+      # ELECTRICITY IS DELIBERATELY NOT HERE, AND THAT IS A GAP, NOT A CHOICE.
+      #
+      # A DIN-rail kWh meter on the same RS-485 line is the cheapest useful
+      # measurement on a moulding floor -- it needs no sensor on the machine,
+      # it reads exactly like the counter above, and energy is the second
+      # largest cost after material. The obvious tag is:
+      #
+      #     - tag: energy
+      #       address: 30001
+      #       signal: energy_kwh        # <-- refused
+      #       ...
+      #
+      # `validate` refuses it, correctly: energy_kwh is not one of AMP's
+      # canonical signals. The canonical list is running, cycle_active,
+      # fault_active, fault_code, machine_mode, part_count, good_count,
+      # reject_count, cycle_time and operating_hours. Anything else travels
+      # under `readings`, and AMP interprets readings ONLY for a machine
+      # registered as an OEM installation with a telemetry profile -- on an
+      # ordinary factory machine they arrive and are ignored.
+      #
+      # So today the gateway cannot fill production_records.energy_kwh, even
+      # though that column exists and the plant board draws it. Energy reaches
+      # AMP by the controller's own USB export instead (see
+      # backend/arico_import.py), which is history rather than live.
+      #
+      # Closing that needs a canonical energy signal end to end: the signal
+      # list, the ingest path, and the same counter handling this file already
+      # relies on. It is a real piece of work and it is not done, which is why
+      # this example says so rather than shipping a tag that silently goes
+      # nowhere.

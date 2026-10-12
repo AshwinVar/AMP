@@ -31,8 +31,20 @@ USAGE
 If you do not know the slave/station address, --probe tries 1..8.
 """
 import argparse
+import logging
 import sys
 import time
+
+# QUIET THE LIBRARY, BECAUSE ITS NOISE HIDES THE ANSWER.
+#
+# pymodbus logs "Cleanup recv buffer before send: 0x0 0x0 0x0 ..." for every
+# retry of every address at every line setting. On a floating line that is
+# hundreds of lines of zeros per setting, and the one line that matters --
+# "ANSWERED" or "silent" -- scrolls past in the middle of it. A commissioning
+# tool whose output cannot be read on a shop floor has failed at its job.
+#
+# ERROR, not CRITICAL: a genuine library error still gets through.
+logging.getLogger("pymodbus").setLevel(logging.ERROR)
 
 try:
     from pymodbus.client import ModbusSerialClient
@@ -48,16 +60,21 @@ PAUSE = 0.05       # between requests, so the bus is never hammered
 
 
 def ports():
+    """Print what is plugged in. Returns the device names found."""
     try:
         from serial.tools import list_ports
     except ImportError:
         print("pyserial is not installed.  pip install pyserial")
-        return
+        return []
     found = list(list_ports.comports())
     if not found:
-        print("no serial ports found — is the USB-RS485 adapter plugged in?")
+        print("no serial ports found - is the USB-RS485 adapter plugged in?")
+        return []
     for p in found:
         print(f"  {p.device:<8} {p.description}")
+        if p.hwid:
+            print(f"           {p.hwid}")
+    return [p.device for p in found]
 
 
 def client_for(port, baud, parity, stopbits, timeout=0.4):
@@ -192,22 +209,35 @@ def main():
     ap.add_argument("--watch", action="store_true")
     a = ap.parse_args()
 
-    if a.ports or not a.port:
+    if a.ports:
         ports()
-        if not a.port:
-            print("\nPick a port, then:  --port COM3 --probe")
-        return
+        return 0
+
+    # THE SAME NO-OP serial_listen.py had: `--probe` with no `--port` printed
+    # the port list and returned 0, which on a floor with one adapter in one
+    # machine is the whole command quietly doing nothing while looking like a
+    # completed run. With exactly one port there is nothing to choose.
+    found = ports()
+    port = a.port
+    if not port:
+        if len(found) == 1:
+            port = found[0]
+            print(f"\nno --port given and only {port} is present, so using it.")
+        else:
+            print("\nPick a port, then:  --port COM3 --probe"
+                  if found else "")
+            return 1
 
     if a.probe:
-        probe(a.port)
-        return
+        probe(port)
+        return 0
 
-    cli = client_for(a.port, a.baud, a.parity, a.stopbits)
+    cli = client_for(port, a.baud, a.parity, a.stopbits)
     if not cli.connect():
-        print(f"could not open {a.port}")
-        return
+        print(f"could not open {port}")
+        return 1
     try:
-        print(f"{a.port} @ {a.baud} 8{a.parity}{a.stopbits}, address {a.unit}  "
+        print(f"{port} @ {a.baud} 8{a.parity}{a.stopbits}, address {a.unit}  "
               f"(READ ONLY)\n")
         if a.watch:
             watch(cli, a.unit, a.start, a.end, a.gap)
@@ -215,6 +245,7 @@ def main():
             scan(cli, a.unit, a.start, a.end)
     finally:
         cli.close()
+    return 0
 
 
 if __name__ == "__main__":

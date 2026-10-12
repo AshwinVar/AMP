@@ -4,7 +4,7 @@ export type MachineEvent = {
   machine_name: string;
   old_status?: string;
   new_status: string;
-  utilization: number;
+  utilization: number | null;
   source: string;
   created_at?: string;
 };

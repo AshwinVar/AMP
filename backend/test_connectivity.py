@@ -287,6 +287,115 @@ def test_connectivity_no_dark_orders_stale_by_silence_and_needs_attention():
     print("PASS no-dark plant: stale ordered by silence, needs_attention is the stalest")
 
 
+
+# ── A machine fed by a GATEWAY, not by IoT telemetry ──────────────────
+#
+# THE BUG THESE EXIST FOR, and it was live: the MQTT gateway path writes
+# production records and telemetry spans and never one `iot_telemetry` row, so
+# a freshness check over that table alone reported an entire plant that was
+# reporting perfectly as DARK -- "never instrumented". Every customer on a
+# Raspberry Pi gateway saw it, on the one screen whose whole job is to say
+# whether the plant is reaching AMP.
+
+
+def _production(db, machine_id, minutes_ago, tenant="DEFAULT"):
+    db.add(models.ProductionRecord(
+        tenant_code=tenant, machine_id=machine_id, total_count=120, good_count=118,
+        rejected_count=2, planned_minutes=5, runtime_minutes=5,
+        ideal_cycle_time_seconds=14,
+        created_at=datetime.utcnow() - timedelta(minutes=minutes_ago)))
+
+
+def _span(db, machine_id, minutes_ago, tenant="DEFAULT"):
+    end = datetime.utcnow() - timedelta(minutes=minutes_ago)
+    db.add(models.MachineTelemetrySpan(
+        tenant_code=tenant, machine_id=machine_id, source="mqtt", status="Running",
+        span_start=end - timedelta(minutes=5), span_end=end, message_count=1))
+
+
+def test_a_gateway_machine_is_not_dark():
+    db = _fresh_session()
+    _machine(db, 1, "IMM-01")
+    _machine(db, 2, "IMM-02")
+    _machine(db, 3, "IMM-03")
+    _production(db, 1, minutes_ago=2)        # the gateway path only
+    _span(db, 2, minutes_ago=3)              # a status message, nothing made
+    db.commit()
+
+    r = connectivity.build_connectivity_summary(db, "DEFAULT")
+    rows = {row["name"]: row for row in r["by_machine"]}
+    assert rows["IMM-01"]["state"] == "fresh", rows["IMM-01"]
+    assert rows["IMM-02"]["state"] == "fresh", rows["IMM-02"]
+    # Only the machine nothing has ever been heard from is dark.
+    assert rows["IMM-03"]["state"] == "dark", rows["IMM-03"]
+    assert r["dark"] == 1 and r["fresh"] == 2, r
+    print("PASS gateway machine: a production record is being heard from, not darkness")
+
+
+def test_the_row_says_which_path_answered():
+    db = _fresh_session()
+    _machine(db, 1, "IMM-01")
+    _machine(db, 2, "PLC-01")
+    _production(db, 1, minutes_ago=2)
+    _telemetry(db, 2, minutes_ago=2)
+    db.commit()
+
+    rows = {r["name"]: r for r in
+            connectivity.build_connectivity_summary(db, "DEFAULT")["by_machine"]}
+    # "0 signals" on a machine that is plainly reporting is unreadable without
+    # this: the count is IoT rows, and a gateway machine has none by design.
+    assert rows["IMM-01"]["heard_via"] == "production record", rows["IMM-01"]
+    assert rows["IMM-01"]["signals"] == 0, rows["IMM-01"]
+    assert rows["PLC-01"]["heard_via"] == "iot telemetry", rows["PLC-01"]
+    assert rows["PLC-01"]["signals"] == 1, rows["PLC-01"]
+    print("PASS gateway machine: the row names the path that answered")
+
+
+def test_a_gateway_machine_goes_stale_not_dark():
+    db = _fresh_session()
+    _machine(db, 1, "IMM-01")
+    _machine(db, 2, "IMM-02")
+    _production(db, 1, minutes_ago=90)            # inside the lookback, past freshness
+    _production(db, 2, minutes_ago=60 * 30)       # older than the 24h lookback
+    db.commit()
+
+    rows = {r["name"]: r for r in
+            connectivity.build_connectivity_summary(db, "DEFAULT")["by_machine"]}
+    assert rows["IMM-01"]["state"] == "stale", rows["IMM-01"]
+    # Heard from before the window is STALE -- it HAS reported, so it is a
+    # silence to chase and not a machine nobody ever wired up.
+    assert rows["IMM-02"]["state"] == "stale", rows["IMM-02"]
+    print("PASS gateway machine: silence is stale, and old silence is still not dark")
+
+
+def test_the_drill_down_agrees_with_the_list():
+    db = _fresh_session()
+    _machine(db, 1, "IMM-01")
+    _production(db, 1, minutes_ago=2)
+    db.commit()
+
+    detail = connectivity.build_connection_detail(db, "DEFAULT", 1)
+    # It used to say "dark / never reported" about a machine the list had just
+    # called fresh -- two screens, one plant, opposite answers.
+    assert detail["state"] == "fresh", detail["state"]
+    assert detail["heard_via"] == "production record", detail.get("heard_via")
+    # No IoT tags is correct for this path, and must not be read as a fault.
+    assert detail["signals"] == 0 and detail["by_signal"] == []
+    assert detail["cadence_minutes"] is None and detail["overdue_multiple"] is None
+    print("PASS gateway machine: the drill-down says what the chase list says")
+
+
+def test_another_tenants_records_do_not_revive_a_dark_machine():
+    db = _fresh_session()
+    _machine(db, 1, "IMM-01")
+    _production(db, 1, minutes_ago=2, tenant="SOMEONE-ELSE")
+    db.commit()
+
+    r = connectivity.build_connectivity_summary(db, "DEFAULT")
+    rows = {row["name"]: row for row in r["by_machine"]}
+    assert rows["IMM-01"]["state"] == "dark", rows["IMM-01"]
+    print("PASS gateway machine: another workspace's output is not evidence here")
+
 if __name__ == "__main__":
     test_connectivity_classifies_fresh_stale_dark_and_scores()
     test_connectivity_no_dark_orders_stale_by_silence_and_needs_attention()
@@ -296,6 +405,11 @@ if __name__ == "__main__":
     test_connection_detail_flags_a_dark_uninstrumented_machine()
     test_connection_detail_is_clean_for_a_healthy_machine()
     test_connection_detail_handles_a_machine_that_is_not_there()
+    test_a_gateway_machine_is_not_dark()
+    test_the_row_says_which_path_answered()
+    test_a_gateway_machine_goes_stale_not_dark()
+    test_the_drill_down_agrees_with_the_list()
+    test_another_tenants_records_do_not_revive_a_dark_machine()
     print("CONNECTIVITY OK: fresh/stale/dark classification; connectivity score; device online rate; "
           "signal good-quality rate; instrumentation coverage; worst-first chase list; empty-safe; "
           "drill-down cadence/overdue, dropped tags, linked devices, unreported work orders, blind spots")

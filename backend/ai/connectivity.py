@@ -36,6 +36,7 @@ from statistics import median
 from sqlalchemy import func
 
 import models
+from ai.gateway_health import last_heard
 
 name = "connectivity"
 
@@ -111,24 +112,31 @@ def build_connectivity_summary(db, tenant: str) -> dict:
     # (one row per machine) rather than hydrating every telemetry row in the window
     # on each 30s poll. func.max on a DateTime column comes back as a real datetime,
     # so the freshness math still runs on datetimes, not SQL strings.
-    agg = (db.query(models.IoTTelemetry.machine_id,
-                    func.max(models.IoTTelemetry.created_at),
-                    func.count())
-           .filter(models.IoTTelemetry.created_at >= window_start,
-                   models.IoTTelemetry.machine_id.isnot(None))
-           .group_by(models.IoTTelemetry.machine_id).all())
-    last_seen = {mid: last for mid, last, _ in agg}
-    signal_count = {mid: cnt for mid, _, cnt in agg}
+    # HOW AMP KNOWS IT HEARD FROM A MACHINE. Not `iot_telemetry` alone: a
+    # machine fed by a gateway writes production records and telemetry spans and
+    # never one IoT row, so keying freshness on that table reported a plant that
+    # was reporting perfectly as DARK -- live, for every MQTT customer.
+    # `last_heard` is the one definition of this, shared with ai/gateway_health.
+    heard = last_heard(db, tenant, window_start)
+    last_seen = {mid: when for mid, (when, _src) in heard.items()}
+    source_of = {mid: src for mid, (_when, src) in heard.items()}
 
-    # DARK vs STALE only matters for machines with NO in-window signal — probe just
-    # those ids for any historical telemetry, instead of a DISTINCT over the whole
-    # (unbounded, ever-growing) telemetry history on every poll.
+    # The signal COUNT stays IoT-only, because that is what it counts. A gateway
+    # machine legitimately shows 0 signals while being fresh, which is why the
+    # row now carries the source that answered.
+    signal_count = {
+        mid: cnt for mid, cnt in
+        db.query(models.IoTTelemetry.machine_id, func.count())
+        .filter(models.IoTTelemetry.created_at >= window_start,
+                models.IoTTelemetry.machine_id.isnot(None))
+        .group_by(models.IoTTelemetry.machine_id).all()
+    }
+
+    # DARK vs STALE only matters for machines with NO in-window evidence — probe
+    # just those ids over all time, instead of scanning an unbounded history for
+    # every machine on every poll.
     candidates = [m.id for m in machines if m.id not in last_seen]
-    ever = set()
-    if candidates:
-        ever = {mid for (mid,) in
-                db.query(models.IoTTelemetry.machine_id)
-                .filter(models.IoTTelemetry.machine_id.in_(candidates)).distinct().all()}
+    ever = set(last_heard(db, tenant, None, machine_ids=candidates))
 
     # Devices: the registered edge estate. Linked machines = instrumentation coverage.
     devices = db.query(models.IndustrialDevice).all()
@@ -162,6 +170,9 @@ def build_connectivity_summary(db, tenant: str) -> dict:
             "last_signal_minutes": mins,
             "last_signal_at": last_at,
             "signals": signal_count.get(m.id, 0),
+            # Which path answered. "0 signals, fresh" is correct and normal for a
+            # gateway machine, and unreadable without this.
+            "heard_via": source_of.get(m.id),
             "linked": m.id in linked_machine_ids,
         })
 
@@ -283,10 +294,16 @@ def build_connection_detail(db, tenant: str, machine_id: int) -> dict:
              .filter(models.IoTTelemetry.machine_id == machine_id,
                      models.IoTTelemetry.created_at >= window_start).all())
     reads = [t for t in reads if t.created_at]
-    ever = bool(reads) or db.query(models.IoTTelemetry.id).filter(
-        models.IoTTelemetry.machine_id == machine_id).first() is not None
 
-    last = max((t.created_at for t in reads), default=None)
+    # The VERDICT is over every path, not just these rows. `reads` stays IoT-only
+    # below because the tag breakdown and the cadence are IoT concepts -- but a
+    # gateway machine has no IoT rows at all, and judging it on them called a
+    # reporting machine dark. See ai/gateway_health.last_heard.
+    in_window = last_heard(db, tenant, window_start, machine_ids=[machine_id]).get(machine_id)
+    heard_via = in_window[1] if in_window else None
+    ever = bool(in_window) or bool(last_heard(db, tenant, None, machine_ids=[machine_id]))
+
+    last = in_window[0] if in_window else None
     if last is not None:
         silence = round((now - last).total_seconds() / 60, 1)
         state = "fresh" if silence <= STALE_AFTER_MINUTES else "stale"
@@ -298,6 +315,8 @@ def build_connection_detail(db, tenant: str, machine_id: int) -> dict:
 
     # Cadence: how often this connection normally speaks, and how far past that
     # the current silence has run. "40 minutes quiet" means nothing without it.
+    # Cadence is the IoT stream's own rhythm; a gateway machine has none, and a
+    # None here is read as "no cadence to be overdue against" rather than 0.
     cadence = _cadence_minutes([t.created_at for t in reads])
     overdue = round(silence / cadence, 1) if (cadence and silence is not None) else None
 
@@ -418,6 +437,9 @@ def build_connection_detail(db, tenant: str, machine_id: int) -> dict:
         "stale_after_minutes": STALE_AFTER_MINUTES,
         "lookback_hours": LOOKBACK_HOURS,
         "state": state,
+        # Which path answered, so "fresh with no signal tags" reads as a gateway
+        # machine rather than as a contradiction.
+        "heard_via": heard_via,
         "last_signal_at": last_at,
         "last_signal_minutes": silence,
         "signals": len(reads),

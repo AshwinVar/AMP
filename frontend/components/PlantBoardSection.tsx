@@ -43,6 +43,7 @@ import {
   exportFilename,
   toCsv,
 } from "../lib/chart-export";
+import { GatewayBanner, MachineLinkBadge, useGatewayHealth } from "./GatewayHealth";
 import PartMasterCard from "./PartMasterCard";
 
 /**
@@ -288,6 +289,9 @@ function PowerCard({ series }: { series: Series }) {
 }
 
 export default function PlantBoardSection({ isAdmin }: { isAdmin: boolean }) {
+  // The same verdict the Machines cards show. An empty hour on this board
+  // and an unreachable gateway look identical until something says which.
+  const gatewayHealth = useGatewayHealth();
   const [on, setOn] = useState(todayLocalIso());
   const [day, setDay] = useState<PlantBoardDay | null>(null);
   const [month, setMonth] = useState<PlantBoardMonth | null>(null);
@@ -497,6 +501,8 @@ export default function PlantBoardSection({ isAdmin }: { isAdmin: boolean }) {
           </button>
         </div>
       </div>
+
+      <GatewayBanner health={gatewayHealth} />
 
       {error ? (
         <div className="rounded-xl border border-red-500/40 bg-red-500/10 p-4 text-sm text-red-200">
@@ -828,7 +834,17 @@ export default function PlantBoardSection({ isAdmin }: { isAdmin: boolean }) {
                           (machineId === p.machine_id ? "bg-slate-800/60" : "")
                         }
                       >
-                        <td className="py-2 font-medium text-slate-100">{p.machine}</td>
+                        <td className="py-2 font-medium text-slate-100">
+                          <span className="flex items-center gap-2">
+                            {p.machine}
+                            {/* A row of zeros and a row AMP could not see are
+                                the same row without this. */}
+                            <MachineLinkBadge
+                              health={gatewayHealth}
+                              machineId={p.machine_id}
+                            />
+                          </span>
+                        </td>
                         <td className="py-2 text-slate-400">{p.tool ?? "—"}</td>
                         <td className="py-2 text-slate-400">{p.part ?? "—"}</td>
                         <td className="py-2 text-right text-slate-100">

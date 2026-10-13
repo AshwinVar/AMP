@@ -21,6 +21,7 @@ from sqlalchemy.orm import Session, joinedload
 
 import ai
 import ai.escalations
+import ai.gateway_health
 import ai.plant_board
 import ai.maintenance
 import ai.workforce
@@ -315,6 +316,19 @@ def plant_board_month(year: int = 0, month: int = 0,
     if not 1 <= month <= 12:
         raise HTTPException(status_code=400, detail=f"month must be 1-12, not {month}")
     return ai.plant_board.month(db, request_tenant(current_user), year, month)
+
+
+@router.get("/analytics/gateway-health")
+def gateway_health(db: Session = Depends(_get_db),
+                   current_user: dict = Depends(get_current_user)):
+    """Can AMP see each machine, and when it cannot, which half is broken.
+
+    Read by the Machines table and the Plant Board, so both screens carry the
+    same verdict: a board that draws an empty day while the Machines page says
+    "fine" is how a dead gateway stays undiscovered until the figures come up
+    short. Tenant comes from the authenticated principal (ADR-0002).
+    """
+    return ai.gateway_health.build_gateway_health(db, request_tenant(current_user))
 
 
 @router.get("/alerts")

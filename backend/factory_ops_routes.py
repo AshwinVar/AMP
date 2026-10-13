@@ -706,7 +706,10 @@ def send_proactive(db: Session = Depends(_get_db),
 # inside five minutes. Fifteen -- three windows -- is comfortably past "the last
 # batch is still in flight" and squarely into "this node has stopped talking",
 # without crying wolf over one slow upload.
-GATEWAY_SILENCE = timedelta(minutes=15)
+# Defined in ai/gateway_health.py and imported here, so the banner on the board
+# and this notification cannot drift apart: two thresholds for one silence is
+# a screen that says a gateway is fine while the feed says it is dead.
+from ai.gateway_health import GATEWAY_SILENCE   # noqa: E402
 
 
 @router.post("/notifications/generate-system-notifications")

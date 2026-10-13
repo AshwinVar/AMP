@@ -118,32 +118,62 @@ def _gateway_reason(state, name, quiet):
     return f"{name} is reporting."
 
 
-def _last_heard(db, tenant, since):
-    """{machine_id: when AMP last received ANYTHING about it}.
+#: Where an answer to "when did AMP last hear from this machine" came from.
+#: Reported because the three paths look nothing alike to the person chasing a
+#: silent machine: a gateway writes production records, an IoT device writes
+#: telemetry rows, and "0 signals" on a machine that is plainly reporting is the
+#: confusion this exists to end.
+IOT, SPAN, PRODUCTION = "iot telemetry", "telemetry span", "production record"
 
-    Two sources because there are two paths. A status-bearing MQTT message
-    writes a telemetry span (ADR-0021) and a window with production writes a
-    record; a machine that is running but made nothing in the window has the
-    first and not the second. Taking the later of the two is the only answer
-    that means "last heard from" rather than "last made something".
+
+def last_heard(db, tenant, since, machine_ids=None):
+    """{machine_id: (when, source)} — the latest ANY path heard from a machine.
+
+    THREE SOURCES BECAUSE THERE ARE THREE PATHS, and a read-model that knows
+    only one declares the others dead:
+
+      * `iot_telemetry`   the IoT/command path, one row per signal
+      * telemetry spans   every status-bearing MQTT message (ADR-0021)
+      * production records the MQTT gateway's actual output
+
+    A machine fed by a Raspberry Pi gateway writes the last two and NEVER the
+    first, so a freshness check over `iot_telemetry` alone reports a plant that
+    is reporting perfectly as dark. That was live.
+
+    `since` bounds the scan. `machine_ids`, when given, bounds it further — the
+    callers that only need to tell "silent" from "never seen" probe just the
+    machines that came back empty, rather than scanning an ever-growing history
+    for every machine on every poll.
     """
     heard = {}
-    spans = (db.query(models.MachineTelemetrySpan.machine_id,
-                      func.max(models.MachineTelemetrySpan.span_end))
-               .filter(models.MachineTelemetrySpan.tenant_code == tenant,
-                       models.MachineTelemetrySpan.span_end >= since)
-               .group_by(models.MachineTelemetrySpan.machine_id).all())
-    for mid, seen in spans:
-        heard[mid] = seen
-    records = (db.query(models.ProductionRecord.machine_id,
-                        func.max(models.ProductionRecord.created_at))
-                 .filter(models.ProductionRecord.tenant_code == tenant,
-                         models.ProductionRecord.created_at >= since)
-                 .group_by(models.ProductionRecord.machine_id).all())
-    for mid, seen in records:
-        if seen and (mid not in heard or heard[mid] is None or seen > heard[mid]):
-            heard[mid] = seen
+
+    def offer(mid, when, source):
+        if mid is None or when is None:
+            return
+        if mid not in heard or when > heard[mid][0]:
+            heard[mid] = (when, source)
+
+    for model, column, source in (
+        (models.IoTTelemetry, models.IoTTelemetry.created_at, IOT),
+        (models.MachineTelemetrySpan, models.MachineTelemetrySpan.span_end, SPAN),
+        (models.ProductionRecord, models.ProductionRecord.created_at, PRODUCTION),
+    ):
+        q = (db.query(model.machine_id, func.max(column))
+               .filter(model.tenant_code == tenant, model.machine_id.isnot(None)))
+        if since is not None:
+            q = q.filter(column >= since)
+        if machine_ids is not None:
+            if not machine_ids:
+                continue
+            q = q.filter(model.machine_id.in_(list(machine_ids)))
+        for mid, when in q.group_by(model.machine_id).all():
+            offer(mid, when, source)
     return heard
+
+
+def _last_heard(db, tenant, since):
+    """Just the timestamps, for callers that do not care which path answered."""
+    return {mid: when for mid, (when, _src) in last_heard(db, tenant, since).items()}
 
 
 def resolved_cause(db, tenant, machine_name):

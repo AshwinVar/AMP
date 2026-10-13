@@ -36,6 +36,7 @@ import {
   dayOnlyMachines,
   todayLocalIso,
   type UnavailableSeries,
+  addedKgTotal,
 } from "../lib/plant-board";
 import {
   type Cell as CsvCell,
@@ -387,6 +388,19 @@ export default function PlantBoardSection({ isAdmin }: { isAdmin: boolean }) {
   );
   const selectedRm = day?.rm_status.find((r) => r.machine_id === machineId) ?? null;
   const selectedShift = day?.shift_rate.find((s) => s.machine_id === machineId) ?? null;
+
+  // Only what was actually booked in kilograms is totalled; the rest is named
+  // in its own unit below the chart.
+  const addedKg = useMemo(() => addedKgTotal(month?.rm_added ?? []), [month]);
+  const notWeighed = useMemo(
+    () => (month?.rm_added ?? []).filter((r) => r.kg === null),
+    [month],
+  );
+  // Defaulted, not asserted. During a deploy the browser is a version ahead of
+  // the API for a minute, and `month.rm_balance.length` on a payload that does
+  // not carry it yet takes the whole board to a blank page rather than dropping
+  // one card. It did exactly that here.
+  const rmBalance = useMemo(() => month?.rm_balance ?? [], [month]);
 
   const plant = useMemo(() => plantHourly(production), [production]);
   const plantTarget = plant[0]?.ideal ?? 0;
@@ -1067,7 +1081,52 @@ export default function PlantBoardSection({ isAdmin }: { isAdmin: boolean }) {
 
           {/* ── The month ─────────────────────────────────────────── */}
           {month ? (
-            <div className="grid gap-4 lg:grid-cols-3">
+            <div className="grid gap-4 lg:grid-cols-2 xl:grid-cols-4">
+              <Card
+                title="Raw material: used and received"
+                hint={
+                  addedKg === null
+                    ? "This month · nothing received was booked in kilograms"
+                    : "This month · " + addedKg.toLocaleString() + " kg received"
+                }
+              >
+                {rmBalance.length ? (
+                  <>
+                    <ResponsiveContainer width="100%" height={220}>
+                      <BarChart data={rmBalance}>
+                        <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" />
+                        <XAxis dataKey="material" stroke="#64748b" fontSize={10} />
+                        <YAxis stroke="#64748b" fontSize={10}
+                               tickFormatter={(v: number) => v + " kg"} />
+                        <Tooltip
+                          contentStyle={{ background: "#0f172a", border: "1px solid #334155" }}
+                          formatter={(v: unknown, name: unknown) =>
+                            [v === null || v === undefined
+                              ? "not derivable"
+                              : numberOf(v).toFixed(3) + " kg", String(name)]}
+                        />
+                        <Legend wrapperStyle={{ fontSize: 11 }} />
+                        <Bar dataKey="consumed_kg" name="Used" fill="#a78bfa" />
+                        <Bar dataKey="added_kg" name="Received" fill="#38bdf8" />
+                      </BarChart>
+                    </ResponsiveContainer>
+                    {notWeighed.length ? (
+                      <p className="mt-2 text-xs text-slate-500">
+                        Not drawn, because these are not weights:{" "}
+                        {notWeighed
+                          .map((r) => r.material + " " + r.quantity.toLocaleString() + " " + r.unit)
+                          .join(", ")}
+                        .
+                      </p>
+                    ) : null}
+                  </>
+                ) : (
+                  <p className="py-12 text-center text-sm text-slate-500">
+                    No material was used or received this month.
+                  </p>
+                )}
+              </Card>
+
               <Card title="Item-wise production this month">
                 {month.itemwise_production.length ? (
                   <ResponsiveContainer width="100%" height={220}>
@@ -1100,6 +1159,7 @@ export default function PlantBoardSection({ isAdmin }: { isAdmin: boolean }) {
                 hint={
                   month.total_revenue > 0
                     ? "Plant total " + money(Math.round(month.total_revenue))
+                      + " at " + money(Math.round(month.total_rate_per_hour)) + "/hr"
                     : "No priced part has produced anything this month"
                 }
               >

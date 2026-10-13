@@ -44,6 +44,9 @@ from ai import plant_board  # noqa: E402
 
 failures = []
 T = "BOARD-TEST"
+#: A second workspace, so a receipt belonging to somebody else can be shown
+#: not to reach this board.
+OTHER = "BOARD-OTHER"
 DAY = date(2026, 10, 7)
 
 
@@ -58,8 +61,11 @@ def section(t):
 
 
 def wipe(db):
-    for M in (models.ProductionRecord, models.ToolAsset, models.PartSpec, models.Machine):
-        db.query(M).filter(M.tenant_code == T).delete()
+    # GRN lines before their notes and items: they carry the foreign keys.
+    for M in (models.GRNItem, models.GoodsReceiptNote, models.InventoryItem,
+              models.ProductionRecord, models.ToolAsset, models.PartSpec, models.Machine):
+        for tenant in (T, OTHER):
+            db.query(M).filter(M.tenant_code == tenant).delete()
     db.commit()
 
 
@@ -248,6 +254,99 @@ def main():
               str(mon["shift_rate_by_machine"]))
         check("monthly power and packing are unavailable too",
               mon["power"]["available"] is False and mon["packing"]["available"] is False)
+
+
+        section("14. MATERIAL RECEIVED: ITS OWN UNIT, NEVER ADDED TO A WEIGHT")
+        # Their sheet asks for RM addition beside RM consumption. Consumption is
+        # derived and always kilograms; a receipt is whatever the storekeeper
+        # booked it in. Adding bags to kilograms prints a number that is not a
+        # weight, so the two are only ever totalled where both are weights.
+        m = setup(db)
+        resin = models.InventoryItem(tenant_code=T, item_code="PP", item_name="PP H 110",
+                                     category="Raw", unit="kg", current_stock=0,
+                                     reorder_level=0, supplier="S")
+        bags = models.InventoryItem(tenant_code=T, item_code="MB", item_name="Masterbatch",
+                                    category="Raw", unit="bags", current_stock=0,
+                                    reorder_level=0, supplier="S")
+        db.add_all([resin, bags])
+        db.flush()
+        taken = models.GoodsReceiptNote(tenant_code=T, grn_no="G-1", supplier_name="S",
+                                        received_by="store", status="Accepted",
+                                        created_at=datetime(DAY.year, DAY.month, 6, 9, 0))
+        draft = models.GoodsReceiptNote(tenant_code=T, grn_no="G-2", supplier_name="S",
+                                        received_by="store", status="Draft",
+                                        created_at=datetime(DAY.year, DAY.month, 6, 9, 0))
+        db.add_all([taken, draft])
+        db.flush()
+        db.add(models.GRNItem(tenant_code=T, grn_id=taken.id, item_id=resin.id,
+                              ordered_qty=500, received_qty=500, accepted_qty=500))
+        db.add(models.GRNItem(tenant_code=T, grn_id=taken.id, item_id=bags.id,
+                              ordered_qty=4, received_qty=4, accepted_qty=4))
+        db.add(models.GRNItem(tenant_code=T, grn_id=draft.id, item_id=resin.id,
+                              ordered_qty=9999, received_qty=9999, accepted_qty=9999))
+        db.commit()
+        produce(db, m, 9, 10000)
+
+        mo = plant_board.month(db, T, DAY.year, DAY.month)
+        added = {a["material"]: a for a in mo["rm_added"]}
+        check("a receipt in kilograms carries a kilogram figure",
+              added["PP H 110"]["kg"] == 500.0 and added["PP H 110"]["unit"] == "kg",
+              str(added.get("PP H 110")))
+        check("a receipt in BAGS keeps its count and has NO kilogram figure",
+              added["Masterbatch"]["quantity"] == 4.0
+              and added["Masterbatch"]["kg"] is None,
+              str(added.get("Masterbatch")))
+        check("a DRAFT receipt is not on the floor and is not counted",
+              added["PP H 110"]["quantity"] == 500.0,
+              f"got {added['PP H 110']['quantity']}; the draft would make it 10499")
+        check("the daily series carries the weights only",
+              mo["rm_added_daily"] == [{"day": date(DAY.year, DAY.month, 6).isoformat(),
+                                        "kg": 500.0}],
+              str(mo["rm_added_daily"]))
+
+        section("15. USED AGAINST RECEIVED, AND HONEST ABOUT THE JOIN")
+        balance = {b["material"]: b for b in mo["rm_balance"]}
+        # 10,000 shots x 56 cavities x 0.33 g = 184.8 kg used against 500 received.
+        check("both sides sit on one row for the same material",
+              balance["PP H 110"]["consumed_kg"] == mo["rm_consumption"][0]["kg"]
+              and balance["PP H 110"]["added_kg"] == 500.0,
+              str(balance.get("PP H 110")))
+        check("a material received but never consumed says None, not 0",
+              balance["Masterbatch"]["consumed_kg"] is None
+              and balance["Masterbatch"]["added_qty"] == 4.0,
+              str(balance.get("Masterbatch")))
+        # "Nothing was received" and "received under a different name" are
+        # different facts, and this join cannot tell them apart.
+        wipe_grn = db.query(models.GRNItem).filter(models.GRNItem.tenant_code == T)
+        wipe_grn.delete()
+        db.commit()
+        mo2 = plant_board.month(db, T, DAY.year, DAY.month)
+        check("a material consumed but never received says None, not 0",
+              mo2["rm_balance"][0]["added_kg"] is None
+              and mo2["rm_balance"][0]["consumed_kg"] > 0,
+              str(mo2["rm_balance"][:1]))
+        check("...and nothing received leaves an empty list, not a zero row",
+              mo2["rm_added"] == [] and mo2["rm_added_daily"] == [],
+              str(mo2["rm_added"]))
+
+        section("16. ANOTHER WORKSPACE'S RECEIPTS ARE NOT ON THIS BOARD")
+        other = models.InventoryItem(tenant_code=OTHER, item_code="PP", item_name="PP H 110",
+                                     category="Raw", unit="kg", current_stock=0,
+                                     reorder_level=0, supplier="S")
+        db.add(other)
+        db.flush()
+        og = models.GoodsReceiptNote(tenant_code=OTHER, grn_no="G-X", supplier_name="S",
+                                     received_by="store", status="Accepted",
+                                     created_at=datetime(DAY.year, DAY.month, 6, 9, 0))
+        db.add(og)
+        db.flush()
+        db.add(models.GRNItem(tenant_code=OTHER, grn_id=og.id, item_id=other.id,
+                              ordered_qty=77777, received_qty=77777, accepted_qty=77777))
+        db.commit()
+        mine = plant_board.month(db, T, DAY.year, DAY.month)
+        check("the other workspace's 77,777 kg is nowhere in this month",
+              all(a["quantity"] != 77777.0 for a in mine["rm_added"]),
+              str(mine["rm_added"]))
 
         wipe(db)
     finally:

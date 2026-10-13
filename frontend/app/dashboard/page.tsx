@@ -85,6 +85,7 @@ import OperatorPerformanceCards from "../../components/OperatorPerformanceCards"
 import WipAgingCard from "../../components/WipAgingCard";
 import CsvExportsCard from "../../components/CsvExportsCard";
 import CsvImportButton from "../../components/CsvImportButton";
+import { GatewayBanner, MachineLinkBadge, useGatewayHealth } from "../../components/GatewayHealth";
 import TenantAdoptionCard from "../../components/TenantAdoptionCard";
 import BrandingSettingsCard from "../../components/BrandingSettingsCard";
 import BrandMark from "../../components/BrandMark";
@@ -244,6 +245,9 @@ export default function DashboardPage() {
   const [machines, setMachines] = useState<Machine[]>([]);
   const [downtimeLogs, setDowntimeLogs] = useState<DowntimeLog[]>([]);
   const [shifts, setShifts] = useState<Shift[]>([]);
+  // Can AMP see the plant at all? Polled on its own clock: a machine card
+  // that reads "Idle" while the gateway is dead is not idle, it is unknown.
+  const gatewayHealth = useGatewayHealth();
   const [activeView, setActiveView] = useState("mission");
   // Narrow-viewport nav: below 1180px the sidebar is off-canvas; the topbar
   // hamburger toggles it, and navigating closes it.
@@ -2463,6 +2467,7 @@ export default function DashboardPage() {
 
           <section className="mb-10">
             <h2 className="text-2xl font-semibold mb-4">Machine Status</h2>
+            <GatewayBanner health={gatewayHealth} />
 
             <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
               {machines.map((machine) => {
@@ -2477,15 +2482,21 @@ export default function DashboardPage() {
                   key={machine.id}
                   className="rounded-2xl bg-slate-900 border border-slate-800 p-5"
                 >
-                  <div className="flex items-center justify-between">
+                  <div className="flex items-center justify-between gap-2">
                     <h3 className="text-xl font-semibold">{machine.name}</h3>
-                    <span
-                      className={`text-xs px-3 py-1 rounded-full border ${getStatusStyle(
-                        machine.status
-                      )}`}
-                    >
-                      {machine.status}
-                    </span>
+                    <div className="flex items-center gap-2">
+                      {/* The LINK first, then the machine's own status. A
+                          "Running" pill on a machine AMP cannot reach is the
+                          stalest thing on the page. */}
+                      <MachineLinkBadge health={gatewayHealth} machineId={machine.id} />
+                      <span
+                        className={`text-xs px-3 py-1 rounded-full border ${getStatusStyle(
+                          machine.status
+                        )}`}
+                      >
+                        {machine.status}
+                      </span>
+                    </div>
                   </div>
 
                   <div className="mt-6">

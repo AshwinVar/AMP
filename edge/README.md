@@ -102,3 +102,7 @@ One ordinary foreground process — `systemd`, NSSM, Task Scheduler or Docker; s
 - a writable **local** directory for the queue file
 
 Nothing else, and nothing inbound.
+
+It also keeps a plain-English event log at `logs/amp-edge.log` beside the queue —
+one line per real event, in local time — read on the box with `python -m ampedge
+log gateway.yaml`. See [INSTALL.md](INSTALL.md#reading-the-plain-english-log).

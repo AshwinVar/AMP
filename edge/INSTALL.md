@@ -179,6 +179,30 @@ machine.
 
 ---
 
+## Reading the plain-English log
+
+Alongside the technical output, the gateway keeps a plain-English event log: one
+line per real event -- started, running, counts and their rate, lost the
+machine, cannot reach AMP, a machine quiet for too long -- in the PC's own local
+time. It lives at `logs/amp-edge.log` next to the queue db (configurable under
+the optional `log:` section in `gateway.yaml`), rotates at about 1 MB with a few
+backups, and is safe to leave running: if it ever cannot be written, the gateway
+carries on regardless.
+
+```bash
+python -m ampedge log gateway.yaml          # the last 50 lines
+python -m ampedge log gateway.yaml --follow # keep printing new ones
+```
+
+This is the log to read, or to send to AMP, when something looks wrong on the
+floor. The deeper technical detail (tracebacks, per-tag debug) stays in the
+system journal -- `journalctl -u amp-edge` on the Pi -- and is for whoever can
+SSH in. No service change is needed: the log is a file the gateway writes
+itself, so under systemd with `WorkingDirectory=/opt/amp-edge` it lands at
+`/opt/amp-edge/logs/amp-edge.log`.
+
+---
+
 ## Running it as a service
 
 The gateway is one ordinary foreground process. Use whatever the PC already has.

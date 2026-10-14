@@ -35,6 +35,7 @@ import sys
 import time
 
 from . import config as config_mod
+from . import eventlog as eventlog_mod
 from . import health as health_mod
 from . import normalizer as normalizer_mod
 from . import publisher as publisher_mod
@@ -407,6 +408,13 @@ def cmd_run(args):
     resolved = _load(args.config)
     logging.basicConfig(level=logging.DEBUG if args.verbose else logging.INFO,
                         format="%(asctime)s %(levelname)-7s %(message)s")
+    # The plain-English event log, started BEFORE the Gateway so its very first
+    # lines (startup, a restart gap detected at construction) have somewhere to
+    # go. Safe by construction: a logging failure degrades to a no-op and the
+    # gateway runs regardless. The technical logger above is untouched.
+    buffer_path = (resolved.get("buffer") or {}).get("path") or "amp-edge-queue.db"
+    if eventlog_mod.init(resolved.get("log") or {}, buffer_path):
+        print(f"Plain-English event log: {eventlog_mod.path()}")
     gateway = runner_mod.Gateway(resolved)
     return asyncio.run(_run(gateway, args))
 
@@ -430,11 +438,22 @@ async def _run(gateway, args):
         except (NotImplementedError, RuntimeError, ValueError):
             pass
 
+    last_verdict = [None]
+
     async def heartbeat():
         while True:
             await asyncio.sleep(args.health_every)
-            for line in health_mod.lines(gateway.health()):
+            report = gateway.health()
+            for line in health_mod.lines(report):
                 print(line)
+            # One plain-English status line into the event log, but only when the
+            # overall verdict CHANGES -- so steady streaming does not write the
+            # same sentence every minute, and a move to or from a fault is
+            # visible. health['say'] is already operator-ready, so reuse it.
+            verdict = report.get("verdict")
+            if verdict != last_verdict[0]:
+                last_verdict[0] = verdict
+                eventlog_mod.event(f"Status: {report.get('say')}")
 
     beat = asyncio.create_task(heartbeat())
     runner_task = asyncio.create_task(gateway.run())
@@ -453,7 +472,27 @@ async def _run(gateway, args):
             await runner_task
         except asyncio.CancelledError:
             pass
+        # Flush and stop the event-log writer thread LAST, so the "shutting down
+        # cleanly" line gateway.stop() just wrote is drained to disk before exit.
+        eventlog_mod.shutdown()
     return 0
+
+
+def cmd_log(args):
+    """Show the plain-English event log -- the operator's view, no journalctl.
+
+    Read-only. Resolves the same path the gateway writes to (the [log] section,
+    or the default beside the buffer db) and prints the tail, optionally
+    following new lines as `watch` does for counters.
+    """
+    resolved = _load(args.config)
+    log_cfg = resolved.get("log") or {}
+    if log_cfg.get("enabled", True) is False:
+        print("The event log is disabled in this config (log.enabled: false).")
+        return 0
+    buffer_path = (resolved.get("buffer") or {}).get("path") or "amp-edge-queue.db"
+    path = log_cfg.get("path") or eventlog_mod.default_path(buffer_path)
+    return eventlog_mod.tail(path, lines=args.lines, follow=args.follow)
 
 
 def cmd_diagnose(args):
@@ -520,6 +559,14 @@ def main(argv=None):
     p.add_argument("--verbose", action="store_true")
     p.add_argument("--health-every", type=float, default=60.0)
     p.set_defaults(func=cmd_run)
+
+    p = sub.add_parser("log", help="show the plain-English event log")
+    p.add_argument("config")
+    p.add_argument("--lines", type=int, default=50,
+                   help="how many trailing lines to show (default 50)")
+    p.add_argument("--follow", action="store_true",
+                   help="keep printing new lines as they are written")
+    p.set_defaults(func=cmd_log)
 
     p = sub.add_parser("diagnose", help="write a redacted bundle for a support ticket")
     p.add_argument("config")

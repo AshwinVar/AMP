@@ -13,6 +13,17 @@ editing a spec changed the row in place, last month's revenue would move because
 this month's price did, and a report already sent to a customer would stop
 reconciling. POST with a new `effective_from` supersedes; it does not overwrite.
 
+CORRECTING IS NOT SUPERSEDING, AND THEY NOW HAVE DIFFERENT VERBS. A SUPERSEDE is
+a real change from a date forward -- a new price, a cavity blocked this week --
+and stays a new row (POST), so the periods before it do not move. A CORRECTION is
+fixing what a row always SHOULD have said: a typo at setup, a price left blank, a
+cavity count keyed wrong. PUT updates that row in place and every chart reading
+it recomputes, because the figure it carried was simply wrong. DELETE removes a
+row entered by mistake -- a duplicate, a draft stranded when a revision landed on
+the wrong date -- which the "new row every time" rule otherwise kept forever.
+Both PUT and DELETE can restate a reported period, on purpose; that intent is the
+difference from the accidental restatement the effective dating guards against.
+
 WHAT IS REFUSED RATHER THAN COERCED. A weight of zero makes a month's material
 consumption vanish. A cycle time of zero makes the ideal rate infinite. Active
 cavities above total cavities is a typo that silently overstates output. Each is
@@ -152,6 +163,73 @@ def create_part_spec(body: dict, db: Session = Depends(_get_db),
                     f"{spec.effective_from}. Use a different date to supersede it."))
     db.refresh(spec)
     return _row(spec)
+
+
+@router.put("/part-specs/{spec_id}")
+def update_part_spec(spec_id: int, body: dict, db: Session = Depends(_get_db),
+                     current_user: dict = Depends(require_roles(["Admin"]))):
+    """CORRECT a spec in place -- a typo, a blank price, a cavity count keyed
+    wrong at setup. Unlike POST (which supersedes with a new dated row), this
+    fixes the row you clicked, and every chart that reads it recomputes -- the
+    whole point of a correction. A genuine change from a date forward is still a
+    POST with a new effective_from, which leaves the old row as the period's
+    fact. Omitted fields keep their current value."""
+    tenant = request_tenant(current_user)
+    spec = (db.query(models.PartSpec)
+              .filter(models.PartSpec.id == spec_id,
+                      models.PartSpec.tenant_code == tenant).first())
+    if spec is None:
+        raise HTTPException(status_code=404, detail="no such part spec in this workspace")
+    cavities = int(_positive(body.get("cavities", spec.cavities), "cavities"))
+    active = int(_positive(body.get("active_cavities", spec.active_cavities), "active_cavities"))
+    if active > cavities:
+        raise HTTPException(
+            status_code=400,
+            detail=(f"active_cavities ({active}) cannot exceed cavities ({cavities}) — "
+                    f"a mould cannot run more cavities than it has"))
+    spec.part_code = _text(body.get("part_code", spec.part_code), "part_code", 40)
+    spec.part_name = _text(body.get("part_name", spec.part_name), "part_name")
+    spec.material = _text(body.get("material", spec.material), "material")
+    spec.part_weight_g = _positive(body.get("part_weight_g", spec.part_weight_g), "part_weight_g")
+    spec.cavities = cavities
+    spec.active_cavities = active
+    spec.ideal_cycle_time_s = _positive(
+        body.get("ideal_cycle_time_s", spec.ideal_cycle_time_s), "ideal_cycle_time_s")
+    spec.price_per_piece = _positive(
+        body.get("price_per_piece", spec.price_per_piece), "price_per_piece", allow_zero=True)
+    if body.get("effective_from"):
+        spec.effective_from = _as_date(body.get("effective_from"), "effective_from")
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(
+            status_code=409,
+            detail=(f"another spec for {spec.part_code} already starts on "
+                    f"{spec.effective_from}. Pick a different date, or edit that row instead."))
+    db.refresh(spec)
+    return _row(spec)
+
+
+@router.delete("/part-specs/{spec_id}")
+def delete_part_spec(spec_id: int, db: Session = Depends(_get_db),
+                     current_user: dict = Depends(require_roles(["Admin"]))):
+    """Remove a spec entered by mistake -- a duplicate, or a draft stranded when a
+    revision landed on the wrong date. It does reach reported history: the board
+    reads whichever spec was in force for a past day, so removing a row changes
+    the figures for the period it covered. That is intended here -- a mistaken row
+    never should have shaped anything -- which is why it is Admin, and one row at
+    a time rather than a bulk delete."""
+    tenant = request_tenant(current_user)
+    spec = (db.query(models.PartSpec)
+              .filter(models.PartSpec.id == spec_id,
+                      models.PartSpec.tenant_code == tenant).first())
+    if spec is None:
+        raise HTTPException(status_code=404, detail="no such part spec in this workspace")
+    part_code = spec.part_code
+    db.delete(spec)
+    db.commit()
+    return {"deleted": spec_id, "part_code": part_code}
 
 
 @router.get("/tool-assignments")

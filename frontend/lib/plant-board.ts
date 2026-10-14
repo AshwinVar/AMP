@@ -131,6 +131,22 @@ export type PlantBoardMonth = {
   daily: MonthDay[];
   itemwise_production: { part: string; total: number; good: number }[];
   rm_consumption: { material: string; kg: number }[];
+  /** What was RECEIVED. `kg` is filled in only where the inventory item is
+   *  counted in kilograms — a receipt booked in bags is a count, and adding it
+   *  to a weight would print a number that is not a weight. */
+  rm_added: { material: string; quantity: number; unit: string; kg: number | null }[];
+  rm_added_daily: { day: string; kg: number }[];
+  /** Received against used, per material. Either side may be null: the two come
+   *  from different vocabularies (the spec's material, the storekeeper's item
+   *  name), and "not received" and "received under another name" are different
+   *  facts this join cannot tell apart. */
+  rm_balance: {
+    material: string;
+    consumed_kg: number | null;
+    added_kg: number | null;
+    added_qty: number | null;
+    added_unit: string | null;
+  }[];
   shift_rate_by_machine: { machine: string; revenue: number; rate_per_hour: number }[];
   total_rate_per_hour: number;
   total_revenue: number;
@@ -333,4 +349,15 @@ export function machineFromClick(entry: unknown): number | null {
     | null;
   const raw = node?.machine_id ?? node?.payload?.machine_id;
   return typeof raw === "number" && Number.isInteger(raw) && raw > 0 ? raw : null;
+}
+
+/** Total kilograms received, or null when nothing received was booked in
+ *  kilograms. Never 0: "nothing arrived" and "what arrived was counted in bags"
+ *  are different facts, and only one of them is a weight of nothing. */
+export function addedKgTotal(
+  rows: { kg: number | null }[],
+): number | null {
+  const weighed = rows.filter((r) => r.kg !== null);
+  if (!weighed.length) return null;
+  return Math.round(weighed.reduce((sum, r) => sum + (r.kg ?? 0), 0) * 1000) / 1000;
 }

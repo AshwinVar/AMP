@@ -49,6 +49,18 @@ gateway:
   id: gw-acme-plant1-03
   key_env: AMP_GATEWAY_KEY
 
+# THE PLAIN-ENGLISH EVENT LOG. Optional -- leave the whole section out and these
+# defaults apply. One human-readable line per real event (started, running,
+# counts, lost the machine, cannot reach AMP, a machine quiet too long), in the
+# Pi's local time, written to a rotating file. Read it on the box with
+# `python -m ampedge log <this file>` or `tail -f logs/amp-edge.log`; the deeper
+# technical detail still goes to the system journal (`journalctl -u amp-edge`).
+log:
+  path: ./logs/amp-edge.log   # default: a logs/ dir beside the queue db
+  max_bytes: 1000000          # rotate at ~1 MB
+  backup_count: 5             # keep 5 old files -> ~6 MB hard cap, total
+  enabled: true               # false silences ONLY this log, never the gateway
+
 machines:
   # ── Serial (RTU): one twisted pair daisy-chained down a row of presses ──
   #
@@ -58,6 +70,13 @@ machines:
   - name: PRESS-01
     protocol: modbus
     poll_interval: 2.0
+    # HOW LONG A MACHINE THAT WAS RUNNING MAY GO QUIET BEFORE A WARNING. Optional
+    # (default 1800s = 30 min). A pulse counter cannot tell a stopped machine
+    # from a sensor whose wire fell off -- both simply stop pulsing -- so after
+    # this long with no cycle the event log warns and names BOTH causes and the
+    # pin to check. Must be well above the adapter's idle_after_s (the Idle flip)
+    # or it would fire on an ordinary pause between shots.
+    prolonged_idle_after_s: 1800
     connection:
       serial_port: /dev/ttyUSB0     # COM3 on Windows
       baudrate: 9600

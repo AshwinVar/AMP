@@ -131,6 +131,31 @@ def validate(raw: dict) -> dict:
                             f"one name at one site are the same machine to AMP, and the second "
                             f"would overwrite the first.")
 
+    # THE PLAIN-ENGLISH EVENT LOG. Optional: an absent [log] section means
+    # defaults (a logs/ dir beside the buffer db, ~1MB rotation, kept). It is a
+    # file the gateway writes itself, so nothing here can keep it from starting
+    # -- a bad value is a collected problem, not a silent default, because a log
+    # that quietly wrote somewhere other than where the config said would be its
+    # own small lie.
+    log_cfg = raw.get("log") or {}
+    if not isinstance(log_cfg, dict):
+        problems.append("log: must be a section (path, max_bytes, backup_count, enabled), "
+                        "not a single value")
+        log_cfg = {}
+    else:
+        if log_cfg.get("path") is not None and not isinstance(log_cfg.get("path"), str):
+            problems.append("log.path must be a file path (a string), e.g. ./logs/amp-edge.log")
+        if log_cfg.get("enabled") is not None and not isinstance(log_cfg.get("enabled"), bool):
+            problems.append("log.enabled must be true or false")
+        mb = log_cfg.get("max_bytes")
+        if mb is not None and (not isinstance(mb, int) or isinstance(mb, bool) or mb <= 0):
+            problems.append("log.max_bytes must be a whole number of bytes greater than zero "
+                            "(the size each log file reaches before it rotates)")
+        bc = log_cfg.get("backup_count")
+        if bc is not None and (not isinstance(bc, int) or isinstance(bc, bool) or bc < 0):
+            problems.append("log.backup_count must be a whole number, zero or more "
+                            "(how many rotated files to keep)")
+
     if problems:
         raise ConfigError("; ".join(problems))
 
@@ -138,6 +163,7 @@ def validate(raw: dict) -> dict:
         "amp": dict(amp),
         "gateway": dict(gateway),
         "buffer": dict(raw.get("buffer") or {}),
+        "log": dict(log_cfg),
         "machines": resolved,
     }
 
@@ -283,6 +309,40 @@ def _machine(entry, i, problems) -> dict:
                                 f"perfectly")
                 ideal_cycle = None
 
+    # HOW LONG A MACHINE THAT WAS PRODUCING MAY GO QUIET BEFORE A WARNING.
+    #
+    # A pulse counter infers "running" ONLY from pulses: after idle_after_s with
+    # no pulse the machine reads Idle, and a genuinely stopped machine is
+    # indistinguishable from one whose sensor wire fell off (an open circuit
+    # throws nothing). This is the threshold above which the gateway stops
+    # trusting the silence and says so, naming BOTH possible causes. It must sit
+    # well above idle_after_s (the Running/Idle flip), or it would fire on an
+    # ordinary between-shots pause. Default 30 minutes.
+    idle_after_s = connection.get("idle_after_s")
+    prolonged_idle = entry.get("prolonged_idle_after_s")
+    if prolonged_idle is None:
+        prolonged_idle = 1800.0
+    else:
+        try:
+            prolonged_idle = float(prolonged_idle)
+        except (TypeError, ValueError):
+            problems.append(f"{where}.prolonged_idle_after_s is not a number")
+            prolonged_idle = 1800.0
+        else:
+            if prolonged_idle <= 0:
+                problems.append(f"{where}.prolonged_idle_after_s must be greater than zero")
+                prolonged_idle = 1800.0
+            elif idle_after_s is not None:
+                try:
+                    floor = float(idle_after_s)
+                except (TypeError, ValueError):
+                    floor = None
+                if floor is not None and prolonged_idle <= floor:
+                    problems.append(
+                        f"{where}.prolonged_idle_after_s ({prolonged_idle:g}s) must be well above "
+                        f"idle_after_s ({floor:g}s) -- below it the long-idle warning would fire "
+                        f"on an ordinary pause between shots")
+
     tags = entry.get("tags") or []
     mappings = []
     if not tags:
@@ -300,6 +360,7 @@ def _machine(entry, i, problems) -> dict:
         "poll_interval": poll,
         "ideal_cycle_time_seconds": ideal_cycle,
         "quality_unknown_is_good": quality_unknown,
+        "prolonged_idle_after_s": prolonged_idle,
         "tags": tags,
         "mappings": mappings,
     }

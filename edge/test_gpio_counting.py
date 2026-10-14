@@ -290,12 +290,19 @@ def test_an_explicit_zero_is_not_the_default():
 
 
 def test_an_absurd_debounce_is_refused():
-    for bad, want in ((5000, "swallow real cycles"), (-1, "negative")):
+    # 35000 ms is past the 30s ceiling; -1 is nonsense. Both refused, by name.
+    for bad, want in ((35000, "swallow real cycles"), (-1, "negative")):
         try:
             adapter(FakeLines(), debounce_ms=bad)
             check(f"debounce_ms={bad} is refused", False, "accepted")
         except base.AdapterError as exc:
             check(f"debounce_ms={bad} is refused", want in str(exc), str(exc))
+    # But a long-yet-legitimate lockout IS accepted: a chattering power-relay
+    # dry contact on a slow press needs ~15s to collapse its bounce into one
+    # count, and the old 2s ceiling wrongly refused exactly that.
+    a = adapter(FakeLines(), debounce_ms=15000)
+    check("a 15s debounce (chattering relay on a slow press) is accepted",
+          a.debounce_ms == 15000, str(a.debounce_ms))
 
 
 # ── 5. The config and the runner ─────────────────────────────────────

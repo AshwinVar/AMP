@@ -47,8 +47,12 @@ from .base import AdapterError, Reading, no_data
 #: on the Pi side -- but not zero: the machine's own relay still bounces.
 DEFAULT_DEBOUNCE_MS = 20.0
 
-#: Refuse a debounce long enough to swallow real cycles.
-MAX_DEBOUNCE_MS = 2000.0
+#: Refuse a debounce long enough to swallow real cycles. Generous, because a
+#: slow press (an injection moulder cycles every 15-30s) driving a chattering
+#: power relay legitimately needs a multi-second lockout to collapse contact
+#: bounce into one count. The limit only catches a debounce so long it would
+#: start eating a second genuine cycle.
+MAX_DEBOUNCE_MS = 30000.0
 
 #: A machine that has not completed a cycle in this long has stopped. Belongs
 #: to the machine; two to three times its cycle time is the rule.
@@ -104,13 +108,33 @@ class _Lines:
                 f"Raspberry Pi, and is the user in the 'gpio' group?")
 
     def claim(self, bcm, pull_up):
-        flags = (self._lgpio.SET_BIAS_PULL_UP if pull_up
-                 else self._lgpio.SET_BIAS_PULL_DOWN)
+        flags = self._pull_flag(pull_up)
         try:
             self._lgpio.gpio_claim_input(self._h, bcm, flags)
         except Exception as exc:         # noqa: BLE001
             raise AdapterError(f"could not claim BCM {bcm}: {exc}")
         self._claimed.append(bcm)
+
+    def _pull_flag(self, pull_up):
+        """The internal pull-resistor flag, whatever this lgpio build calls it.
+
+        lgpio renamed these constants between releases: older builds (e.g. the
+        one on Raspberry Pi OS Bullseye) expose SET_PULL_UP / SET_PULL_DOWN,
+        newer ones SET_BIAS_PULL_UP / SET_BIAS_PULL_DOWN. The same gateway wheel
+        has to run on both, so take whichever the installed lgpio actually has
+        rather than hard-coding one name and crashing at claim time on the other.
+        """
+        lg = self._lgpio
+        names = (("SET_BIAS_PULL_UP", "SET_PULL_UP") if pull_up
+                 else ("SET_BIAS_PULL_DOWN", "SET_PULL_DOWN"))
+        for name in names:
+            flag = getattr(lg, name, None)
+            if flag is not None:
+                return flag
+        raise AdapterError(
+            "this lgpio build exposes neither SET_BIAS_PULL_* nor SET_PULL_* "
+            "bias flags, so the input pull resistor cannot be set. Upgrade or "
+            "reinstall lgpio.")
 
     def read(self, bcm):
         return bool(self._lgpio.gpio_read(self._h, bcm))

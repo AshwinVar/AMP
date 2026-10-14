@@ -250,6 +250,10 @@ _ensure_column("work_orders", "material_state", "ALTER TABLE work_orders ADD COL
 _ensure_column("work_orders", "completed_at", "ALTER TABLE work_orders ADD COLUMN completed_at TIMESTAMP")
 _backfill_completed_at()
 _ensure_column("tenant_configs", "unit_value_gbp", "ALTER TABLE tenant_configs ADD COLUMN unit_value_gbp FLOAT")
+# The plant's own timezone (IANA name). The board buckets a day and its hours in
+# LOCAL time; the loading screen and every hourly figure read this column on the
+# first request, so a missing column would 500 the board on an existing DB.
+_ensure_column("tenant_configs", "timezone", "ALTER TABLE tenant_configs ADD COLUMN timezone VARCHAR")
 # A consent names the hosted provider it was given for (alembic 0012, ADR-0038).
 # Added at boot as well because the consent gate selects this column on every
 # Copilot request while a hosted key is configured; a missing column would be a

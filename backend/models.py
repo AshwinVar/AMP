@@ -663,6 +663,11 @@ class TenantConfig(Base):
     # read-model can value the OEE gap in money. NULL = unset (report units only,
     # never a made-up figure).
     unit_value_gbp = Column(Float, nullable=True)
+    # The plant's own timezone (an IANA name like "Asia/Kolkata"). The board
+    # buckets production by the hour and the day this names, not by UTC, which
+    # drew a 5pm IST shift at noon. NULL = UTC, which is exactly how every tenant
+    # behaved before this column existed.
+    timezone = Column(String, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
 
 

@@ -54,6 +54,13 @@ export const NAV_ITEMS: NavItem[] = [
   // CORE for the same reason (ADR-0021): where a factory accepts, rejects or
   // disputes a service contract that binds it. Admin and Supervisor only.
   { key: "contracts",      label: "Service Contracts",  icon: "§", module: "core" },
+  // CORE, and not the Admin pack. Every plan sells user seats -- Starter says
+  // "up to 5 users" on the pricing page -- so every plan needs the screen that
+  // creates them. The /users routes were never gated anyway (plan_gate builds
+  // its map from packs where `gated` is true, and admin is not one), so this
+  // opens no new access: it stops hiding a door that was never locked.
+  // Still Admin-only by ROLE, via ADMIN_ONLY_VIEWS below.
+  { key: "users",          label: "User Management",    icon: "◔", module: "core" },
   { key: "workorders",     label: "Work Orders",        icon: "▣", module: "operations" },
   { key: "planning",       label: "Production Plan",    icon: "▤", module: "operations" },
   { key: "scheduling",     label: "Scheduling",         icon: "◫", module: "operations" },
@@ -78,7 +85,6 @@ export const NAV_ITEMS: NavItem[] = [
   { key: "notifications",  label: "Notifications",      icon: "●", module: "intelligence" },
   { key: "documents",      label: "Documents",          icon: "▱", module: "admin" },
   { key: "saas",           label: "SaaS Admin",         icon: "◌", module: "admin" },
-  { key: "users",          label: "User Management",    icon: "◔", module: "admin" },
   { key: "costing",        label: "Costing",            icon: CURRENCY, module: "admin" },
   { key: "enterprise",     label: "Enterprise Polish",  icon: "◆", module: "admin" },
 ];

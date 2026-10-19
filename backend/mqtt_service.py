@@ -20,7 +20,7 @@ try:
     from live_ws import broadcast_live_event
 except Exception:
     async def broadcast_live_event(event):
-        log.info("Live WebSocket broadcast skipped:", event)
+        log.info("Live WebSocket broadcast skipped: %s", event)
 
 
 MQTT_BROKER = os.environ.get("MQTT_BROKER", "127.0.0.1")
@@ -90,9 +90,9 @@ def safe_broadcast(event: dict):
             loop.run_until_complete(broadcast_live_event(event))
             loop.close()
         except Exception as ws_error:
-            log.info("WebSocket broadcast error:", repr(ws_error))
+            log.info("WebSocket broadcast error: %s", repr(ws_error))
     except Exception as ws_error:
-        log.info("WebSocket broadcast error:", repr(ws_error))
+        log.info("WebSocket broadcast error: %s", repr(ws_error))
 
 
 def on_connect(client, userdata, flags, rc):
@@ -110,10 +110,10 @@ def on_message(client, userdata, msg):
 
     try:
         log.info("\nRAW MQTT MESSAGE RECEIVED")
-        log.info("Topic:", msg.topic)
+        log.info("Topic: %s", msg.topic)
 
         raw_payload = msg.payload.decode()
-        log.info("Payload:", raw_payload)
+        log.info("Payload: %s", raw_payload)
 
         payload = json.loads(raw_payload)
 
@@ -253,7 +253,7 @@ def on_message(client, userdata, msg):
 
     except Exception as e:
         db.rollback()
-        log.info("FastAPI MQTT service error:", repr(e))
+        log.info("FastAPI MQTT service error: %s", repr(e))
 
     finally:
         db.close()
@@ -269,7 +269,7 @@ def start_mqtt_service():
             client.connect(MQTT_BROKER, MQTT_PORT, 60)
             client.loop_forever()
         except Exception as e:
-            log.info("FastAPI MQTT connection error:", repr(e))
+            log.info("FastAPI MQTT connection error: %s", repr(e))
 
     thread = threading.Thread(target=run, daemon=True)
     thread.start()

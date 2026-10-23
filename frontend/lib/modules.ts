@@ -44,7 +44,9 @@ export const NAV_ITEMS: NavItem[] = [
   // target by the hour, material consumed, the rate a shift is running at. Those
   // are the same question asked four ways, so they belong on one page -- split
   // across tabs, nobody sees that a good hour and a cheap hour are the same hour.
-  { key: "plantboard",     label: "Plant Board",        icon: "▩", module: "core" },
+  // Per-customer: granted by putting "plantboard" in a tenant's
+  // enabled_modules, never bundled with a plan. See backend/modules.json.
+  { key: "plantboard",     label: "Plant Board",        icon: "▩", module: "plantboard" },
   { key: "trends",         label: "Trends",             icon: "▨", module: "core" },
   { key: "timeline",       label: "Timeline",           icon: "↔", module: "core" },
   // CORE, deliberately — not the Factory pack. This is where a customer sees
@@ -118,6 +120,14 @@ export const MODULE_CATALOG: ModuleInfo[] = [
     label: "Intelligence Pack",
     description: "IoT command center, AI-driven insights, executive OEE dashboards, and smart escalations.",
     tagline: "Data-driven decisions",
+    color: "amber",
+  },
+  {
+    key: "plantboard",
+    label: "Plant Board",
+    description:
+      "A full-screen shop-floor board of today's output, rate and energy. Built for one customer; granted per tenant, never bundled with a plan.",
+    tagline: "Per-customer; not sold in a plan",
     color: "amber",
   },
   {

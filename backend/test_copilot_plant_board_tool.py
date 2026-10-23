@@ -60,6 +60,8 @@ from ai import evidence as ev   # noqa: E402
 from ai import grounding        # noqa: E402
 from ai import plant_board      # noqa: E402
 from ai.tools import Principal, run_tool   # noqa: E402
+import module_manifest                     # noqa: E402
+import platform_routes                     # noqa: E402
 from currency import CURRENCY   # noqa: E402
 
 failures = []
@@ -144,6 +146,17 @@ def setup(db):
     produce(db, T, two, 9, 400)
     produce(db, T, two, 10, 400)
     produce(db, T, three, 9, 1000)
+    # THE BOARD IS A PER-CUSTOMER PACK (backend/modules.json carries it with
+    # `plans: []`), so the workspace it was built for is granted it BY HAND.
+    # Without this the Copilot tool is refused NOT_LICENSED -- the registry
+    # resolves a tool's pack from its `mirrors` route through the same manifest
+    # the API gate uses, so gating the route gated the tool with no extra
+    # wiring. That refusal is asserted at the end of this file.
+    for granted in (T, OTHER):
+        cfg = platform_routes.get_or_create_config(db, granted)
+        cfg.enabled_modules = module_manifest.plan_modules("enterprise") + ",plantboard"
+        db.commit()
+
     # Another workspace, same machine names, its own priced spec and its own
     # output. Nothing of it may appear on this tenant's board.
     other = machine(db, OTHER, "IMM-01")
@@ -287,6 +300,26 @@ def main():   # noqa: C901 - one section per pinned property, read top to bottom
         check("...and that tenant sees its own figure instead",
               facts_of(other)["board.parts"].value == 999999 * 56,
               str(facts_of(other)["board.parts"].value))
+
+        section("7b. A WORKSPACE NOT GRANTED THE PACK CANNOT ASK AT ALL")
+        # The board was built for one customer. modules.json carries it with
+        # `plans: []`, so no subscription provisions it -- and because the tool
+        # registry resolves a tool's pack from its `mirrors` route through the
+        # SAME manifest the API gate uses, gating the route gated the Copilot
+        # with no extra wiring. An ungranted workspace on the TOP plan is still
+        # refused.
+        stranger = "BOARDTOOL-UNLICENSED"
+        scfg = platform_routes.get_or_create_config(db, stranger)
+        scfg.enabled_modules = module_manifest.plan_modules("enterprise")
+        db.commit()
+        denied = ask(db, "get_plant_board", {"on": day}, tenant=stranger)
+        check("an enterprise workspace without the pack is refused",
+              denied.refused, f"{denied.state}: {denied.summary}")
+        check("...for NOT_LICENSED, not for missing data",
+              denied.state == ev.NOT_LICENSED, str(denied.state))
+        check("...and the refusal names the pack, not the customer",
+              "plant board" in denied.summary.lower()
+              and "shrinidhi" not in denied.summary.lower(), denied.summary)
 
         section("8. NOTHING SPECCED AT ALL: UNKNOWN EVERYWHERE, AND NO MONEY WORD")
         wipe(db)

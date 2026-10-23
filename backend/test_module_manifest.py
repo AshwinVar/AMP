@@ -30,6 +30,9 @@ _EXPECTED_ROUTES = {
     ("/analytics/ai-insights", "intelligence"), ("/copilot", "intelligence"),
     ("/insights", "intelligence"), ("/agent-actions", "intelligence"),
     ("/agent-roster", "intelligence"), ("/agent-policy", "intelligence"),
+    # A pack in no plan. It gates exactly like the others; what makes it
+    # per-customer is `plans: []`, asserted in its own test below.
+    ("/analytics/plant-board", "plantboard"),
 }
 
 
@@ -54,7 +57,7 @@ _EXPECTED_VIEWS = {
     # pack would leave the smallest customers, who are exactly the ones with
     # nobody on the floor to read a report, with the counts and none of the
     # pictures.
-    "plantboard": "core",
+    "plantboard": "plantboard",
     # CORE, deliberately (ADR-0017). This is where a customer sees and withdraws
     # what a machine's manufacturer may read about their shop floor, and a
     # consent control behind a paywall is not a consent control. Moving it into
@@ -128,9 +131,50 @@ def test_modules_endpoint_reflects_tenant_subscription():
 
     by = {p["id"]: p["enabled"] for p in res["packs"]}
     assert by == {"core": True, "operations": True, "factory": True,
-                  "intelligence": False, "admin": False}, by
+                  "intelligence": False, "admin": False,
+                  # A per-customer pack is OFF for a tenant that was not
+                  # explicitly granted it, however high their plan.
+                  "plantboard": False}, by
     assert res["plan"] == "growth" and res["tenant"] == "ACME"
     print("PASS GET /modules reflects the tenant's subscription (intelligence/admin off for Growth)")
+
+
+def test_a_per_customer_pack_is_granted_per_tenant_and_never_by_plan():
+    """The mechanism for a feature built for ONE customer.
+
+    The plant board was written for one plant. Before this it lived in `core`,
+    which is ungated and in every plan, so every tenant AMP ever signs would
+    have received it -- and its endpoint was not gated at all. A pack with
+    `plans: []` inverts that: nothing provisions it, and it arrives only when
+    its id is put in a tenant's enabled_modules by hand.
+    """
+    engine = create_engine("sqlite://", connect_args={"check_same_thread": False})
+    Base.metadata.create_all(engine)
+    db = sessionmaker(bind=engine)()
+
+    # The highest plan there is, applied the way the SaaS admin applies it.
+    top = platform_routes.get_or_create_config(db, "RICHCO")
+    top.plan = "enterprise"
+    top.enabled_modules = module_manifest.plan_modules("enterprise")
+    db.commit()
+    assert "plantboard" not in module_manifest.enabled_pack_ids(top.enabled_modules)
+
+    licensed = module_manifest.enabled_pack_ids(top.enabled_modules)
+    assert not module_manifest.pack_licensed("plantboard", licensed),         "an enterprise subscription must not reach a per-customer pack"
+
+    # The one tenant it was built for, granted by hand.
+    theirs = platform_routes.get_or_create_config(db, "SHRINIDHI")
+    theirs.plan = "starter"
+    theirs.enabled_modules = module_manifest.plan_modules("starter") + ",plantboard"
+    db.commit()
+    mine = module_manifest.enabled_pack_ids(theirs.enabled_modules)
+    assert module_manifest.pack_licensed("plantboard", mine),         "the tenant it was granted to must reach it, even on the cheapest plan"
+
+    # And the gate agrees, because both resolve through the same manifest.
+    assert plan_gate.pack_for_path("/analytics/plant-board") == "plantboard"
+    assert plan_gate.pack_for_path("/analytics/plant-board/month") == "plantboard"
+    assert not module_manifest.pack_licensed("plantboard", frozenset()),         "a per-customer pack must not be always-open"
+    print("PASS a per-customer pack is granted per tenant and never by plan")
 
 
 def test_plan_bundles_and_valid_pack_ids():
@@ -138,7 +182,12 @@ def test_plan_bundles_and_valid_pack_ids():
     assert b["starter"] == ["core"]
     assert b["growth"] == ["core", "operations", "factory"]
     assert set(b["enterprise"]) == {"core", "operations", "factory", "intelligence", "admin"}
-    assert module_manifest.valid_pack_ids() == {"core", "operations", "factory", "intelligence", "admin"}
+    assert module_manifest.valid_pack_ids() == {
+        "core", "operations", "factory", "intelligence", "admin", "plantboard"}
+    # THE POINT OF A PER-CUSTOMER PACK: it is in no plan's bundle, so no
+    # subscription -- not even enterprise or demo -- ever provisions it.
+    for plan, bundle in b.items():
+        assert "plantboard" not in bundle, (plan, bundle)
     print("PASS plan bundles + valid pack ids derive from the manifest")
 
 

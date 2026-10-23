@@ -225,14 +225,26 @@ def main():
                 # and this loop checks it leaks nothing and invents no provenance.
                 # That it writes nothing is test_copilot_actions.py section 1.
                 "draft_maintenance_task": {"machine": "CNC-01"}}
-    for name in sorted(REGISTRY):
-        for tenant in F.TENANTS:
-            p = Principal(tenant=tenant, role="Admin")
-            r = call(Session, p, name, args_for.get(name))
-            bad_prov = [f.key for f in r.facts if f.provenance not in ev.PROVENANCE]
-            check(f"{name} / {tenant}: runs, only its own data, known provenance",
-                  not r.refused and not leaks(r, tenant) and not bad_prov,
-                  f"state={r.state} leaks={leaks(r, tenant)} prov={bad_prov}")
+    # LICENSED FOR EVERYTHING, DELIBERATELY. This section asks whether a tool
+    # leaks another workspace's data or invents provenance -- licensing is
+    # section 4's question. Without this the tenants get a PLAN BUNDLE, and a
+    # per-customer pack (modules.json `plans: []`) belongs to no plan, so its
+    # tools would silently drop out of "EVERY TOOL" and stop being checked for
+    # leaks at all. The sweep must widen as the manifest does.
+    import module_manifest
+    _real_licensed = registry._licensed_packs
+    registry._licensed_packs = lambda tenant: module_manifest.valid_pack_ids()
+    try:
+        for name in sorted(REGISTRY):
+            for tenant in F.TENANTS:
+                p = Principal(tenant=tenant, role="Admin")
+                r = call(Session, p, name, args_for.get(name))
+                bad_prov = [f.key for f in r.facts if f.provenance not in ev.PROVENANCE]
+                check(f"{name} / {tenant}: runs, only its own data, known provenance",
+                      not r.refused and not leaks(r, tenant) and not bad_prov,
+                      f"state={r.state} leaks={leaks(r, tenant)} prov={bad_prov}")
+    finally:
+        registry._licensed_packs = _real_licensed
     # The same sentence as the rule copilot, for the same read-model.
     for pillar, tool in (("downtime", "get_downtime"), ("oee", "get_oee"), ("machines", "get_machine_status"),
                          ("cost", "get_financial_losses"), ("quality", "get_quality_summary"),

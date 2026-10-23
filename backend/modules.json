@@ -1,12 +1,7 @@
 {
   "_comment": "AMP module manifest — the SINGLE source of truth for the plug-and-play plugin system. Edit this file to add/remove a module (a view), change which routes a pack gates, or change which subscription plans include a pack. Both the backend plan-gate (plan_gate.py builds PATH_PACKS from `routes` where `gated` is true) and the GET /modules endpoint (which drives the frontend nav) read this file. A tenant only sees/uses a pack its subscription (TenantConfig.enabled_modules) lists. `gated`=false means the API never 403s the pack (core basics + account admin), matching plan_gate's always-open set. `plans` is which subscription tiers bundle the pack.",
   "version": 1,
-  "plans": [
-    "starter",
-    "growth",
-    "enterprise",
-    "demo"
-  ],
+  "plans": ["starter", "growth", "enterprise", "demo"],
   "packs": [
     {
       "id": "core",
@@ -15,64 +10,19 @@
       "tagline": "Included in every plan",
       "color": "blue",
       "gated": false,
-      "plans": [
-        "starter",
-        "growth",
-        "enterprise",
-        "demo"
-      ],
+      "plans": ["starter", "growth", "enterprise", "demo"],
       "routes": [],
       "views": [
-        {
-          "key": "mission",
-          "label": "Mission Control",
-          "icon": "❖"
-        },
-        {
-          "key": "overview",
-          "label": "Overview",
-          "icon": "⌂"
-        },
-        {
-          "key": "machines",
-          "label": "Machines",
-          "icon": "▦"
-        },
-        {
-          "key": "downtime",
-          "label": "Downtime",
-          "icon": "◷"
-        },
-        {
-          "key": "shifts",
-          "label": "Shifts",
-          "icon": "◴"
-        },
-        {
-          "key": "analytics",
-          "label": "Analytics",
-          "icon": "▧"
-        },
-        {
-          "key": "trends",
-          "label": "Trends",
-          "icon": "▨"
-        },
-        {
-          "key": "timeline",
-          "label": "Timeline",
-          "icon": "↔"
-        },
-        {
-          "key": "connected",
-          "label": "Connected Equipment",
-          "icon": "◈"
-        },
-        {
-          "key": "contracts",
-          "label": "Service Contracts",
-          "icon": "§"
-        }
+        {"key": "mission", "label": "Mission Control", "icon": "❖"},
+        {"key": "overview", "label": "Overview", "icon": "⌂"},
+        {"key": "machines", "label": "Machines", "icon": "▦"},
+        {"key": "downtime", "label": "Downtime", "icon": "◷"},
+        {"key": "shifts", "label": "Shifts", "icon": "◴"},
+        {"key": "analytics", "label": "Analytics", "icon": "▧"},
+        {"key": "trends", "label": "Trends", "icon": "▨"},
+        {"key": "timeline", "label": "Timeline", "icon": "↔"},
+        {"key": "connected", "label": "Connected Equipment", "icon": "◈"},
+        {"key": "contracts", "label": "Service Contracts", "icon": "§"}
       ]
     },
     {
@@ -82,45 +32,17 @@
       "tagline": "For production teams",
       "color": "green",
       "gated": true,
-      "plans": [
-        "growth",
-        "enterprise",
-        "demo"
-      ],
+      "plans": ["growth", "enterprise", "demo"],
       "routes": [
-        "/work-orders",
-        "/production-plans",
-        "/production-schedules",
-        "/analytics/production-schedules",
-        "/operator",
-        "/analytics/operator-terminal"
+        "/work-orders", "/production-plans", "/production-schedules",
+        "/analytics/production-schedules", "/operator", "/analytics/operator-terminal"
       ],
       "views": [
-        {
-          "key": "workorders",
-          "label": "Work Orders",
-          "icon": "▣"
-        },
-        {
-          "key": "planning",
-          "label": "Production Plan",
-          "icon": "▤"
-        },
-        {
-          "key": "scheduling",
-          "label": "Scheduling",
-          "icon": "◫"
-        },
-        {
-          "key": "operator",
-          "label": "Operator Terminal",
-          "icon": "▶"
-        },
-        {
-          "key": "orders",
-          "label": "Orders & Dispatch",
-          "icon": "⇄"
-        }
+        {"key": "workorders", "label": "Work Orders", "icon": "▣"},
+        {"key": "planning", "label": "Production Plan", "icon": "▤"},
+        {"key": "scheduling", "label": "Scheduling", "icon": "◫"},
+        {"key": "operator", "label": "Operator Terminal", "icon": "▶"},
+        {"key": "orders", "label": "Orders & Dispatch", "icon": "⇄"}
       ]
     },
     {
@@ -130,61 +52,20 @@
       "tagline": "Full shopfloor visibility",
       "color": "purple",
       "gated": true,
-      "plans": [
-        "growth",
-        "enterprise",
-        "demo"
-      ],
+      "plans": ["growth", "enterprise", "demo"],
       "routes": [
-        "/maintenance",
-        "/quality",
-        "/inventory",
-        "/suppliers",
-        "/purchase-orders",
-        "/twin-overlay",
-        "/machine-health",
-        "/remnants",
-        "/issue-slips",
-        "/grns",
-        "/cycle-counts",
-        "/bom"
+        "/maintenance", "/quality", "/inventory", "/suppliers", "/purchase-orders",
+        "/twin-overlay", "/machine-health", "/remnants", "/issue-slips", "/grns",
+        "/cycle-counts", "/bom"
       ],
       "views": [
-        {
-          "key": "maintenance_ai",
-          "label": "Maintenance AI",
-          "icon": "◇"
-        },
-        {
-          "key": "cmms",
-          "label": "CMMS",
-          "icon": "⚙"
-        },
-        {
-          "key": "quality",
-          "label": "Quality",
-          "icon": "✓"
-        },
-        {
-          "key": "inventory",
-          "label": "Inventory",
-          "icon": "▥"
-        },
-        {
-          "key": "purchasing",
-          "label": "Purchasing",
-          "icon": "◈"
-        },
-        {
-          "key": "digitaltwin",
-          "label": "Digital Twin",
-          "icon": "◎"
-        },
-        {
-          "key": "machinehealth",
-          "label": "Machine Health",
-          "icon": "♥"
-        }
+        {"key": "maintenance_ai", "label": "Maintenance AI", "icon": "◇"},
+        {"key": "cmms", "label": "CMMS", "icon": "⚙"},
+        {"key": "quality", "label": "Quality", "icon": "✓"},
+        {"key": "inventory", "label": "Inventory", "icon": "▥"},
+        {"key": "purchasing", "label": "Purchasing", "icon": "◈"},
+        {"key": "digitaltwin", "label": "Digital Twin", "icon": "◎"},
+        {"key": "machinehealth", "label": "Machine Health", "icon": "♥"}
       ]
     },
     {
@@ -194,73 +75,23 @@
       "tagline": "Data-driven decisions",
       "color": "amber",
       "gated": true,
-      "plans": [
-        "enterprise",
-        "demo"
-      ],
+      "plans": ["enterprise", "demo"],
       "routes": [
-        "/iot",
-        "/analytics/iot-command",
-        "/industrial",
-        "/ai",
-        "/analytics/ai-insights",
-        "/copilot",
-        "/insights",
-        "/agent-actions",
-        "/agent-roster",
-        "/agent-policy"
+        "/iot", "/analytics/iot-command", "/industrial", "/ai",
+        "/analytics/ai-insights", "/copilot", "/insights", "/agent-actions",
+        "/agent-roster", "/agent-policy"
       ],
       "views": [
-        {
-          "key": "iot",
-          "label": "IoT Command",
-          "icon": "◉"
-        },
-        {
-          "key": "connectivity",
-          "label": "Connectivity",
-          "icon": "⇄"
-        },
-        {
-          "key": "ai",
-          "label": "AI Insights",
-          "icon": "✦"
-        },
-        {
-          "key": "copilot",
-          "label": "AI Copilot",
-          "icon": "✸"
-        },
-        {
-          "key": "inbox",
-          "label": "Inbox",
-          "icon": "✉"
-        },
-        {
-          "key": "agentactivity",
-          "label": "Agent Activity",
-          "icon": "⊙"
-        },
-        {
-          "key": "roi",
-          "label": "AI Impact",
-          "icon": "◊"
-        },
-        {
-          "key": "executive",
-          "label": "Executive OEE",
-          "icon": "▰"
-        },
-        {
-          "key": "escalations",
-          "label": "Escalations",
-          "icon": "!"
-        },
-        {
-          "key": "notifications",
-          "label": "Notifications",
-          "icon": "●"
-        }
+        {"key": "iot", "label": "IoT Command", "icon": "◉"},
+        {"key": "connectivity", "label": "Connectivity", "icon": "⇄"},
+        {"key": "ai", "label": "AI Insights", "icon": "✦"},
+        {"key": "copilot", "label": "AI Copilot", "icon": "✸"},
+        {"key": "inbox", "label": "Inbox", "icon": "✉"},
+        {"key": "agentactivity", "label": "Agent Activity", "icon": "⊙"},
+        {"key": "roi", "label": "AI Impact", "icon": "◊"},
+        {"key": "executive", "label": "Executive OEE", "icon": "▰"},
+        {"key": "escalations", "label": "Escalations", "icon": "!"},
+        {"key": "notifications", "label": "Notifications", "icon": "●"}
       ]
     },
     {
@@ -271,15 +102,9 @@
       "color": "amber",
       "gated": true,
       "plans": [],
-      "routes": [
-        "/analytics/plant-board"
-      ],
+      "routes": ["/analytics/plant-board"],
       "views": [
-        {
-          "key": "plantboard",
-          "label": "Plant Board",
-          "icon": "▩"
-        }
+        {"key": "plantboard", "label": "Plant Board", "icon": "▩"}
       ]
     },
     {
@@ -289,37 +114,14 @@
       "tagline": "For management & compliance",
       "color": "red",
       "gated": false,
-      "plans": [
-        "enterprise",
-        "demo"
-      ],
+      "plans": ["enterprise", "demo"],
       "routes": [],
       "views": [
-        {
-          "key": "documents",
-          "label": "Documents",
-          "icon": "▱"
-        },
-        {
-          "key": "saas",
-          "label": "SaaS Admin",
-          "icon": "◌"
-        },
-        {
-          "key": "users",
-          "label": "User Management",
-          "icon": "◔"
-        },
-        {
-          "key": "costing",
-          "label": "Costing",
-          "icon": "₹"
-        },
-        {
-          "key": "enterprise",
-          "label": "Enterprise Polish",
-          "icon": "◆"
-        }
+        {"key": "documents", "label": "Documents", "icon": "▱"},
+        {"key": "saas", "label": "SaaS Admin", "icon": "◌"},
+        {"key": "users", "label": "User Management", "icon": "◔"},
+        {"key": "costing", "label": "Costing", "icon": "₹"},
+        {"key": "enterprise", "label": "Enterprise Polish", "icon": "◆"}
       ]
     }
   ]

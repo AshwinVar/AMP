@@ -243,6 +243,26 @@ def _row(resp, case_id, tenant, role, split, acceptable=None, fact_keys=(), ques
 
 
 def run(Session, llm=None, label=None, roles=C.ROLES) -> Report:
+    # THE FIXTURE TENANTS ARE LICENSED FOR EVERY PACK THE MANIFEST KNOWS.
+    #
+    # This harness measures whether an ANSWER is grounded, not whether a
+    # workspace bought a module. Left to the real lookup the fixtures get a plan
+    # BUNDLE, and a per-customer pack (modules.json `plans: []`) belongs to no
+    # plan — so its tools would answer NOT LICENSED and every case that reads
+    # them would score as a hallucination rather than as unlicensed. Licensing
+    # here keeps the eval measuring the thing it is for, and keeps it widening
+    # automatically as the manifest does.
+    import module_manifest
+    from ai.tools import registry as _registry
+    _real_licensed = _registry._licensed_packs
+    _registry._licensed_packs = lambda tenant: module_manifest.valid_pack_ids()
+    try:
+        return _run(Session, llm=llm, label=label, roles=roles)
+    finally:
+        _registry._licensed_packs = _real_licensed
+
+
+def _run(Session, llm=None, label=None, roles=C.ROLES) -> Report:
     report = Report(label or (getattr(llm, "name", None) or "AMP rules (no model)"))
     for tenant in F.TENANTS:
         admin = Principal(tenant=tenant, role="Admin", username=f"{tenant.lower()}-admin")

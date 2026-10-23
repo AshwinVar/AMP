@@ -60,6 +60,8 @@ from ai import evidence as ev   # noqa: E402
 from ai import grounding        # noqa: E402
 from ai import plant_board      # noqa: E402
 from ai.tools import Principal, run_tool   # noqa: E402
+import module_manifest                     # noqa: E402
+from ai.tools import registry as tool_registry   # noqa: E402
 from currency import CURRENCY   # noqa: E402
 
 failures = []
@@ -169,6 +171,21 @@ def unknown(f):
 def main():   # noqa: C901 - one section per pinned property, read top to bottom
     models.Base.metadata.create_all(bind=database.engine)
     db = database.SessionLocal()
+
+    # THE BOARD IS A PER-CUSTOMER PACK (modules.json carries it with
+    # `plans: []`), so the workspaces it was built for are licensed here and a
+    # stranger is not. Bound through registry._licensed_packs rather than by
+    # writing a TenantConfig, because plan_gate does `from database import
+    # SessionLocal` at IMPORT: standalone that is this suite's database, but in
+    # the single-process coverage run it is whatever was bound first, so a real
+    # row written here is invisible to the reader and every board fact vanishes.
+    # The indirection exists for this ("so a test can bind it to its own
+    # in-memory database").
+    _granted = frozenset({T, OTHER})
+    _plan_only = module_manifest.enabled_pack_ids(module_manifest.plan_modules("enterprise"))
+    _real_licensed = tool_registry._licensed_packs
+    tool_registry._licensed_packs = (
+        lambda tenant: module_manifest.valid_pack_ids() if tenant in _granted else _plan_only)
     try:
         setup(db)
         day = DAY.isoformat()
@@ -287,6 +304,23 @@ def main():   # noqa: C901 - one section per pinned property, read top to bottom
         check("...and that tenant sees its own figure instead",
               facts_of(other)["board.parts"].value == 999999 * 56,
               str(facts_of(other)["board.parts"].value))
+
+        section("7b. A WORKSPACE NOT GRANTED THE PACK CANNOT ASK AT ALL")
+        # The board was built for one customer. modules.json carries it with
+        # `plans: []`, so no subscription provisions it -- and because the tool
+        # registry resolves a tool's pack from its `mirrors` route through the
+        # SAME manifest the API gate uses, gating the route gated the Copilot
+        # with no extra wiring. An ungranted workspace on the TOP plan is still
+        # refused.
+        stranger = "BOARDTOOL-UNLICENSED"   # enterprise, but not granted the pack
+        denied = ask(db, "get_plant_board", {"on": day}, tenant=stranger)
+        check("an enterprise workspace without the pack is refused",
+              denied.refused, f"{denied.state}: {denied.summary}")
+        check("...for NOT_LICENSED, not for missing data",
+              denied.state == ev.NOT_LICENSED, str(denied.state))
+        check("...and the refusal names the pack, not the customer",
+              "plant board" in denied.summary.lower()
+              and "shrinidhi" not in denied.summary.lower(), denied.summary)
 
         section("8. NOTHING SPECCED AT ALL: UNKNOWN EVERYWHERE, AND NO MONEY WORD")
         wipe(db)
@@ -473,6 +507,7 @@ def main():   # noqa: C901 - one section per pinned property, read top to bottom
               grounding.check(full.summary, full.to_dict()["facts"]).passed, full.summary)
         wipe(db)
     finally:
+        tool_registry._licensed_packs = _real_licensed
         db.close()
 
 

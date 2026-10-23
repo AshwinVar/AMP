@@ -19,7 +19,6 @@
         {"key": "downtime", "label": "Downtime", "icon": "◷"},
         {"key": "shifts", "label": "Shifts", "icon": "◴"},
         {"key": "analytics", "label": "Analytics", "icon": "▧"},
-        {"key": "plantboard", "label": "Plant Board", "icon": "▩"},
         {"key": "trends", "label": "Trends", "icon": "▨"},
         {"key": "timeline", "label": "Timeline", "icon": "↔"},
         {"key": "connected", "label": "Connected Equipment", "icon": "◈"},
@@ -93,6 +92,19 @@
         {"key": "executive", "label": "Executive OEE", "icon": "▰"},
         {"key": "escalations", "label": "Escalations", "icon": "!"},
         {"key": "notifications", "label": "Notifications", "icon": "●"}
+      ]
+    },
+    {
+      "id": "plantboard",
+      "label": "Plant Board",
+      "description": "A full-screen shop-floor board of today's output, rate and energy. Built for one customer; granted per tenant, never bundled with a plan.",
+      "tagline": "Per-customer; not sold in a plan",
+      "color": "amber",
+      "gated": true,
+      "plans": [],
+      "routes": ["/analytics/plant-board"],
+      "views": [
+        {"key": "plantboard", "label": "Plant Board", "icon": "▩"}
       ]
     },
     {

@@ -367,6 +367,79 @@ def day(db, tenant, on: date):
     }
 
 
+#: Units that ARE kilograms, written out because `InventoryItem.unit` is free
+#: text a person typed. Anything else is a count of something -- bags, drums,
+#: pieces -- and must never be added to a weight.
+KG_UNITS = frozenset({"kg", "kgs", "kilo", "kilos", "kilogram", "kilograms"})
+
+
+def rm_added(db, tenant, start: datetime, end: datetime) -> list:
+    """Material RECEIVED in the window, from goods receipts that were taken in.
+
+    WHY THIS IS NOT SIMPLY ADDED TO CONSUMPTION. Consumption is always kilograms
+    because it is DERIVED: parts x the spec's part weight. A receipt is whatever
+    the storekeeper booked it in, and `InventoryItem.unit` is free text -- a
+    moulder books resin in bags as often as in kilograms. Adding the two would
+    put bags into a kilogram total and print a number that is not a weight. So
+    every material is reported in ITS OWN unit, and `kg` is filled in only where
+    that unit says kilograms.
+
+    Draft receipts are excluded: material nobody has accepted is not on the
+    floor yet. `accepted_qty` is the quantity taken in, already net of whatever
+    was rejected at inspection.
+    """
+    rows = (db.query(models.GRNItem, models.InventoryItem, models.GoodsReceiptNote)
+              .join(models.GoodsReceiptNote, models.GRNItem.grn_id == models.GoodsReceiptNote.id)
+              .join(models.InventoryItem, models.GRNItem.item_id == models.InventoryItem.id)
+              .filter(models.GRNItem.tenant_code == tenant,
+                      models.GoodsReceiptNote.tenant_code == tenant,
+                      models.InventoryItem.tenant_code == tenant,
+                      models.GoodsReceiptNote.status != "Draft",
+                      models.GoodsReceiptNote.created_at >= start,
+                      models.GoodsReceiptNote.created_at < end)
+              .all())
+    totals, per_day = defaultdict(float), defaultdict(float)
+    for line, item, grn in rows:
+        qty = float(line.accepted_qty or 0)
+        unit = (item.unit or "").strip()
+        totals[(item.item_name, unit)] += qty
+        # Only weights go on the daily series. A day's bar that mixed 400 kg and
+        # 6 bags would be a number with no unit.
+        if unit.lower() in KG_UNITS and grn.created_at:
+            per_day[grn.created_at.date()] += qty
+    out = []
+    for (name, unit), qty in sorted(totals.items(), key=lambda kv: -kv[1]):
+        out.append({"material": name, "quantity": round(qty, 3), "unit": unit or "(no unit)",
+                    "kg": round(qty, 3) if unit.lower() in KG_UNITS else None})
+    daily = [{"day": d.isoformat(), "kg": round(k, 3)} for d, k in sorted(per_day.items())]
+    return out, daily
+
+
+def rm_balance(consumed: list, added: list) -> list:
+    """Received against used, per material, and honest about the join.
+
+    The two come from different vocabularies: consumption is keyed by
+    `PartSpec.material` (what the mould is fed) and a receipt by
+    `InventoryItem.item_name` (what the storekeeper books). They are matched on
+    the name, case- and space-insensitively, and a material on only one side
+    keeps a row with the other side None -- never zero, because "nothing was
+    received" and "received under a different name" are different facts and
+    this join cannot tell them apart.
+    """
+    key = lambda s: " ".join((s or "").split()).lower()    # noqa: E731
+    rows = {}
+    for c in consumed:
+        rows[key(c["material"])] = {"material": c["material"], "consumed_kg": c["kg"],
+                                    "added_kg": None, "added_qty": None, "added_unit": None}
+    for a in added:
+        row = rows.setdefault(key(a["material"]),
+                              {"material": a["material"], "consumed_kg": None,
+                               "added_kg": None, "added_qty": None, "added_unit": None})
+        row["added_kg"], row["added_qty"], row["added_unit"] = a["kg"], a["quantity"], a["unit"]
+    return sorted(rows.values(),
+                  key=lambda r: -((r["consumed_kg"] or 0) + (r["added_kg"] or 0)))
+
+
 def month(db, tenant, year: int, mon: int):
     """The monthly tables, from the same inputs as the daily board."""
     start = datetime(year, mon, 1)
@@ -448,13 +521,23 @@ def month(db, tenant, year: int, mon: int):
               "revenue": round(money_by_day[d], 2) if d in money_by_day else None}
              for d in sorted(parts_by_day)]
 
+    received, received_daily = rm_added(db, tenant, start, end)
+    consumption = [{"material": mat, "kg": round(kg, 3)}
+                   for mat, kg in sorted(by_material.items(), key=lambda kv: -kv[1])]
+
     return {
         "year": year, "month": mon,
         "daily": daily,
         "itemwise_production": [{"part": p, "total": t, "good": good_by_part[p]}
                                 for p, t in sorted(by_part.items(), key=lambda kv: -kv[1])],
-        "rm_consumption": [{"material": mat, "kg": round(kg, 3)}
-                           for mat, kg in sorted(by_material.items(), key=lambda kv: -kv[1])],
+        "rm_consumption": consumption,
+        # What came IN, against what went out. Their sheet asks for both, and a
+        # consumption figure with no receipts beside it cannot answer the
+        # question anybody actually has: are we getting through more than we are
+        # buying. Reported in each item's own unit -- see rm_added.
+        "rm_added": received,
+        "rm_added_daily": received_daily,
+        "rm_balance": rm_balance(consumption, received),
         "shift_rate_by_machine": machine_rates,
         "total_rate_per_hour": round(sum(r["rate_per_hour"] for r in machine_rates), 2),
         "total_revenue": round(sum(r["revenue"] for r in machine_rates), 2),

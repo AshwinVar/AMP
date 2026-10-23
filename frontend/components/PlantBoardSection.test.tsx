@@ -80,6 +80,10 @@ function month(over: Partial<PlantBoardMonth> = {}): PlantBoardMonth {
     year: 2026, month: 10,
     itemwise_production: [{ part: "Ele clip", total: 432000, good: 428000 }],
     rm_consumption: [{ material: "PP H 110", kg: 142.56 }],
+    rm_added: [],
+    rm_added_daily: [],
+    rm_balance: [{ material: "PP H 110", consumed_kg: 142.56, added_kg: null,
+                   added_qty: null, added_unit: null }],
     shift_rate_by_machine: [{ machine: "IMM-01", revenue: 1400000, rate_per_hour: 1882 }],
     total_rate_per_hour: 1882,
     total_revenue: 1400000,
@@ -196,5 +200,62 @@ describe("when the request fails", () => {
     render(<PlantBoardSection isAdmin />);
     await screen.findByText("the workspace has no machines");
     expect(screen.getByText("Try again")).toBeTruthy();
+  });
+});
+
+/**
+ * The two items from the customer's sheet that the board could not answer:
+ * what material came IN, and the plant's own shift-hour rate.
+ */
+describe("raw material: used and received", () => {
+  it("keeps a receipt booked in bags out of the kilogram total", async () => {
+    serve(day(), month({
+      rm_added: [
+        { material: "PP H 110", quantity: 500, unit: "kg", kg: 500 },
+        { material: "Masterbatch", quantity: 4, unit: "bags", kg: null },
+      ],
+      rm_balance: [
+        { material: "PP H 110", consumed_kg: 142.56, added_kg: 500,
+          added_qty: 500, added_unit: "kg" },
+        { material: "Masterbatch", consumed_kg: null, added_kg: null,
+          added_qty: 4, added_unit: "bags" },
+      ],
+    }));
+    render(<PlantBoardSection isAdmin={false} />);
+    // 500 kg received. The 4 bags are a COUNT; adding them would print a
+    // number that is not a weight.
+    await screen.findByText(/500 kg received/);
+    expect(screen.getByText(/Masterbatch 4 bags/)).toBeTruthy();
+    expect(screen.queryByText(/504/)).toBeNull();
+  });
+
+  it("says so when nothing received was a weight", async () => {
+    serve(day(), month({
+      rm_added: [{ material: "Masterbatch", quantity: 4, unit: "bags", kg: null }],
+      rm_balance: [{ material: "Masterbatch", consumed_kg: null, added_kg: null,
+                     added_qty: 4, added_unit: "bags" }],
+    }));
+    render(<PlantBoardSection isAdmin={false} />);
+    // Not "0 kg received": nothing arrived and what arrived was counted in
+    // bags are different facts.
+    await screen.findByText(/nothing received was booked in kilograms/);
+    expect(screen.queryByText(/0 kg received/)).toBeNull();
+  });
+});
+
+describe("the plant's shift-hour rate", () => {
+  it("is shown, not only the revenue beside it", async () => {
+    serve(day(), month());
+    render(<PlantBoardSection isAdmin={false} />);
+    // total_rate_per_hour has been computed and returned since the board
+    // shipped; the card printed the revenue and never the rate.
+    await screen.findByText(/₹1,882\/hr/);
+  });
+
+  it("still groups the money in lakhs", async () => {
+    serve(day(), month());
+    render(<PlantBoardSection isAdmin={false} />);
+    await screen.findByText(/₹14,00,000/);
+    expect(screen.queryByText(/1,400,000/)).toBeNull();
   });
 });

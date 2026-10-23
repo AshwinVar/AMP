@@ -95,7 +95,13 @@ overrides do.
 7. **Networking → TCP Proxy → port 8883.** Never 1883: the plaintext listener
    must stay on the private network. Railway assigns a `*.proxy.rlwy.net`
    hostname and a port once you deploy.
-8. Set `MQTT_TLS_SAN` to that hostname and deploy again. The broker generates
+8. Set `MQTT_TLS_SAN` and deploy again. **List a hostname you own first** —
+   `mqtt.marx8.com,xxx.proxy.rlwy.net` — and point that name at this service
+   with a CNAME. A gateway that dials the host's generated hostname has to be
+   VISITED to move it; one that dials ours moves with a DNS record (ADR-0042).
+   Names are ADDED to this list, never swapped: the certificate is reissued for
+   the whole list under the same CA, so every already-commissioned gateway keeps
+   working and none needs a new `ca.crt`. The broker generates
    its CA on the first run and prints `ca.crt` to the log.
 
 ### Why no healthcheck
@@ -120,7 +126,7 @@ the startup log because a container with no shell has no other way out.
 
 | Variable | Value |
 |---|---|
-| `MQTT_TLS_SAN` | the hostname gateways dial, e.g. `xxx.proxy.rlwy.net`. Comma-separated for several. **Unset ⇒ no TLS listener at all**, which is the safe default |
+| `MQTT_TLS_SAN` | every hostname gateways may dial, comma-separated. **Put a name YOU own first** (e.g. `mqtt.marx8.com`), and keep the host's generated name in the list as a fallback — see ADR-0042. **Unset ⇒ no TLS listener at all**, which is the safe default |
 
 The proxy points at **8883**, never 1883. The plaintext listener stays on the
 private network where only the AMP backend can reach it; exposing it would put

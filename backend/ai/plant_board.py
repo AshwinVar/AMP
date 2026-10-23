@@ -43,7 +43,8 @@ output would restate a month already reported, so every lookup is as-of.
 """
 import calendar
 from collections import defaultdict
-from datetime import date, datetime, time, timedelta
+from datetime import date, datetime, time, timedelta, timezone as _timezone
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import models
 
@@ -83,7 +84,44 @@ NO_ENERGY = (
     "plant total allocated by runtime.")
 
 
-def _energy_hours(records, hours):
+#: The timezone a tenant's board buckets by when none is configured. UTC keeps
+#: the exact pre-timezone behaviour for every tenant that never sets one, so this
+#: change is inert until a plant declares where it is.
+DEFAULT_TZ = "UTC"
+
+
+def tenant_zone(db, tenant):
+    """The plant's own timezone, as a ZoneInfo.
+
+    created_at is stored in UTC. Bucketing it by the UTC hour drew a 5pm IST
+    shift at noon -- the board showed the wrong hour and, within 5.5 hours of
+    local midnight, the wrong DAY. The hour and the day a chart reports have to
+    be the ones a person on that floor lived, which means the tenant's own zone.
+
+    Falls back to UTC when none is set or the name is not a real zone, which is
+    exactly what every tenant saw before this column existed.
+    """
+    cfg = (db.query(models.TenantConfig)
+             .filter(models.TenantConfig.tenant_code == tenant).first())
+    name = (getattr(cfg, "timezone", None) or DEFAULT_TZ) if cfg else DEFAULT_TZ
+    try:
+        return ZoneInfo(name)
+    except (ZoneInfoNotFoundError, ValueError):
+        return ZoneInfo(DEFAULT_TZ)
+
+
+def _local(dt, zone):
+    """A naive-UTC created_at as an aware datetime in the plant's zone."""
+    return dt.replace(tzinfo=_timezone.utc).astimezone(zone)
+
+
+def _utc_naive(local_dt):
+    """An aware local datetime back to naive UTC, to compare with created_at
+    (which is naive and in UTC) in a query window."""
+    return local_dt.astimezone(_timezone.utc).replace(tzinfo=None)
+
+
+def _energy_hours(records, hours, zone):
     """Hourly kWh, or None when nothing in the window measured any.
 
     NULL IS NOT ZERO, and the difference is the whole point of this function.
@@ -106,8 +144,9 @@ def _energy_hours(records, hours):
     for r in measured:
         if not r.created_at:
             continue
-        by_hour[r.created_at.hour] += float(r.energy_kwh)
-        seen.add(r.created_at.hour)
+        h = _local(r.created_at, zone).hour
+        by_hour[h] += float(r.energy_kwh)
+        seen.add(h)
     if not seen:
         return None
     return [{"hour": h, "kwh": round(by_hour[h], 2) if h in seen else None}
@@ -242,8 +281,11 @@ def hourly_only(records):
 
 def day(db, tenant, on: date):
     """Everything the board shows for one day."""
-    start = datetime.combine(on, time.min)
-    end = start + timedelta(days=1)
+    zone = tenant_zone(db, tenant)
+    # The window is the LOCAL day `on`, expressed in UTC to match created_at.
+    local_start = datetime.combine(on, time.min).replace(tzinfo=zone)
+    start = _utc_naive(local_start)
+    end = _utc_naive(local_start + timedelta(days=1))
     machines = (db.query(models.Machine)
                   .filter(models.Machine.tenant_code == tenant)
                   .order_by(models.Machine.name.asc()).all())
@@ -257,7 +299,7 @@ def day(db, tenant, on: date):
     for r in hourly:
         if r.machine_id not in by_id or not r.created_at:
             continue
-        h = r.created_at.hour
+        h = _local(r.created_at, zone).hour
         made[h][r.machine_id] += int(r.total_count or 0)
         good[h][r.machine_id] += int(r.good_count or 0)
 
@@ -350,7 +392,7 @@ def day(db, tenant, on: date):
     # Measured electricity, or nothing at all -- never zeros (_energy_hours).
     # Hourly records only: a day's kWh spread over no hours would stack onto
     # midnight exactly as a day's shots would.
-    energy_points = _energy_hours(hourly, HOURS)
+    energy_points = _energy_hours(hourly, HOURS, zone)
 
     return {
         "date": on.isoformat(),
@@ -369,8 +411,10 @@ def day(db, tenant, on: date):
 
 def month(db, tenant, year: int, mon: int):
     """The monthly tables, from the same inputs as the daily board."""
-    start = datetime(year, mon, 1)
-    end = datetime(year + (mon == 12), (mon % 12) + 1, 1)
+    zone = tenant_zone(db, tenant)
+    # The window is the LOCAL month, expressed in UTC to match created_at.
+    start = _utc_naive(datetime(year, mon, 1, tzinfo=zone))
+    end = _utc_naive(datetime(year + (mon == 12), (mon % 12) + 1, 1, tzinfo=zone))
     machines = {m.id: m for m in db.query(models.Machine)
                 .filter(models.Machine.tenant_code == tenant).all()}
     records = _records(db, tenant, start, end)
@@ -410,7 +454,7 @@ def month(db, tenant, year: int, mon: int):
     by_day = defaultdict(float)
     for r in records:
         if r.energy_kwh is not None and r.created_at:
-            by_day[r.created_at.date()] += float(r.energy_kwh)
+            by_day[_local(r.created_at, zone).date()] += float(r.energy_kwh)
     month_energy = [{"day": d.isoformat(), "kwh": round(k, 2)}
                     for d, k in sorted(by_day.items())]
 
@@ -430,7 +474,7 @@ def month(db, tenant, year: int, mon: int):
     for r in records:
         if not r.created_at:
             continue
-        d = r.created_at.date()
+        d = _local(r.created_at, zone).date()
         spec = specs.get(r.machine_id)
         shots = int(r.total_count or 0)
         parts = shots_to_parts(shots, spec)

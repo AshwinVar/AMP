@@ -95,6 +95,10 @@ CORE_TENANT_TABLES = [
     # listed to keep this list and SCOPED_MODELS in lockstep, which test_tenancy
     # asserts.
     "part_specs", "tool_assets",
+    # The part master's field-level audit trail (0017). Also created WITH
+    # tenant_code (a new table), so ensure_tenant_columns finds it present and
+    # does nothing; listed to keep this list and SCOPED_MODELS in lockstep.
+    "part_spec_audits",
 ]
 
 # Tables that gain tenant_code but must NOT be blind-backfilled to DEFAULT: the
@@ -229,6 +233,10 @@ SCOPED_MODELS = (
     # like every other tenant-owned table, so a read written later is scoped by
     # default rather than by whoever remembers.
     models.PartSpec, models.ToolAsset,
+    # The part master's field-level audit trail (migration 0017). part_spec_routes
+    # filters by tenant explicitly too, for the same reason as PartSpec: the
+    # trail carries the history of a part's selling price.
+    models.PartSpecAudit,
 )
 
 

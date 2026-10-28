@@ -31,6 +31,7 @@ import schema_guard
 import schemas
 from auth import get_current_user, require_roles
 from database import SessionLocal, engine
+from money_redaction import redact_money
 
 # The running build's git commit, if the platform exposes it (Railway sets
 # RAILWAY_GIT_COMMIT_SHA automatically). Short, public, resolved once at import.
@@ -326,7 +327,10 @@ def tenant_config(db: Session = Depends(get_db), current_user: dict = Depends(ge
     client's licence and branding, not the founder's."""
     import tenancy
     tenant = tenancy.current_tenant() or current_user.get("tenant", "DEFAULT")
-    return _config_dict(get_or_create_config(db, tenant))
+    # The config carries unit_value_gbp — the per-good-unit margin rate that prices
+    # every loss figure — which is Admin-only; branding and plan stay for everyone
+    # (money_redaction). Setting the rate is already Admin (PATCH /tenant-config).
+    return redact_money(_config_dict(get_or_create_config(db, tenant)), current_user)
 
 
 @router.get("/modules")

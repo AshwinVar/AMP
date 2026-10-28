@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import { apiGet } from "../lib/api";
 import { type Coverage, coveragePhrase } from "../lib/coverage";
 import { CURRENCY, money } from "../lib/money";
+import { useCanSeeMoney } from "../lib/money-visibility";
 
 // Mirrors the backend scorecard read-model (ai/scorecard.py build_scorecard).
 // Only the Plant OEE KPI carries a coverage (backend oee_contract.coverage).
@@ -58,6 +59,7 @@ const KPI_TO_VIEW: Record<string, string> = {
 // refreshes. Renders nothing until there's data.
 export default function ScorecardStrip({ onOpen }: { onOpen?: (viewKey: string) => void }) {
   const [s, setS] = useState<Scorecard | null>(null);
+  const canSeeMoney = useCanSeeMoney();
 
   const load = useCallback(async () => {
     try {
@@ -75,9 +77,13 @@ export default function ScorecardStrip({ onOpen }: { onOpen?: (viewKey: string) 
 
   if (!s || !s.has_data) return null;
 
+  // Money is Admin-only: the one KPI carried in the currency (loss_cost) drops
+  // out for anyone else, rather than showing an empty tile. The others stay.
+  const kpis = s.kpis.filter((k) => canSeeMoney || k.unit !== CURRENCY);
+
   return (
     <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-      {s.kpis.map((k) => {
+      {kpis.map((k) => {
         const view = KPI_TO_VIEW[k.key];
         const clickable = Boolean(onOpen && view);
         const cls = "group rounded-2xl border border-slate-800 bg-slate-900/60 p-5";

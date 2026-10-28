@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { apiGet, apiPost } from "../lib/api";
 import { money } from "../lib/money";
+import { useCanSeeMoney } from "../lib/money-visibility";
 import { ActionError, useActionError } from "../lib/useActionError";
 
 // Mirrors the recovery read-model's "fix this first" fields (ai/recovery.py).
@@ -40,6 +41,7 @@ export default function NextBestActionCard({
   const [s, setS] = useState<RecoverySummary | null>(null);
   const [raising, setRaising] = useState(false);
   const { error, report, clear } = useActionError();
+  const canSeeMoney = useCanSeeMoney();
 
   const load = useCallback(async () => {
     try {
@@ -76,7 +78,8 @@ export default function NextBestActionCard({
   // Nothing to recommend until there's a lever with a gap to close.
   if (!s || !s.has_data || s.at_world_class || !s.biggest_lever) return null;
 
-  const priced = s.unit_value_gbp != null;
+  // Money is Admin-only; everyone else sees the prize in good units per year.
+  const priced = s.unit_value_gbp != null && canSeeMoney;
   const comp = s.components.find((c) => c.key === s.biggest_lever);
   const prize = priced
     ? `${money(s.lever_recoverable_value_per_year ?? 0)} / yr`

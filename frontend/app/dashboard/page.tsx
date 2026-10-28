@@ -155,6 +155,7 @@ import {
   type PlanName,
 } from "../../lib/modules";
 import LockedModuleView from "../../components/LockedModuleView";
+import { CanSeeMoneyProvider } from "../../lib/money-visibility";
 
 import { getStatusStyle } from "../../lib/utils";
 
@@ -1923,6 +1924,7 @@ export default function DashboardPage() {
 
 
   return (
+    <CanSeeMoneyProvider value={isAdmin}>
     <main className="phase29-shell min-h-screen bg-slate-950 text-white p-6">
 <aside className={`phase29-sidebar ${mobileNavOpen ? "phase29-sidebar-open" : ""}`}>
   <div className="phase29-brand">
@@ -3160,6 +3162,7 @@ export default function DashboardPage() {
         </>
       ))}
     </main>
+    </CanSeeMoneyProvider>
   );
 }
 

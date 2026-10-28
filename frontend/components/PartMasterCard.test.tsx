@@ -33,7 +33,7 @@ vi.mock("../lib/api", () => ({
   errorDetail: (e: unknown) => (e instanceof Error ? e.message : String(e)),
 }));
 
-import PartMasterCard from "./PartMasterCard";
+import PartMasterCard, { currentPerPart } from "./PartMasterCard";
 
 const SPEC: PartSpec = {
   id: 1,
@@ -137,5 +137,82 @@ describe("revising a part", () => {
 
     expect(screen.queryByRole("button", { name: "Revise" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Add a part" })).toBeNull();
+  });
+});
+
+/**
+ * CURRENT-ONLY. The master shows the spec in force, one row per part, not a stack
+ * of revisions. The backend already trims, but the client trims too so a stale or
+ * half-rolled-out response cannot re-clutter the table with superseded rows.
+ */
+describe("current-only list", () => {
+  it("keeps only the latest effective date per part code", () => {
+    const older: PartSpec = { ...SPEC, id: 1, effective_from: "2026-01-01", price_per_piece: 0.09 };
+    const current: PartSpec = { ...SPEC, id: 2, effective_from: "2026-06-01", price_per_piece: 0.12 };
+    // Order must not matter: the later date wins however the rows arrive.
+    const out = currentPerPart([current, older]);
+    expect(out).toHaveLength(1);
+    expect(out[0].effective_from).toBe("2026-06-01");
+    expect(out[0].price_per_piece).toBe(0.12);
+  });
+
+  it("keeps distinct parts and is a no-op for one spec each", () => {
+    const a: PartSpec = { ...SPEC, id: 1, part_code: "A", effective_from: "2026-01-01" };
+    const b: PartSpec = { ...SPEC, id: 2, part_code: "B", effective_from: "2026-02-01" };
+    expect(currentPerPart([a, b]).map((s) => s.part_code).sort()).toEqual(["A", "B"]);
+  });
+
+  it("renders one row per part even if the API returns two revisions", async () => {
+    mountWith([
+      { ...SPEC, id: 1, effective_from: "2026-01-01" },
+      { ...SPEC, id: 2, effective_from: "2026-06-01" },
+    ]);
+    render(<PartMasterCard isAdmin />);
+    // Two revisions of one part -> exactly one row (one "M clip white").
+    await waitFor(() => expect(screen.getAllByText("M clip white")).toHaveLength(1));
+  });
+});
+
+/**
+ * THE AUDIT TRAIL. A spec change restates revenue and output, so the master is
+ * trimmed to the current figure only because the history is kept and readable.
+ * The control that opens it is Admin-only, like the endpoint it reads.
+ */
+describe("audit trail", () => {
+  it("is admin-only and opens the field-level change history", async () => {
+    const entries = [
+      {
+        part_code: "MCLIP-WHITE",
+        part_name: "M clip white",
+        actor: "ashwin",
+        at: "2026-06-01T04:30:00",
+        changes: { price_per_piece: { old: 0.09, new: 0.12 } },
+      },
+    ];
+    apiGet.mockImplementation((path: string) =>
+      path.startsWith("/part-spec-audit")
+        ? Promise.resolve({ entries })
+        : path.startsWith("/part-specs")
+          ? Promise.resolve({ specs: [SPEC], materials: ["PP H110"] })
+          : Promise.resolve({ tools: [], machines: [] }));
+
+    render(<PartMasterCard isAdmin />);
+    await waitFor(() => expect(screen.getByText("M clip white")).toBeTruthy());
+
+    fireEvent.click(screen.getByRole("button", { name: "Audit trail" }));
+
+    // The old -> new is the whole point: the figure, and what it was before.
+    await waitFor(() => expect(screen.getByText("0.12")).toBeTruthy());
+    expect(screen.getByText("Part master — change history")).toBeTruthy();
+    expect(screen.getByText(/Revised by ashwin/)).toBeTruthy();
+    expect(screen.getByText("0.09")).toBeTruthy();
+  });
+
+  it("gives a non-admin no audit-trail control", async () => {
+    mountWith();
+    render(<PartMasterCard isAdmin={false} />);
+    await waitFor(() => expect(screen.getByText("M clip white")).toBeTruthy());
+
+    expect(screen.queryByRole("button", { name: "Audit trail" })).toBeNull();
   });
 });

@@ -555,6 +555,54 @@ class ToolAsset(Base):
         return max(0, made) // max(1, int(self.cavities or 1))
 
 
+class PartSpecAudit(Base):
+    """Every change to a part master, recorded field by field (migration 0017).
+
+    WHY A TRAIL AT ALL. A PartSpec turns a shot count into kilograms and rupees
+    for every hour the plant runs, and a spec is effective-dated: a revision is
+    a NEW row, never an edit, so the part_specs table already keeps every figure
+    a part ever carried. What it does NOT keep is WHO changed WHAT, WHEN, and
+    what the figure was BEFORE -- and a price restates revenue, so when a
+    customer disputes an invoice that is the first question. This is the answer:
+    one row per create or revise, carrying the acting user, the moment, and the
+    old->new of every field that moved.
+
+    WHY A JSON BLOB AND NOT A COLUMN PER FIELD. The set of fields that can change
+    IS the part spec's own shape; pinning it into columns here would force a
+    migration every time a spec grows a field. `changes` is a small JSON object,
+    {field: {old, new}}, written once and read whole -- never filtered or summed
+    in SQL, so it has no business being normalised into columns.
+
+    OLD IS NULL FOR A NEW PART. The first spec for a part code has nothing before
+    it, so every field records old=null. A later revision records only the fields
+    that actually moved, against the spec that was current when it was made.
+
+    part_name is FROZEN as it read when the change was made, like
+    ActionOutcome.scope_label: a later rename must not rewrite the history of
+    what was changed.
+
+    Tenant-owned and in tenancy.SCOPED_MODELS; part_spec_routes filters by tenant
+    explicitly as well, because a part spec carries a SELLING PRICE and this trail
+    carries its history -- the last thing that may leak on a forgotten filter.
+    """
+
+    __tablename__ = "part_spec_audits"
+    __table_args__ = (
+        # The read path: this tenant's trail, newest first, optionally one part.
+        Index("ix_part_spec_audits_tenant_created", "tenant_code", "created_at"),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    tenant_code = Column(String, index=True, nullable=False, default="DEFAULT")
+    part_code = Column(String, nullable=False)
+    part_name = Column(String, nullable=True)
+    actor = Column(String, default="system")
+    # {field: {"old": <was>, "new": <now>}} as JSON text. Written once, read
+    # whole; never queried into, so a blob, not columns (see the class docstring).
+    changes = Column(Text, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
 class ProductionSchedule(Base):
     __tablename__ = "production_schedules"
     __table_args__ = (

@@ -18,6 +18,7 @@ from ai import orchestrator as ai_orchestrator
 from ai.tools import Principal
 from auth import get_current_user
 from database import SessionLocal
+from money_redaction import redact_money
 from tenancy import request_tenant
 
 
@@ -211,7 +212,10 @@ def get_recovery_summary(db: Session = Depends(_get_db), current_user: dict = De
     # OEE recovery opportunity (ADR-0007): the gap to the world-class benchmark
     # and what closing it is worth in recoverable good units (window + annualised),
     # with the per-factor gap so the biggest lever is obvious.
-    return ai.recovery.build_recovery_summary(db, request_tenant(current_user))
+    # Money (recoverable value, the per-unit rate, the "fix this first" prize) is
+    # Admin-only; a non-Admin gets the units and the gap, no rupees (money_redaction).
+    return redact_money(ai.recovery.build_recovery_summary(db, request_tenant(current_user)),
+                        current_user)
 
 
 @router.get("/command-centre")
@@ -220,14 +224,20 @@ def get_command_centre(db: Session = Depends(_get_db), current_user: dict = Depe
     # read-model -- where the plant is, what is wrong ranked by measured impact,
     # why, what it is costing (money only when a unit value is set), and what to
     # do next. Composes the existing read-models; adds no storage.
-    return ai.command_centre.build_command_centre(db, request_tenant(current_user))
+    # Impact priced in money, the cost block and the money facts are Admin-only;
+    # the ranking, units and headline (figure scrubbed) stay for everyone.
+    return redact_money(ai.command_centre.build_command_centre(db, request_tenant(current_user)),
+                        current_user)
 @router.get("/daily-brief")
 def get_daily_brief(db: Session = Depends(_get_db), current_user: dict = Depends(get_current_user)):
     # The Daily Factory Brief (ADR-0028): the Command Centre, the Root-Cause
     # Explorer, the Risk Radar, the shift log and the scorecard, written out as
     # sentences in one page -- plus the section no card has, what AMP could not
     # see. Composes those read-models and computes no figure of its own.
-    return ai.brief.build_daily_brief(db, request_tenant(current_user))
+    # The brief writes money into its sentences; a non-Admin gets the prose with
+    # the rupee figures scrubbed and the money facts nulled (money_redaction).
+    return redact_money(ai.brief.build_daily_brief(db, request_tenant(current_user)),
+                        current_user)
 @router.get("/action-outcomes")
 def get_action_outcomes(db: Session = Depends(_get_db), current_user: dict = Depends(get_current_user)):
     # Closed-loop outcomes (ADR-0029): every approved action AMP is following up,
@@ -244,7 +254,10 @@ def get_shortage_impact(db: Session = Depends(_get_db), current_user: dict = Dep
     # the production it will actually stop -- open work orders through the
     # tenant's own bill of materials, stock allocated in due-date order. An item
     # with no BOM line gets no figure at all; it is listed with the reason.
-    return ai.shortage.build_shortage_impact(db, request_tenant(current_user))
+    # The units a shortage will stop stay; the money_at_risk and its fact are
+    # Admin-only (money_redaction).
+    return redact_money(ai.shortage.build_shortage_impact(db, request_tenant(current_user)),
+                        current_user)
 @router.get("/proactive")
 def get_proactive(db: Session = Depends(_get_db), current_user: dict = Depends(get_current_user)):
     # Proactive intelligence (ADR-0031): what AMP would tell you now, and --
@@ -259,7 +272,10 @@ def get_root_cause(db: Session = Depends(_get_db), current_user: dict = Depends(
     # MEASURE in the same window (scrap, slow running, logged stoppages), each
     # labelled by how well the evidence supports it, and the part of the gap
     # nothing in the data explains.
-    return ai.root_cause.explain_production_gap(db, request_tenant(current_user))
+    # The gap in units and its attribution stay; the money columns (measured /
+    # attributed / gap money) are Admin-only (money_redaction).
+    return redact_money(ai.root_cause.explain_production_gap(db, request_tenant(current_user)),
+                        current_user)
 
 
 @router.get("/risk-radar")
@@ -267,14 +283,20 @@ def get_risk_radar(db: Session = Depends(_get_db), current_user: dict = Depends(
     # The Production Risk Radar (ADR-0026): what is likely to become a problem,
     # by rule over measured data, with the rule and the measurement stated. No
     # prediction from a trained model, and no probability.
-    return ai.risk_radar.build_risk_radar(db, request_tenant(current_user))
+    # Each risk's impact_money is Admin-only; the rule, the measurement and the
+    # units behind it stay for everyone (money_redaction).
+    return redact_money(ai.risk_radar.build_risk_radar(db, request_tenant(current_user)),
+                        current_user)
 
 
 @router.get("/briefing")
 def get_briefing(db: Session = Depends(_get_db), current_user: dict = Depends(get_current_user)):
     # Morning briefing (ADR-0007): the "what needs attention right now" digest —
     # headline OEE + trend, ranked alerts across every pillar, and a few wins.
-    return ai.briefing.build_briefing(db, request_tenant(current_user))
+    # The "£.../yr to recover" line composes money into prose; a non-Admin gets
+    # the briefing with the rupee figure scrubbed (money_redaction).
+    return redact_money(ai.briefing.build_briefing(db, request_tenant(current_user)),
+                        current_user)
 
 
 @router.get("/delivery-summary")
@@ -347,7 +369,10 @@ def get_work_order_trace(work_order_no: str, db: Session = Depends(_get_db),
 def get_cost_summary(db: Session = Depends(_get_db), current_user: dict = Depends(get_current_user)):
     # Cost of losses (ADR-0007): downtime + scrap priced at standard rates, and
     # recorded costs for the period rolled up by type.
-    return ai.cost.build_cost_summary(db, request_tenant(current_user))
+    # The whole cost-of-losses surface is rupees — every figure here is Admin-only;
+    # a non-Admin keeps the lost-units view with the money omitted (money_redaction).
+    return redact_money(ai.cost.build_cost_summary(db, request_tenant(current_user)),
+                        current_user)
 
 
 @router.get("/cost-trend")
@@ -356,7 +381,10 @@ def get_cost_trend(db: Session = Depends(_get_db), current_user: dict = Depends(
     # standard rates) against last week's on the same per-record basis, the
     # direction, the machines and the driver (downtime vs scrap) that moved it —
     # the money twin of the downtime and quality trends.
-    return ai.cost.build_cost_trend(db, request_tenant(current_user))
+    # Same as the cost summary: the trend's figures and its money verdict string
+    # are Admin-only; the direction and the units stay (money_redaction).
+    return redact_money(ai.cost.build_cost_trend(db, request_tenant(current_user)),
+                        current_user)
 
 
 @router.get("/handover")
@@ -370,14 +398,20 @@ def get_handover(db: Session = Depends(_get_db), current_user: dict = Depends(ge
 def get_scorecard(db: Session = Depends(_get_db), current_user: dict = Depends(get_current_user)):
     # Executive scorecard (ADR-0007): one headline KPI per pillar (OEE, good rate,
     # on-time orders, cost of losses), each with a tone.
-    return ai.scorecard.build_scorecard(db, request_tenant(current_user))
+    # The cost-of-losses KPI is in rupees (unit == CURRENCY); a non-Admin gets the
+    # tile with its value and delta nulled, the other three KPIs intact.
+    return redact_money(ai.scorecard.build_scorecard(db, request_tenant(current_user)),
+                        current_user)
 
 
 @router.get("/twin-overlay")
 def get_twin_overlay(db: Session = Depends(_get_db), current_user: dict = Depends(get_current_user)):
     # Digital-twin overlay (ADR-0007): per-machine OEE + cost of losses, keyed by
     # machine, so the floor map can heat by either metric.
-    return ai.twin.build_twin_overlay(db, request_tenant(current_user))
+    # The overlay heats the floor map by OEE or by cost of losses; the per-machine
+    # cost is Admin-only, so a non-Admin can heat by OEE only (money_redaction).
+    return redact_money(ai.twin.build_twin_overlay(db, request_tenant(current_user)),
+                        current_user)
 
 
 @router.get("/maintenance-summary")

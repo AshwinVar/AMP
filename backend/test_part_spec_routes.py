@@ -18,6 +18,13 @@ import os
 import sys
 from datetime import date
 
+# PRINTING THE CURRENCY SYMBOL MUST NOT KILL A PASSING SUITE (memory:
+# cp1252-console-kills-passing-suites). This suite prints ₹ in its checks; a
+# cp1252 Windows console cannot encode it, so make stdout tolerant first.
+# Pinned by test_currency_single.test_a_suite_that_prints_the_symbol_survives_a_windows_console.
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 os.environ.setdefault("DATABASE_URL", "sqlite:///./ci_psr.db")
@@ -86,6 +93,7 @@ GATES = {
     "list_tool_assignments": None,
     "create_part_spec": ["Admin"],      # restates revenue and output
     "assign_tool": ["Admin"],
+    "list_part_spec_audit": ["Admin"],  # the history of those writes is the same data
 }
 
 
@@ -134,7 +142,7 @@ def main():
     models.Base.metadata.create_all(bind=database.engine)
     db = database.SessionLocal()
     try:
-        for M in (models.ToolAsset, models.PartSpec, models.Machine):
+        for M in (models.ToolAsset, models.PartSpec, models.PartSpecAudit, models.Machine):
             db.query(M).filter(M.tenant_code == T).delete()
         db.commit()
 
@@ -227,9 +235,26 @@ def main():
         out = R.assign_tool(tool.id, {"machine_id": None}, db=db, current_user=ADMIN)
         check("a tool can go back to the tool room", out["machine_id"] is None, str(out))
 
-        section("7. THE LIST FEEDS THE DROPDOWNS")
+        section("7. THE LIST FEEDS THE DROPDOWNS, AND IS CURRENT-ONLY")
         listing = R.list_part_specs(db=db, current_user=ADMIN)
-        check("specs are listed", len(listing["specs"]) >= 3, str(len(listing["specs"])))
+        codes = [s["part_code"] for s in listing["specs"]]
+        # CURRENT-ONLY: one row per part code, not one per revision. ELE-CLIP has
+        # two revisions on record (section 5) and must appear exactly once, and
+        # that one must be the LATEST effective date (2026-06-01, ₹0.12), not the
+        # superseded 2026-01-01/₹0.09 row.
+        check("the list is current-only: one row per part code",
+              codes.count("ELE-CLIP") == 1 and codes.count("NOPRICE") == 1
+              and len(listing["specs"]) == 2, str(codes))
+        ele = next((s for s in listing["specs"] if s["part_code"] == "ELE-CLIP"), None)
+        check("...and ELE-CLIP's row is the current spec, not a superseded one",
+              ele is not None and ele["effective_from"] == "2026-06-01"
+              and ele["price_per_piece"] == 0.12, str(ele))
+        # The superseded row is still in the DATABASE — current-only is a read,
+        # not a delete (the two prices were both on record in section 5).
+        kept = (db.query(models.PartSpec)
+                  .filter(models.PartSpec.tenant_code == T,
+                          models.PartSpec.part_code == "ELE-CLIP").count())
+        check("...while both revisions remain stored", kept == 2, f"{kept} rows")
         check("...and materials are offered for a dropdown",
               "PP H 110" in listing["materials"], str(listing["materials"]))
         assigns = R.list_tool_assignments(db=db, current_user=ADMIN)
@@ -250,7 +275,70 @@ def main():
         check("...nor its material in the material dropdown",
               "SECRET ABS" not in listing["materials"], str(listing["materials"]))
 
-        for M in (models.ToolAsset, models.PartSpec, models.Machine):
+        section("8. A SPEC DATED IN THE FUTURE IS HELD BACK UNTIL ITS DATE")
+        from datetime import timedelta
+        today = date.today()
+        past = (today - timedelta(days=30)).isoformat()
+        future = (today + timedelta(days=30)).isoformat()
+        R.create_part_spec({**GOOD, "part_code": "FUT", "price_per_piece": 0.20,
+                            "effective_from": past}, db=db, current_user=ADMIN)
+        R.create_part_spec({**GOOD, "part_code": "FUT", "price_per_piece": 0.30,
+                            "effective_from": future}, db=db, current_user=ADMIN)
+        listing = R.list_part_specs(db=db, current_user=ADMIN)
+        fut = [s for s in listing["specs"] if s["part_code"] == "FUT"]
+        # The CURRENT spec is the greatest effective_from that is already in force
+        # — a price agreed for next month must not restate this month.
+        check("a part with a future revision still shows its in-force spec",
+              len(fut) == 1 and fut[0]["effective_from"] == past
+              and fut[0]["price_per_piece"] == 0.20, str(fut))
+        # A part whose ONLY spec is in the future has no current row at all.
+        R.create_part_spec({**GOOD, "part_code": "NOTYET", "effective_from": future},
+                           db=db, current_user=ADMIN)
+        listing = R.list_part_specs(db=db, current_user=ADMIN)
+        check("a part whose only spec is future-dated is not yet listed",
+              all(s["part_code"] != "NOTYET" for s in listing["specs"]),
+              str([s["part_code"] for s in listing["specs"]]))
+
+        section("9. EVERY CHANGE IS ON AN AUDITABLE, FIELD-LEVEL TRAIL")
+        trail = R.list_part_spec_audit(db=db, current_user=ADMIN)["entries"]
+        ele_trail = [e for e in trail if e["part_code"] == "ELE-CLIP"]
+        # ELE-CLIP was created (section 1) then revised (section 5): two entries.
+        # The refused writes (400s in section 2, the 409 in section 5) left none —
+        # a trail entry for a write that did not happen would be a lie.
+        check("a create and a revise each left exactly one trail entry",
+              len(ele_trail) == 2, str(len(ele_trail)))
+        newest, oldest = ele_trail[0], ele_trail[1]
+        # NEWEST FIRST: the revise (₹0.12) comes before the create (₹0.09).
+        check("the trail is newest-first",
+              newest["changes"].get("price_per_piece", {}).get("new") == 0.12,
+              str(newest["changes"]))
+        check("every entry carries a timestamp", bool(newest["at"]), str(newest["at"]))
+        # THE REVISE records old -> new only for the fields that actually moved.
+        check("the revise records the price old -> new",
+              newest["changes"].get("price_per_piece") == {"old": 0.09, "new": 0.12},
+              str(newest["changes"].get("price_per_piece")))
+        check("...and the effective date old -> new",
+              newest["changes"].get("effective_from")
+              == {"old": "2026-01-01", "new": "2026-06-01"},
+              str(newest["changes"].get("effective_from")))
+        check("an unchanged field is NOT recorded as a change",
+              "part_weight_g" not in newest["changes"], str(sorted(newest["changes"])))
+        # THE CREATE records every field with old=null — the part did not exist.
+        check("the create records a new part with old=null throughout",
+              oldest["changes"].get("part_weight_g", {}).get("old") is None
+              and oldest["changes"].get("price_per_piece") == {"old": None, "new": 0.09},
+              str(oldest["changes"].get("price_per_piece")))
+        # WHO made the change is on the record (ADMIN's username).
+        check("the acting user is recorded", newest["actor"] == "admin",
+              str(newest["actor"]))
+        # The optional part_code filter narrows the trail to one part.
+        filtered = R.list_part_spec_audit(part_code="ELE-CLIP", db=db,
+                                          current_user=ADMIN)["entries"]
+        check("the part_code filter returns only that part's trail",
+              bool(filtered) and all(e["part_code"] == "ELE-CLIP" for e in filtered),
+              str([e["part_code"] for e in filtered]))
+
+        for M in (models.ToolAsset, models.PartSpec, models.PartSpecAudit, models.Machine):
             db.query(M).filter(M.tenant_code.in_([T, "SOMEONE-ELSE"])).delete(
                 synchronize_session=False)
         db.commit()

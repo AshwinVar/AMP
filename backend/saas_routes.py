@@ -32,6 +32,7 @@ import tenancy
 from amp_ai import consent as amp_ai_consent
 from auth import get_current_user, require_roles
 from database import SessionLocal
+from money_redaction import redact_money
 from platform_routes import log_audit
 from security import hash_password
 
@@ -264,7 +265,9 @@ def get_saas_analytics(db: Session = Depends(_get_db), current_user: dict = Depe
         db.query(func.coalesce(func.sum(models.CompanyTenant.seats), 0))
     ).scalar() or 0
 
-    return {
+    # Reachable by any signed-in role (get_current_user). MRR is the one rupee
+    # figure and is Admin-only; the tenant counts and seats stay (money_redaction).
+    return redact_money({
         "total_tenants": int(total_tenants),
         "trial": status_counts.get("Trial", 0),
         "active": status_counts.get("Active", 0),
@@ -272,7 +275,7 @@ def get_saas_analytics(db: Session = Depends(_get_db), current_user: dict = Depe
         "cancelled": status_counts.get("Cancelled", 0),
         "monthly_recurring_revenue": int(mrr),
         "total_seats": int(total_seats),
-    }
+    }, current_user)
 
 
 def get_tenant_activity(db: Session = Depends(_get_db),

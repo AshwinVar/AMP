@@ -16,6 +16,7 @@ from database import SessionLocal
 import gateway_auth
 import models
 import mqtt_identity
+import pulse_calibration
 from events import event_bus, DowntimeStarted
 import oem_telemetry
 import telemetry_coverage
@@ -845,6 +846,25 @@ def on_message(client, userdata, msg):
         ideal_cycle_time_seconds = _non_negative_int(
             payload.get("ideal_cycle_time_seconds", 60)
         )
+
+        # PULSE CALIBRATION. A cycle-counting node reports one edge per machine
+        # cycle; if the signal it taps pulses N times per cycle (a relay firing
+        # several times per mould cycle) or picks up noise, the raw count runs N
+        # times high and inflates every figure built on it. AMP cannot reach the
+        # node to re-wire it, so the known multiple is divided out HERE -- before
+        # the counts are validated, stored, keyed for idempotency or broadcast
+        # live, so every one of those sees the corrected figure. A no-op at the
+        # default of one edge per cycle. Gated on the raw payload already being
+        # self-consistent (good+rejected==total): collapse() derives good from the
+        # corrected total, so a MALFORMED payload must still fall to the skip
+        # below rather than being silently made valid. See pulse_calibration.
+        divisor = pulse_calibration.pulses_per_cycle(machine)
+        if (divisor > 1 and None not in (total_count, good_count, rejected_count)
+                and good_count + rejected_count == total_count):
+            total_count, good_count, rejected_count = pulse_calibration.collapse(
+                total_count, good_count, rejected_count, divisor)
+            log.debug("pulse calibration: %s/%s/%s counts divided by %d",
+                      machine.tenant_code, machine.site, machine.name, divisor)
 
         production_valid = None not in (
             total_count, good_count, rejected_count,

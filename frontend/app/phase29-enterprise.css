@@ -32,3 +32,50 @@ table{border-collapse:separate!important;border-spacing:0!important}thead{backgr
 main>div:not(.phase29-sidebar):not(.phase29-topbar),main>section{max-width:1740px}
 .phase29-sidebar::-webkit-scrollbar{width:7px}.phase29-sidebar::-webkit-scrollbar-thumb{background:rgba(100,116,139,.6);border-radius:999px}::-webkit-scrollbar{width:10px;height:10px}::-webkit-scrollbar-track{background:rgba(2,6,23,.75)}::-webkit-scrollbar-thumb{background:rgba(71,85,105,.85);border-radius:999px}
 @media(max-width:1180px){.phase29-shell,main{padding:92px 18px 28px!important}.phase29-sidebar{transform:translateX(-100%)}.phase29-sidebar.phase29-sidebar-open{transform:translateX(0)}.phase29-menu-btn{display:grid}.phase29-topbar{left:0}.phase29-search,.phase29-pill{display:none}.phase29-topbar-actions{padding-right:98px}}
+
+/* ── Narrow viewport (phones) ─────────────────────────────────────────
+   WHY THIS BLOCK EXISTS. The only breakpoint this sheet had was 1180px,
+   which swings the sidebar off-canvas and nothing else. At 375px the topbar
+   then broke in a way a desktop never shows: its two flex children are a
+   left group (menu button + greeting + page title) and .phase29-topbar-actions,
+   and the right one had no shrink constraint. Measured on a 375px viewport it
+   took 500px -- a 280px search box plus a 133px user chip plus 124px of
+   padding -- which collapsed the LEFT group to ZERO width. The page title then
+   spilled out of a zero-width box and rendered underneath the search field,
+   and 63px of the user chip sat off-screen, so the account menu could not be
+   tapped at all.
+
+   The search box needed no new CSS: this sheet ALREADY styles .phase29-search
+   (width, and the border/background it shares with .phase29-pill and
+   .phase29-user). The markup had drifted to an inline style attribute that
+   duplicated all of it -- which is what broke the hide, because an inline
+   width cannot be undone by a media query without !important. Deleting the
+   attribute and restoring the class is the whole repair. */
+
+/* WCAG AA tap targets, applied wherever the off-canvas drawer IS the navigation
+   -- which is every width below the 1180px collapse, tablets included. The glyph
+   is not the tap area (Fitts's law); these were 38x38 and 37px tall, which is a
+   miss on a thumb at any screen size that has no sidebar to click instead. */
+@media(max-width:1180px){
+  .phase29-menu-btn{width:44px;height:44px}
+  .phase29-nav-item{min-height:44px!important}
+}
+
+@media(max-width:767.98px){
+  /* Let the title have the room, and let the actions take only what they need. */
+  .phase29-topbar{padding:0 14px;gap:10px}
+  .phase29-topbar>:first-child{flex:1 1 auto;min-width:0}
+  .phase29-topbar-actions{flex:0 0 auto;min-width:0;padding-right:0;gap:8px}
+
+  /* Truncate rather than overflow: a long view name must not push the chrome. */
+  .phase29-topbar h1{font-size:1.05rem!important;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .phase29-eyebrow{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-bottom:2px}
+
+  /* No rule hides the search here: the 1180px block above already does, and
+     now that the class is back on the element it finally takes effect. */
+  .phase29-user{max-width:46vw;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
+
+  /* The shell clears a 74px fixed topbar; 30px side gutters are too much here. */
+  .phase29-shell,main{padding:84px 14px 24px!important}
+}
+

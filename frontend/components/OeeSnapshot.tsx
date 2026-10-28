@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { apiGet } from "../lib/api";
 import MachineDetailDrawer from "./MachineDetailDrawer";
-import { parseApiDate } from "../lib/apiDate";
+import { formatDateParts } from "../lib/apiDate";
 
 // Mirrors the backend OEE summary (ai/oee.py build_oee_summary).
 type MachineOee = {
@@ -53,8 +53,7 @@ function barColor(v: number | null) {
 }
 
 function wk(iso: string) {
-  const d = parseApiDate(iso);
-  return d ? d.toLocaleDateString(undefined, { weekday: "short" }) : "";
+  return formatDateParts(iso, { weekday: "short" });
 }
 
 function lineStyle(line: string) {

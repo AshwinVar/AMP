@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { apiGet } from "../lib/api";
-import { parseApiDate } from "../lib/apiDate";
+import { formatDateParts } from "../lib/apiDate";
 
 type ChaseRow = {
   schedule_no: string;
@@ -45,8 +45,7 @@ function toneClasses(tone?: string) {
 }
 
 function dayLabel(iso: string) {
-  const d = parseApiDate(iso);
-  return d ? d.toLocaleDateString(undefined, { weekday: "narrow" }) : "";
+  return formatDateParts(iso, { weekday: "narrow" });
 }
 
 // The planner's morning board: booked load over the next 7 days (by day and by

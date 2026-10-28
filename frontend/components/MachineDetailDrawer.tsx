@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { apiGet, apiPost, getUserRole } from "../lib/api";
 import { useModalFocus } from "../lib/useModalFocus";
-import { parseApiDate } from "../lib/apiDate";
+import { formatDateParts, formatInstant } from "../lib/apiDate";
 import { DECISION_ROLE_NOTE, EXPIRED_PROPOSAL_NOTE, canDecideProposals } from "../lib/agent-actions";
 import HealthExplanation, { type HealthExplanation as HealthExplanationData } from "./HealthExplanation";
 
@@ -115,14 +115,11 @@ function kindColor(kind: string) {
 }
 
 function fmt(iso: string | null) {
-  if (!iso) return "—";
-  const d = parseApiDate(iso);
-  return d ? d.toLocaleString() : "—";
+  return formatInstant(iso);
 }
 
 function wk(iso: string) {
-  const d = parseApiDate(iso);
-  return d ? d.toLocaleDateString(undefined, { weekday: "short" }) : "";
+  return formatDateParts(iso, { weekday: "short" });
 }
 
 function DowntimeSparkline({ series }: { series: { date: string; count: number }[] }) {

@@ -51,6 +51,14 @@ HOURS = 24
 SHIFT_HOURS = 8
 SHIFTS = HOURS // SHIFT_HOURS
 
+#: The board renders in plant-local IST (UTC+5:30). ProductionRecord.created_at
+#: is naive UTC, so at READ TIME we add this to bucket a shot into the hour and
+#: day the plant floor actually saw it -- 05:58 UTC is 11:28 IST, hour 11 and not
+#: hour 5. Every AMP tenant is in India today; lift this to a per-tenant timezone
+#: when that stops being true. Nothing STORED changes -- this is a display offset
+#: only, applied the same way to the daily and the monthly views.
+IST_OFFSET = timedelta(hours=5, minutes=30)
+
 #: A record covering this many minutes or more describes a WHOLE DAY and is
 #: never drawn as an hour -- see `hourly_only`.
 #:
@@ -106,8 +114,9 @@ def _energy_hours(records, hours):
     for r in measured:
         if not r.created_at:
             continue
-        by_hour[r.created_at.hour] += float(r.energy_kwh)
-        seen.add(r.created_at.hour)
+        hour = (r.created_at + IST_OFFSET).hour         # bucket in plant-local IST
+        by_hour[hour] += float(r.energy_kwh)
+        seen.add(hour)
     if not seen:
         return None
     return [{"hour": h, "kwh": round(by_hour[h], 2) if h in seen else None}
@@ -242,7 +251,9 @@ def hourly_only(records):
 
 def day(db, tenant, on: date):
     """Everything the board shows for one day."""
-    start = datetime.combine(on, time.min)
+    # The IST calendar day `on`, expressed in the UTC that created_at is stored
+    # in: records in [IST-midnight, next IST-midnight) belong to this day.
+    start = datetime.combine(on, time.min) - IST_OFFSET
     end = start + timedelta(days=1)
     machines = (db.query(models.Machine)
                   .filter(models.Machine.tenant_code == tenant)
@@ -257,7 +268,7 @@ def day(db, tenant, on: date):
     for r in hourly:
         if r.machine_id not in by_id or not r.created_at:
             continue
-        h = r.created_at.hour
+        h = (r.created_at + IST_OFFSET).hour            # the IST hour the plant saw
         made[h][r.machine_id] += int(r.total_count or 0)
         good[h][r.machine_id] += int(r.good_count or 0)
 
@@ -369,8 +380,9 @@ def day(db, tenant, on: date):
 
 def month(db, tenant, year: int, mon: int):
     """The monthly tables, from the same inputs as the daily board."""
-    start = datetime(year, mon, 1)
-    end = datetime(year + (mon == 12), (mon % 12) + 1, 1)
+    # The IST month, expressed in UTC -- same read-time offset as the daily board.
+    start = datetime(year, mon, 1) - IST_OFFSET
+    end = datetime(year + (mon == 12), (mon % 12) + 1, 1) - IST_OFFSET
     machines = {m.id: m for m in db.query(models.Machine)
                 .filter(models.Machine.tenant_code == tenant).all()}
     records = _records(db, tenant, start, end)
@@ -410,7 +422,7 @@ def month(db, tenant, year: int, mon: int):
     by_day = defaultdict(float)
     for r in records:
         if r.energy_kwh is not None and r.created_at:
-            by_day[r.created_at.date()] += float(r.energy_kwh)
+            by_day[(r.created_at + IST_OFFSET).date()] += float(r.energy_kwh)
     month_energy = [{"day": d.isoformat(), "kwh": round(k, 2)}
                     for d, k in sorted(by_day.items())]
 
@@ -430,7 +442,7 @@ def month(db, tenant, year: int, mon: int):
     for r in records:
         if not r.created_at:
             continue
-        d = r.created_at.date()
+        d = (r.created_at + IST_OFFSET).date()          # the IST day this output fell on
         spec = specs.get(r.machine_id)
         shots = int(r.total_count or 0)
         parts = shots_to_parts(shots, spec)

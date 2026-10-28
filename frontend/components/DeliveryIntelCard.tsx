@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { apiGet } from "../lib/api";
-import { parseApiDate } from "../lib/apiDate";
+import { formatDateParts } from "../lib/apiDate";
 
 type AtRiskOrder = {
   order_no: string;
@@ -36,8 +36,7 @@ type DeliverySummary = {
 };
 
 function dayLabel(iso: string) {
-  const d = parseApiDate(iso);
-  return d ? d.toLocaleDateString(undefined, { weekday: "narrow" }) : "";
+  return formatDateParts(iso, { weekday: "narrow" });
 }
 
 // The Orders & Dispatch view's intelligence layer over the order CRUD: are we

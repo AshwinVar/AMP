@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { apiGet } from "../lib/api";
-import { parseApiDate } from "../lib/apiDate";
+import { formatDateParts } from "../lib/apiDate";
 
 type Series = { date: string; count: number }[];
 
@@ -29,8 +29,7 @@ const TREND_CARDS: { key: string; label: string; path: string }[] = [
 ];
 
 function wk(iso: string) {
-  const d = parseApiDate(iso);
-  return d ? d.toLocaleDateString(undefined, { weekday: "short" }) : "";
+  return formatDateParts(iso, { weekday: "short" });
 }
 
 function toneClasses(tone?: string) {

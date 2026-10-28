@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { apiGet } from "../lib/api";
 import { useModalFocus } from "../lib/useModalFocus";
-import { parseApiDate } from "../lib/apiDate";
+import { formatInstant } from "../lib/apiDate";
 
 // Mirrors the backend work-order traceability read-model (ai/trace.py build_work_order_trace).
 type PlanRow = {
@@ -367,7 +367,7 @@ export default function WorkOrderTraceDrawer({
                         <div className="min-w-0 flex-1">
                           <p className="text-slate-200 font-medium truncate">{d.reason}</p>
                           <p className="text-[11px] text-slate-500 truncate">
-                            {parseApiDate(d.at)?.toLocaleString() ?? "—"}
+                            {formatInstant(d.at)}
                             {d.notes ? ` · ${d.notes}` : ""}
                           </p>
                         </div>
@@ -391,7 +391,7 @@ export default function WorkOrderTraceDrawer({
                         </div>
                         <p className="text-xs text-slate-600 mt-0.5 pl-4 truncate">
                           {KIND[e.kind].label}
-                          {e.at ? ` · ${parseApiDate(e.at)?.toLocaleString() ?? ""}` : ""}
+                          {e.at ? ` · ${formatInstant(e.at, "")}` : ""}
                           {e.detail ? ` · ${e.detail}` : ""}
                         </p>
                       </li>

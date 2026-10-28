@@ -586,12 +586,16 @@ export default function PlantBoardSection({ isAdmin }: { isAdmin: boolean }) {
               })),
             }}
           >
+            {/* 24 hourly bars: fill the width on a desktop, scroll on a narrow
+                plant laptop instead of squashing a whole day into slivers. */}
+            <div className="overflow-x-auto pb-1">
+              <div className="min-w-[1152px]">
             <ResponsiveContainer width="100%" height={260}>
               <BarChart
                 data={plant.map((p) => ({ ...p, label: hourLabel(p.hour) }))}
               >
                 <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" />
-                <XAxis dataKey="label" stroke="#64748b" fontSize={11} interval={1} />
+                <XAxis dataKey="label" stroke="#64748b" fontSize={11} interval={0} />
                 <YAxis stroke="#64748b" fontSize={11} />
                 <Tooltip
                   {...TOOLTIP}
@@ -631,6 +635,8 @@ export default function PlantBoardSection({ isAdmin }: { isAdmin: boolean }) {
                 ) : null}
               </BarChart>
             </ResponsiveContainer>
+              </div>
+            </div>
 
             {/* A machine read off a MONTH page has a real day and no hours. Its
                 24 zero bars are already excluded from the plant total above, so

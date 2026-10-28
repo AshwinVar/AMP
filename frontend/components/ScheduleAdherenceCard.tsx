@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { apiGet } from "../lib/api";
-import { parseApiDate } from "../lib/apiDate";
+import { formatDateParts } from "../lib/apiDate";
 
 type ChaseRow = {
   plan_no: string;
@@ -35,8 +35,7 @@ type ScheduleSummary = {
 };
 
 function dayLabel(iso: string) {
-  const d = parseApiDate(iso);
-  return d ? d.toLocaleDateString(undefined, { weekday: "narrow" }) : "";
+  return formatDateParts(iso, { weekday: "narrow" });
 }
 
 // The Production Plan view's intelligence layer over the plan CRUD: did we make

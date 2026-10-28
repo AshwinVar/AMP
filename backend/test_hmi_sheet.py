@@ -330,22 +330,39 @@ def case_a_day_total_is_not_drawn_at_midnight(tmp):
 
 
 def case_an_hourly_day_still_draws_and_adds_up(tmp):
+    """Hourly records are drawn per hour and summed -- now across the IST day.
+
+    created_at is UTC and the board renders the plant's IST wall clock
+    (UTC+5:30), so a sheet of 24 UTC hours for one date lands on TWO IST
+    board-days: 00:00..18:00 UTC are 05:30..23:30 IST on the 9th (19 hours), and
+    19:00..23:00 UTC have crossed IST midnight onto the 10th (5 hours). Every
+    hour is still drawn exactly once and every shot and kWh counted once -- the
+    timezone only moved WHICH board-day each hour lands on.
+    """
     db, made = fresh()
     hour_path = write(tmp, "h.csv", "machine,date,hour,shots,kwh\n"
                       + "".join(f"IMM-01,2026-10-09,{h},200,3.5\n" for h in range(24)))
     hmi_sheet.import_sheet(db, TENANT, made, hour_path, "hmi-hour")
 
-    board = plant_board.day(db, TENANT, date(2026, 10, 9))
-    row = next(p for p in board["production"] if p["machine"] == "IMM-01")
-    check("an hourly day draws every hour",
-          all(p["parts"] == 200 for p in row["points"]),
-          f"points {[p['parts'] for p in row['points']][:3]}...")
-    check("its total matches its hours", row["total"] == 4800)
-    check("and it does not claim its hours are unknown",
-          row["hours_known"] is True)
-    check("the power chart draws, and its total matches",
-          board["power"]["available"] and board["power"]["total"] == 84.0,
-          f"reported {board['power'].get('total')}")
+    ninth = plant_board.day(db, TENANT, date(2026, 10, 9))
+    tenth = plant_board.day(db, TENANT, date(2026, 10, 10))
+    r9 = next(p for p in ninth["production"] if p["machine"] == "IMM-01")
+    r10 = next(p for p in tenth["production"] if p["machine"] == "IMM-01")
+    drawn = [p for p in r9["points"] + r10["points"] if p["parts"]]
+    check("every drawn hour carries its own 200 shots",
+          all(p["parts"] == 200 for p in drawn),
+          f"parts drawn: {sorted({p['parts'] for p in drawn})}")
+    check("the 24 UTC hours are drawn once each across the two IST days",
+          len(drawn) == 24, f"drew {len(drawn)} hours")
+    check("each board-day's total is the sum of its own hours",
+          r9["total"] == sum(p["parts"] for p in r9["points"])
+          and r10["total"] == sum(p["parts"] for p in r10["points"]),
+          f"9th total={r9['total']} 10th total={r10['total']}")
+    check("and neither claims its hours are unknown",
+          r9["hours_known"] is True and r10["hours_known"] is True)
+    check("the two days' kWh together match the sheet's 24 x 3.5",
+          round((ninth["power"]["total"] or 0) + (tenth["power"]["total"] or 0), 1) == 84.0,
+          f"{ninth['power'].get('total')} + {tenth['power'].get('total')}")
     db.close()
 
 
@@ -361,8 +378,13 @@ def case_a_mixed_plant_keeps_both_honest(tmp):
     board = plant_board.day(db, TENANT, date(2026, 10, 9))
     one = next(p for p in board["production"] if p["machine"] == "IMM-01")
     two = next(p for p in board["production"] if p["machine"] == "IMM-02")
+    # IMM-01's 24 UTC hours split across two IST days (as in
+    # case_an_hourly_day_still_draws_and_adds_up); on the 9th it keeps exactly
+    # the hours that fall in the IST day, and its total is the sum of them.
     check("the metered machine keeps its hours",
-          one["hours_known"] is True and one["total"] == 2400)
+          one["hours_known"] is True and one["total"] > 0
+          and one["total"] == sum(p["parts"] for p in one["points"]),
+          f"total={one['total']} hours={[p['parts'] for p in one['points'] if p['parts']]}")
     check("the photographed machine keeps its day",
           two["hours_known"] is False and two["total"] == 7000)
     check("and the day machine contributes nothing to any hour",

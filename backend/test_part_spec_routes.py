@@ -276,8 +276,8 @@ def main():
               "SECRET ABS" not in listing["materials"], str(listing["materials"]))
 
         section("8. A SPEC DATED IN THE FUTURE IS HELD BACK UNTIL ITS DATE")
-        from datetime import timedelta
-        today = date.today()
+        from datetime import datetime, timedelta
+        today = datetime.utcnow().date()
         past = (today - timedelta(days=30)).isoformat()
         future = (today + timedelta(days=30)).isoformat()
         R.create_part_spec({**GOOD, "part_code": "FUT", "price_per_piece": 0.20,

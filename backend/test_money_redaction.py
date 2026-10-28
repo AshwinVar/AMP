@@ -573,10 +573,15 @@ def test_saas_analytics_handler_is_wired():
         db.commit()
         admin = SR.get_saas_analytics(db=db, current_user=ADMIN)
         check("saas: Admin sees MRR = 50000", admin.get("monthly_recurring_revenue") == 50000)
+        # SaaS billing is EXEMPT from the money gate: MRR here is the platform's /
+        # a client's own subscription fee (the trial banner reads it), not the
+        # plant-floor commercial data the gate hides, and the registry aggregate is
+        # already workspace-scoped. A client Operator must still get its own row as
+        # DATA (test_saas_registry_authz), so every role sees MRR here.
         for u in NON_ADMINS:
             out = SR.get_saas_analytics(db=db, current_user=u)
-            check(f"saas: [{u['role']}] has no MRR, keeps the tenant count",
-                  "monthly_recurring_revenue" not in out and "total_tenants" in out)
+            check(f"saas: [{u['role']}] still sees MRR (SaaS billing is not plant money)",
+                  out.get("monthly_recurring_revenue") == 50000)
     finally:
         SR._registry_scope = orig_scope
         db.query(models.CompanyTenant).filter(models.CompanyTenant.company_code == code).delete()

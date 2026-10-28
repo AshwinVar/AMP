@@ -100,6 +100,20 @@ def produce(db, machine, hour, shots, good=None):
     db.commit()
 
 
+def produce_at(db, machine, when_utc, shots):
+    """One hour of output stamped at an EXPLICIT naive-UTC instant.
+
+    `produce` above stamps by UTC hour-of-day; this one takes the whole instant,
+    so the IST-bucketing checks can say exactly which UTC minute a shot was made
+    and assert which plant-local (IST) hour and day it lands in.
+    """
+    db.add(models.ProductionRecord(
+        tenant_code=T, machine_id=machine.id, total_count=shots, good_count=shots,
+        rejected_count=0, planned_minutes=60, runtime_minutes=55,
+        ideal_cycle_time_seconds=14, created_at=when_utc))
+    db.commit()
+
+
 def main():
     models.Base.metadata.create_all(bind=database.engine)
     db = database.SessionLocal()
@@ -125,15 +139,17 @@ def main():
         section("3. GREEN, RED, AND UNRATED")
         # The ideal is 14,400 PARTS/hr, so the shot counts below are that
         # target divided by the 56 active cavities. Shots, not parts, because
-        # shots are what a machine's counter actually produces.
+        # shots are what a machine's counter actually produces. created_at is
+        # UTC and the board buckets in IST (UTC+5:30), so 09:00/10:00/11:00 UTC
+        # are 14:30/15:30/16:30 IST and land in hours 14/15/16.
         m = setup(db)
-        produce(db, m, 9, 257)              # 257 x 56 = 14,392 — 99.9% of ideal
-        produce(db, m, 10, 196)             # 10,976 parts = 76% — below the line
-        produce(db, m, 11, 214)             # 11,984 parts = 83% — acceptable
+        produce(db, m, 9, 257)              # 09:00 UTC = 14:30 IST; 257 x 56 = 14,392 — 99.9%
+        produce(db, m, 10, 196)             # 10:00 UTC = 15:30 IST; 10,976 parts = 76% — below
+        produce(db, m, 11, 214)             # 11:00 UTC = 16:30 IST; 11,984 parts = 83% — ok
         pts = {p["hour"]: p for p in plant_board.day(db, T, DAY)["production"][0]["points"]}
-        check("an hour at the ideal is ok", pts[9]["status"] == "ok", pts[9]["status"])
-        check("76% of ideal is low", pts[10]["status"] == "low", pts[10]["status"])
-        check("83% of ideal is ok", pts[11]["status"] == "ok", pts[11]["status"])
+        check("an hour at the ideal is ok", pts[14]["status"] == "ok", pts[14]["status"])
+        check("76% of ideal is low", pts[15]["status"] == "low", pts[15]["status"])
+        check("83% of ideal is ok", pts[16]["status"] == "ok", pts[16]["status"])
         check("an hour with no output is low, not unrated",
               pts[0]["status"] == "low", pts[0]["status"])
 
@@ -248,6 +264,55 @@ def main():
               str(mon["shift_rate_by_machine"]))
         check("monthly power and packing are unavailable too",
               mon["power"]["available"] is False and mon["packing"]["available"] is False)
+
+        section("9. THE BOARD RENDERS IN THE PLANT'S IST WALL CLOCK, NOT UTC")
+        # created_at is naive UTC; an Indian plant must see production at its own
+        # wall-clock hour and on its own calendar day. Each record below is
+        # written at an explicit UTC instant and must land where IST (UTC+5:30)
+        # puts it, not where UTC would.
+        m = setup(db)
+        # The headline case: 05:58 UTC is 11:28 IST -> hour 11, never hour 5.
+        produce_at(db, m, datetime(2026, 10, 7, 5, 58), 100)
+        pts = {p["hour"]: p for p in plant_board.day(db, T, DAY)["production"][0]["points"]}
+        check("05:58 UTC lands in IST hour 11, not hour 5",
+              pts[11]["shots"] == 100 and pts[5]["shots"] == 0,
+              f"hour 11 = {pts[11]['shots']}, hour 5 = {pts[5]['shots']}")
+
+        m = setup(db)
+        # 18:15 UTC = 23:45 IST, still the 7th -> in, at hour 23.
+        produce_at(db, m, datetime(2026, 10, 7, 18, 15), 11)
+        # 18:45 UTC = 00:15 IST on the 8th -> past IST midnight, NOT the 7th.
+        produce_at(db, m, datetime(2026, 10, 7, 18, 45), 22)
+        seventh = {p["hour"]: p for p in plant_board.day(db, T, DAY)["production"][0]["points"]}
+        check("23:45 IST is on the 7th at hour 23", seventh[23]["shots"] == 11,
+              str(seventh[23]["shots"]))
+        check("00:15 IST the next day is NOT on the 7th at all",
+              sum(p["shots"] for p in seventh.values()) == 11,
+              f"the 7th totals {sum(p['shots'] for p in seventh.values())} shots")
+        eighth = {p["hour"]: p for p
+                  in plant_board.day(db, T, DAY + timedelta(days=1))["production"][0]["points"]}
+        check("...it is on the 8th instead, at hour 0", eighth[0]["shots"] == 22,
+              str(eighth[0]["shots"]))
+
+        m = setup(db)
+        # The window start is inclusive: IST midnight itself is hour 0 of the day.
+        produce_at(db, m, datetime(2026, 10, 6, 18, 30), 7)   # 00:00 IST on the 7th
+        produce_at(db, m, datetime(2026, 10, 6, 18, 29), 9)   # 23:59 IST on the 6th
+        edge = {p["hour"]: p for p in plant_board.day(db, T, DAY)["production"][0]["points"]}
+        check("IST midnight is hour 0 of the day (inclusive start)",
+              edge[0]["shots"] == 7, str(edge[0]["shots"]))
+        check("the minute before IST midnight belongs to the previous day",
+              sum(p["shots"] for p in edge.values()) == 7,
+              f"the 7th totals {sum(p['shots'] for p in edge.values())} shots")
+
+        # The month groups a day by its IST date too: 18:45 UTC on the 7th is
+        # 00:15 IST on the 8th, so it must appear under the 8th, not the 7th.
+        m = setup(db)
+        produce_at(db, m, datetime(2026, 10, 7, 18, 45), 50)
+        daily = {d["day"]: d for d in plant_board.month(db, T, DAY.year, DAY.month)["daily"]}
+        check("the month view buckets a day by its IST date",
+              "2026-10-08" in daily and "2026-10-07" not in daily,
+              f"days seen: {sorted(daily)}")
 
         wipe(db)
     finally:

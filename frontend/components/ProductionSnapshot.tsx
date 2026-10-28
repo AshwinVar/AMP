@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { apiGet } from "../lib/api";
 import MachineDetailDrawer from "./MachineDetailDrawer";
-import { parseApiDate } from "../lib/apiDate";
+import { formatDateParts } from "../lib/apiDate";
 
 // Mirrors the backend production summary (ai/production.py build_production_summary).
 type ProductionSummary = {
@@ -32,8 +32,7 @@ function lineStyle(line: string) {
 }
 
 function wk(iso: string) {
-  const d = parseApiDate(iso);
-  return d ? d.toLocaleDateString(undefined, { weekday: "short" }) : "";
+  return formatDateParts(iso, { weekday: "short" });
 }
 
 // A glanceable production read-out — throughput sparkline, good rate, top

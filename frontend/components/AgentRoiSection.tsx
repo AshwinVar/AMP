@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { apiGet } from "../lib/api";
-import { parseApiDate } from "../lib/apiDate";
+import { formatDateParts } from "../lib/apiDate";
 
 type Outputs = { maintenance_tasks: number; purchase_orders: number; escalations: number };
 
@@ -46,8 +46,7 @@ function agentStyle(a: string) {
 }
 
 function weekday(iso: string) {
-  const d = parseApiDate(iso);
-  return d ? d.toLocaleDateString(undefined, { weekday: "short" }) : "";
+  return formatDateParts(iso, { weekday: "short" });
 }
 
 // The exec/sales artifact for the AI workforce: what the agents have actually

@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { apiGet, apiGetWithTotal, apiPost, apiPatch } from "../lib/api";
-import { parseApiDate } from "../lib/apiDate";
+import { formatInstant } from "../lib/apiDate";
 import PageNotice from "./PageNotice";
 import {
   AGENT_ACTIONS_PAGE,
@@ -40,9 +40,7 @@ function agentStyle(a: string) {
 }
 
 function fmt(iso: string | null) {
-  if (!iso) return "—";
-  const d = parseApiDate(iso);
-  return d ? d.toLocaleString() : "—";
+  return formatInstant(iso);
 }
 
 // One place to triage everything awaiting a human: the agent approval queue

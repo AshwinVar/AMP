@@ -159,10 +159,17 @@ def main():
         check("the day grows from 6 hours to 12, not to 18", ninth == 12, str(ninth))
 
         section("7. NULL ENERGY IS NOT ZERO ENERGY")
-        b = plant_board.day(db, T, date(2026, 10, 7))
-        check("a metered day draws a real power series", b["power"]["available"])
-        check("...with the hours it measured",
-              b["power"]["total"] == round(3.8 * 24, 2), str(b["power"]["total"]))
+        # created_at is UTC and the board renders IST (UTC+5:30), so the 24 UTC
+        # hours of the 7th fall across two IST board-days -- 19 on the 7th and 5
+        # past IST midnight on the 8th. Summed across the boundary nothing the
+        # machine measured is lost or doubled.
+        b7 = plant_board.day(db, T, date(2026, 10, 7))
+        b8 = plant_board.day(db, T, date(2026, 10, 8))
+        check("a metered day draws a real power series", b7["power"]["available"])
+        check("...with every hour it measured, across the IST day boundary",
+              round((b7["power"]["total"] or 0) + (b8["power"]["total"] or 0), 2)
+              == round(3.8 * 24, 2),
+              f"{b7['power'].get('total')} + {b8['power'].get('total')}")
 
         # Now a machine whose export carried no energy file at all.
         wipe(db)
@@ -170,16 +177,17 @@ def main():
         db.add(m2)
         db.commit()
         arico_import.import_export(db, T, m2, prod, None)      # production only
-        b2 = plant_board.day(db, T, date(2026, 10, 7))
+        b2_7 = plant_board.day(db, T, date(2026, 10, 7))
+        b2_8 = plant_board.day(db, T, date(2026, 10, 8))
         check("a machine that measured NO energy reports unavailable",
-              b2["power"]["available"] is False, str(b2["power"]))
+              b2_7["power"]["available"] is False, str(b2_7["power"]))
         check("...and carries no points that could be drawn as zero",
-              b2["power"]["points"] == [], str(b2["power"]["points"]))
-        check("...while its production is still counted",
-              b2["production"][0]["total"] == int(sum(full)),
-              str(b2["production"][0]["total"]))
+              b2_7["power"]["points"] == [], str(b2_7["power"]["points"]))
+        check("...while its production is still counted, across the IST day boundary",
+              b2_7["production"][0]["total"] + b2_8["production"][0]["total"] == int(sum(full)),
+              f"{b2_7['production'][0]['total']} + {b2_8['production'][0]['total']}")
         check("...and it names the reason and the fix",
-              bool(b2["power"]["reason"]) and bool(b2["power"]["fix"]))
+              bool(b2_7["power"]["reason"]) and bool(b2_7["power"]["fix"]))
 
         section("8. REFUSALS")
         bad = os.path.join(TMP, "notanexport.CSV")

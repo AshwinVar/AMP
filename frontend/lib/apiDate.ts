@@ -80,3 +80,46 @@ export function parseApiDate(value: string | null | undefined): Date | null {
   const d = new Date(normalizeApiDateString(value));
   return Number.isNaN(d.getTime()) ? null : d;
 }
+
+/**
+ * The zone every instant is displayed in, regardless of the viewer's browser.
+ *
+ * Parsing (above) is about the WIRE and stays in UTC; this is about the SCREEN.
+ * Every tenant is in India today, and the plant laptops' browsers sit on UTC,
+ * so a bare `.toLocaleString()` drew every clock 5h30m behind the wall. Pinning
+ * display to IST fixes that for every viewer, on any machine. Display-only, and
+ * one constant on purpose: lift it to a per-tenant setting the day a tenant is
+ * not in India.
+ */
+export const DISPLAY_TIME_ZONE = "Asia/Kolkata";
+
+/**
+ * A full local date + time in DISPLAY_TIME_ZONE — the one-line stamp used on
+ * event rows, logs and tables. A string is parsed with parseApiDate (naive-UTC
+ * and date-only both handled); a Date is used as given. Returns `fallback` for
+ * null / empty / unparseable, so a call site renders a dash, not "Invalid Date".
+ */
+export function formatInstant(
+  value: string | Date | null | undefined,
+  fallback = "—",
+): string {
+  const d = value instanceof Date ? value : parseApiDate(value);
+  if (!d) return fallback;
+  return d.toLocaleString(undefined, { timeZone: DISPLAY_TIME_ZONE });
+}
+
+/**
+ * Chosen date parts (weekday / month / day …) in DISPLAY_TIME_ZONE. `opts` picks
+ * which parts show and the zone is forced on top, so the label names the day it
+ * is in India. A string goes through parseApiDate; a Date is used as given.
+ * Returns `fallback` (default "") for null / empty / unparseable.
+ */
+export function formatDateParts(
+  value: string | Date | null | undefined,
+  opts: Intl.DateTimeFormatOptions,
+  fallback = "",
+): string {
+  const d = value instanceof Date ? value : parseApiDate(value);
+  if (!d) return fallback;
+  return d.toLocaleDateString(undefined, { ...opts, timeZone: DISPLAY_TIME_ZONE });
+}

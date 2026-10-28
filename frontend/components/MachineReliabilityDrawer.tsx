@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { apiGet } from "../lib/api";
 import { useModalFocus } from "../lib/useModalFocus";
-import { parseApiDate } from "../lib/apiDate";
+import { formatInstant } from "../lib/apiDate";
 
 // Mirrors the backend machine drill-down (ai/reliability.py build_machine_reliability).
 type Mode = { reason: string; count: number; minutes: number };
@@ -314,7 +314,7 @@ export default function MachineReliabilityDrawer({
                           <span className="text-xs text-amber-400 shrink-0">{minsLabel(f.minutes)}</span>
                         </div>
                         <p className="text-xs text-slate-600 mt-0.5">
-                          {parseApiDate(f.at)?.toLocaleString() ?? "—"}
+                          {formatInstant(f.at)}
                           {f.notes ? ` · ${f.notes}` : ""}
                         </p>
                       </li>

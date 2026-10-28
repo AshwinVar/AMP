@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { apiGet } from "../lib/api";
 import { useModalFocus } from "../lib/useModalFocus";
-import { parseApiDate } from "../lib/apiDate";
+import { formatDateParts } from "../lib/apiDate";
 
 // Mirrors the backend part drill-down (ai/coverage.py build_part_runway).
 type RunwayState = "out" | "critical" | "watch" | "ok";
@@ -54,7 +54,7 @@ const PO_STATE_CLS: Record<PoState, string> = {
 
 function fmtDate(iso: string | null) {
   if (!iso) return null;
-  return parseApiDate(iso)?.toLocaleDateString(undefined, { month: "short", day: "numeric" }) ?? null;
+  return formatDateParts(iso, { month: "short", day: "numeric" });
 }
 
 function coverLabel(p: PartRunway) {
@@ -280,7 +280,7 @@ export default function PartRunwayDrawer({ itemCode, onClose }: { itemCode: stri
                           {m.reference && <p className="text-xs text-slate-600 mt-0.5 truncate">{m.reference}</p>}
                         </div>
                         <span className="text-xs text-slate-600 shrink-0">
-                          {parseApiDate(m.at)?.toLocaleDateString(undefined, { month: "short", day: "numeric" }) ?? ""}
+                          {formatDateParts(m.at, { month: "short", day: "numeric" })}
                         </span>
                       </li>
                     ))}

@@ -1,5 +1,5 @@
 import type { MachineEvent } from "../lib/phase8-types";
-import { parseApiDate } from "../lib/apiDate";
+import { formatInstant } from "../lib/apiDate";
 
 import { statusHue, type StatusHue } from "../lib/utils";
 // The timeline's chip treatment — lighter than the twin's nodes on purpose,
@@ -36,7 +36,7 @@ export default function MachineTimeline({ events }: { events: MachineEvent[] }) 
               <div>
                 <p className="font-semibold text-white">{event.machine_name}</p>
                 <p className="text-xs text-slate-500 mt-1">
-                  {parseApiDate(event.created_at)?.toLocaleString() ?? "Live event"}
+                  {formatInstant(event.created_at, "Live event")}
                 </p>
               </div>
 

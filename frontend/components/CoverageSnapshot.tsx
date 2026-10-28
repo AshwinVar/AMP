@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { apiGet } from "../lib/api";
 import PartRunwayDrawer from "./PartRunwayDrawer";
-import { parseApiDate } from "../lib/apiDate";
+import { formatDateParts } from "../lib/apiDate";
 
 // Mirrors the backend days-of-cover read-model (ai/coverage.py build_coverage_summary).
 type CoverageItem = {
@@ -49,8 +49,7 @@ function coverLabel(i: CoverageItem) {
 
 function fmtDate(iso: string | null) {
   if (!iso) return null;
-  const d = parseApiDate(iso);
-  return d ? d.toLocaleDateString(undefined, { month: "short", day: "numeric" }) : null;
+  return formatDateParts(iso, { month: "short", day: "numeric" });
 }
 
 // A glanceable stockout forecast — the items burning down fastest and when they

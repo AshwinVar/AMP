@@ -10,7 +10,7 @@
  * anomaly score as an alarm, would say something the evaluation does not. So the
  * wording lives here, where it is tested, and the components only render it.
  */
-import { parseApiDate } from "./apiDate";
+import { formatDateParts } from "./apiDate";
 
 // ── Shapes (backend/amp_ai/registry.py, amp_ai/consent.py, native_ai_routes.py) ──
 
@@ -262,8 +262,8 @@ export function copilotBadge(turn: CopilotTurnSource): CopilotBadge {
 // ── Consent ────────────────────────────────────────────────────────────────────
 
 function day(iso: string | null): string | null {
-  const d = parseApiDate(iso);
-  return d ? d.toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" }) : null;
+  if (!iso) return null;
+  return formatDateParts(iso, { day: "numeric", month: "short", year: "numeric" });
 }
 
 /** A provider's name as the card says it. */

@@ -7,7 +7,7 @@ import AgentPolicyPanel from "./AgentPolicyPanel";
 import AILearningConsentCard from "./AILearningConsentCard";
 import ActionOutcomesSection from "./ActionOutcomesSection";
 import AINativeModelsPanel from "./AIModelCard";
-import { parseApiDate } from "../lib/apiDate";
+import { formatDateParts, formatInstant } from "../lib/apiDate";
 import {
   AGENT_ACTIONS_PAGE,
   EXPIRED_PROPOSAL_NOTE,
@@ -73,14 +73,11 @@ function agentStyle(a: string) {
 }
 
 function fmt(iso: string | null) {
-  if (!iso) return "—";
-  const d = parseApiDate(iso);
-  return d ? d.toLocaleString() : "—";
+  return formatInstant(iso);
 }
 
 function weekday(iso: string) {
-  const d = parseApiDate(iso);
-  return d ? d.toLocaleDateString(undefined, { weekday: "short" }) : "";
+  return formatDateParts(iso, { weekday: "short" });
 }
 
 export default function AgentActivitySection() {

@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { apiGet, apiPost } from "../lib/api";
 import { useModalFocus } from "../lib/useModalFocus";
-import { parseApiDate } from "../lib/apiDate";
+import { formatDateParts, formatInstant } from "../lib/apiDate";
 import { EXPIRED_PROPOSAL_NOTE } from "../lib/agent-actions";
 
 // Mirrors the backend agent detail read-model (ai/roster.py build_agent_detail).
@@ -57,14 +57,11 @@ function statusStyle(s: string) {
 }
 
 function fmt(iso: string | null) {
-  if (!iso) return "—";
-  const d = parseApiDate(iso);
-  return d ? d.toLocaleString() : "—";
+  return formatInstant(iso);
 }
 
 function wk(iso: string) {
-  const d = parseApiDate(iso);
-  return d ? d.toLocaleDateString(undefined, { weekday: "short" }) : "";
+  return formatDateParts(iso, { weekday: "short" });
 }
 
 function humanKind(k: string) {

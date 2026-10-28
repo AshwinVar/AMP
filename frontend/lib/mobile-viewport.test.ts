@@ -1,6 +1,7 @@
 import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 
+import postcss from "postcss";
 import { describe, expect, it } from "vitest";
 
 /**
@@ -48,7 +49,55 @@ function markup(): string {
   return out.join("\n");
 }
 
-const css = readFileSync(SHEET, "utf8");
+/**
+ * The sheet with comments stripped.
+ *
+ * This guards the ORPHAN test, which pulls `.phase29-*` out of raw media-block
+ * text: a comment that merely NAMES a class -- the obvious thing to write when
+ * explaining why a rule was dropped -- is otherwise read as a rule that matches
+ * nothing, and the suite fails pointing at a comment. Verified by inserting
+ * one: with the strip it passes, without it the orphan test reports
+ * `phase29-legacy-toolbar`.
+ *
+ * It does NOT protect the padding assertion below, though this sheet's own
+ * comment quotes `padding-right:124px`. rulesFor() matches a selector exactly,
+ * and a comment has no braces, so it is absorbed into the next rule's SELECTOR
+ * and can never be read as a declaration.
+ */
+const raw = readFileSync(SHEET, "utf8");
+const css = raw.replace(/\/\*[\s\S]*?\*\//g, "");
+
+/** The declaration body of every rule whose selector list names `sel` exactly. */
+function rulesFor(sel: string, source: string = css): string[] {
+  const out: string[] = [];
+  const re = /([^{}]+)\{([^{}]*)\}/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(source)) !== null) {
+    if (m[1].split(",").map((x) => x.trim()).includes(sel)) out.push(m[2]);
+  }
+  return out;
+}
+
+/** The sheet minus every @media block: the rules that hold at EVERY width. */
+function baseRules(source: string): string {
+  const re = /@media[^{]*\{/g;
+  let out = "";
+  let last = 0;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(source)) !== null) {
+    out += source.slice(last, m.index);
+    let depth = 1;
+    let i = re.lastIndex;
+    while (i < source.length && depth > 0) {
+      if (source[i] === "{") depth++;
+      else if (source[i] === "}") depth--;
+      i++;
+    }
+    last = i;
+    re.lastIndex = i;
+  }
+  return out + source.slice(last);
+}
 
 /** The body of every `@media(max-width: ...)` block, brace-matched. */
 function mediaBlocks(source: string): { query: string; body: string }[] {
@@ -69,6 +118,16 @@ function mediaBlocks(source: string): { query: string; body: string }[] {
 }
 
 describe("narrow viewport", () => {
+  it("is a stylesheet the compiler can actually parse", () => {
+    // Everything else here strips comments and never parses, so when a comment
+    // was once mis-edited and orphaned four lines of prose into the sheet, all
+    // of it still passed -- while the dev server answered 500 for the entire
+    // dashboard ("Unknown word Between"). A guard that cannot see a broken
+    // stylesheet is not guarding the stylesheet. This runs PostCSS, the parser
+    // the build itself uses, over the raw file.
+    expect(() => postcss.parse(raw, { from: SHEET })).not.toThrow();
+  });
+
   it("has a breakpoint for phones, not just the 1180px sidebar collapse", () => {
     const widths = mediaBlocks(css).map((b) => b.query);
     expect(widths.some((q) => /7\d\d(\.\d+)?px/.test(q))).toBe(true);
@@ -113,13 +172,84 @@ describe("narrow viewport", () => {
   it("lets the topbar's title shrink instead of crushing it to nothing", () => {
     // The actual failure: .phase29-topbar-actions had no shrink constraint, so
     // it took its content width (500px on a 375px screen) and left the title
-    // group with zero. Both halves of the fix are pinned.
+    // group with zero. The fix is a BASE rule -- the same crush happened at
+    // 1280, where the actions measured 892px and left the title 36px -- so it
+    // is asserted outside any media query, where it holds at every width.
+    const base = baseRules(css);
+    expect(base).toMatch(/\.phase29-topbar>:first-child\{[^}]*flex:\s*1 1 auto/);
+    expect(base).toMatch(/\.phase29-topbar>:first-child\{[^}]*min-width:\s*0/);
+    expect(base).toMatch(/\.phase29-topbar-actions\{[^}]*min-width:\s*0/);
+  });
+
+  it("reserves no topbar space for an element that is not there", () => {
+    // `padding-right:124px` (98px below 1180) came in with the scaffold and
+    // nothing had measured the row since. Measured at 1280 the last control
+    // ended at 1126 against a bar edge of 1280 -- 154px of the row sat empty
+    // while the title was crushed to 36px, because the actions were the only
+    // child that could not give way. The bar's own 30px gutter is the margin;
+    // a padding here is a reserve, and a reserve has to be justified by
+    // something fixed sitting over it. Nothing is.
+    const actions = rulesFor(".phase29-topbar-actions");
+    expect(actions.length).toBeGreaterThan(0);
+    for (const body of actions) {
+      expect(body).not.toMatch(/padding-right\s*:\s*[1-9]/);
+      // And it must stay able to shrink: flex-shrink:0 re-creates the crush
+      // from the other side -- title ellipsised away rather than overlapped.
+      expect(body).not.toMatch(/flex\s*:\s*0\s+0/);
+      expect(body).not.toMatch(/flex-shrink\s*:\s*0/);
+    }
+  });
+
+  it("keeps the topbar one row, because the bar cannot grow a second one", () => {
+    // .phase29-topbar is a fixed 74px, so a title that wraps does not make the
+    // bar taller -- it spills out of it. Measured at 1280 before the fix: 90px
+    // of title group inside a 74px bar, because "Mission Control" wants 175px
+    // on one line and had 174. Width was not the real fault; a long enough
+    // machine or user name spills at 1440 too, which is why this is asserted
+    // at BASE and not inside a phone query.
+    const base = baseRules(css);
+    for (const sel of [".phase29-topbar h1", ".phase29-eyebrow"]) {
+      const bodies = rulesFor(sel, base);
+      expect(bodies.length, `${sel} has no base rule`).toBeGreaterThan(0);
+      const all = bodies.join(";");
+      expect(all, `${sel} may wrap`).toMatch(/white-space\s*:\s*nowrap/);
+      expect(all, `${sel} has no ellipsis`).toMatch(/text-overflow\s*:\s*ellipsis/);
+    }
+    // The phone query may still resize the title, but truncation is no longer
+    // its job -- a redundant duplicate is how a mutation survived this suite.
     const narrow = mediaBlocks(css)
       .filter((b) => /7\d\d(\.\d+)?px/.test(b.query))
       .map((b) => b.body)
       .join("\n");
-    expect(narrow).toMatch(/\.phase29-topbar>:first-child\{[^}]*min-width:\s*0/);
-    expect(narrow).toMatch(/\.phase29-topbar-actions\{[^}]*flex:\s*0 0 auto/);
-    expect(narrow).toMatch(/\.phase29-topbar h1\{[^}]*text-overflow:\s*ellipsis/);
+    for (const sel of [".phase29-topbar h1", ".phase29-eyebrow"]) {
+      for (const body of rulesFor(sel, narrow)) {
+        expect(body, `${sel} re-declares truncation on phones`)
+          .not.toMatch(/text-overflow/);
+      }
+    }
+    // (.phase29-user keeps its own ellipsis there -- that chip is not the title.)
+  });
+
+  it("lets the tenant switcher give way instead of the search box", () => {
+    // .phase29-pill is a <select>, so its width is its widest <option> -- the
+    // tenant list. At min-width:auto a name like "Shrinidhi Plastics Private
+    // Limited" pins it at 245px and the search box eats the whole shortfall:
+    // measured 129px at 1181. min-width:0 moves it to 167 and the search holds
+    // 190. (A floor on the search and text-overflow on the select were both
+    // tried here and measured out -- neither ever changed a pixel.)
+    const bodies = rulesFor(".phase29-pill", baseRules(css));
+    expect(bodies.length, "no base rule for .phase29-pill").toBeGreaterThan(0);
+    expect(bodies.join(";")).toMatch(/min-width\s*:\s*0/);
+  });
+
+  it("makes the chrome yield before the page title does", () => {
+    // Both can shrink, so flexbox splits a shortfall between them in
+    // proportion to base size times shrink factor -- and the actions are much
+    // the wider, so an equal factor makes the TITLE pay. At 1181px that clipped
+    // "Mission Control" beside a search box still holding 71px of slack.
+    const base = baseRules(css);
+    const m = /\.phase29-topbar-actions\{[^}]*flex\s*:\s*(\d+)\s+(\d+)/.exec(base);
+    expect(m, "no base flex on .phase29-topbar-actions").not.toBeNull();
+    expect(Number(m![2]), "chrome must yield faster than the title").toBeGreaterThan(1);
   });
 });

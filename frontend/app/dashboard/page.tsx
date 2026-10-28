@@ -252,6 +252,19 @@ export default function DashboardPage() {
   // Narrow-viewport nav: below 1180px the sidebar is off-canvas; the topbar
   // hamburger toggles it, and navigating closes it.
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
+  // Escape closes the drawer. It had no dismissal of its own: the topbar's "✕"
+  // is painted UNDERNEATH the open drawer (sidebar z-index 100, topbar 90, and
+  // the drawer spans the button's x-range), so tapping it hit the drawer's own
+  // brand mark. The only way out was tapping a nav item, which also navigates —
+  // you could not open the menu, look, and back out.
+  useEffect(() => {
+    if (!mobileNavOpen) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setMobileNavOpen(false);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [mobileNavOpen]);
   // Which Overview card group is open. Only the active group's cards mount, so
   // the home stays glanceable and the background polling stays light.
   const [overviewTab, setOverviewTab] = useState("performance");
@@ -1924,6 +1937,13 @@ export default function DashboardPage() {
 
   return (
     <main className="phase29-shell min-h-screen bg-slate-950 text-white p-6">
+{mobileNavOpen && (
+  <div
+    className="phase29-nav-backdrop"
+    onClick={() => setMobileNavOpen(false)}
+    aria-hidden="true"
+  />
+)}
 <aside className={`phase29-sidebar ${mobileNavOpen ? "phase29-sidebar-open" : ""}`}>
   <div className="phase29-brand">
     <BrandMark name={brandName} color={tenantCfg?.brand_color} logoUrl={tenantCfg?.brand_logo_url} />

@@ -93,6 +93,20 @@ main>div:not(.phase29-sidebar):not(.phase29-topbar),main>section{max-width:1740p
    truncates its own label. Both were tried and measured out. */
 .phase29-pill{min-width:0}
 
+/* THE OPEN DRAWER NEEDS A WAY OUT.
+   The topbar's "X" is painted UNDERNEATH the open drawer: the sidebar is
+   z-index 100, the topbar 90, and the drawer spans 0-274px, which covers the
+   button at x 14-58. Hit-testing the button's centre returned the drawer's own
+   .phase29-brand-mark. There was no scrim and no Escape handler either, so the
+   only way to dismiss it was tapping a nav item -- which also navigates you
+   somewhere. You could not open the menu, look, and back out.
+
+   99 is deliberate: under the drawer (100) so the drawer stays legible, over
+   the topbar (90) so a tap on the covered "X" still lands here and closes.
+   Hidden by default because the hamburger that opens this only exists below
+   1180; a stray full-screen layer on desktop would eat every click. */
+.phase29-nav-backdrop{display:none;position:fixed;inset:0;z-index:99;background:rgba(2,6,23,.6)}
+
 /* WCAG AA tap targets, applied wherever the off-canvas drawer IS the navigation
    -- which is every width below the 1180px collapse, tablets included. The glyph
    is not the tap area (Fitts's law); these were 38x38 and 37px tall, which is a
@@ -100,6 +114,7 @@ main>div:not(.phase29-sidebar):not(.phase29-topbar),main>section{max-width:1740p
 @media(max-width:1180px){
   .phase29-menu-btn{width:44px;height:44px}
   .phase29-nav-item{min-height:44px!important}
+  .phase29-nav-backdrop{display:block}
 }
 
 @media(max-width:767.98px){

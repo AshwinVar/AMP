@@ -230,6 +230,51 @@ describe("narrow viewport", () => {
     // (.phase29-user keeps its own ellipsis there -- that chip is not the title.)
   });
 
+  it("gives the open drawer a way out that is not navigating away", () => {
+    // The topbar's "X" is painted UNDER the open drawer -- sidebar z-index 100,
+    // topbar 90, and the drawer spans 0-274px over a button at x 14-58 -- so a
+    // hit test on the button's centre returned .phase29-brand-mark. With no
+    // scrim and no Escape handler, the only dismissal was tapping a nav item,
+    // which also navigates: you could not open the menu, look, and back out.
+    const base = baseRules(css);
+    const zOf = (sel: string) => {
+      const m = /z-index\s*:\s*(\d+)/.exec(rulesFor(sel, base).join(";"));
+      expect(m, `no z-index on ${sel}`).not.toBeNull();
+      return Number(m![1]);
+    };
+    const topbar = zOf(".phase29-topbar");
+    const scrim = zOf(".phase29-nav-backdrop");
+    const drawer = zOf(".phase29-sidebar");
+    // Over the topbar, so a tap on the covered "X" still lands on the scrim
+    // and closes; under the drawer, so the drawer itself stays usable.
+    expect(scrim, "scrim must sit above the topbar").toBeGreaterThan(topbar);
+    expect(scrim, "scrim must sit below the drawer").toBeLessThan(drawer);
+
+    // The hamburger exists only below 1180, so a full-screen layer must not be
+    // live on desktop, where it would silently eat every click on the page.
+    const scrimBase = rulesFor(".phase29-nav-backdrop", base).join(";");
+    expect(scrimBase, "scrim is live at desktop widths").toMatch(/display\s*:\s*none/);
+    const drawerWidths = mediaBlocks(css)
+      .filter((b) => /1180px/.test(b.query))
+      .map((b) => b.body)
+      .join("\n");
+    expect(rulesFor(".phase29-nav-backdrop", drawerWidths).join(";"))
+      .toMatch(/display\s*:\s*block/);
+
+    // Both dismissal paths must actually close it, not merely exist.
+    const page = readFileSync(join(APP, "dashboard", "page.tsx"), "utf8");
+    expect(page, "the backdrop does not close the drawer")
+      .toMatch(/phase29-nav-backdrop[\s\S]{0,160}?setMobileNavOpen\(false\)/);
+    expect(page, "Escape does not close the drawer")
+      .toMatch(/"Escape"[\s\S]{0,80}?setMobileNavOpen\(false\)/);
+    // ...and the handler has to be REGISTERED. Deleting only the
+    // addEventListener leaves the Escape branch sitting there, inert, and a
+    // guard that looks for the branch alone passes. A mutation did exactly
+    // that and survived, so the wiring is pinned too.
+    expect(page, "the Escape handler is never registered")
+      .toMatch(/"Escape"[\s\S]{0,200}?addEventListener\("keydown"/);
+  });
+
   it("lets the tenant switcher give way instead of the search box", () => {
     // .phase29-pill is a <select>, so its width is its widest <option> -- the
     // tenant list. At min-width:auto a name like "Shrinidhi Plastics Private

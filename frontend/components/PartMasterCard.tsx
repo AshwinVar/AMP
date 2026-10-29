@@ -4,7 +4,9 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { apiGet, apiPost, errorDetail } from "../lib/api";
 import { CURRENCY } from "../lib/money";
+import { useCanSeeMoney } from "../lib/money-visibility";
 import { todayLocalIso, type PartSpec, type ToolAssignment } from "../lib/plant-board";
+import PartSpecAuditDrawer from "./PartSpecAuditDrawer";
 
 /**
  * THE PART MASTER — the figures no controller on the floor knows.
@@ -72,6 +74,29 @@ export function previewRate(cycleSeconds: string, activeCavities: string): numbe
   return Math.round((3600 / cycle) * cavities);
 }
 
+/**
+ * The current spec per part code — the latest effective date, one row each.
+ *
+ * The backend already returns current-only (part_spec_routes.list_part_specs),
+ * so in steady state this changes nothing. It is DEFENSIVE: a half-rolled-out
+ * backend, a cached response, or a future change that forgets the rule would
+ * otherwise list a part once per revision — and the whole point of the trim is
+ * that the master shows the figure in force, not its history (which lives in the
+ * audit trail). Keyed by part_code, keeping the greatest effective_from. ISO
+ * dates sort lexically, so a string compare is a date compare; a missing date
+ * (`null`) sorts first, i.e. treated as the oldest, never winning over a real one.
+ */
+export function currentPerPart(specs: PartSpec[]): PartSpec[] {
+  const byCode = new Map<string, PartSpec>();
+  for (const spec of specs) {
+    const prev = byCode.get(spec.part_code);
+    if (!prev || (spec.effective_from ?? "") > (prev.effective_from ?? "")) {
+      byCode.set(spec.part_code, spec);
+    }
+  }
+  return [...byCode.values()];
+}
+
 function Field({
   label,
   hint,
@@ -107,9 +132,15 @@ export default function PartMasterCard({
   const [machines, setMachines] = useState<{ id: number; name: string }[]>([]);
   const [draft, setDraft] = useState<Draft>(blank);
   const [open, setOpen] = useState(false);
+  // The audit-trail drawer. Admin-only, like the endpoint it reads.
+  const [auditOpen, setAuditOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [saved, setSaved] = useState("");
+  // Price is money: shown only to a viewer who may see money (the Price column
+  // drops out otherwise). The edit form below is already Admin-only, which is
+  // the same viewer, so its price field needs no separate gate.
+  const canSeeMoney = useCanSeeMoney();
 
   const load = useCallback(async () => {
     try {
@@ -118,7 +149,10 @@ export default function PartMasterCard({
         apiGet<{ tools: ToolAssignment[]; machines: { id: number; name: string }[] }>(
           "/tool-assignments"),
       ]);
-      setSpecs(s.specs);
+      // Current-only, defensively: the backend already sends one row per part,
+      // but a stale/cached response must not re-clutter the master with
+      // superseded revisions. See currentPerPart.
+      setSpecs(currentPerPart(s.specs));
       setMaterials(s.materials);
       setTools(t.tools);
       setMachines(t.machines);
@@ -251,32 +285,46 @@ export default function PartMasterCard({
           </h3>
           <p className="mt-1 text-xs text-slate-500">
             What a machine cannot know: part weight, cavities, cycle time and
-            price. Every kilogram and every {CURRENCY} figure on this page comes
+            price. Every kilogram{canSeeMoney ? ` and every ${CURRENCY} figure` : ""} on this page comes
             from here.
           </p>
         </div>
         {isAdmin ? (
-          <button
-            type="button"
-            onClick={() => {
-              // OPENING IS ALWAYS A FRESH PART. Without this, clicking "Add a
-              // part" after a revision reopens the form still holding the
-              // revised part's eight fields, and the likeliest outcome is a
-              // new part saved with another part's cavity count -- invisible
-              // afterwards, because every figure downstream scales with it.
-              if (!open) {
-                setDraft(blank());
-                setError("");
-                setSaved("");
-              }
-              setOpen((v) => !v);
-            }}
-            className="rounded-lg border border-sky-500/40 bg-sky-500/10 px-4 py-2 text-sm text-sky-200 hover:bg-sky-500/20"
-          >
-            {open ? "Close" : "Add a part"}
-          </button>
+          <div className="flex shrink-0 items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setAuditOpen(true)}
+              title="Who changed a part's weight, cavities, cycle or price — and what it was before"
+              className="rounded-lg border border-slate-700 px-3 py-2 text-sm text-slate-300 hover:border-slate-500 hover:text-slate-100"
+            >
+              Audit trail
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                // OPENING IS ALWAYS A FRESH PART. Without this, clicking "Add a
+                // part" after a revision reopens the form still holding the
+                // revised part's eight fields, and the likeliest outcome is a
+                // new part saved with another part's cavity count -- invisible
+                // afterwards, because every figure downstream scales with it.
+                if (!open) {
+                  setDraft(blank());
+                  setError("");
+                  setSaved("");
+                }
+                setOpen((v) => !v);
+              }}
+              className="rounded-lg border border-sky-500/40 bg-sky-500/10 px-4 py-2 text-sm text-sky-200 hover:bg-sky-500/20"
+            >
+              {open ? "Close" : "Add a part"}
+            </button>
+          </div>
         ) : null}
       </div>
+
+      {auditOpen && isAdmin ? (
+        <PartSpecAuditDrawer onClose={() => setAuditOpen(false)} />
+      ) : null}
 
       {error ? (
         <p className="mt-3 rounded-lg border border-red-500/40 bg-red-500/10 p-3 text-sm text-red-200">
@@ -451,7 +499,7 @@ export default function PartMasterCard({
                 <th className="py-2 text-right">Cavities</th>
                 <th className="py-2 text-right">Cycle (s)</th>
                 <th className="py-2 text-right">Target/hr</th>
-                <th className="py-2 text-right">Price</th>
+                {canSeeMoney ? <th className="py-2 text-right">Price</th> : null}
                 <th className="py-2">From</th>
                 {isAdmin ? <th className="py-2 text-right">Revise</th> : null}
               </tr>
@@ -475,9 +523,11 @@ export default function PartMasterCard({
                   <td className="py-2 text-right text-sky-300">
                     {s.ideal_parts_per_hour.toLocaleString()}
                   </td>
-                  <td className="py-2 text-right text-slate-300">
-                    {s.price_per_piece > 0 ? CURRENCY + s.price_per_piece : "unpriced"}
-                  </td>
+                  {canSeeMoney ? (
+                    <td className="py-2 text-right text-slate-300">
+                      {s.price_per_piece > 0 ? CURRENCY + s.price_per_piece : "unpriced"}
+                    </td>
+                  ) : null}
                   <td className="py-2 text-slate-500">{s.effective_from ?? "—"}</td>
                   {isAdmin ? (
                     <td className="py-2 text-right">
@@ -502,7 +552,7 @@ export default function PartMasterCard({
       ) : (
         <p className="mt-4 text-sm text-slate-500">
           No part has a specification yet, so the board can count parts but cannot
-          turn them into kilograms or {CURRENCY}.
+          turn them into kilograms{canSeeMoney ? ` or ${CURRENCY}` : ""}.
         </p>
       )}
 

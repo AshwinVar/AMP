@@ -17,6 +17,7 @@ import paging
 import schemas
 from auth import get_current_user, require_roles
 from database import SessionLocal
+from money_redaction import redact_money
 
 
 def _get_db():
@@ -160,7 +161,11 @@ def get_costing_analytics(db: Session = Depends(_get_db), current_user: dict = D
     # units) -> None, shown as "—", never a misleading ₹0 while costs exist.
     cost_per_good_unit = round(manual_cost / production_units, 2) if production_units else None
 
-    return {
+    # The money here (manual_cost_total, cost_per_good_unit, the by_type / by_department
+    # spend maps) is Admin-only; a non-Admin keeps the counts (records, units,
+    # receipts) with the rupees omitted (money_redaction). total_cost_records is a
+    # COUNT, not money, and is kept.
+    return redact_money({
         "total_cost_records": total_cost_records,
         "manual_cost_total": manual_cost,
         "production_units": production_units,
@@ -168,4 +173,4 @@ def get_costing_analytics(db: Session = Depends(_get_db), current_user: dict = D
         "supplier_receipt_units": material_spend,
         "by_type": by_type,
         "by_department": by_department,
-    }
+    }, current_user)

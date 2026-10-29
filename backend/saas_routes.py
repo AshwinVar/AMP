@@ -264,6 +264,9 @@ def get_saas_analytics(db: Session = Depends(_get_db), current_user: dict = Depe
         db.query(func.coalesce(func.sum(models.CompanyTenant.seats), 0))
     ).scalar() or 0
 
+    # SaaS billing (platform MRR / a client's own subscription fee, read by the
+    # trial banner) is NOT the plant-floor commercial data the money gate hides —
+    # it is already founder/own-workspace scoped above, so it is returned whole.
     return {
         "total_tenants": int(total_tenants),
         "trial": status_counts.get("Trial", 0),

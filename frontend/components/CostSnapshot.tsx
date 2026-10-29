@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import { apiGet } from "../lib/api";
 import { barPct } from "../lib/bar";
 import { lossFigure, money } from "../lib/money";
+import { useCanSeeMoney } from "../lib/money-visibility";
 
 // Mirrors the backend cost read-model (ai/cost.py build_cost_summary).
 //
@@ -47,8 +48,8 @@ const lineChip = (line: string) =>
     ? "border-violet-500/40 bg-violet-500/10 text-violet-300"
     : "border-slate-700 bg-slate-800 text-slate-300";
 
-const split = (r: LossRow) =>
-  `Downtime ${lossFigure(r.downtime_cost, r.downtime_lost_units)} · Scrap ${lossFigure(r.scrap_cost, r.rejected_units)}`;
+const split = (r: LossRow, canSeeMoney: boolean) =>
+  `Downtime ${lossFigure(canSeeMoney ? r.downtime_cost : null, r.downtime_lost_units)} · Scrap ${lossFigure(canSeeMoney ? r.scrap_cost : null, r.rejected_units)}`;
 
 // The cost-of-losses card: what downtime and scrap cost the plant this week, in
 // good units and (with a unit value) money, plus the costs actually recorded.
@@ -56,6 +57,7 @@ const split = (r: LossRow) =>
 // there's something to show.
 export default function CostSnapshot({ onOpen }: { onOpen?: (viewKey: string) => void }) {
   const [s, setS] = useState<CostSummary | null>(null);
+  const canSeeMoney = useCanSeeMoney();
 
   const load = useCallback(async () => {
     try {
@@ -77,6 +79,11 @@ export default function CostSnapshot({ onOpen }: { onOpen?: (viewKey: string) =>
   // units exist whether or not a rate is set.
   const peak = s.losses.reduce((m, l) => Math.max(m, l.units ?? 0), 0) || 1;
   const dailyPeak = Math.max(...s.daily.map((d) => d.lost_units ?? 0), 1);
+  // Money is Admin-only: for anyone else, price out the cost so every loss reads
+  // in good units, never rupees. The recorded-costs block (money with no units
+  // equivalent) is dropped outright below.
+  const loss = (c: number | null, u: number | null | undefined) =>
+    lossFigure(canSeeMoney ? c : null, u);
 
   return (
     <div className="rounded-2xl border border-slate-800 bg-slate-900/60 p-6">
@@ -99,7 +106,7 @@ export default function CostSnapshot({ onOpen }: { onOpen?: (viewKey: string) =>
           )}
         </div>
         <div className="text-right">
-          <p className="text-3xl font-bold text-red-400">{lossFigure(s.loss_cost, s.lost_units)}</p>
+          <p className="text-3xl font-bold text-red-400">{loss(s.loss_cost, s.lost_units)}</p>
           <p className="text-[11px] text-slate-500">
             {s.lost_units == null ? "downtime with no run time to convert" : "lost to downtime + scrap"}
           </p>
@@ -119,7 +126,7 @@ export default function CostSnapshot({ onOpen }: { onOpen?: (viewKey: string) =>
                 <span className={isBiggest ? "text-amber-300 font-semibold" : "text-slate-300"}>
                   {l.label}{isBiggest ? " · biggest" : ""}
                 </span>
-                <span className="text-slate-400 tabular-nums">{lossFigure(l.cost, l.units)}</span>
+                <span className="text-slate-400 tabular-nums">{loss(l.cost, l.units)}</span>
               </div>
               <div className="h-2 rounded-full bg-slate-800 overflow-hidden">
                 <div className={`h-full ${isBiggest ? "bg-amber-500" : "bg-red-500/70"}`} style={{ width: `${w}%` }} />
@@ -143,7 +150,7 @@ export default function CostSnapshot({ onOpen }: { onOpen?: (viewKey: string) =>
                 // the twin of the downtime daily series #464 already guarded.
                 // A nonzero day keeps its 3% floor to stay visible.
                 style={{ height: `${barPct(d.lost_units ?? 0, dailyPeak, 3)}%` }}
-                title={`${d.date}: ${lossFigure(d.cost, d.lost_units)}${d.partial ? " (partial day — the 7-day window opens part-way through it)" : ""}`}
+                title={`${d.date}: ${loss(d.cost, d.lost_units)}${d.partial ? " (partial day — the 7-day window opens part-way through it)" : ""}`}
               />
             ))}
           </div>
@@ -158,9 +165,9 @@ export default function CostSnapshot({ onOpen }: { onOpen?: (viewKey: string) =>
               <span
                 key={l.line}
                 className={`rounded-md border px-2.5 py-1 text-xs font-medium ${lineChip(l.line)}`}
-                title={split(l)}
+                title={split(l, canSeeMoney)}
               >
-                {l.line} <span className="opacity-70">· {lossFigure(l.cost, l.lost_units)}</span>
+                {l.line} <span className="opacity-70">· {loss(l.cost, l.lost_units)}</span>
               </span>
             ))}
           </div>
@@ -175,7 +182,7 @@ export default function CostSnapshot({ onOpen }: { onOpen?: (viewKey: string) =>
               const cls = "rounded-md border border-slate-700 bg-slate-800 px-2.5 py-1 text-xs text-slate-300";
               const label = (
                 <>
-                  {m.name} <span className="text-slate-500">· {lossFigure(m.cost, m.lost_units)}</span>
+                  {m.name} <span className="text-slate-500">· {loss(m.cost, m.lost_units)}</span>
                 </>
               );
               return onOpen ? (
@@ -183,13 +190,13 @@ export default function CostSnapshot({ onOpen }: { onOpen?: (viewKey: string) =>
                   key={m.machine_id}
                   type="button"
                   onClick={() => onOpen("machines")}
-                  title={`${split(m)} — open Machines`}
+                  title={`${split(m, canSeeMoney)} — open Machines`}
                   className={`${cls} hover:border-slate-500 hover:bg-slate-700 transition focus:outline-none focus:ring-2 focus:ring-slate-600`}
                 >
                   {label}
                 </button>
               ) : (
-                <span key={m.machine_id} className={cls} title={split(m)}>
+                <span key={m.machine_id} className={cls} title={split(m, canSeeMoney)}>
                   {label}
                 </span>
               );
@@ -198,9 +205,10 @@ export default function CostSnapshot({ onOpen }: { onOpen?: (viewKey: string) =>
         </div>
       )}
 
-      {s.by_type.length > 0 && (
+      {s.by_type.length > 0 && canSeeMoney && (
         <div className="mt-4 pt-4 border-t border-slate-800/70">
-          {/* Recorded costs are the tenant's own logged amounts: money whatever the rate. */}
+          {/* Recorded costs are the tenant's own logged amounts: money whatever the
+              rate, and with no units equivalent — so this block is Admin-only. */}
           <p className="text-xs text-slate-500 mb-2">Recorded costs · {money(s.recorded_total)}</p>
           <div className="flex flex-wrap gap-2">
             {s.by_type.map((t) => (

@@ -19,6 +19,7 @@ import {
   type Totals,
 } from "../../lib/contracts";
 import { formatDecimalMoney } from "../../lib/money";
+import { useCanSeeMoney } from "../../lib/money-visibility";
 
 /**
  * One downtime attribution statement, as both parties read it (ADR-0021).
@@ -103,7 +104,17 @@ function SlaBlock({ sla }: { sla: Sla }) {
 }
 
 function CreditBlock({ credit, state }: { credit: Credit; state: string | null }) {
+  // Period fee and credit are money — Admin-only. The OEM's /oem page has no
+  // provider, so the default (true) keeps them visible to the other party.
+  const canSeeMoney = useCanSeeMoney();
   const money = (amount: string | null) => formatDecimalMoney(amount, credit.currency);
+  if (!canSeeMoney) {
+    return (
+      <div className="rounded-xl border border-slate-800 bg-slate-950/40 p-4 text-sm">
+        <p className="text-xs text-slate-500">Period fee and credit are visible to Admins.</p>
+      </div>
+    );
+  }
   let line: React.ReactNode;
   if (state === "pending_disputes") {
     line = (

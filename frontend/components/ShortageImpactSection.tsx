@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import { apiGet } from "../lib/api";
 import { stateNotice } from "../lib/evidence";
 import { money } from "../lib/money";
+import { useCanSeeMoney } from "../lib/money-visibility";
 
 // Mirrors ai/shortage.py (ADR-0030).
 type OrderRow = {
@@ -63,6 +64,7 @@ export function shortageSize(s: Pick<Shortage, "money_at_risk" | "units_at_risk"
 export default function ShortageImpactSection() {
   const [s, setS] = useState<Impact | null>(null);
   const [open, setOpen] = useState<string | null>(null);
+  const canSeeMoney = useCanSeeMoney();
 
   const load = useCallback(async () => {
     try {
@@ -102,7 +104,8 @@ export default function ShortageImpactSection() {
                   </p>
                 </div>
                 <div className="text-right shrink-0">
-                  <p className="text-sm font-semibold tabular-nums">{shortageSize(row)}</p>
+                  {/* Money is Admin-only; null the amount so the shortage is sized in units for anyone else. */}
+                  <p className="text-sm font-semibold tabular-nums">{shortageSize({ money_at_risk: canSeeMoney ? row.money_at_risk : null, units_at_risk: row.units_at_risk })}</p>
                   <p className="text-[10px] text-slate-500">
                     {row.orders_affected} open order{row.orders_affected === 1 ? "" : "s"}
                   </p>

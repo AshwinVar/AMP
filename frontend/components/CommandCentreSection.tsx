@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import { apiGet } from "../lib/api";
 import { formatFactValue, provenanceTone, stateNotice, type Fact } from "../lib/evidence";
 import { CURRENCY, money } from "../lib/money";
+import { useCanSeeMoney } from "../lib/money-visibility";
 
 // Mirrors ai/command_centre.py (ADR-0024).
 type Why = { label: string; text: string; facts: Fact[] };
@@ -77,6 +78,7 @@ function Facts({ facts }: { facts: Fact[] }) {
 export default function CommandCentreSection({ onOpen }: { onOpen?: (viewKey: string) => void }) {
   const [c, setC] = useState<Centre | null>(null);
   const [open, setOpen] = useState<string | null>(null);
+  const canSeeMoney = useCanSeeMoney();
 
   const load = useCallback(async () => {
     try {
@@ -165,11 +167,12 @@ export default function CommandCentreSection({ onOpen }: { onOpen?: (viewKey: st
         <div className="rounded-xl bg-slate-950/60 border border-slate-800 p-3">
           <p className="text-[11px] text-slate-500">Cost of losses</p>
           <p className="text-lg font-semibold tabular-nums">
-            {c.cost.priced && c.cost.loss_cost != null
+            {c.cost.priced && c.cost.loss_cost != null && canSeeMoney
               ? money(c.cost.loss_cost)
               : c.cost.lost_units != null ? `${c.cost.lost_units.toLocaleString()} units` : "not measured"}
           </p>
-          {!c.cost.priced && (
+          {/* The rupee-mentioning hint is itself money talk — only for an Admin. */}
+          {!c.cost.priced && canSeeMoney && (
             <p className="text-[11px] text-amber-300/80">no unit value set, so no {CURRENCY} figure</p>
           )}
         </div>
@@ -188,7 +191,11 @@ export default function CommandCentreSection({ onOpen }: { onOpen?: (viewKey: st
                 <p className="text-xs text-slate-400">{problem.detail}</p>
               </div>
               <div className="text-right shrink-0">
-                <p className="text-sm font-semibold tabular-nums">{impactLabel(problem)}</p>
+                {/* Money is Admin-only: null the amount so impactLabel() states
+                    the problem in good units for everyone else. */}
+                <p className="text-sm font-semibold tabular-nums">
+                  {impactLabel({ impact_money: canSeeMoney ? problem.impact_money : null, impact_units: problem.impact_units })}
+                </p>
                 <p className="text-[10px] uppercase tracking-wide text-slate-500">{problem.rank_basis}</p>
               </div>
             </div>

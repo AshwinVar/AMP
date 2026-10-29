@@ -68,7 +68,7 @@ def test_management_dashboard_matches_list_summary_and_pools_in_sql():
     db = _fresh_session()
     _seed(db)
 
-    out = analytics_routes.get_management_dashboard(db=db, current_user={})
+    out = analytics_routes.get_management_dashboard(db=db, current_user={"role": "Admin"})
 
     # 1) Byte-for-byte parity with the list-based engine over the same rows. This is
     #    the honesty guarantee: the SQL aggregation changed nothing the user sees.
@@ -216,7 +216,7 @@ def test_management_dashboard_empty_tables_are_zero_not_a_crash():
     db = _fresh_session()
     db.add(models.Machine(id=1, name="M", status="Idle", utilization=0))
     db.commit()
-    out = analytics_routes.get_management_dashboard(db=db, current_user={})
+    out = analytics_routes.get_management_dashboard(db=db, current_user={"role": "Admin"})
     assert out["avg_oee"] == 0 and out["avg_availability"] == 0, out
     assert out["total_downtime_minutes"] == 0, out
     assert out["target_achievement"] == 0, out          # 0 target -> 0, not a crash
@@ -235,7 +235,7 @@ def test_management_dashboard_zero_target_shift_is_zero_not_a_crash():
     db.add(models.Machine(id=1, name="M", status="Running", utilization=50))
     db.add(models.ShiftData(shift_name="Unplanned", target_output=0, actual_output=40))
     db.commit()
-    out = analytics_routes.get_management_dashboard(db=db, current_user={})
+    out = analytics_routes.get_management_dashboard(db=db, current_user={"role": "Admin"})
     # Only shift has target 0 -> total target 0 -> attainment 0 (honest, not a crash).
     assert out["target_output"] == 0 and out["actual_output"] == 40, out
     assert out["target_achievement"] == 0, out

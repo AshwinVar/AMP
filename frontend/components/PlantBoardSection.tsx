@@ -16,6 +16,7 @@ import {
 
 import { apiGet, errorDetail } from "../lib/api";
 import { money } from "../lib/money";
+import { useCanSeeMoney } from "../lib/money-visibility";
 import { usePolling } from "../lib/usePolling";
 import {
   HOUR_FILL,
@@ -24,18 +25,14 @@ import {
   hourFromClick,
   machineFromClick,
   hourLabel,
-  type MeasuredSeries,
   missingLinks,
   plantHourly,
-  powerMode,
-  type Series,
   shiftLabel,
   type HourStatus,
   type PlantBoardDay,
   type PlantBoardMonth,
   dayOnlyMachines,
   todayLocalIso,
-  type UnavailableSeries,
 } from "../lib/plant-board";
 import {
   type Cell as CsvCell,
@@ -114,7 +111,6 @@ const countLabel = (isParts: boolean) => (isParts ? "Parts" : "Shots");
 const fmtCount = (v: unknown) => numberOf(v).toLocaleString();
 // Recharts 3 types a tick/label formatter's argument as ReactNode, not
 // number, so hourLabel cannot be passed directly (same trap as fmtCount).
-const fmtHour = (v: unknown) => hourLabel(numberOf(v));
 const fmtKg = (v: unknown) => numberOf(v).toFixed(3) + " kg";
 const fmtMoney = (v: unknown) => money(Math.round(numberOf(v)));
 
@@ -197,101 +193,13 @@ function Card({
   );
 }
 
-/**
- * A chart AMP cannot draw. Deliberately not chart-shaped: a reader skimming the
- * page must not mistake it for a measurement, and the fix is the useful part.
- */
-function NoSource({ title, series }: { title: string; series: UnavailableSeries }) {
-  return (
-    <Card title={title} hint="Not measured">
-      <div className="rounded-xl border border-dashed border-slate-700 bg-slate-950/40 p-6">
-        <p className="text-sm text-slate-300">{series.reason}</p>
-        <p className="mt-3 text-xs uppercase tracking-wide text-slate-500">To measure it</p>
-        <p className="mt-1 text-sm text-slate-400">{series.fix}</p>
-        <p className="mt-4 text-xs text-slate-600">
-          No figure is shown rather than a zero — a zero here would be
-          indistinguishable from a plant that consumed nothing.
-        </p>
-      </div>
-    </Card>
-  );
-}
-
-/**
- * Electricity, drawn only to the resolution it was measured at.
- *
- * Three states, because there are three (see `powerMode`). The middle one is
- * the one that did not exist until machines started arriving by photograph: a
- * meter that reports a day's total and no hours. Its number is real and its
- * chart is not, so the number is shown and the chart is not drawn.
- */
-function PowerCard({ series }: { series: Series }) {
-  const mode = powerMode(series);
-  if (mode === "unavailable") {
-    return <NoSource title="Power consumption" series={series as UnavailableSeries} />;
-  }
-  const measured = series as MeasuredSeries;
-  const total = `${fmtCount(measured.total)} ${measured.unit}`;
-
-  if (mode === "day-only") {
-    return (
-      <Card title="Power consumption" hint="Measured per day">
-        <p className="text-3xl font-semibold text-emerald-300">{total}</p>
-        <div className="mt-4 rounded-xl border border-dashed border-slate-700 bg-slate-950/40 p-4">
-          <p className="text-sm text-slate-300">
-            This came off the controller&apos;s month page, which records a day
-            at a time. The day&apos;s figure is the machine&apos;s own; the hours
-            inside it were never stored.
-          </p>
-          <p className="mt-3 text-xs uppercase tracking-wide text-slate-500">
-            To see it by the hour
-          </p>
-          <p className="mt-1 text-sm text-slate-400">
-            Press EXPORT DATA on the machine&apos;s HOUR PROD. page with a USB
-            stick fitted, or connect the machine to AMP.
-          </p>
-        </div>
-      </Card>
-    );
-  }
-
-  return (
-    <Card
-      title="Power consumption"
-      hint={total}
-      exportAs={{
-        on: "day",
-        headers: ["hour", "kwh"],
-        rows: (measured.points ?? []).map((pt) => ({
-          hour: hourLabel(pt.hour),
-          kwh: pt.kwh,
-        })),
-      }}
-    >
-      <ResponsiveContainer width="100%" height={200}>
-        <BarChart data={measured.points ?? []}>
-          <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" />
-          <XAxis dataKey="hour" stroke="#64748b" fontSize={10} tickFormatter={fmtHour} />
-          <YAxis stroke="#64748b" fontSize={10} />
-          <Tooltip
-            {...TOOLTIP}
-            labelFormatter={fmtHour}
-            formatter={fmtCount}
-          />
-          {/* An hour with no measurement is null and leaves a gap. Recharts
-              draws no bar for null, which is the point — a zero bar would say
-              the machine ran that hour and drew nothing. */}
-          <Bar dataKey="kwh" name={measured.unit} fill="#34d399" />
-        </BarChart>
-      </ResponsiveContainer>
-    </Card>
-  );
-}
-
 export default function PlantBoardSection({ isAdmin }: { isAdmin: boolean }) {
   // The same verdict the Machines cards show. An empty hour on this board
   // and an unreachable gateway look identical until something says which.
   const gatewayHealth = useGatewayHealth();
+  // Revenue and shift value are money — Admin-only. Everything else on the board
+  // (parts, shots, kg, targets) is for everyone; only the rupee figures gate.
+  const canSeeMoney = useCanSeeMoney();
   const [on, setOn] = useState(todayLocalIso());
   const [day, setDay] = useState<PlantBoardDay | null>(null);
   const [month, setMonth] = useState<PlantBoardMonth | null>(null);
@@ -389,7 +297,6 @@ export default function PlantBoardSection({ isAdmin }: { isAdmin: boolean }) {
   const selectedShift = day?.shift_rate.find((s) => s.machine_id === machineId) ?? null;
 
   const plant = useMemo(() => plantHourly(production), [production]);
-  const plantTarget = plant[0]?.ideal ?? 0;
 
   /**
    * The hourly target expressed in SHOTS, for the rate chart.
@@ -556,10 +463,10 @@ export default function PlantBoardSection({ isAdmin }: { isAdmin: boolean }) {
             <div className="rounded-2xl border border-slate-800 bg-slate-900/60 p-5">
               <p className="text-xs uppercase tracking-wide text-slate-500">Value produced</p>
               <p className="mt-2 text-2xl font-semibold text-white">
-                {anyPriced ? money(Math.round(plantRevenue)) : "—"}
+                {canSeeMoney && anyPriced ? money(Math.round(plantRevenue)) : "—"}
               </p>
               <p className="mt-1 text-xs text-slate-500">
-                {anyPriced ? "At the price in force today" : "No part is priced yet"}
+                {!canSeeMoney ? "Visible to Admins" : anyPriced ? "At the price in force today" : "No part is priced yet"}
               </p>
             </div>
           </div>
@@ -970,7 +877,7 @@ export default function PlantBoardSection({ isAdmin }: { isAdmin: boolean }) {
               <Card
                 title="Shift rate"
                 exportAs={
-                  selectedShift
+                  canSeeMoney && selectedShift
                     ? {
                         on: day.date + "-" + selected.machine,
                         headers: ["shift", "from_hour", "to_hour", "parts",
@@ -987,12 +894,14 @@ export default function PlantBoardSection({ isAdmin }: { isAdmin: boolean }) {
                     : undefined
                 }
                 hint={
-                  selectedShift?.priced
+                  !canSeeMoney
+                    ? "Shift value is visible to Admins"
+                    : selectedShift?.priced
                     ? "Value produced per hour, averaged over each 8-hour block"
                     : "The part has no price, so there is no rate to show"
                 }
               >
-                {selectedShift?.priced ? (
+                {canSeeMoney && selectedShift?.priced ? (
                   <ResponsiveContainer width="100%" height={200}>
                     <BarChart
                       data={selectedShift.points.map((b) => ({
@@ -1012,7 +921,7 @@ export default function PlantBoardSection({ isAdmin }: { isAdmin: boolean }) {
                   </ResponsiveContainer>
                 ) : (
                   <p className="py-12 text-center text-sm text-slate-500">
-                    Enter a price per piece and this fills in.
+                    {canSeeMoney ? "Enter a price per piece and this fills in." : "Shift value is visible to Admins."}
                   </p>
                 )}
               </Card>
@@ -1036,7 +945,8 @@ export default function PlantBoardSection({ isAdmin }: { isAdmin: boolean }) {
                   day: d.day,
                   parts: d.parts,
                   kg: d.kg,
-                  revenue: d.revenue,
+                  // Revenue is money: null it for a non-Admin so a CSV never carries a figure they may not see.
+                  revenue: canSeeMoney ? d.revenue : null,
                 })),
               }}
             >
@@ -1104,12 +1014,14 @@ export default function PlantBoardSection({ isAdmin }: { isAdmin: boolean }) {
               <Card
                 title="Shift rate by machine, this month"
                 hint={
-                  month.total_revenue > 0
+                  !canSeeMoney
+                    ? "Plant value is visible to Admins"
+                    : month.total_revenue > 0
                     ? "Plant total " + money(Math.round(month.total_revenue))
                     : "No priced part has produced anything this month"
                 }
               >
-                {month.shift_rate_by_machine.length ? (
+                {canSeeMoney && month.shift_rate_by_machine.length ? (
                   <ResponsiveContainer width="100%" height={220}>
                     {/* VALUE ONLY, not value and rate on one pair of axes. The
                         month's value is six figures and its per-hour rate is
@@ -1136,7 +1048,52 @@ export default function PlantBoardSection({ isAdmin }: { isAdmin: boolean }) {
                   </ResponsiveContainer>
                 ) : (
                   <p className="py-12 text-center text-sm text-slate-500">
-                    Enter a price per piece for the parts being made.
+                    {canSeeMoney ? "Enter a price per piece for the parts being made." : "Plant value is visible to Admins."}
+                  </p>
+                )}
+              </Card>
+
+              <Card
+                title="Raw material consumed this month"
+                hint={
+                  month.rm_consumption.length
+                    ? "Plant total " +
+                      month.rm_consumption.reduce((s, r) => s + r.kg, 0).toFixed(2) + " kg"
+                    : "No part declares a weight, so consumption cannot be derived"
+                }
+                exportAs={{
+                  on: month.year + "-" + String(month.month).padStart(2, "0"),
+                  headers: ["material", "kg"],
+                  rows: month.rm_consumption.map((r) => ({
+                    material: r.material,
+                    kg: r.kg,
+                  })),
+                }}
+              >
+                {month.rm_consumption.length ? (
+                  <ResponsiveContainer width="100%" height={220}>
+                    {/* Horizontal bars by material. Consumption is derived
+                        from each part's weight and the parts it made, so a
+                        material whose spec carries no weight is absent here,
+                        never a zero. */}
+                    <BarChart data={month.rm_consumption} layout="vertical"
+                              margin={{ left: 8, right: 16, top: 4, bottom: 4 }}>
+                      <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" />
+                      <XAxis type="number" stroke="#64748b" fontSize={10} unit=" kg" />
+                      <YAxis
+                        type="category"
+                        dataKey="material"
+                        stroke="#64748b"
+                        fontSize={10}
+                        width={110}
+                      />
+                      <Tooltip {...TOOLTIP} formatter={fmtKg} />
+                      <Bar dataKey="kg" name="kg" fill="#a78bfa" />
+                    </BarChart>
+                  </ResponsiveContainer>
+                ) : (
+                  <p className="py-12 text-center text-sm text-slate-500">
+                    Enter a part weight for the parts being made and this fills in.
                   </p>
                 )}
               </Card>

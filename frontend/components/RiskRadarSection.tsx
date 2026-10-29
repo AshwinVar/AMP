@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import { apiGet } from "../lib/api";
 import { formatFactValue, provenanceTone, stateNotice, type Fact, type ProposableKind } from "../lib/evidence";
 import { money } from "../lib/money";
+import { useCanSeeMoney } from "../lib/money-visibility";
 import ProposeActionButton from "./ProposeActionButton";
 
 // Mirrors ai/risk_radar.py (ADR-0026).
@@ -52,6 +53,7 @@ export function riskSize(r: Pick<Risk, "impact_money" | "impact_units">): string
 export default function RiskRadarSection({ onOpen }: { onOpen?: (viewKey: string) => void }) {
   const [r, setR] = useState<Radar | null>(null);
   const [open, setOpen] = useState<string | null>(null);
+  const canSeeMoney = useCanSeeMoney();
 
   const load = useCallback(async () => {
     try {
@@ -70,6 +72,9 @@ export default function RiskRadarSection({ onOpen }: { onOpen?: (viewKey: string
 
   if (!r) return null;
   const notice = stateNotice(r.state);
+  // Money is Admin-only; null the amount so a risk is sized in units for anyone else.
+  const sizeOf = (risk: Risk) =>
+    riskSize({ impact_money: canSeeMoney ? risk.impact_money : null, impact_units: risk.impact_units });
   return (
     <section className="rounded-2xl bg-slate-900 border border-slate-800 p-5">
       <div className="flex items-start justify-between gap-3 flex-wrap">
@@ -100,7 +105,7 @@ export default function RiskRadarSection({ onOpen }: { onOpen?: (viewKey: string
                 <span className={`text-[10px] uppercase tracking-wide rounded-full px-2 py-0.5 border ${LIKELIHOOD_CLASS[risk.likelihood] ?? LIKELIHOOD_CLASS.WATCH}`}>
                   {risk.likelihood}
                 </span>
-                {riskSize(risk) && <p className="text-sm font-semibold tabular-nums mt-1">{riskSize(risk)}</p>}
+                {sizeOf(risk) && <p className="text-sm font-semibold tabular-nums mt-1">{sizeOf(risk)}</p>}
                 <p className="text-[10px] text-slate-500">{risk.horizon}</p>
               </div>
             </div>

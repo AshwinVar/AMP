@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { apiGet } from "../lib/api";
 import { lossFigure } from "../lib/money";
+import { useCanSeeMoney } from "../lib/money-visibility";
 import type { CostSummary as Summary } from "./CostSnapshot";
 
 // Mirrors ai.cost.build_cost_summary (GET /cost-summary). Money only at the
@@ -36,6 +37,7 @@ export default function CostIntelCard() {
   const [s, setS] = useState<CostSummary | null>(null);
   const [t, setT] = useState<CostTrend | null>(null);
   const [loading, setLoading] = useState(true);
+  const canSeeMoney = useCanSeeMoney();
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -63,6 +65,10 @@ export default function CostIntelCard() {
 
   // Bars scale by lost units, which exist with or without a unit value.
   const topUnits = s.by_machine[0]?.lost_units || 1;
+  // Money is Admin-only: for anyone else, price out the cost so lossFigure()
+  // states the loss in good units (never a rupee figure, never an empty hole).
+  const loss = (c: number | null, u: number | null | undefined) =>
+    lossFigure(canSeeMoney ? c : null, u);
 
   return (
     <section className="rounded-2xl border border-slate-800 bg-slate-900 p-5 space-y-4">
@@ -79,9 +85,9 @@ export default function CostIntelCard() {
       </div>
 
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-        <Stat label="Total lost" value={lossFigure(s.loss_cost, s.lost_units)} bad={(s.lost_units ?? 0) > 0} />
-        <Stat label="Downtime" value={lossFigure(s.downtime_cost, s.downtime_lost_units)} sub={`${s.downtime_minutes.toLocaleString()} min`} />
-        <Stat label="Scrap" value={lossFigure(s.scrap_cost, s.rejected_units)} sub={`${s.rejected_units.toLocaleString()} units`} />
+        <Stat label="Total lost" value={loss(s.loss_cost, s.lost_units)} bad={(s.lost_units ?? 0) > 0} />
+        <Stat label="Downtime" value={loss(s.downtime_cost, s.downtime_lost_units)} sub={`${s.downtime_minutes.toLocaleString()} min`} />
+        <Stat label="Scrap" value={loss(s.scrap_cost, s.rejected_units)} sub={`${s.rejected_units.toLocaleString()} units`} />
         <Stat label="Biggest lever" value={s.biggest || "—"} small />
       </div>
 
@@ -96,7 +102,7 @@ export default function CostIntelCard() {
                 <div className="flex items-center justify-between gap-3">
                   <span className="min-w-0 truncate font-semibold">{m.name}</span>
                   <span className="text-xs text-slate-400 whitespace-nowrap">
-                    {lossFigure(m.cost, m.lost_units)} (downtime {lossFigure(m.downtime_cost, m.downtime_lost_units)} · scrap {lossFigure(m.scrap_cost, m.rejected_units)})
+                    {loss(m.cost, m.lost_units)} (downtime {loss(m.downtime_cost, m.downtime_lost_units)} · scrap {loss(m.scrap_cost, m.rejected_units)})
                   </span>
                 </div>
                 <div className="mt-1 h-1.5 rounded bg-slate-800">
@@ -111,7 +117,7 @@ export default function CostIntelCard() {
         )}
         {s.by_line.length > 0 && (
           <p className="text-xs text-slate-500 mt-3">
-            By line: {s.by_line.map((l) => `${l.line}: ${lossFigure(l.cost, l.lost_units)}`).join(" · ")}
+            By line: {s.by_line.map((l) => `${l.line}: ${loss(l.cost, l.lost_units)}`).join(" · ")}
           </p>
         )}
       </div>

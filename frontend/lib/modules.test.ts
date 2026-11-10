@@ -84,7 +84,7 @@ describe("the always-open overlay", () => {
 
   it("leaves a full plan unchanged", () => {
     expect(getEnabledModules("enterprise").sort()).toEqual(
-      ["admin", "core", "factory", "intelligence", "operations"],
+      ["admin", "core", "factory", "fleet", "intelligence", "operations"],
     );
   });
 

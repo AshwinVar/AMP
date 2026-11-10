@@ -78,6 +78,11 @@ export const NAV_ITEMS: NavItem[] = [
   { key: "executive",      label: "Executive OEE",      icon: "▰", module: "intelligence" },
   { key: "escalations",    label: "Escalations",        icon: "!", module: "intelligence" },
   { key: "notifications",  label: "Notifications",      icon: "●", module: "intelligence" },
+  // Fleet Ops: the autonomous-movement layer. Two screens — the live mission
+  // control (map, vehicles, assistance queue) and the transport-task queue the
+  // dispatch engine works from. Bundled with enterprise/demo.
+  { key: "fleetops",       label: "Fleet Control",      icon: "⬢", module: "fleet" },
+  { key: "transport",      label: "Transport Tasks",    icon: "⇶", module: "fleet" },
   { key: "documents",      label: "Documents",          icon: "▱", module: "admin" },
   { key: "saas",           label: "SaaS Admin",         icon: "◌", module: "admin" },
   { key: "users",          label: "User Management",    icon: "◔", module: "admin" },
@@ -131,6 +136,14 @@ export const MODULE_CATALOG: ModuleInfo[] = [
     color: "amber",
   },
   {
+    key: "fleet",
+    label: "Fleet Ops Pack",
+    description:
+      "Autonomous material movement: transport-task dispatch from MES events, a live fleet mission-control map, and the remote-assistance queue for AMRs, AGVs, tugs and forklifts.",
+    tagline: "Orchestrate what moves the material",
+    color: "cyan",
+  },
+  {
     key: "admin",
     label: "Admin Pack",
     description: "Compliance documents, cost tracking, SaaS tenant management, and enterprise reporting.",
@@ -142,8 +155,8 @@ export const MODULE_CATALOG: ModuleInfo[] = [
 export const PLAN_MODULES: Record<PlanName, ModuleKey[]> = {
   starter:    ["core"],
   growth:     ["core", "operations", "factory"],
-  enterprise: ["core", "operations", "factory", "intelligence", "admin"],
-  demo:       ["core", "operations", "factory", "intelligence", "admin"],
+  enterprise: ["core", "operations", "factory", "intelligence", "fleet", "admin"],
+  demo:       ["core", "operations", "factory", "intelligence", "fleet", "admin"],
 };
 
 // The packs the API never gates, mirroring module_manifest.always_open_packs()
@@ -204,6 +217,10 @@ export function viewLabel(viewKey: string): string | null {
 export const OPERATOR_VIEWS = new Set<string>([
   "mission", "overview", "machines", "machinehealth", "downtime", "workorders",
   "operator", "quality", "cmms", "inventory", "notifications",
+  // The floor works the fleet: an Operator watches the map and raises
+  // transport tasks (the backend lets Operators POST /fleet/tasks); advising
+  // a stuck vehicle stays Admin/Supervisor, enforced per button and per route.
+  "fleetops", "transport",
 ]);
 
 // Owner/account administration — hidden from Supervisors.

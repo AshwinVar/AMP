@@ -95,6 +95,11 @@ CORE_TENANT_TABLES = [
     # listed to keep this list and SCOPED_MODELS in lockstep, which test_tenancy
     # asserts.
     "part_specs", "tool_assets",
+    # Fleet Ops (0017). Created WITH tenant_code (new tables, migration
+    # 0017_fleet_ops + create_all), so ensure_tenant_columns finds the column
+    # present and does nothing; listed to keep this list and SCOPED_MODELS in
+    # lockstep, which test_tenancy asserts.
+    "fleet_vehicles", "transport_tasks", "fleet_alerts",
 ]
 
 # Tables that gain tenant_code but must NOT be blind-backfilled to DEFAULT: the
@@ -229,6 +234,12 @@ SCOPED_MODELS = (
     # like every other tenant-owned table, so a read written later is scoped by
     # default rather than by whoever remembers.
     models.PartSpec, models.ToolAsset,
+    # Fleet Ops (0017): a plant's own movers, movement orders and assistance
+    # pleas. The fleet routes also pass through request_tenant per call, but
+    # the hook is what protects the read somebody writes later — a transport
+    # task names what a plant is making and moving, which is operational
+    # intelligence no other tenant may see.
+    models.FleetVehicle, models.TransportTask, models.FleetAlert,
 )
 
 

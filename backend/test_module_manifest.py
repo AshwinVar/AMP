@@ -33,6 +33,9 @@ _EXPECTED_ROUTES = {
     # A pack in no plan. It gates exactly like the others; what makes it
     # per-customer is `plans: []`, asserted in its own test below.
     ("/analytics/plant-board", "plantboard"),
+    # Fleet Ops: transport-task dispatch + the fleet mission-control surface.
+    # One prefix gates the whole /fleet/* family (longest-prefix matching).
+    ("/fleet", "fleet"),
 }
 
 
@@ -79,6 +82,7 @@ _EXPECTED_VIEWS = {
     "copilot": "intelligence", "inbox": "intelligence", "agentactivity": "intelligence",
     "roi": "intelligence", "executive": "intelligence", "escalations": "intelligence",
     "notifications": "intelligence",
+    "fleetops": "fleet", "transport": "fleet",
     "documents": "admin", "saas": "admin", "users": "admin", "costing": "admin",
     "enterprise": "admin",
 }
@@ -132,6 +136,8 @@ def test_modules_endpoint_reflects_tenant_subscription():
     by = {p["id"]: p["enabled"] for p in res["packs"]}
     assert by == {"core": True, "operations": True, "factory": True,
                   "intelligence": False, "admin": False,
+                  # Fleet Ops ships in enterprise/demo bundles only.
+                  "fleet": False,
                   # A per-customer pack is OFF for a tenant that was not
                   # explicitly granted it, however high their plan.
                   "plantboard": False}, by
@@ -181,9 +187,10 @@ def test_plan_bundles_and_valid_pack_ids():
     b = module_manifest.plan_bundles()
     assert b["starter"] == ["core"]
     assert b["growth"] == ["core", "operations", "factory"]
-    assert set(b["enterprise"]) == {"core", "operations", "factory", "intelligence", "admin"}
+    assert set(b["enterprise"]) == {"core", "operations", "factory", "intelligence",
+                                    "fleet", "admin"}
     assert module_manifest.valid_pack_ids() == {
-        "core", "operations", "factory", "intelligence", "admin", "plantboard"}
+        "core", "operations", "factory", "intelligence", "fleet", "admin", "plantboard"}
     # THE POINT OF A PER-CUSTOMER PACK: it is in no plan's bundle, so no
     # subscription -- not even enterprise or demo -- ever provisions it.
     for plan, bundle in b.items():

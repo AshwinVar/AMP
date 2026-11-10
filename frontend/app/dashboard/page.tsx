@@ -101,6 +101,8 @@ import AIInsightsSection from "../../components/AIInsightsSection";
 import PlatformStatusCard from "../../components/PlatformStatusCard";
 import MissionControlSection from "../../components/MissionControlSection";
 import AgentActivitySection from "../../components/AgentActivitySection";
+import FleetOpsSection from "../../components/FleetOpsSection";
+import TransportTasksSection from "../../components/TransportTasksSection";
 import AgentRoiSection from "../../components/AgentRoiSection";
 import MachineHealthSection from "../../components/MachineHealthSection";
 import SaaSAdminSection from "../../components/SaaSAdminSection";
@@ -2848,6 +2850,13 @@ export default function DashboardPage() {
 
       {renderSection("mission", (
         <MissionControlSection />
+      ))}
+
+      {renderSection("fleetops", (
+        <FleetOpsSection />
+      ))}
+      {renderSection("transport", (
+        <TransportTasksSection />
       ))}
 
       {renderSection("agentactivity", (

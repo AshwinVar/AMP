@@ -1901,3 +1901,132 @@ class GatewayCredential(Base):
     # Written on every accepted packet: the one question an operator asks about
     # a gateway is "is it still talking to us".
     last_seen_at = Column(DateTime, nullable=True)
+
+
+# ── Fleet Ops (ADR pending): autonomous material movement + mission control ──
+
+
+class FleetVehicle(Base):
+    """One autonomous mover on this plant's floor: AMR, AGV, tug or forklift.
+
+    WHY A VEHICLE IS NOT A MACHINE. models.Machine is a PRODUCER — it holds a
+    status vocabulary (Running/Idle/Breakdown), OEE inputs and a downtime
+    ledger, and every analytics rollup sums over it. A vehicle produces
+    nothing; it MOVES what producers make, its states are navigation states
+    (to-pickup, carrying, charging, stuck), and the questions asked of it are
+    "where is it, what is it carrying, how much charge is left" — none of
+    which a Machine column answers. Forcing vehicles into `machines` would
+    both corrupt the production rollups (a forklift has no OEE) and leave
+    every vehicle question unanswerable.
+
+    POSITION IS A PLAIN (x, y) IN METRES on a 100x100 grid, not GPS. Indoors
+    GPS does not work (the UDIPTA/Edge-Nano lesson: indoor tracking is
+    BLE/UWB territory); every indoor positioning system ultimately reports a
+    local plant coordinate, so that is what AMP stores. A real vehicle
+    adapter writes the same two floats the simulator writes — the dashboard
+    cannot tell the difference, which is the point: the simulator IS the
+    reference implementation of the adapter contract.
+
+    STATUS VOCABULARY (fleet_engine enforces transitions):
+        Idle | ToPickup | Carrying | Charging | Stuck | Offline
+    `current_task_id` is set exactly while ToPickup/Carrying — the invariant
+    a dispatcher needs ("one task per vehicle, one vehicle per task") lives
+    in the engine, not in a constraint, because Stuck keeps its task too.
+    """
+
+    __tablename__ = "fleet_vehicles"
+    __table_args__ = (
+        UniqueConstraint("tenant_code", "name", name="uq_fleet_vehicles_tenant_name"),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    tenant_code = Column(String, index=True, nullable=False, default="DEFAULT")
+    name = Column(String, nullable=False)
+    vehicle_type = Column(String, default="AMR")     # AMR | AGV | Tug | Forklift
+    status = Column(String, default="Idle")
+    x = Column(Float, default=5.0)
+    y = Column(Float, default=85.0)
+    battery_pct = Column(Float, default=100.0)
+    current_task_id = Column(Integer, nullable=True)
+    # Lifetime counters, kept exact on the row (not derived) because they only
+    # ever increment and the fleet KPI reads them thousands of times per shift.
+    odometer_m = Column(Float, default=0.0)
+    deliveries_total = Column(Integer, default=0)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class TransportTask(Base):
+    """One material movement: take `payload` from `origin` to `destination`.
+
+    THIS ROW IS THE PRODUCT. The whole Fleet Ops thesis is that the moment a
+    machine finishes a batch, the MES already knows something must move —
+    today that knowledge evaporates into a worker noticing a full bin. A
+    TransportTask is that knowledge captured as a dispatchable order, whether
+    a person typed it (source "manual") or the plant's own event stream
+    raised it (source "mes").
+
+    STATIONS ARE NAMES, NOT FOREIGN KEYS, deliberately. Origin/destination
+    name a point the engine can place on the floor: a machine (by its
+    Machine.name) or a fixed logistics anchor (Warehouse, Packing, Dispatch,
+    Charge Dock). A FK to machines would make "Warehouse" unrepresentable,
+    and a FK to a stations table would mean a stations table whose only
+    content restates the machine roster. fleet_engine.stations_for() derives
+    the map from the roster instead, so the floor plan is always exactly the
+    tenant's real plant, with zero station CRUD to drift out of date.
+
+    LIFECYCLE (engine-enforced, timestamps mark each hop):
+        Pending -> Assigned -> InTransit -> Delivered
+                 \\-> Cancelled (person)   \\-> Pending again (vehicle failed)
+    wait/travel KPIs derive from the timestamps; nothing stores a duration
+    (the 0010 rule: durations are summed, so they are computed, not kept).
+    """
+
+    __tablename__ = "transport_tasks"
+
+    id = Column(Integer, primary_key=True, index=True)
+    tenant_code = Column(String, index=True, nullable=False, default="DEFAULT")
+    origin = Column(String, nullable=False)
+    destination = Column(String, nullable=False)
+    payload = Column(String, default="")
+    # Integer, higher is more urgent (3 High / 2 Normal / 1 Low). An integer
+    # sorts in SQL; the UI words are presentation.
+    priority = Column(Integer, default=2)
+    status = Column(String, default="Pending")
+    vehicle_id = Column(Integer, nullable=True)
+    source = Column(String, default="manual")        # manual | mes | api
+    requested_at = Column(DateTime, default=datetime.utcnow)
+    assigned_at = Column(DateTime, nullable=True)
+    picked_up_at = Column(DateTime, nullable=True)
+    completed_at = Column(DateTime, nullable=True)
+
+
+class FleetAlert(Base):
+    """A vehicle asking a human for help — the remote-assistance queue.
+
+    MODELLED ON HOW THE REAL OPERATORS RUN IT (Waymo fleet response, Zoox
+    TeleGuidance): the VEHICLE initiates contact when it hits something it
+    cannot resolve (stuck, blocked, battery critical while tasked), a person
+    answers with ADVICE from a closed vocabulary, and the vehicle acts on it.
+    The human never "drives" — `advice` is one of resume | return_task |
+    send_to_charge, applied by fleet_engine.advise(), so the audit trail of
+    who told which vehicle what survives in the row.
+
+    Not models.Alert, because that table is the production alert feed every
+    analytics rollup and notification path reads; a navigation plea routed
+    through it would both spam those and lose the vehicle/task linkage this
+    queue exists to show.
+    """
+
+    __tablename__ = "fleet_alerts"
+
+    id = Column(Integer, primary_key=True, index=True)
+    tenant_code = Column(String, index=True, nullable=False, default="DEFAULT")
+    vehicle_id = Column(Integer, nullable=False)
+    task_id = Column(Integer, nullable=True)
+    kind = Column(String, nullable=False)            # Stuck | LowBattery | Offline
+    severity = Column(String, default="High")
+    message = Column(String, default="")
+    status = Column(String, default="Open")          # Open | Resolved
+    advice = Column(String, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    resolved_at = Column(DateTime, nullable=True)

@@ -108,6 +108,20 @@
       ]
     },
     {
+      "id": "fleet",
+      "label": "Fleet Ops Pack",
+      "description": "Autonomous material movement: transport-task dispatch from MES events, a live fleet mission-control map, and the remote-assistance queue for AMRs, AGVs, tugs and forklifts.",
+      "tagline": "Orchestrate what moves the material",
+      "color": "cyan",
+      "gated": true,
+      "plans": ["enterprise", "demo"],
+      "routes": ["/fleet"],
+      "views": [
+        {"key": "fleetops", "label": "Fleet Control", "icon": "⬢"},
+        {"key": "transport", "label": "Transport Tasks", "icon": "⇶"}
+      ]
+    },
+    {
       "id": "admin",
       "label": "Admin Pack",
       "description": "Compliance documents, cost tracking, SaaS tenant management, and enterprise reporting.",

@@ -76,6 +76,7 @@ import bom_routes
 import part_spec_routes
 import gateway_routes
 import core_routes
+import fleet_routes
 import industrial_adapters
 from events import event_bus, ProductionCompleted, DowntimeStarted, InventoryLow, QualityInspectionFailed
 import subscribers
@@ -464,6 +465,11 @@ app.include_router(bom_routes.router)
 app.include_router(part_spec_routes.router)
 app.include_router(gateway_routes.router)
 app.include_router(core_routes.router)
+
+# Register Fleet Ops — autonomous material movement (transport-task dispatch)
+# and the fleet mission-control surface (vehicles, lazy-ticked simulation, the
+# remote-assistance queue). Gated by the `fleet` pack; logic in fleet_engine.
+app.include_router(fleet_routes.router)
 
 # Register the OEM portal (ADR-0017) — the machine manufacturer's view of its
 # installed fleet across customer factories. Every route authenticates as an OEM

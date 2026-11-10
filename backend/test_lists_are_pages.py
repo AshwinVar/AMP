@@ -70,6 +70,10 @@ ALLOWED = {
     "analytics_routes.py::get_industrial_gateway_analytics":
         "GET /analytics/industrial -- a display window of the newest 500 signals "
         "next to a SQL count() for the headline",
+    "fleet_routes.py::fleet_state":
+        "GET /fleet/state -- the live frame the floor map polls: every vehicle, "
+        "plus the 50 most urgent live tasks and 50 open alerts drawn on it; "
+        "history pages through GET /fleet/tasks",
     # ---- On-demand downloads.
     "reports_routes.py::export_intelligence_summary":
         "GET /intelligence-summary.txt -- a text download whose alert feed takes the "

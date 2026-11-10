@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { apiGet } from "../lib/api";
 import { lossFigure } from "../lib/money";
+import { useCanSeeMoney } from "../lib/money-visibility";
 import type { FactoryCommandCenter, FactoryLayoutNode } from "../lib/phase16-types";
 
 import { statusHue, type StatusHue } from "../lib/utils";
@@ -107,6 +108,7 @@ export default function DigitalTwinSection({
   // units always (ADR-0010); the map heats by units, which rank the same either way.
   const [overlay, setOverlay] = useState<Overlay>("status");
   const [metrics, setMetrics] = useState<{ machine_id: number; oee: number | null; cost: number | null; lost_units: number | null }[]>([]);
+  const canSeeMoney = useCanSeeMoney();
   const loadMetrics = useCallback(async () => {
     try {
       setMetrics((await apiGet<{ machines: typeof metrics }>("/twin-overlay")).machines);
@@ -123,9 +125,11 @@ export default function DigitalTwinSection({
   const lossMap = new Map(metrics.map((m) => [m.machine_id, m]));
   const maxLoss = Math.max(1, ...metrics.map((m) => m.lost_units ?? 0));
   // A machine with no production in the window has no loss row: "—", not a zero.
+  // Money is Admin-only; everyone else sees the loss in good units (the map
+  // already heats by units, which rank the same either way).
   const lossLabel = (machineId?: number) => {
     const row = machineId == null ? undefined : lossMap.get(machineId);
-    return row ? lossFigure(row.cost, row.lost_units) : "—";
+    return row ? lossFigure(canSeeMoney ? row.cost : null, row.lost_units) : "—";
   };
 
   function nodeStyle(node: FactoryLayoutNode) {

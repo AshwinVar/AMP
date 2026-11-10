@@ -29,6 +29,12 @@ const GROUP = new Intl.NumberFormat("en-IN", { maximumFractionDigits: 0 });
 
 /** money(49740) -> "₹49,740"; money(1400000) -> "₹14,00,000" */
 export function money(n: number): string {
+  // A money figure is gated by useCanSeeMoney() at its render site, so for a
+  // non-Admin — whose payload omits the amount — money() is not called at all.
+  // This guard is the floor under that: a stray null/undefined/NaN (a figure a
+  // caller forgot to default) renders an em dash, never "₹NaN" in front of a
+  // customer. 0 is a real figure and still groups normally.
+  if (!Number.isFinite(n)) return "—";
   return `${CURRENCY}${GROUP.format(n)}`;
 }
 

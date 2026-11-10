@@ -1,4 +1,7 @@
+"use client";
+
 import { money } from "../lib/money";
+import { useCanSeeMoney } from "../lib/money-visibility";
 import type { AuditLog, FinalExecutiveSummary, ReportRequest, SystemHealth } from "../lib/phase27-types";
 
 export default function EnterprisePolishSection({ auditLogs, reports, health, summary, reportForm, setReportForm, createReport }: {
@@ -10,6 +13,9 @@ export default function EnterprisePolishSection({ auditLogs, reports, health, su
   setReportForm: (v: any) => void;
   createReport: (e: React.FormEvent) => void;
 }) {
+  // The Cost KPI is money. This view is Admin-only, so the gate never fires in
+  // practice; it is here so the rule holds across every component.
+  const canSeeMoney = useCanSeeMoney();
   return (
     <section className="mt-8 space-y-6">
       <div>
@@ -28,7 +34,7 @@ export default function EnterprisePolishSection({ auditLogs, reports, health, su
         />
         <Kpi title="Dispatch" value={summary?.dispatch_rate == null ? "—" : summary.dispatch_rate + "%"} />
         <Kpi title="Low Stock" value={summary?.low_stock_items ?? 0} />
-        <Kpi title="Cost" value={money(summary?.total_cost ?? 0)} />
+        {canSeeMoney && <Kpi title="Cost" value={money(summary?.total_cost ?? 0)} />}
       </div>
 
       <div className="rounded-2xl bg-slate-900 border border-slate-800 p-5">

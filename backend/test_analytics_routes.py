@@ -711,7 +711,7 @@ def test_final_executive_summary_null_columns_are_zero_not_a_crash():
     db.commit()
     db.expire_all()
 
-    out = analytics_routes.get_final_executive_summary(db=db, current_user={})
+    out = analytics_routes.get_final_executive_summary(db=db, current_user={"role": "Admin"})
 
     assert out["machine_count"] == 3, out
     assert out["running_machines"] == 2, out
@@ -735,7 +735,7 @@ def test_final_executive_summary_null_columns_are_zero_not_a_crash():
 
 def test_final_executive_summary_empty_tables_are_unmeasured_not_zero():
     db = _fresh_session()
-    out = analytics_routes.get_final_executive_summary(db=db, current_user={})
+    out = analytics_routes.get_final_executive_summary(db=db, current_user={"role": "Admin"})
     assert out["machine_count"] == 0 and out["running_machines"] == 0
     assert out["work_orders"] == 0 and out["production_plans"] == 0
     # Rates over nothing are not measured...
@@ -795,7 +795,7 @@ def test_final_executive_summary_counts_are_tenant_scoped():
                                     order_quantity=200, dispatched_quantity=40, due_date=date(2026, 1, 1)))
         db.add(models.CostRecord(cost_no="GC1", cost_type="Downtime", description="d", amount=500))
         db.commit()
-        out = analytics_routes.get_final_executive_summary(db=db, current_user={"tenant": "GMATS"})
+        out = analytics_routes.get_final_executive_summary(db=db, current_user={"tenant": "GMATS", "role": "Admin"})
     finally:
         T.reset_current_tenant(tok)
 

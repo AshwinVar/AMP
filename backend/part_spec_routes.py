@@ -19,7 +19,8 @@ cavities above total cavities is a typo that silently overstates output. Each is
 a 400 naming the field, because a part master entered wrongly is not discovered
 until someone disputes an invoice.
 """
-from datetime import date, datetime
+import json
+from datetime import date, datetime, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.exc import IntegrityError
@@ -28,6 +29,7 @@ from sqlalchemy.orm import Session
 import models
 from auth import get_current_user, require_roles
 from database import SessionLocal
+from money_redaction import redact_money
 from tenancy import request_tenant
 
 router = APIRouter(tags=["Part master"])
@@ -94,10 +96,79 @@ def _row(spec):
     }
 
 
+def _actor(current_user):
+    """The signed-in user's name for the audit trail. The JWT carries it as
+    `sub` in production; some harnesses pass `username`. Fall back to a marker
+    rather than inventing a name — and never read it from client input."""
+    user = current_user or {}
+    return user.get("sub") or user.get("username") or "system"
+
+
+# The fields a revision can move, in the order they read on the part master.
+# part_code is the KEY that identifies the part, not a changed field — a row
+# whose part_code "changed" is a different part, not an edit — so it is not here.
+_AUDITED_FIELDS = ("part_name", "material", "part_weight_g", "cavities",
+                   "active_cavities", "ideal_cycle_time_s", "price_per_piece",
+                   "effective_from")
+
+
+def _audit_value(spec, field):
+    """One field of a spec, JSON-serialisable. effective_from is a date;
+    everything else is already a str / int / float."""
+    value = getattr(spec, field)
+    if isinstance(value, date):
+        return value.isoformat()
+    return value
+
+
+def _diff_changes(prior, spec):
+    """``{field: {"old": <was>, "new": <now>}}`` for a create or a revise.
+
+    ``prior`` is None for the first spec of a part code, and then every field
+    reads old=null — the trail says the part was created, not edited. For a
+    revision only the fields that actually moved are recorded, against the spec
+    that was current when the new one was entered.
+    """
+    changes = {}
+    for field in _AUDITED_FIELDS:
+        new = _audit_value(spec, field)
+        old = _audit_value(prior, field) if prior is not None else None
+        if prior is None or old != new:
+            changes[field] = {"old": old, "new": new}
+    return changes
+
+
+def _audit_entry(entry):
+    """One audit row as the API returns it: the acting user, the moment, and the
+    field-level old->new of that one change."""
+    try:
+        changes = json.loads(entry.changes) if entry.changes else {}
+    except (TypeError, ValueError):
+        # A trail row whose JSON is somehow unreadable must still list: an empty
+        # change set is better than a 500 that hides the whole history.
+        changes = {}
+    return {
+        "part_code": entry.part_code,
+        "part_name": entry.part_name,
+        "actor": entry.actor,
+        "at": entry.created_at.isoformat() if entry.created_at else None,
+        "changes": changes,
+    }
+
+
 @router.get("/part-specs")
 def list_part_specs(db: Session = Depends(_get_db),
                     current_user: dict = Depends(get_current_user)):
-    """Every spec this workspace has, newest effective date first.
+    """The CURRENT spec for every part this workspace has — one row each.
+
+    ONE ROW PER PART, NOT PER REVISION. A spec is effective-dated and a revision
+    is a NEW row (see create_part_spec), so a part revised a few times accrued a
+    stack of rows that cluttered the master and buried the figure actually in
+    force. This returns, per part code, the spec with the greatest effective_from
+    that is ALREADY in force (`<= today`) — the one a reader is costing against
+    right now. Every revision stays in the database and in the audit trail; this
+    is a read, not a delete. A future-dated spec is held back until its date
+    arrives, so a price agreed for next month does not restate this month.
 
     Readable by anyone signed in: an operator looking at an hourly target should
     be able to see the cycle time it came from. Only writing is Admin.
@@ -105,10 +176,33 @@ def list_part_specs(db: Session = Depends(_get_db),
     rows = (db.query(models.PartSpec)
               .filter(models.PartSpec.tenant_code == request_tenant(current_user))
               .order_by(models.PartSpec.part_code.asc(),
-                        models.PartSpec.effective_from.desc())
+                        models.PartSpec.effective_from.desc(),
+                        models.PartSpec.id.desc())
               .all())
-    return {"specs": [_row(r) for r in rows],
-            "materials": sorted({r.material for r in rows})}
+    # The plant runs on IST; the server clock is UTC (Railway). For the 5.5h
+    # after IST midnight the server day is still yesterday, which would hold back
+    # a spec that is in force today while the board — which renders in IST (#749)
+    # — already costs at the new price. Resolve "today" in IST so the master and
+    # the board agree on the day a spec takes effect.
+    today = (datetime.utcnow() + timedelta(hours=5, minutes=30)).date()
+    current = {}
+    for r in rows:
+        if r.part_code in current:
+            continue  # rows are effective_from-desc, so the first kept is the latest
+        # A spec dated in the future is not yet in force: the figure a reader is
+        # costing against is still the previous one, so skip it until its day.
+        if r.effective_from and r.effective_from <= today:
+            current[r.part_code] = r
+    # An operator may read a spec for its cycle time, but price_per_piece — the
+    # figure that turns shots into rupees — is Admin-only, so it is omitted from
+    # every row for a non-Admin (money_redaction). Writing a spec is already Admin.
+    return redact_money(
+        {"specs": [_row(r) for r in current.values()],
+         # Materials for the dropdown come from EVERY spec, not only the
+         # current ones: a grade used on a now-superseded spec is still a grade
+         # this plant buys, and dropping it would make a reviser retype it.
+         "materials": sorted({r.material for r in rows})},
+        current_user)
 
 
 @router.post("/part-specs", status_code=201)
@@ -141,17 +235,67 @@ def create_part_spec(body: dict, db: Session = Depends(_get_db),
         effective_from=_as_date(body.get("effective_from") or date.today().isoformat(),
                                 "effective_from"),
     )
+    # The spec that is current for this part BEFORE this write — what the new row
+    # is a change FROM. Read now, while it is still the latest; None for a brand
+    # new part, which makes every field read old=null in the trail.
+    prior = (db.query(models.PartSpec)
+               .filter(models.PartSpec.tenant_code == tenant,
+                       models.PartSpec.part_code == spec.part_code)
+               .order_by(models.PartSpec.effective_from.desc(),
+                         models.PartSpec.id.desc())
+               .first())
     db.add(spec)
     try:
-        db.commit()
+        # Flush (not commit) so a duplicate effective_from still raises here, yet
+        # the spec and its audit row land in ONE transaction at the commit below:
+        # the trail can never lose the one change whose second commit failed.
+        db.flush()
     except IntegrityError:
         db.rollback()
         raise HTTPException(
             status_code=409,
             detail=(f"a spec for {spec.part_code} already starts on "
                     f"{spec.effective_from}. Use a different date to supersede it."))
+    # Record the change in the same transaction as the spec. The entry would be a
+    # lie only for a write that was refused — and a refused spec never reaches
+    # here (the 409 above). tenant_code and actor are set explicitly: the trail of
+    # a price change is commercial data and must carry WHO even when no request
+    # tenant is bound (a direct call in a test). `prior` was read before the
+    # flush, so it is the spec this one supersedes, not this one.
+    db.add(models.PartSpecAudit(
+        tenant_code=tenant,
+        part_code=spec.part_code,
+        part_name=spec.part_name,
+        actor=_actor(current_user),
+        changes=json.dumps(_diff_changes(prior, spec)),
+    ))
+    db.commit()
     db.refresh(spec)
     return _row(spec)
+
+
+@router.get("/part-spec-audit")
+def list_part_spec_audit(part_code: str | None = None,
+                         db: Session = Depends(_get_db),
+                         current_user: dict = Depends(require_roles(["Admin"]))):
+    """The part master's change history, newest first — who changed what, when.
+
+    ADMIN ONLY, like the writes it records. A spec change restates the plant's
+    revenue and output, and the trail of those changes is the same commercial
+    data: an operator who may not see a price may not see its history either.
+    Scoped to the caller's tenant; an optional `part_code` narrows it to one
+    part. Each entry carries the field-level old->new of that single change,
+    with old=null throughout for the row that first created a part.
+    """
+    tenant = request_tenant(current_user)
+    query = (db.query(models.PartSpecAudit)
+               .filter(models.PartSpecAudit.tenant_code == tenant))
+    code = str(part_code or "").strip()
+    if code:
+        query = query.filter(models.PartSpecAudit.part_code == code)
+    rows = query.order_by(models.PartSpecAudit.created_at.desc(),
+                          models.PartSpecAudit.id.desc()).all()
+    return {"entries": [_audit_entry(r) for r in rows]}
 
 
 @router.get("/tool-assignments")

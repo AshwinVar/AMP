@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import { apiGet } from "../lib/api";
 import { formatFactValue, provenanceTone, stateNotice, type Fact } from "../lib/evidence";
 import { money } from "../lib/money";
+import { useCanSeeMoney } from "../lib/money-visibility";
 
 // Mirrors ai/root_cause.py (ADR-0025).
 type Contributor = {
@@ -52,6 +53,7 @@ export function contributorSize(c: Pick<Contributor, "units" | "minutes" | "mone
 export default function RootCauseSection() {
   const [r, setR] = useState<RootCause | null>(null);
   const [open, setOpen] = useState<string | null>(null);
+  const canSeeMoney = useCanSeeMoney();
 
   const load = useCallback(async () => {
     try {
@@ -110,7 +112,8 @@ export default function RootCauseSection() {
                 <p className="text-xs text-slate-400">{c.basis}</p>
               </div>
               <div className="text-right shrink-0">
-                <p className="text-sm font-semibold tabular-nums">{contributorSize(c)}</p>
+                {/* Money is Admin-only; null the amount so the contributor is sized in units/minutes for anyone else. */}
+                <p className="text-sm font-semibold tabular-nums">{contributorSize({ units: c.units, minutes: c.minutes, money: canSeeMoney ? c.money : null })}</p>
                 <span className={`text-[10px] uppercase tracking-wide rounded-full px-2 py-0.5 border ${CAUSE_CLASS[c.cause_label] ?? CAUSE_CLASS["INSUFFICIENT EVIDENCE"]}`}>
                   {c.cause_label}
                 </span>

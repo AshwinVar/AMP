@@ -1,13 +1,20 @@
+"use client";
+
 import type { CostingAnalytics, CostRecord } from "../lib/mega-pack3-types";
 import { CURRENCY, money } from "../lib/money";
+import { useCanSeeMoney } from "../lib/money-visibility";
 import { LiveInput } from "../lib/useLiveField";
 
 export default function CostingSection({ costs, analytics, form, setForm, createCost, updateCost, deleteCost }: {
   costs: CostRecord[]; analytics: CostingAnalytics | null; form: any; setForm:(v:any)=>void; createCost:(e:React.FormEvent)=>void; updateCost:(id:number,amount:number)=>void; deleteCost?:(id:number)=>void;
 }) {
+  // The rupee KPIs (Manual Cost, Cost/Unit) are Admin-only — without this a
+  // non-Admin's omitted analytics would render money(0) as "₹0". The cost-record
+  // table below edits raw numbers (not a formatted figure) and keeps its column.
+  const canSeeMoney = useCanSeeMoney();
   return <section className="mt-8 space-y-6">
     <div><h2 className="text-3xl font-bold">ERP-lite Costing</h2><p className="text-slate-400 mt-2">Production costing, material costing, supplier spend and profitability base layer.</p></div>
-    <div className="grid grid-cols-1 md:grid-cols-5 gap-4"><Kpi title="Cost Records" value={analytics?.total_cost_records ?? 0}/><Kpi title="Manual Cost" value={money(analytics?.manual_cost_total ?? 0)}/><Kpi title="Good Units" value={analytics?.production_units ?? 0}/><Kpi title="Cost / Unit" value={analytics?.cost_per_good_unit != null ? `${CURRENCY}${analytics.cost_per_good_unit.toFixed(2)}` : "—"}/><Kpi title="Receipt Units" value={analytics?.supplier_receipt_units ?? 0}/></div>
+    <div className="grid grid-cols-1 md:grid-cols-5 gap-4"><Kpi title="Cost Records" value={analytics?.total_cost_records ?? 0}/>{canSeeMoney && <Kpi title="Manual Cost" value={money(analytics?.manual_cost_total ?? 0)}/>}<Kpi title="Good Units" value={analytics?.production_units ?? 0}/>{canSeeMoney && <Kpi title="Cost / Unit" value={analytics?.cost_per_good_unit != null ? `${CURRENCY}${analytics.cost_per_good_unit.toFixed(2)}` : "—"}/>}<Kpi title="Receipt Units" value={analytics?.supplier_receipt_units ?? 0}/></div>
     <form onSubmit={createCost} className="rounded-2xl bg-slate-900 border border-slate-800 p-5 grid grid-cols-1 md:grid-cols-6 gap-4">
       <input className="bg-slate-950 border border-slate-700 rounded-xl px-4 py-3" placeholder="Cost No" value={form.cost_no} onChange={(e)=>setForm({...form,cost_no:e.target.value})} required/>
       <select className="bg-slate-950 border border-slate-700 rounded-xl px-4 py-3" value={form.cost_type} onChange={(e)=>setForm({...form,cost_type:e.target.value})}><option>Material</option><option>Labour</option><option>Machine</option><option>Overhead</option><option>Supplier</option></select>

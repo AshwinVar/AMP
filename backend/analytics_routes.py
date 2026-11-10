@@ -48,6 +48,7 @@ from analytics_engine import (
 )
 from auth import get_current_user, require_roles
 from database import SessionLocal
+from money_redaction import redact_money
 from tenancy import request_tenant, tenant_unit_value
 
 
@@ -281,7 +282,14 @@ def oee_summary(db: Session = Depends(_get_db), current_user: dict = Depends(get
         )
     return data
 
-router.get("/analytics/summary")(analytics_summary)
+@router.get("/analytics/summary")
+def analytics_summary_endpoint(db: Session = Depends(_get_db),
+                               current_user: dict = Depends(get_current_user)):
+    """The HTTP boundary for analytics_summary. analytics_summary itself stays a
+    PURE function — main's /reports/daily-summary.txt and core_routes call it
+    directly and must keep every figure — so money (the per-unit rate and the
+    estimated loss value) is removed HERE for a non-Admin, not inside it."""
+    return redact_money(analytics_summary(db, current_user), current_user)
 
 
 @router.get("/analytics/plant-board")
@@ -302,7 +310,10 @@ def plant_board_day(on: str = "", db: Session = Depends(_get_db),
     except ValueError:
         raise HTTPException(status_code=400,
                             detail=f"`on` must be YYYY-MM-DD, not {on!r}")
-    return ai.plant_board.day(db, request_tenant(current_user), when)
+    # The shift-rate series is in rupees (revenue, rate_per_hour); a non-Admin
+    # gets the board with those omitted, production and raw-material intact.
+    return redact_money(ai.plant_board.day(db, request_tenant(current_user), when),
+                        current_user)
 
 
 @router.get("/analytics/plant-board/month")
@@ -315,7 +326,10 @@ def plant_board_month(year: int = 0, month: int = 0,
     month = month or now.month
     if not 1 <= month <= 12:
         raise HTTPException(status_code=400, detail=f"month must be 1-12, not {month}")
-    return ai.plant_board.month(db, request_tenant(current_user), year, month)
+    # Monthly revenue (total_revenue, the per-day revenue, the per-machine shift
+    # rate) is Admin-only; the itemwise output and RM consumption stay.
+    return redact_money(ai.plant_board.month(db, request_tenant(current_user), year, month),
+                        current_user)
 
 
 @router.get("/analytics/gateway-health")
@@ -494,7 +508,9 @@ def get_management_dashboard(db: Session = Depends(_get_db), current_user: dict 
     # s4); the intelligence report prints it from here
     # (test_every_plant_oee_states_coverage.py).
     summary["coverage"] = oee_contract.coverage(db, request_tenant(current_user), _oee_window)
-    return summary
+    # Reachable by a Supervisor, who is non-Admin: the per-unit rate and the
+    # estimated loss value are Admin-only, so they come out here (money_redaction).
+    return redact_money(summary, current_user)
 
 
 @router.get("/alerts/smart")
@@ -1864,7 +1880,9 @@ def get_final_executive_summary(db: Session = Depends(_get_db), current_user: di
     # of an empty cost register. The rule is about an empty DENOMINATOR.
     total_cost = int(db.query(func.coalesce(func.sum(models.CostRecord.amount), 0)).scalar() or 0)
 
-    return {
+    # total_cost (the recorded cost register) is the one rupee figure here and is
+    # Admin-only; every other field is a count or a rate (money_redaction).
+    return redact_money({
         "machine_count": machine_count,
         "running_machines": running_machines,
         "work_orders": work_orders,
@@ -1878,7 +1896,7 @@ def get_final_executive_summary(db: Session = Depends(_get_db), current_user: di
         "dispatch_measured": order_qty > 0,
         "purchase_orders": purchase_orders,
         "total_cost": total_cost,
-    }
+    }, current_user)
 
 
 @router.get("/analytics/industrial-gateway")

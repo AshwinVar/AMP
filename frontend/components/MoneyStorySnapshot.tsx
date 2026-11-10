@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import { apiGet } from "../lib/api";
 import { type Coverage, coveragePhrase } from "../lib/coverage";
 import { CURRENCY, money } from "../lib/money";
+import { useCanSeeMoney } from "../lib/money-visibility";
 import UnitRateEditor from "./UnitRateEditor";
 
 // The money story: the OEE gap and downtime, both valued off the one per-tenant
@@ -53,6 +54,7 @@ function trendBadge(trend: Recovery["oee_trend"], delta: number | null) {
 export default function MoneyStorySnapshot({ isAdmin = false }: { isAdmin?: boolean }) {
   const [rec, setRec] = useState<Recovery | null>(null);
   const [mgmt, setMgmt] = useState<Management | null>(null);
+  const canSeeMoney = useCanSeeMoney();
 
   const load = useCallback(async () => {
     const [r, m] = await Promise.allSettled([
@@ -73,7 +75,10 @@ export default function MoneyStorySnapshot({ isAdmin = false }: { isAdmin?: bool
   if (!rec || !rec.has_data) return null;
 
   const rate = rec.unit_value_gbp;
-  const priced = rate != null;
+  // Money is Admin-only. When the viewer may not see it, this card falls back to
+  // its honest units-only view (the same path a tenant with no rate set gets),
+  // so a non-Admin reads the OEE gap and downtime in good units, never in rupees.
+  const priced = rate != null && canSeeMoney;
 
   return (
     <section className="mt-8 space-y-4">
@@ -85,7 +90,7 @@ export default function MoneyStorySnapshot({ isAdmin = false }: { isAdmin?: bool
           ) : (
             <span className="text-slate-300">your unit value</span>
           )}
-          {priced ? "" : isAdmin ? ` — set your rate below to see ${CURRENCY}` : ` — ask an Admin to set your rate to see ${CURRENCY}`}.
+          {priced ? "" : isAdmin ? ` — set your rate below to see ${CURRENCY}` : ""}.
         </p>
       </div>
 
@@ -93,7 +98,7 @@ export default function MoneyStorySnapshot({ isAdmin = false }: { isAdmin?: bool
         <div className="rounded-2xl border border-red-500/30 bg-red-500/5 p-6">
           <p className="text-xs font-semibold uppercase tracking-wide text-red-300/80">Downtime loss · recent window</p>
           <p className="mt-2 text-4xl font-bold text-red-300 tabular-nums">
-            {mgmt?.estimated_loss_value != null
+            {mgmt?.estimated_loss_value != null && canSeeMoney
               ? gbp(mgmt.estimated_loss_value)
               : mgmt?.estimated_loss_units != null
                 ? `${units(mgmt.estimated_loss_units)} units`
@@ -141,19 +146,23 @@ export default function MoneyStorySnapshot({ isAdmin = false }: { isAdmin?: bool
 
       <div className="flex items-center justify-between text-[11px] text-slate-500 gap-3 flex-wrap">
         <span>
-          Both figures are units × the same {CURRENCY}/good-unit — one rate drives the whole dashboard, and stays units-only until you set it.
+          {canSeeMoney
+            ? `Both figures are units × the same ${CURRENCY}/good-unit — one rate drives the whole dashboard, and stays units-only until you set it.`
+            : "Both figures are in good units — the OEE gap and downtime, not money."}
         </span>
-        <span className="flex items-center gap-2 whitespace-nowrap">
-          <span>
-            Unit value:{" "}
-            {priced ? (
-              <span className="text-slate-300 tabular-nums">{money(rate)}</span>
-            ) : (
-              <span className="text-slate-500">not set</span>
-            )}
+        {canSeeMoney && (
+          <span className="flex items-center gap-2 whitespace-nowrap">
+            <span>
+              Unit value:{" "}
+              {priced ? (
+                <span className="text-slate-300 tabular-nums">{money(rate)}</span>
+              ) : (
+                <span className="text-slate-500">not set</span>
+              )}
+            </span>
+            <UnitRateEditor rate={rate} isAdmin={isAdmin} onSaved={load} />
           </span>
-          <UnitRateEditor rate={rate} isAdmin={isAdmin} onSaved={load} />
-        </span>
+        )}
       </div>
     </section>
   );

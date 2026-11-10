@@ -3,6 +3,8 @@ import { describe, expect, it } from "vitest";
 
 import StatementView from "./StatementView";
 import { content } from "./testFixtures";
+import { CanSeeMoneyProvider } from "../../lib/money-visibility";
+import { CURRENCY } from "../../lib/money";
 
 /**
  * A statement as both parties read it (ADR-0021).
@@ -82,5 +84,20 @@ describe("StatementView", () => {
   it("labels a preview as not a statement", () => {
     render(<StatementView content={content()} preview />);
     expect(screen.getByText(/cannot be accepted/)).toBeTruthy();
+  });
+
+  it("hides the fee and credit from a non-Admin, keeping the rest of the statement", () => {
+    const { container } = render(
+      <CanSeeMoneyProvider value={false}>
+        <StatementView content={content()} />
+      </CanSeeMoneyProvider>,
+    );
+    // No rupee figure anywhere on the statement.
+    expect(container.textContent).not.toContain(CURRENCY);
+    expect(screen.queryByTestId("credit-amount")).toBeNull();
+    expect(screen.getByText(/Period fee and credit are visible to Admins/)).toBeTruthy();
+    // The non-money parts are untouched: the SLA verdict and availability remain.
+    expect(screen.getByTestId("sla-state").textContent).toBe("SLA breached");
+    expect(screen.getByTestId("availability").textContent).toBe("96.27%");
   });
 });

@@ -140,7 +140,7 @@ def main():
           p["agents"]["auto_rate"] is None and p["agents"]["auto_measured"] is False,
           str(p["agents"]["auto_rate"]))
 
-    ex = analytics_routes.get_final_executive_summary(db=db, current_user={})
+    ex = analytics_routes.get_final_executive_summary(db=db, current_user={"role": "Admin"})
     check("the executive page: nothing inspected -> quality rate not measured",
           ex["quality_rate"] is None and ex["quality_measured"] is False, str(ex["quality_rate"]))
     check("...and no order raised -> dispatch rate not measured",
@@ -266,7 +266,7 @@ def main():
                                      failed_quantity=90, defect_category="Dent",
                                      created_at=now - timedelta(days=60)))
     db4.commit()
-    ex2 = analytics_routes.get_final_executive_summary(db=db4, current_user={})
+    ex2 = analytics_routes.get_final_executive_summary(db=db4, current_user={"role": "Admin"})
     qv = analytics_routes.get_quality_analytics(db=db4, current_user={})
     check("the executive page's quality rate is the window's 99%, not the lifetime 54%",
           ex2["quality_rate"] == 99, str(ex2["quality_rate"]))

@@ -4,6 +4,7 @@ import React from "react";
 
 import { bucketLabel, formatDuration, shortHash, type TermVersion } from "../../lib/contracts";
 import { formatDecimalMoney } from "../../lib/money";
+import { useCanSeeMoney } from "../../lib/money-visibility";
 
 /**
  * The terms of one version of a contract, as either party reads them (ADR-0021).
@@ -27,6 +28,9 @@ function Row({ label, children }: { label: string; children: React.ReactNode }) 
 }
 
 export default function ContractTerms({ version }: { version: TermVersion }) {
+  // The period fee is money — Admin-only. On the OEM's own /oem page there is no
+  // provider, so the default (true) keeps the fee visible to the other party.
+  const canSeeMoney = useCanSeeMoney();
   const t = version.terms;
   const every = t.period_months === 1 ? "month" : `${t.period_months} months`;
   return (
@@ -38,7 +42,9 @@ export default function ContractTerms({ version }: { version: TermVersion }) {
           <span className="font-mono" title={version.terms_hash}>{shortHash(version.terms_hash)}</span>
         </Row>
         <Row label="Fee">
-          {formatDecimalMoney(t.period_fee, t.currency)} per {every}, for {t.term_months} months
+          {canSeeMoney
+            ? `${formatDecimalMoney(t.period_fee, t.currency)} per ${every}, for ${t.term_months} months`
+            : `Visible to Admins · ${t.term_months}-month term`}
         </Row>
         <Row label="Periods">whole calendar periods in {t.timezone}</Row>
         <Row label="Covered hours">

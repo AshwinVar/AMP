@@ -26,6 +26,8 @@ vi.mock("../lib/api", () => ({
 vi.mock("./PartMasterCard", () => ({ default: () => null }));
 
 import PlantBoardSection from "./PlantBoardSection";
+import { CanSeeMoneyProvider } from "../lib/money-visibility";
+import { CURRENCY } from "../lib/money";
 
 const UNAVAILABLE = {
   available: false as const,
@@ -125,6 +127,24 @@ describe("power and packing", () => {
   });
 });
 
+describe("raw material, by month", () => {
+  /**
+   * The monthly view must carry raw-material consumption, not only the day's.
+   * The backend's month() returns rm_consumption by material; this is the card
+   * that draws it, and this guards it against quietly dropping back out the
+   * way power and packing could have.
+   */
+  it("shows the month's consumption as its own card", async () => {
+    serve(day(), month());
+    render(<PlantBoardSection isAdmin />);
+    await screen.findByText("IMM-01");
+
+    expect(screen.getByText("Raw material consumed this month")).toBeTruthy();
+    // 142.56 kg is the month's total from the one material in the fixture.
+    expect(screen.getByText(/142\.56 kg/)).toBeTruthy();
+  });
+});
+
 describe("a machine nobody has specified", () => {
   it("still reports the parts it made, and asks for the mould", async () => {
     serve(
@@ -196,5 +216,41 @@ describe("when the request fails", () => {
     render(<PlantBoardSection isAdmin />);
     await screen.findByText("the workspace has no machines");
     expect(screen.getByText("Try again")).toBeTruthy();
+  });
+});
+
+describe("money behind the Admin gate", () => {
+  /**
+   * Revenue and shift value are money; the rest of the board (parts, shots, kg,
+   * targets) is for everyone. Driven from the SAME priced day/month payload, so
+   * this proves the useCanSeeMoney() gate hides the rupees — not the backend.
+   */
+  it("hides every rupee figure from a non-Admin, and keeps the rest", async () => {
+    serve(day(), month());
+    const { container } = render(
+      <CanSeeMoneyProvider value={false}>
+        <PlantBoardSection isAdmin={false} />
+      </CanSeeMoneyProvider>,
+    );
+    await screen.findByText("IMM-01");
+
+    expect(container.textContent).not.toContain(CURRENCY);
+    expect(screen.queryByText(/14,00,000/)).toBeNull();
+    // The card is still there — a neutral note, not an empty hole or a "₹0".
+    expect(screen.getByText("Value produced")).toBeTruthy();
+    expect(screen.getByText("Visible to Admins")).toBeTruthy();
+    // A non-money figure the same board carries is untouched.
+    expect(screen.getAllByText(/142\.56 kg/).length).toBeGreaterThan(0);
+  });
+
+  it("shows an Admin the rupee figures", async () => {
+    serve(day(), month());
+    const { container } = render(
+      <CanSeeMoneyProvider value={true}>
+        <PlantBoardSection isAdmin />
+      </CanSeeMoneyProvider>,
+    );
+    await waitFor(() => expect(screen.getAllByText(/14,00,000/).length).toBeGreaterThan(0));
+    expect(container.textContent).toContain(CURRENCY);
   });
 });

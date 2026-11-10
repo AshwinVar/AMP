@@ -3,6 +3,8 @@
 import { useCallback, useEffect, useState } from "react";
 import { apiGet } from "../lib/api";
 import { stateNotice } from "../lib/evidence";
+import { CURRENCY } from "../lib/money";
+import { useCanSeeMoney } from "../lib/money-visibility";
 
 // Mirrors ai/outcomes.py (ADR-0029).
 type Outcome = {
@@ -65,6 +67,7 @@ const VERDICT_CLASS: Record<string, string> = {
  */
 export default function ActionOutcomesSection() {
   const [s, setS] = useState<Summary | null>(null);
+  const canSeeMoney = useCanSeeMoney();
 
   const load = useCallback(async () => {
     try {
@@ -81,6 +84,11 @@ export default function ActionOutcomesSection() {
 
   if (!s) return null;
   const notice = stateNotice(s.state);
+  // A money-metric outcome (unit is the currency symbol) is Admin-only: its
+  // before/after figures read as an em dash for anyone else, never as rupees.
+  // Non-money metrics (min, units, %) are shown to everyone, unchanged.
+  const show = (value: number | null, unit: string) =>
+    !canSeeMoney && unit === CURRENCY ? "—" : reading(value, unit);
   return (
     <section className="rounded-2xl bg-slate-900 border border-slate-800 p-5">
       <div className="flex items-start justify-between gap-3 flex-wrap">
@@ -133,14 +141,14 @@ export default function ActionOutcomesSection() {
                 </div>
               </div>
               <p className="text-xs text-slate-400 mt-2 tabular-nums">
-                before {reading(o.baseline_value, o.unit)}
+                before {show(o.baseline_value, o.unit)}
                 {o.waiting ? (
                   <span className="text-slate-600"> · measured after the window</span>
                 ) : (
                   <>
                     {" → after "}
-                    {reading(o.measured_value, o.unit)}
-                    {o.change !== null && (
+                    {show(o.measured_value, o.unit)}
+                    {o.change !== null && !(o.unit === CURRENCY && !canSeeMoney) && (
                       <span className="text-slate-500">
                         {" ("}
                         {o.change > 0 ? "+" : ""}

@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { apiGet } from "../lib/api";
 import { money } from "../lib/money";
+import { useCanSeeMoney } from "../lib/money-visibility";
 import UnitRateEditor from "./UnitRateEditor";
 
 // Mirrors the backend recovery read-model (ai/recovery.py build_recovery_summary).
@@ -40,6 +41,7 @@ function TrendBadge({ trend, delta }: { trend: RecoverySummary["oee_trend"]; del
 // nothing until there's production to measure.
 export default function RecoverySnapshot({ isAdmin = false }: { isAdmin?: boolean }) {
   const [s, setS] = useState<RecoverySummary | null>(null);
+  const canSeeMoney = useCanSeeMoney();
 
   const load = useCallback(async () => {
     try {
@@ -70,7 +72,7 @@ export default function RecoverySnapshot({ isAdmin = false }: { isAdmin?: boolea
           </p>
         </div>
         <div className="text-right">
-          {s.recoverable_value_per_year != null ? (
+          {s.recoverable_value_per_year != null && canSeeMoney ? (
             <>
               <p className="text-3xl font-bold text-emerald-400 tabular-nums">
                 {money(s.at_world_class ? 0 : s.recoverable_value_per_year)}
@@ -119,11 +121,11 @@ export default function RecoverySnapshot({ isAdmin = false }: { isAdmin?: boolea
         })}
       </div>
 
-      {(s.unit_value_gbp != null || isAdmin) && (
+      {((s.unit_value_gbp != null && canSeeMoney) || isAdmin) && (
         <div className="mt-4 pt-3 border-t border-slate-800 flex items-center justify-between text-[11px] text-slate-500">
           <span>
             Unit value:{" "}
-            {s.unit_value_gbp != null ? (
+            {s.unit_value_gbp != null && canSeeMoney ? (
               <span className="text-slate-300 tabular-nums">{money(s.unit_value_gbp)} / good unit</span>
             ) : (
               <span className="text-slate-500">not set — showing units only</span>

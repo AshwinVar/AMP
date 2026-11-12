@@ -181,6 +181,22 @@ fi
 # independent Railway `${{ secret(32) }}` and can be rotated for one customer
 # without touching another's.
 : > "$PASSWD_FILE.tmp"
+# One helper owns mosquitto_passwd's -c flag (create vs append): with THREE
+# kinds of account now rendered (gateways, the VDA pair below, the backend),
+# per-section first-entry logic is exactly the kind of duplication that lets
+# one section truncate another's entries.
+passwd_count=0
+add_passwd() {
+    # argv, not a shell string: a password containing $ ` " or a space reaches
+    # mosquitto_passwd exactly as typed. -b is batch mode (no prompt).
+    if [ "$passwd_count" -eq 0 ]; then
+        "$PASSWD_BIN" -c -b "$PASSWD_FILE.tmp" "$1" "$2"
+    else
+        "$PASSWD_BIN" -b "$PASSWD_FILE.tmp" "$1" "$2"
+    fi
+    passwd_count=$((passwd_count + 1))
+}
+
 gateway_count=0
 i=1
 while :; do
@@ -213,25 +229,78 @@ while :; do
         echo "topic write $PREFIX/$tenant/$site/machines"
     } >> "$ACL_FILE"
 
-    # argv, not a shell string: a password containing $ ` " or a space reaches
-    # mosquitto_passwd exactly as typed. -b is batch mode (no prompt).
-    if [ "$gateway_count" -eq 0 ]; then
-        "$PASSWD_BIN" -c -b "$PASSWD_FILE.tmp" "$user" "$password"
-    else
-        "$PASSWD_BIN" -b "$PASSWD_FILE.tmp" "$user" "$password"
-    fi
+    add_passwd "$user" "$password"
 
     gateway_count=$((gateway_count + 1))
     i=$((i + 1))
 done
 
+# ── VDA 5050: the fleet's vehicles and their master control ────────────
+# Same philosophy as the gateways, different traffic DIRECTION. On
+# {iface}/{ver}/{manufacturer}/{serial}/{channel} a VEHICLE writes its own
+# state/connection and reads its own order/instantActions; AMP (the master
+# control, backend/fleet_vda5050.py) reads every vehicle's reports and writes
+# every vehicle's commands. The identity segments are validated exactly like
+# tenants, because one '+' in a serial is a robot account that can impersonate
+# the whole fleet.
+VDA_IFACE="${VDA5050_INTERFACE:-uagv}"
+VDA_VER="${VDA5050_VERSION:-v2}"
+valid_identifier "$VDA_IFACE" || die "VDA5050_INTERFACE is not a valid identifier"
+valid_identifier "$VDA_VER" || die "VDA5050_VERSION is not a valid identifier"
+
+VDA_USER="${AMP_VDA_USER:-amp-vda5050}"
+VDA_PASSWORD="$(getenv AMP_VDA_PASSWORD)"
+if [ -n "$VDA_PASSWORD" ]; then
+    valid_identifier "$VDA_USER" || die "AMP_VDA_USER is not a valid identifier"
+    {
+        echo
+        echo "# AMP's VDA 5050 master control: reads every vehicle, commands every vehicle."
+        echo "user $VDA_USER"
+        echo "topic read $VDA_IFACE/$VDA_VER/+/+/state"
+        echo "topic read $VDA_IFACE/$VDA_VER/+/+/connection"
+        echo "topic write $VDA_IFACE/$VDA_VER/+/+/order"
+        echo "topic write $VDA_IFACE/$VDA_VER/+/+/instantActions"
+    } >> "$ACL_FILE"
+    add_passwd "$VDA_USER" "$VDA_PASSWORD"
+fi
+
+vda_robot_count=0
+i=1
+while :; do
+    user="$(getenv "VDA_ROBOT_${i}_USER")"
+    [ -n "$user" ] || break
+
+    password="$(getenv "VDA_ROBOT_${i}_PASSWORD")"
+    manufacturer="$(getenv "VDA_ROBOT_${i}_MANUFACTURER")"
+    serial="$(getenv "VDA_ROBOT_${i}_SERIAL")"
+
+    valid_identifier "$user" \
+        || die "VDA_ROBOT_${i}_USER is not a valid identifier"
+    [ -n "$password" ] \
+        || die "VDA_ROBOT_${i}_USER is set but VDA_ROBOT_${i}_PASSWORD is not"
+    valid_identifier "$manufacturer" \
+        || die "VDA_ROBOT_${i}_MANUFACTURER is not a valid identifier. A '+' or '#' here would let this robot speak as every vehicle on the broker, so it is refused rather than escaped."
+    valid_identifier "$serial" \
+        || die "VDA_ROBOT_${i}_SERIAL is not a valid identifier (same injection risk as the manufacturer)"
+
+    {
+        echo
+        echo "# VDA robot ${i}: is ${manufacturer}/${serial} and nobody else."
+        echo "user $user"
+        echo "topic write $VDA_IFACE/$VDA_VER/$manufacturer/$serial/state"
+        echo "topic write $VDA_IFACE/$VDA_VER/$manufacturer/$serial/connection"
+        echo "topic read $VDA_IFACE/$VDA_VER/$manufacturer/$serial/order"
+        echo "topic read $VDA_IFACE/$VDA_VER/$manufacturer/$serial/instantActions"
+    } >> "$ACL_FILE"
+    add_passwd "$user" "$password"
+
+    vda_robot_count=$((vda_robot_count + 1))
+    i=$((i + 1))
+done
+
 # The backend's own credential goes in last so the file is never valid-looking
 # but incomplete if a gateway above refused.
-if [ "$gateway_count" -eq 0 ]; then
-    "$PASSWD_BIN" -c -b "$PASSWD_FILE.tmp" "$BACKEND_USER" "$BACKEND_PASSWORD"
-else
-    "$PASSWD_BIN" -b "$PASSWD_FILE.tmp" "$BACKEND_USER" "$BACKEND_PASSWORD"
-fi
+add_passwd "$BACKEND_USER" "$BACKEND_PASSWORD"
 
 mv "$PASSWD_FILE.tmp" "$PASSWD_FILE"
 chmod 0600 "$PASSWD_FILE"
@@ -422,6 +491,10 @@ fi
 # shoulder-surfable and retained.
 echo "amp-mosquitto: subscriber '$BACKEND_USER' reads $PREFIX/+/+/machines"
 echo "amp-mosquitto: $gateway_count gateway credential(s) rendered"
+if [ -n "$VDA_PASSWORD" ]; then
+    echo "amp-mosquitto: VDA 5050 master control '$VDA_USER' on $VDA_IFACE/$VDA_VER"
+fi
+echo "amp-mosquitto: $vda_robot_count VDA robot credential(s) rendered"
 if [ "$gateway_count" -eq 0 ]; then
     echo "amp-mosquitto: no GATEWAY_1_USER set — no gateway can publish to this broker yet."
 fi

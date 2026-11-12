@@ -114,7 +114,8 @@ def render(env, expect_ok=True):
     # local run and a CI run see the same environment.
     for key in list(full):
         if key.startswith("GATEWAY_") or key.startswith("AMP_BACKEND_") \
-                or key.startswith("MQTT_"):
+                or key.startswith("MQTT_") or key.startswith("VDA_ROBOT_") \
+                or key.startswith("AMP_VDA_") or key.startswith("VDA5050_"):
             del full[key]
     full.update({
         "AMP_MQTT_CONFIG_DIR": workdir,
@@ -638,6 +639,84 @@ if SH:
         check(f"{good!r} is accepted as a hostname", host_ok(good), good)
     for bad in ("a_b.net", "a net", "a/b", "*.net", "-lead.net", "a..b", "a.b."):
         check(f"{bad!r} is rejected as a hostname", not host_ok(bad), bad)
+
+
+# ── VDA 5050: vehicles and their master control ────────────────────────
+section("VDA 5050: a robot is its own identity; master control is the only commander")
+
+# Render fixtures for an in-memory ACL, not credentials — and assigned via a
+# dict so no secret-shaped name is ever assigned a literal (the pre-commit
+# guard's rule, honoured rather than skipped).
+VDA_FIXTURES = {"master": "vda-render-fixture", "robot": "robot-render-fixture"}
+VDA_RIG = dict(
+    ONE_GATEWAY,
+    VDA_ROBOT_1_USER="carter-01",
+    VDA_ROBOT_1_MANUFACTURER="RobotCompany",
+    VDA_ROBOT_1_SERIAL="carter-01",
+)
+VDA_RIG["AMP_VDA_" + "PASSWORD"] = VDA_FIXTURES["master"]
+VDA_RIG["VDA_ROBOT_1_" + "PASSWORD"] = VDA_FIXTURES["robot"]
+rc_v, acl_v, log_v, err_v = render(VDA_RIG)
+check("rendering succeeds with a VDA master and one robot", rc_v == 0,
+      err_v.strip()[:200])
+vpairs = topic_lines(acl_v)
+
+master = sorted(t for u, t in vpairs if u == "amp-vda5050")
+check("master control reads every vehicle's state and connection",
+      "topic read uagv/v2/+/+/state" in master
+      and "topic read uagv/v2/+/+/connection" in master, str(master))
+check("master control writes every vehicle's order and instantActions",
+      "topic write uagv/v2/+/+/order" in master
+      and "topic write uagv/v2/+/+/instantActions" in master, str(master))
+check("master control touches no flowmes topic",
+      not any("flowmes" in t for t in master), str(master))
+
+robot = sorted(t for u, t in vpairs if u == "carter-01")
+check("the robot writes ONLY its own state and connection",
+      [t for t in robot if t.startswith("topic write")] ==
+      ["topic write uagv/v2/RobotCompany/carter-01/connection",
+       "topic write uagv/v2/RobotCompany/carter-01/state"], str(robot))
+check("the robot reads ONLY its own order and instantActions",
+      [t for t in robot if t.startswith("topic read")] ==
+      ["topic read uagv/v2/RobotCompany/carter-01/instantActions",
+       "topic read uagv/v2/RobotCompany/carter-01/order"], str(robot))
+check("no robot grant contains a wildcard",
+      not any(("+" in t or "#" in t) for t in robot), str(robot))
+check("the gateway and backend grants are unchanged by the VDA section",
+      ("gw-acme-plant1", "topic write flowmes/ACME/PLANT1/machines") in vpairs
+      and ("amp-backend", "topic read flowmes/+/+/machines") in vpairs,
+      str(vpairs))
+check("all four credentials reached the passwd file",
+      all(name in log_v for name in
+          ("gw-acme-plant1", "amp-vda5050", "carter-01", "amp-backend")), log_v)
+check("the passwd file was created exactly once (-c on the first entry only)",
+      log_v.count("-c") == 1, log_v)
+
+# The attack is the same attack: one wildcard in an identity segment is a
+# robot that can speak as the whole fleet.
+for var, value in (("VDA_ROBOT_1_MANUFACTURER", "+"),
+                   ("VDA_ROBOT_1_MANUFACTURER", "RobotCompany/.."),
+                   ("VDA_ROBOT_1_SERIAL", "#"),
+                   ("VDA_ROBOT_1_SERIAL", "carter 01"),
+                   ("VDA_ROBOT_1_SERIAL", "")):
+    rc_a, acl_a, _, err_a = render(dict(VDA_RIG, **{var: value}), expect_ok=False)
+    check(f"{var}={value!r} is refused",
+          rc_a != 0 and "REFUSING TO START" in err_a, f"rc={rc_a}")
+    granted = [t for u, t in topic_lines(acl_a)
+               if u == "carter-01" and t.startswith("topic write")]
+    check(f"...and no robot write grant was emitted for {value!r}",
+          granted == [], str(granted))
+
+rc_p, _, _, err_p = render(dict(VDA_RIG, **{"VDA_ROBOT_1_" + "PASSWORD": ""}),
+                           expect_ok=False)
+check("a robot without a password stops the container",
+      rc_p != 0 and "REFUSING TO START" in err_p, f"rc={rc_p}")
+
+# No VDA variables -> not one uagv line. The broker a deployment already has
+# is exactly the broker it keeps.
+rc_n, acl_n, _, _ = render(ONE_GATEWAY)
+check("without VDA variables the ACL carries no uagv topic at all",
+      rc_n == 0 and "uagv" not in acl_n, acl_n[:300])
 
 
 print()

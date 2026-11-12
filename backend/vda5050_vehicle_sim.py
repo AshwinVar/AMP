@@ -174,14 +174,19 @@ class Vehicle:
         return body
 
 
-def run_vehicle(vehicle, broker, port, username=None, password=None, hz=1.0):
+def run_vehicle(vehicle, broker, port, username=None, password=None, hz=1.0,
+                cafile=None):
     """Wire one Vehicle to a broker and loop forever. Imported lazily so the
-    pure core above needs no paho at test time."""
+    pure core above needs no paho at test time. `cafile` turns on TLS against
+    a broker presenting a certificate from that CA (AMP's broker mints its
+    own; infra/mosquitto renders it and gateways pin it)."""
     import paho.mqtt.client as mqtt
 
     client = mqtt.Client(client_id=f"vda-sim-{vehicle.serial}-{uuid.uuid4().hex[:6]}")
     if username:
         client.username_pw_set(username, password)
+    if cafile:
+        client.tls_set(ca_certs=cafile)
     client.will_set(vehicle.topic("connection"),
                     json.dumps(vehicle.connection_message("CONNECTIONBROKEN")),
                     qos=1, retain=True)
@@ -232,6 +237,8 @@ def main():
     parser.add_argument("--port", type=int, default=1883)
     parser.add_argument("--username", default=None)
     parser.add_argument("--password", default=None)
+    parser.add_argument("--cafile", default=None,
+                        help="CA certificate; enables TLS (the broker's own CA)")
     parser.add_argument("--robots", default="RobotCompany/carter-01",
                         help="comma-separated manufacturer/serial pairs")
     parser.add_argument("--x", type=float, default=8.0)
@@ -250,6 +257,7 @@ def main():
         t = threading.Thread(target=run_vehicle,
                              args=(v, args.broker, args.port,
                                    args.username, args.password),
+                             kwargs={"cafile": args.cafile},
                              daemon=True)
         t.start()
         threads.append(t)

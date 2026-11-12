@@ -1965,7 +1965,11 @@ class FleetVehicle(Base):
     # identity arrives on the topic before AMP knows whose it is, so it must
     # resolve to exactly one row — which is also what binds the message to a
     # tenant (fail-closed: an unregistered identity is dropped, never created).
-    vda_identity = Column(String, nullable=True, unique=True)
+    # Uniqueness via a NAMED UNIQUE INDEX, not a table constraint: an index is
+    # independent of the table's DDL, so migration 0018 can add and drop it by
+    # name on PostgreSQL and SQLite alike (an inline constraint cannot be
+    # dropped portably, which is exactly what its first downgrade proved).
+    vda_identity = Column(String, nullable=True, unique=True, index=True)
 
 
 class TransportTask(Base):

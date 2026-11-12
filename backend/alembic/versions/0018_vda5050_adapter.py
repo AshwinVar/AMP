@@ -39,8 +39,15 @@ branch_labels = None
 depends_on = None
 
 
+INDEX = "ix_fleet_vehicles_vda_identity"   # create_all's name for unique+index
+
+
 def _columns(table):
     return {c["name"] for c in sa.inspect(op.get_bind()).get_columns(table)}
+
+
+def _indexes(table):
+    return {i["name"] for i in sa.inspect(op.get_bind()).get_indexes(table)}
 
 
 def upgrade():
@@ -50,8 +57,14 @@ def upgrade():
                       sa.Column("adapter", sa.String(), server_default="sim"))
     if "vda_identity" not in vehicle_cols:
         op.add_column("fleet_vehicles", sa.Column("vda_identity", sa.String()))
-        op.create_unique_constraint("uq_fleet_vehicles_vda_identity",
-                                    "fleet_vehicles", ["vda_identity"])
+    # Uniqueness as a NAMED UNIQUE INDEX, never a table constraint: an index
+    # exists independently of the table's DDL, so both this upgrade and the
+    # downgrade can manage it by name on PostgreSQL and SQLite alike. (The
+    # first cut used create_unique_constraint; its downgrade could not drop
+    # the constraint portably — PostgreSQL auto-names it on the create_all
+    # path, and SQLite cannot rebuild the table around it.)
+    if INDEX not in _indexes("fleet_vehicles"):
+        op.create_index(INDEX, "fleet_vehicles", ["vda_identity"], unique=True)
 
     task_cols = _columns("transport_tasks")
     if "vda_order_id" not in task_cols:
@@ -69,13 +82,12 @@ def downgrade():
     if "vda_order_id" in task_cols:
         op.drop_column("transport_tasks", "vda_order_id")
 
+    # The index first, by name — SQLite refuses to drop an indexed column,
+    # and PostgreSQL would otherwise leave a dangling index error path.
+    if INDEX in _indexes("fleet_vehicles"):
+        op.drop_index(INDEX, table_name="fleet_vehicles")
     vehicle_cols = _columns("fleet_vehicles")
     if "vda_identity" in vehicle_cols:
-        try:
-            op.drop_constraint("uq_fleet_vehicles_vda_identity",
-                               "fleet_vehicles", type_="unique")
-        except Exception:
-            pass    # SQLite without the named constraint; the column drop suffices
         op.drop_column("fleet_vehicles", "vda_identity")
     if "adapter" in vehicle_cols:
         op.drop_column("fleet_vehicles", "adapter")

@@ -85,6 +85,8 @@ GATES = {
     "list_part_specs": None,            # readable by anyone signed in
     "list_tool_assignments": None,
     "create_part_spec": ["Admin"],      # restates revenue and output
+    "update_part_spec": ["Admin"],      # a correction still restates both
+    "delete_part_spec": ["Admin"],      # removing a row restates its period
     "assign_tool": ["Admin"],
 }
 
@@ -249,6 +251,73 @@ def main():
               str([s["part_code"] for s in listing["specs"]]))
         check("...nor its material in the material dropdown",
               "SECRET ABS" not in listing["materials"], str(listing["materials"]))
+
+        theirs = db.query(models.PartSpec).filter(
+            models.PartSpec.tenant_code == "SOMEONE-ELSE").first()
+
+        section("8. EDIT CORRECTS A ROW IN PLACE, IT DOES NOT ADD ONE")
+        made = R.create_part_spec(
+            {**GOOD, "part_code": "FIXME", "cavities": 40, "active_cavities": 40,
+             "price_per_piece": 0, "effective_from": "2026-03-01"},
+            db=db, current_user=ADMIN)
+        before = (db.query(models.PartSpec)
+                    .filter(models.PartSpec.tenant_code == T,
+                            models.PartSpec.part_code == "FIXME").count())
+        fixed = R.update_part_spec(
+            made["id"], {"price_per_piece": 0.5, "active_cavities": 38},
+            db=db, current_user=ADMIN)
+        after = (db.query(models.PartSpec)
+                   .filter(models.PartSpec.tenant_code == T,
+                           models.PartSpec.part_code == "FIXME").count())
+        check("the correction updates the same row, adding none",
+              fixed["id"] == made["id"] and before == 1 and after == 1, f"{before}->{after}")
+        check("...the corrected fields take, and the rate recomputes with them",
+              fixed["price_per_piece"] == 0.5 and fixed["active_cavities"] == 38, str(fixed))
+        check("...and a field not sent is left alone",
+              fixed["cavities"] == 40 and fixed["part_weight_g"] == GOOD["part_weight_g"], str(fixed))
+        try:
+            R.update_part_spec(made["id"], {"active_cavities": 99}, db=db, current_user=ADMIN)
+            check("the cavity guard still bites on an edit", False, "accepted")
+        except HTTPException as e:
+            check("the cavity guard still bites on an edit",
+                  e.status_code == 400 and "cannot exceed" in str(e.detail), str(e.detail))
+        try:
+            R.update_part_spec(theirs.id, {"price_per_piece": 0.01}, db=db, current_user=ADMIN)
+            check("another workspace's spec cannot be edited here", False, "accepted")
+        except HTTPException as e:
+            check("another workspace's spec cannot be edited here",
+                  e.status_code == 404, f"{e.status_code}: {e.detail}")
+
+        section("9. DELETE REMOVES A MISTAKEN ROW, AND ONLY THIS WORKSPACE'S")
+        versions = (db.query(models.PartSpec)
+                      .filter(models.PartSpec.tenant_code == T,
+                              models.PartSpec.part_code == "ELE-CLIP")
+                      .order_by(models.PartSpec.effective_from.asc()).all())
+        check("two ELE-CLIP versions are on record before the delete",
+              len(versions) == 2, str([s.effective_from for s in versions]))
+        victim, keep = versions[0].id, versions[1].id
+        R.delete_part_spec(victim, db=db, current_user=ADMIN)
+        left = (db.query(models.PartSpec)
+                  .filter(models.PartSpec.tenant_code == T,
+                          models.PartSpec.part_code == "ELE-CLIP").all())
+        check("the chosen row is gone and the other remains",
+              len(left) == 1 and left[0].id == keep, str([s.id for s in left]))
+        try:
+            R.delete_part_spec(victim, db=db, current_user=ADMIN)   # already gone
+            check("deleting a row that is not there is a 404, not a silent success",
+                  False, "accepted")
+        except HTTPException as e:
+            check("deleting a row that is not there is a 404, not a silent success",
+                  e.status_code == 404, f"{e.status_code}: {e.detail}")
+        try:
+            R.delete_part_spec(theirs.id, db=db, current_user=ADMIN)
+            check("another workspace's spec cannot be deleted here", False, "accepted")
+        except HTTPException as e:
+            check("another workspace's spec cannot be deleted here",
+                  e.status_code == 404, f"{e.status_code}: {e.detail}")
+        check("...and that workspace's spec is untouched",
+              db.query(models.PartSpec).filter(
+                  models.PartSpec.id == theirs.id).first() is not None)
 
         for M in (models.ToolAsset, models.PartSpec, models.Machine):
             db.query(M).filter(M.tenant_code.in_([T, "SOMEONE-ELSE"])).delete(

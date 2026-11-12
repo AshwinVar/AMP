@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 
-import { apiGet, apiPost, errorDetail } from "../lib/api";
+import { apiDelete, apiGet, apiPost, apiPut, errorDetail } from "../lib/api";
 import { CURRENCY } from "../lib/money";
 import { todayLocalIso, type PartSpec, type ToolAssignment } from "../lib/plant-board";
 
@@ -110,6 +110,9 @@ export default function PartMasterCard({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [saved, setSaved] = useState("");
+  // When set, the form is CORRECTING that row in place (PUT), not adding a new
+  // effective-dated one (POST). null is the add/revise case.
+  const [editingId, setEditingId] = useState<number | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -196,9 +199,70 @@ export default function PartMasterCard({
       // mean overwriting history, which is the thing this avoids.
       effective_from: todayLocalIso(),
     });
+    setEditingId(null);          // a revision is a NEW row, never an edit
     setError("");
     setSaved("");
     setOpen(true);
+  }
+
+  /**
+   * CORRECT A PART IN PLACE — the entry was wrong, not superseded.
+   *
+   * Unlike revise(), this does not make a new dated row: it reopens the row you
+   * clicked, KEEPING its own effective_from, and save() PUTs it back over
+   * itself. That restates the period it covers, which is exactly right for a
+   * correction -- a typo, a price left blank, a cavity count keyed wrong -- where
+   * the figure was simply incorrect. A genuine change from a date forward is a
+   * revise, not an edit.
+   */
+  function edit(s: PartSpec) {
+    const known = materials.includes(s.material);
+    setDraft({
+      part_code: s.part_code,
+      part_name: s.part_name,
+      material: known ? s.material : OTHER,
+      materialOther: known ? "" : s.material,
+      part_weight_g: String(s.part_weight_g ?? ""),
+      cavities: String(s.cavities ?? ""),
+      active_cavities: String(s.active_cavities ?? ""),
+      ideal_cycle_time_s: String(s.ideal_cycle_time_s ?? ""),
+      price_per_piece: s.price_per_piece > 0 ? String(s.price_per_piece) : "",
+      // KEEP the row's own date: an edit fixes THIS version, it does not move it.
+      effective_from: s.effective_from ?? todayLocalIso(),
+    });
+    setEditingId(s.id);
+    setError("");
+    setSaved("");
+    setOpen(true);
+  }
+
+  /**
+   * DELETE A MISTAKEN ROW — a duplicate, or a draft stranded when a revision
+   * landed on the wrong date. Confirmed by name because it reaches reported
+   * history: the board reads whichever spec was in force for a past day.
+   */
+  async function remove(s: PartSpec) {
+    const when = s.effective_from ?? "";
+    if (!window.confirm(
+      `Delete the ${s.part_code} specification${when ? " from " + when : ""}? ` +
+      `Figures for the period it covered will be recalculated without it.`)) {
+      return;
+    }
+    setError("");
+    setSaved("");
+    try {
+      await apiDelete("/part-specs/" + s.id);
+      setSaved("Removed the " + s.part_code + " specification" + (when ? " from " + when : "") + ".");
+      if (editingId === s.id) {
+        setEditingId(null);
+        setDraft(blank());
+        setOpen(false);
+      }
+      await load();
+      onSaved?.();
+    } catch (e) {
+      setError(errorDetail(e));
+    }
   }
 
   async function save() {
@@ -206,20 +270,31 @@ export default function PartMasterCard({
     setError("");
     setSaved("");
     const material = draft.material === OTHER ? draft.materialOther : draft.material;
+    const body = {
+      part_code: draft.part_code,
+      part_name: draft.part_name,
+      material,
+      part_weight_g: Number(draft.part_weight_g),
+      cavities: Number(draft.cavities),
+      active_cavities: Number(draft.active_cavities || draft.cavities),
+      ideal_cycle_time_s: Number(draft.ideal_cycle_time_s),
+      price_per_piece: Number(draft.price_per_piece || 0),
+      effective_from: draft.effective_from,
+    };
     try {
-      await apiPost("/part-specs", {
-        part_code: draft.part_code,
-        part_name: draft.part_name,
-        material,
-        part_weight_g: Number(draft.part_weight_g),
-        cavities: Number(draft.cavities),
-        active_cavities: Number(draft.active_cavities || draft.cavities),
-        ideal_cycle_time_s: Number(draft.ideal_cycle_time_s),
-        price_per_piece: Number(draft.price_per_piece || 0),
-        effective_from: draft.effective_from,
-      });
-      setSaved("Saved " + draft.part_code + ". Every chart using it has been recalculated.");
+      if (editingId != null) {
+        // CORRECTION: fix the row in place. The figure it carried was wrong, so
+        // every chart reading it should now show the right one.
+        await apiPut("/part-specs/" + editingId, body);
+        setSaved("Corrected " + draft.part_code + ". Every chart using it has been recalculated.");
+      } else {
+        // NEW or SUPERSEDE: a new effective-dated row, leaving any earlier spec
+        // describing the period before this date.
+        await apiPost("/part-specs", body);
+        setSaved("Saved " + draft.part_code + ". Every chart using it has been recalculated.");
+      }
       setDraft(blank());
+      setEditingId(null);
       await load();
       onSaved?.();
     } catch (e) {
@@ -266,6 +341,7 @@ export default function PartMasterCard({
               // afterwards, because every figure downstream scales with it.
               if (!open) {
                 setDraft(blank());
+                setEditingId(null);
                 setError("");
                 setSaved("");
               }
@@ -295,7 +371,14 @@ export default function PartMasterCard({
               revision under a typo'd code silently creates a second part
               instead of superseding the first -- so the code already in the
               table is worth stating back. */}
-          {revising ? (
+          {editingId != null ? (
+            <p className="mb-3 rounded-lg border border-amber-500/30 bg-amber-500/5 p-3 text-xs text-amber-200">
+              Correcting <span className="font-semibold">{draft.part_code}</span> in place
+              {draft.effective_from ? " (in force from " + draft.effective_from + ")" : ""}. This
+              fixes the existing entry rather than adding one, so every chart using it is
+              recalculated. To change a price or cavity count from a new date instead, use Revise.
+            </p>
+          ) : revising ? (
             <p className="mb-3 rounded-lg border border-sky-500/30 bg-sky-500/5 p-3 text-xs text-sky-200">
               Revising <span className="font-semibold">{draft.part_code}</span> from{" "}
               {draft.effective_from}. The existing specification is kept and still
@@ -433,7 +516,7 @@ export default function PartMasterCard({
               onClick={() => void save()}
               className="rounded-lg bg-sky-600 px-5 py-2 text-sm font-medium text-white hover:bg-sky-500 disabled:opacity-50"
             >
-              {busy ? "Saving…" : "Save part"}
+              {busy ? "Saving…" : editingId != null ? "Save correction" : "Save part"}
             </button>
           </div>
         </div>
@@ -453,7 +536,7 @@ export default function PartMasterCard({
                 <th className="py-2 text-right">Target/hr</th>
                 <th className="py-2 text-right">Price</th>
                 <th className="py-2">From</th>
-                {isAdmin ? <th className="py-2 text-right">Revise</th> : null}
+                {isAdmin ? <th className="py-2 text-right">Actions</th> : null}
               </tr>
             </thead>
             <tbody>
@@ -481,17 +564,39 @@ export default function PartMasterCard({
                   <td className="py-2 text-slate-500">{s.effective_from ?? "—"}</td>
                   {isAdmin ? (
                     <td className="py-2 text-right">
-                      <button
-                        type="button"
-                        onClick={() => revise(s)}
-                        title={`Start a new ${s.part_code} specification from today, ` +
-                               `prefilled from this one. The existing row is kept, ` +
-                               `so months already reported do not change.`}
-                        className="rounded-lg border border-slate-700 px-3 py-1 text-xs
-                                   text-slate-300 hover:border-sky-500/40 hover:text-sky-200"
-                      >
-                        Revise
-                      </button>
+                      <div className="flex justify-end gap-1">
+                        <button
+                          type="button"
+                          onClick={() => edit(s)}
+                          title={`Fix this ${s.part_code} entry in place — a typo, a blank ` +
+                                 `price, a wrong cavity count. Charts using it recalculate.`}
+                          className="rounded-lg border border-slate-700 px-2 py-1 text-xs
+                                     text-slate-300 hover:border-sky-500/40 hover:text-sky-200"
+                        >
+                          Edit
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => revise(s)}
+                          title={`Start a new ${s.part_code} specification from today, ` +
+                                 `prefilled from this one. The existing row is kept, ` +
+                                 `so months already reported do not change.`}
+                          className="rounded-lg border border-slate-700 px-2 py-1 text-xs
+                                     text-slate-300 hover:border-sky-500/40 hover:text-sky-200"
+                        >
+                          Revise
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => void remove(s)}
+                          title={`Delete this ${s.part_code} entry — for a duplicate or a ` +
+                                 `mistake. Figures for the period it covered recalculate without it.`}
+                          className="rounded-lg border border-slate-700 px-2 py-1 text-xs
+                                     text-slate-300 hover:border-red-500/40 hover:text-red-200"
+                        >
+                          Delete
+                        </button>
+                      </div>
                     </td>
                   ) : null}
                 </tr>

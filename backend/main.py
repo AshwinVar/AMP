@@ -26,6 +26,7 @@ from security import hash_password
 import live_ws
 from live_ws import manager
 from mqtt_service import start_mqtt_service
+from fleet_vda5050 import start_vda5050_service
 
 import models
 import schemas
@@ -322,6 +323,19 @@ _ensure_column("tool_assets", "part_code",
 # hour", and a default of 0 would claim a machine ran and drew no power.
 _ensure_column("production_records", "energy_kwh",
                "ALTER TABLE production_records ADD COLUMN energy_kwh FLOAT")
+# alembic 0018: the VDA 5050 adapter columns. `adapter` defaults to "sim" so
+# every existing vehicle keeps its simulator; vda_identity has no default
+# because only a registered real vehicle has one (its uniqueness is enforced
+# by the migration's constraint on managed databases; create_all carries it
+# on fresh ones).
+_ensure_column("fleet_vehicles", "adapter",
+               "ALTER TABLE fleet_vehicles ADD COLUMN adapter VARCHAR DEFAULT 'sim'")
+_ensure_column("fleet_vehicles", "vda_identity",
+               "ALTER TABLE fleet_vehicles ADD COLUMN vda_identity VARCHAR")
+_ensure_column("transport_tasks", "vda_order_id",
+               "ALTER TABLE transport_tasks ADD COLUMN vda_order_id VARCHAR")
+_ensure_column("transport_tasks", "vda_order_update_id",
+               "ALTER TABLE transport_tasks ADD COLUMN vda_order_update_id INTEGER DEFAULT 0")
 # The windowed read-models filter these by created_at in SQL — index them so the
 # window stays fast as the tables grow.
 _ensure_index("production_records", "created_at")
@@ -633,6 +647,7 @@ async def startup_event():
         return
 
     start_mqtt_service()
+    start_vda5050_service()
     asyncio.create_task(_simulation_loop())
     try:
         db = SessionLocal()

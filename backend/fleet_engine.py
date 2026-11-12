@@ -199,11 +199,15 @@ def dispatch(db, stations=None, now=None):
 
 def _release_task(task, now):
     """Put a task back in the queue as if never assigned. The payload is
-    still wherever it was; only the claim on a vehicle is undone."""
+    still wherever it was; only the claim on a vehicle is undone. The VDA
+    5050 bookkeeping is cleared with it: a released task's next assignment
+    is a NEW order (a vehicle rejects a reused orderId at update 0)."""
     task.status = "Pending"
     task.vehicle_id = None
     task.assigned_at = None
     task.picked_up_at = None
+    task.vda_order_id = None
+    task.vda_order_update_id = 0
 
 
 def advance(db, seconds, stations=None, now=None, rng=None):
@@ -217,6 +221,13 @@ def advance(db, seconds, stations=None, now=None, rng=None):
              .filter(models.TransportTask.status.in_(("Assigned", "InTransit"))).all()}
 
     for v in vehicles:
+        if (v.adapter or "sim") != "sim":
+            # An externally-adapted vehicle (VDA 5050) is moved by its own
+            # reports, never by the simulator: fleet_vda5050.handle_state owns
+            # its position, battery, status and task flips. Simulating it too
+            # would have two writers racing over one row.
+            continue
+
         if v.status == "Offline":
             continue
 

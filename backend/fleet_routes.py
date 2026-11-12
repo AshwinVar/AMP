@@ -29,6 +29,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy.exc import IntegrityError
 
 import fleet_engine
+import fleet_vda5050
 import models
 import paging
 from auth import get_current_user, require_roles
@@ -51,6 +52,12 @@ def _get_db():
 class VehicleCreate(BaseModel):
     name: str = Field(min_length=1, max_length=64)
     vehicle_type: str = "AMR"
+    # "sim" (the default; fleet_engine moves it) or "vda5050" (a real vehicle
+    # on the VDA 5050 bus moves it — then both identity halves are required,
+    # because the identity is what binds its messages to this workspace).
+    adapter: str = "sim"
+    vda_manufacturer: str = Field(default="", max_length=64)
+    vda_serial: str = Field(default="", max_length=64)
 
 
 class TaskCreate(BaseModel):
@@ -77,6 +84,8 @@ def _vehicle_out(v):
         "current_task_id": v.current_task_id,
         "odometer_m": round(v.odometer_m or 0, 1),
         "deliveries_total": v.deliveries_total or 0,
+        "adapter": v.adapter or "sim",
+        "vda_identity": v.vda_identity,
     }
 
 
@@ -172,15 +181,22 @@ def cancel_task(task_id: int, db=Depends(_get_db),
         # advise the vehicle (return_task) rather than void the order under it.
         raise HTTPException(status_code=409,
                             detail=f"A task that is {task.status} cannot be cancelled")
+    stood_down = None
     if task.vehicle_id:
         vehicle = db.query(models.FleetVehicle).filter(
             models.FleetVehicle.id == task.vehicle_id).first()
         if vehicle is not None and vehicle.current_task_id == task.id:
             vehicle.current_task_id = None
             vehicle.status = "Idle"
+            stood_down = vehicle
     task.status = "Cancelled"
     task.completed_at = datetime.utcnow()
+    task.vda_order_id = None
+    task.vda_order_update_id = 0
     db.commit()
+    if stood_down is not None:
+        # A real vehicle mid-drive must be told, not just un-rowed.
+        fleet_vda5050.on_task_cancelled(db, stood_down, fleet_vda5050.publish_live)
     return _task_out(task)
 
 
@@ -199,19 +215,37 @@ def create_vehicle(body: VehicleCreate, db=Depends(_get_db),
         raise HTTPException(
             status_code=400,
             detail=f"vehicle_type must be one of: {', '.join(fleet_engine.SPEED_MPS)}")
+    if body.adapter not in (fleet_vda5050.ADAPTER_SIM, fleet_vda5050.ADAPTER_VDA5050):
+        raise HTTPException(
+            status_code=400,
+            detail=f"adapter must be '{fleet_vda5050.ADAPTER_SIM}' or "
+                   f"'{fleet_vda5050.ADAPTER_VDA5050}'")
+    vda_identity = None
+    if body.adapter == fleet_vda5050.ADAPTER_VDA5050:
+        manufacturer = body.vda_manufacturer.strip()
+        serial = body.vda_serial.strip()
+        if not manufacturer or not serial or "/" in manufacturer or "/" in serial:
+            raise HTTPException(
+                status_code=400,
+                detail="A vda5050 vehicle needs vda_manufacturer and vda_serial "
+                       "(the two topic segments; neither may contain '/').")
+        vda_identity = fleet_vda5050.identity(manufacturer, serial)
     dock = fleet_engine.ANCHORS["Charge Dock"]
     vehicle = models.FleetVehicle(name=body.name, vehicle_type=body.vehicle_type,
-                                  status="Idle", x=dock["x"] + 3.0, y=dock["y"])
+                                  status="Idle", x=dock["x"] + 3.0, y=dock["y"],
+                                  adapter=body.adapter, vda_identity=vda_identity)
     db.add(vehicle)
-    # (tenant_code, name) is a UNIQUE constraint; caught rather than
-    # pre-checked because a pre-check races (same shape as create_machine).
+    # (tenant_code, name) is UNIQUE, and so is vda_identity (installation-wide:
+    # it is what binds a topic to a workspace); caught rather than pre-checked
+    # because a pre-check races (same shape as create_machine).
     try:
         db.commit()
     except IntegrityError:
         db.rollback()
         raise HTTPException(
             status_code=409,
-            detail=f"A vehicle named '{body.name}' already exists in this workspace.")
+            detail=f"A vehicle named '{body.name}' already exists in this workspace, "
+                   f"or that VDA 5050 identity is already registered.")
     db.refresh(vehicle)
     return _vehicle_out(vehicle)
 
@@ -256,6 +290,12 @@ def advise_alert(alert_id: int, body: AdviceBody, db=Depends(_get_db),
         fleet_engine.advise(db, alert, body.advice)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
+    vehicle = db.query(models.FleetVehicle).filter(
+        models.FleetVehicle.id == alert.vehicle_id).first()
+    if vehicle is not None:
+        # The row-side meaning is applied; a real vehicle also hears the verb
+        # on the wire (resume = order re-publish, the rest = cancelOrder).
+        fleet_vda5050.on_advice(db, vehicle, body.advice, fleet_vda5050.publish_live)
     return _alert_out(alert)
 
 

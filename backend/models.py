@@ -1953,6 +1953,23 @@ class FleetVehicle(Base):
     odometer_m = Column(Float, default=0.0)
     deliveries_total = Column(Integer, default=0)
     created_at = Column(DateTime, default=datetime.utcnow)
+    # WHO MOVES THIS ROW. "sim" means fleet_engine.advance() drives it; any
+    # other value names an external adapter (today: "vda5050") and advance()
+    # must never touch it — position, battery and status then come from the
+    # vehicle's own reports, exactly as this model's docstring promised a real
+    # integration would.
+    adapter = Column(String, default="sim")          # sim | vda5050
+    # The vehicle's identity on the VDA 5050 bus: "{manufacturer}/{serial}",
+    # the two topic segments every message carries. Unique INSTALLATION-wide,
+    # not per tenant, for the same reason GatewayCredential.gateway_id is: the
+    # identity arrives on the topic before AMP knows whose it is, so it must
+    # resolve to exactly one row — which is also what binds the message to a
+    # tenant (fail-closed: an unregistered identity is dropped, never created).
+    # Uniqueness via a NAMED UNIQUE INDEX, not a table constraint: an index is
+    # independent of the table's DDL, so migration 0018 can add and drop it by
+    # name on PostgreSQL and SQLite alike (an inline constraint cannot be
+    # dropped portably, which is exactly what its first downgrade proved).
+    vda_identity = Column(String, nullable=True, unique=True, index=True)
 
 
 class TransportTask(Base):
@@ -1998,6 +2015,14 @@ class TransportTask(Base):
     assigned_at = Column(DateTime, nullable=True)
     picked_up_at = Column(DateTime, nullable=True)
     completed_at = Column(DateTime, nullable=True)
+    # VDA 5050 bookkeeping, set only while the task is assigned to a vehicle
+    # whose adapter is "vda5050". `vda_order_id` is the orderId AMP published
+    # for this leg (fresh per assignment, so a task that bounces back to the
+    # same vehicle is never rejected as a stale orderUpdateId); the counter
+    # increments on every re-publish of the SAME order (the resume verb).
+    # Cleared whenever the task returns to the queue.
+    vda_order_id = Column(String, nullable=True)
+    vda_order_update_id = Column(Integer, default=0)
 
 
 class FleetAlert(Base):

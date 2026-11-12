@@ -1,0 +1,30 @@
+# VDA 5050 test rig: a broker + NVIDIA's simulated robots, for exercising
+# AMP's master-control adapter (backend/fleet_vda5050.py) against the robots
+# NVIDIA Isaac Mission Dispatch itself tests with. See README.md alongside.
+#
+# Requires Docker. On a machine without it, backend/vda5050_vehicle_sim.py is
+# the no-Docker equivalent (same protocol surface, pure Python).
+services:
+  mosquitto:
+    image: eclipse-mosquitto:2
+    ports:
+      - "1883:1883"
+    # Anonymous, LOCAL-ONLY convenience. Never expose this broker beyond the
+    # dev machine; the production broker story (TLS, per-gateway accounts)
+    # lives in infra/mosquitto/.
+    command: >
+      sh -c "printf 'listener 1883\nallow_anonymous true\n' >
+      /mosquitto/config/mosquitto.conf && /usr/sbin/mosquitto -c
+      /mosquitto/config/mosquitto.conf"
+
+  # NVIDIA's "simple, simulated robots that implement the VDA5050 client".
+  # Image: https://catalog.ngc.nvidia.com/orgs/nvidia/teams/isaac/containers/mission-simulator
+  # Args: --robots takes name,x,y[,theta] tuples; coordinates are the map
+  # frame, which for AMP is fleet_engine's 100x100 m grid (mapId amp-floor).
+  mission-simulator:
+    image: nvcr.io/nvidia/isaac/mission-simulator:latest
+    depends_on:
+      - mosquitto
+    command: >
+      --mqtt_host mosquitto --mqtt_port 1883
+      --robots carter-01,8,85 carter-02,12,85

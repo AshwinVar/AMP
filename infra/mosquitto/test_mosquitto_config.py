@@ -348,8 +348,14 @@ _hostile = "-c -b /tmp/amp-mosq-cyjr31sk/passwd.tmp gw1\n-b /tmp/amp-mosq-cyjr31
 check("...and counting it is immune to a temp path containing '-c'",
       sum(1 for line in _hostile.splitlines() if "-c" in line.split()) == 1,
       _hostile)
+# THE SAME LESSON AS "-c" ABOVE, LEARNED A SECOND TIME. This was a substring
+# test, and mkdtemp handed CI a directory called `amp-mosq-yelp2yv4` — which
+# contains "p2" — so the check reddened on a commit that touched nothing near
+# it. A password would arrive as a whole argument, so the question is asked of
+# the arguments.
+_logged_args = {a for line in log_m.splitlines() for a in line.split()}
 check("no password reached the fixture's log",
-      "p1" not in log_m and "p2" not in log_m, log_m)
+      "p1" not in _logged_args and "p2" not in _logged_args, log_m)
 
 
 # ── 9. the CA can actually be got OUT of the container ────────────────

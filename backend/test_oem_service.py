@@ -378,6 +378,42 @@ def test_confidence_appears_only_where_it_means_something():
           oem_service.project_service_date(FakeInstall(hours=1800.0), model, flat)
           is None)
 
+    # An OVERDUE machine gets NO forward projection, even with a clean rising
+    # trend. service_state reports hours_remaining BELOW ZERO once the interval is
+    # passed (its own `overdue` boundary; -100.0 here), so a straight-line divide
+    # of a negative remaining by a positive per-day rate is a NEGATIVE days-out.
+    # project_service_date answers "when will the counter REACH the next service" —
+    # a threshold already crossed has no such date, and a confident "service in
+    # about -10 days" is a figure the data cannot support (ADR-0010). Independently
+    # derived: 2000 -> 2100 h over 10 days = 10 h/day; 2100 h is 100 h PAST a
+    # 2000 h interval, so remaining = -100 h and days_out = -100/10 = -10, which
+    # must NOT be emitted. (Before the fix this returned "Expect service in about
+    # -10 days" with a positive confidence beside the correct overdue alert.)
+    overdue_trend = [(date(2027, 1, 1), 2000.0), (date(2027, 1, 5), 2040.0),
+                     (date(2027, 1, 8), 2070.0), (date(2027, 1, 11), 2100.0)]
+    overdue_proj = oem_service.project_service_date(
+        FakeInstall(hours=2100.0), model, overdue_trend, date(2027, 1, 11))
+    check("an OVERDUE machine with a rising trend produces NO projection "
+          "(no negative days-to-service)", overdue_proj is None, str(overdue_proj))
+    # Exactly-at-the-threshold (remaining == 0) is the overdue boundary too, and a
+    # "service in about 0 days" projection is the same non-answer — also suppressed.
+    at_threshold = [(date(2027, 1, 1), 1900.0), (date(2027, 1, 5), 1940.0),
+                    (date(2027, 1, 8), 1970.0), (date(2027, 1, 11), 2000.0)]
+    check("a machine exactly AT its interval produces NO projection",
+          oem_service.project_service_date(
+              FakeInstall(hours=2000.0), model, at_threshold, date(2027, 1, 11))
+          is None)
+    # Suppressing the projection loses no signal: the overdue machine still raises
+    # the arithmetic service_due alert, and ONLY that — never the bogus projection.
+    overdue_recs = oem_service.recommendations(
+        FakeInstall(hours=2100.0), model, today=date(2027, 1, 11),
+        history=overdue_trend)
+    check("...while its overdue service_due alert still fires and no "
+          "service_projection is emitted",
+          any(r["kind"] == "service_due" for r in overdue_recs)
+          and all(r["kind"] != "service_projection" for r in overdue_recs),
+          str([r["kind"] for r in overdue_recs]))
+
     # Nothing anywhere may claim prediction.
     import inspect
     # The module may DISCUSS predictive maintenance in order to disclaim it; what

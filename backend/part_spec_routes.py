@@ -107,8 +107,21 @@ def list_part_specs(db: Session = Depends(_get_db),
               .order_by(models.PartSpec.part_code.asc(),
                         models.PartSpec.effective_from.desc())
               .all())
+    # The distinct materials feed a filter dropdown. PartSpec.material is
+    # Column(String, nullable=False) WITHOUT a default, and (as everywhere in
+    # this codebase) that constraint is not retro-applied to a row written by
+    # raw SQL / a migration / a legacy insert — so such a row can hold a genuine
+    # NULL. A NULL in the set made `sorted({None, "PP"})` raise
+    # `TypeError: '<' not supported between 'str' and 'NoneType'`, 500-ing the
+    # WHOLE listing: one poisoned row then hid every valid spec from everyone
+    # signed in (the list is readable by any user). Drop falsy values before the
+    # sort — a NULL/blank material is not a usable filter option anyway — the
+    # same convention the sibling distinct-value aggregations use (ai/trace.py
+    # `if p.shift_name`, ai/ingest_guide.py filters falsy before sorting). The
+    # per-row `_row(r)` serialiser still returns the raw (null) material, so the
+    # spec itself stays listed; only the dropdown excludes the non-value.
     return {"specs": [_row(r) for r in rows],
-            "materials": sorted({r.material for r in rows})}
+            "materials": sorted({r.material for r in rows if r.material})}
 
 
 @router.post("/part-specs", status_code=201)
@@ -180,8 +193,17 @@ def list_tool_assignments(db: Session = Depends(_get_db),
         "cycles_since_service": t.cycles_since_service,
         "service_interval_cycles": t.service_interval_cycles,
     } for t in tools],
+        # Sorted by machine NAME for the mould-change dropdown. Machine.name is
+        # Column(String, nullable=False) WITHOUT a default, so (same threat model
+        # as the material set above) a raw-SQL / migration / legacy row can hold a
+        # NULL name — and `sorted(..., key=lambda kv: kv[1])` then compared
+        # `None < "IMM-01"` and raised TypeError, 500-ing the whole assignment
+        # listing. A None-safe sort key (never drop the machine — it is a real
+        # asset a tool can be fitted to, and the id is what the form submits)
+        # keeps it in the list, sorting a nameless machine first; the row still
+        # reports its true (null) name rather than a fabricated one.
         "machines": [{"id": i, "name": n} for i, n in sorted(machines.items(),
-                                                             key=lambda kv: kv[1])]}
+                                                             key=lambda kv: kv[1] or "")]}
 
 
 @router.post("/tool-assignments/{tool_id}")

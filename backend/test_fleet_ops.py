@@ -307,6 +307,65 @@ def test_critical_battery_aborts_the_task_and_recovers_to_idle():
     print("PASS critical battery: abort, plead, requeue, charge, recover")
 
 
+def test_a_null_battery_vehicle_aborts_cleanly_without_crashing_the_tick():
+    """A tasked vehicle whose battery_pct is NULL must abort cleanly, not 500
+    the whole tenant's /fleet/state.
+
+    battery_pct is Column(Float, default=100.0): nullable, Python-side default
+    only, so a legacy / migration / cleared-field row can hold a true NULL
+    (the default fires only at INSERT with the column absent — explicitly
+    clearing it afterwards writes NULL). The critical-battery guard reads
+    `(v.battery_pct or 0)`, so such a vehicle ENTERS the abort branch (0 <= 10),
+    but the alert message formatted the raw column and `format(None, '.0f')`
+    raised TypeError. advance() has no per-vehicle guard, so that one row aborted
+    the entire tick — every vehicle's update rolled back and /fleet/state 500'd
+    — and the NULL vehicle never got its task released or sent to charge.
+
+    Pins: the tick does not raise, the NULL vehicle aborts (task requeued,
+    status Charging, one Critical plea), AND an unrelated healthy vehicle in the
+    same tick still advances — proving one bad row no longer takes the fleet down.
+    """
+    db = _db()
+    _machine(db, "IMM-01")
+
+    # The malformed row: battery cleared to NULL after insert (a migration /
+    # raw-SQL / cleared-field vehicle). Assert the fixture really is NULL — the
+    # ORM default would otherwise mask the very state under test.
+    bad = _vehicle(db, "AMR-NULL", x=8.0, y=85.0, status="ToPickup")
+    bad.battery_pct = None
+    db.commit(); db.refresh(bad)
+    assert bad.battery_pct is None, "fixture must hold a genuine NULL battery_pct"
+    t_bad = _task(db, "IMM-01", "Packing")
+    t_bad.status = "Assigned"; t_bad.vehicle_id = bad.id; t_bad.assigned_at = datetime.utcnow()
+    bad.current_task_id = t_bad.id
+    db.commit()
+
+    # A healthy vehicle tasked in the SAME tick: its progress must survive the
+    # bad row (blast-radius check — advance commits once for the whole fleet).
+    good = _vehicle(db, "AMR-OK", x=40.0, y=40.0, battery=100.0, status="ToPickup")
+    t_good = _task(db, "IMM-01", "Packing")
+    t_good.status = "Assigned"; t_good.vehicle_id = good.id; t_good.assigned_at = datetime.utcnow()
+    good.current_task_id = t_good.id
+    good_x0, good_y0 = good.x, good.y
+    db.commit()
+
+    # The whole point: this used to raise TypeError and 500 the tick.
+    fleet_engine.advance(db, 5.0, rng=NeverFires())
+
+    db.refresh(bad); db.refresh(t_bad); db.refresh(good)
+    # The NULL vehicle aborted honestly: task back to the queue, off to charge,
+    # exactly one Critical plea, and the message reads 0% (not a crash).
+    assert t_bad.status == "Pending" and t_bad.vehicle_id is None
+    assert bad.status == "Charging" and bad.current_task_id is None
+    pleas = db.query(models.FleetAlert).filter(models.FleetAlert.kind == "LowBattery").all()
+    assert len(pleas) == 1 and pleas[0].severity == "Critical"
+    assert pleas[0].vehicle_id == bad.id and "battery 0%" in pleas[0].message
+    # And the healthy vehicle in the same tick still moved — the bad row did not
+    # roll back or crash the fleet-wide tick.
+    assert (good.x, good.y) != (good_x0, good_y0)
+    print("PASS NULL battery aborts cleanly and does not crash the fleet tick")
+
+
 # ── Routes: validation and shapes ───────────────────────────────────────
 
 def test_create_task_validates_stations_and_self_moves():
@@ -437,6 +496,7 @@ if __name__ == "__main__":
     test_advice_send_to_charge_requeues_and_docks()
     test_unknown_advice_is_refused_and_changes_nothing()
     test_critical_battery_aborts_the_task_and_recovers_to_idle()
+    test_a_null_battery_vehicle_aborts_cleanly_without_crashing_the_tick()
     test_create_task_validates_stations_and_self_moves()
     test_cancel_refuses_in_transit_and_frees_assigned_vehicles()
     test_vehicle_delete_refuses_while_tasked()

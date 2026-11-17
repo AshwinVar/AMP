@@ -175,6 +175,25 @@ class DowntimeResponse(DowntimeBase):
     id: int
     created_at: Optional[datetime] = None
 
+    # reason / duration are Column(String, nullable=False) WITHOUT a default. That
+    # constraint is not retro-applied to a row written by raw SQL / a migration /
+    # a legacy insert, so such a row can hold a genuine NULL — and because both are
+    # typed non-optional `str` here, one NULL row raised Pydantic ValidationError
+    # during serialisation and 500-ed the WHOLE GET /downtime-logs list, one bad
+    # row hiding every good log. The compute paths already read these NULLs safely
+    # (analytics_engine.normalize_downtime_reason -> "Unknown"; the reports CSV
+    # writes a NULL duration as an empty cell), but this raw-ORM list serializer was
+    # missed when the same heal was applied across the other list schemas (#427-#472,
+    # MachineResponse / QualityInspectionResponse / …) — this list's model name
+    # (DowntimeLog) doesn't match the schema stem (Downtime), so the heal guard never
+    # saw it either. Coalesce to the one label the canonical reader already uses for
+    # an unlabelled stop ("Unknown"), and a NULL duration to "" (not recorded) — the
+    # same value the CSV export renders and parse_duration_to_minutes reads as 0, so
+    # no surface disagrees. A real recorded value is untouched (mode="before" only
+    # rewrites None).
+    _heal_reason = field_validator("reason", mode="before")(_coalesce_null_text("Unknown"))
+    _heal_duration = field_validator("duration", mode="before")(_coalesce_null_text(""))
+
     class Config:
         from_attributes = True
 
@@ -193,6 +212,21 @@ class ShiftResponse(ShiftBase):
     id: int
     created_at: Optional[datetime] = None
 
+    # target_output / actual_output are Column(Integer, nullable=False) WITHOUT a
+    # default, so a raw-SQL / migration / legacy row can hold a genuine NULL (the
+    # nullable=False constraint is not retro-applied). Typed non-optional `int`
+    # here, one such NULL row 500-ed the WHOLE GET /shifts list on serialisation.
+    # Every other reader of these columns already coalesces a NULL to 0 — the CSV
+    # export (reports_routes: `shift.target_output or 0`) and build_shift_kpis
+    # (`shift.target_output or 0`) — so healing this list to 0 keeps it on the same
+    # basis as the attainment the dashboard shows (rule-1 one convention, rule-3 the
+    # list reconciles with the KPI), rather than a null the frontend would have to
+    # re-handle. This is the QualityInspectionResponse.inspected_quantity precedent
+    # (a nullable=False no-default count healed to 0 on the way out). A real 0 is
+    # untouched (mode="before" only rewrites None).
+    _heal_outputs = field_validator("target_output", "actual_output",
+                                    mode="before")(_coalesce_null_count)
+
     class Config:
         from_attributes = True
 
@@ -210,6 +244,24 @@ class ProductionCreate(BaseModel):
 class ProductionResponse(ProductionCreate):
     id: int
     created_at: Optional[datetime] = None
+
+    # planned_minutes / runtime_minutes / ideal_cycle_time_seconds / total_count /
+    # good_count / rejected_count are all Column(Integer, nullable=False) WITHOUT a
+    # default, so a raw-SQL / migration / legacy row can hold a genuine NULL (the
+    # nullable=False constraint is not retro-applied). Typed non-optional `int` here
+    # (inherited from ProductionCreate), ONE such NULL row 500-ed the WHOLE
+    # GET /production-records list on serialisation — one bad row hiding every good
+    # record, on production_records, the most-polled growing table. analytics_engine
+    # .calculate_oee_from_record / pooled_oee already read every one of these columns
+    # as `... or 0`, and the /reports/oee.csv export does too, so healing this list to
+    # 0 puts it on the same basis as the OEE those surfaces show for the same row
+    # (rule-1, rule-3) — not a null the frontend must re-handle. The validators live on
+    # the Response subclass only, so ProductionCreate (the POST body) still requires
+    # every field. A real recorded 0 is untouched (mode="before" only rewrites None).
+    _heal_counts = field_validator(
+        "planned_minutes", "runtime_minutes", "ideal_cycle_time_seconds",
+        "total_count", "good_count", "rejected_count",
+        mode="before")(_coalesce_null_count)
 
     class Config:
         from_attributes = True

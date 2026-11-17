@@ -16,6 +16,7 @@ repository (read-enforcement) is rolled out table-by-table in follow-up PRs,
 once ownership of existing rows is settled — see ADR-0002.
 """
 import contextvars
+import math
 
 from sqlalchemy import event, inspect, text
 from sqlalchemy.orm import Session, with_loader_criteria
@@ -353,9 +354,25 @@ def tenant_unit_value(db, tenant):
     """The tenant's configured ₹ margin per good unit (TenantConfig.unit_value_gbp),
     or None if unset. The single per-tenant ₹ rate — shared by the recovery
     read-model and the management summary's estimated_loss_value so every money
-    figure uses the same number (never a made-up default when unset)."""
+    figure uses the same number (never a made-up default when unset).
+
+    A non-finite stored rate (NaN / +-Inf) reads as unset (None), not as a usable
+    number. unit_value_gbp is a Float column with NO database constraint, so a
+    raw-SQL / migration row — or one written before PATCH /tenant-config grew its
+    finite guard — can hold inf/nan. Read raw, that value flows into every money
+    surface (loss_value.value, ai/cost, ai/recovery, risk_radar, the management
+    summary), where `units x inf` is non-finite and loss_value.whole(...) raised
+    OverflowError / ValueError — 500-ing the whole read-model for the tenant. One
+    tenant can also hold ai/cost's priced path open (`unit_value is not None`) with
+    a None cost and then crash in apportion(None). Coalescing to None HERE, at the
+    single helper every consumer already routes the rate through, makes a bad rate
+    behave exactly like an unset one (units-only) everywhere at once — a rate the
+    data can't support is no rate, the same honesty rule the write guard enforces."""
     c = db.query(models.TenantConfig).filter(models.TenantConfig.tenant_code == tenant).first()
-    return c.unit_value_gbp if c else None
+    rate = c.unit_value_gbp if c else None
+    if rate is not None and not math.isfinite(rate):
+        return None
+    return rate
 
 
 _scoping_installed = False

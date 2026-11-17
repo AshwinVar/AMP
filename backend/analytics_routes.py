@@ -567,29 +567,29 @@ def get_work_order_analytics(db: Session = Depends(_get_db), current_user: dict 
     # metric, not two spellings; rule-3: a breakdown must reconcile with its
     # headline) — exactly the fold the sibling customer-order (#444) and
     # production-schedule (#463) rollups already apply.
-    planned = status_counts.get("Planned", 0)
-    running = status_counts.get("Running", 0) + status_counts.get("In Progress", 0)
-    completed = status_counts.get("Completed", 0)
-    delayed = status_counts.get("Delayed", 0)
+    #
     # Folding the synonym was not enough on its own: "On Hold" is a real work-order
-    # status (the model default is "Planned" but the status dropdown and the
-    # simulator both write "On Hold"), and a raw-SQL / migration / legacy row can
-    # carry a NULL status that func.count still tallies into total_work_orders.
-    # Neither lands in any of the four named buckets, so the KPI row still summed
-    # to LESS than the "Total WO" headline rendered beside it — the same shortfall
-    # the maintenance (#568/#569), purchasing and customer-order rollups each
-    # closed with an `other` catch-all. `other` is total minus the named buckets,
-    # so the five buckets now partition every row exactly (rule-3) whatever words
-    # the status column holds. It is non-negative because the named buckets only
-    # ever count a subset of the rows func.count totals.
-    other = total_work_orders - (planned + running + completed + delayed)
+    # status (the status dropdown and the simulator both write it), "Cancelled" is
+    # another, and a raw-SQL / migration / legacy row can carry a NULL status that
+    # func.count still tallies into total_work_orders. None of those lands in any of
+    # the four named buckets, so the KPI row still summed to LESS than the "Total WO"
+    # headline rendered beside it — the same rule-3 shortfall the maintenance
+    # (#568/#569), purchasing and customer-order rollups each closed with an `other`
+    # catch-all. `other` is the total minus the named buckets, so the five buckets
+    # partition every row exactly whatever the status column holds; it is non-negative
+    # because the named buckets only ever count a subset of the rows func.count totals.
+    other = total_work_orders - (
+        status_counts.get("Planned", 0)
+        + status_counts.get("Running", 0) + status_counts.get("In Progress", 0)
+        + status_counts.get("Completed", 0)
+        + status_counts.get("Delayed", 0))
     return {
         "total_work_orders": total_work_orders,
         "achievement_measured": total_target > 0,
-        "planned": planned,
-        "running": running,
-        "completed": completed,
-        "delayed": delayed,
+        "planned": status_counts.get("Planned", 0),
+        "running": status_counts.get("Running", 0) + status_counts.get("In Progress", 0),
+        "completed": status_counts.get("Completed", 0),
+        "delayed": status_counts.get("Delayed", 0),
         # The catch-all that keeps the breakdown reconciled with the headline for
         # On Hold / Cancelled / NULL / any future status (see above).
         "other": other,
@@ -636,31 +636,32 @@ def get_production_plan_analytics(db: Session = Depends(_get_db), current_user: 
     # spellings; rule-3: a breakdown must reconcile with its headline) — exactly
     # the fold the sibling /analytics/work-orders (#470) and
     # /analytics/production-schedules (#463) rollups already apply.
-    planned = status_counts.get("Planned", 0)
-    running = status_counts.get("Running", 0) + status_counts.get("In Progress", 0)
-    completed = status_counts.get("Completed", 0)
-    behind = status_counts.get("Behind", 0)
+    #
     # Folding the synonym was not enough on its own: a plan can hold "On Hold" or
     # "Cancelled" (the status PATCH stores any word the UI sends), and a raw-SQL /
     # migration / legacy row can carry a NULL status that func.count still tallies
-    # into total_plans. None of those land in the four named buckets, so the KPI
-    # row still summed to LESS than the "Plans" headline rendered beside it — the
-    # same shortfall the maintenance (#568/#569), purchasing and customer-order
-    # rollups each closed with an `other` catch-all. `other` is total minus the
-    # named buckets, so the five buckets now partition every row exactly (rule-3)
-    # whatever the status column holds; it is non-negative because the named
-    # buckets only ever count a subset of the rows func.count totals.
-    other = total_plans - (planned + running + completed + behind)
+    # into total_plans. None of those lands in the four named buckets, so without a
+    # catch-all the KPI row summed to LESS than the "Plans" headline rendered beside
+    # it — the same rule-3 shortfall the maintenance (#568/#569), purchasing and
+    # customer-order rollups each closed with an `other` bucket. `other` is the total
+    # minus the named buckets, so the five buckets partition every row exactly whatever
+    # the status column holds; it is non-negative because the named buckets only ever
+    # count a subset of the rows func.count totals.
+    other = total_plans - (
+        status_counts.get("Planned", 0)
+        + status_counts.get("Running", 0) + status_counts.get("In Progress", 0)
+        + status_counts.get("Completed", 0)
+        + status_counts.get("Behind", 0))
     return {
         "total_plans": total_plans,
         "achievement_measured": planned_quantity > 0,
         "planned_quantity": planned_quantity,
         "actual_quantity": actual_quantity,
         "achievement": achievement,
-        "planned": planned,
-        "running": running,
-        "completed": completed,
-        "behind": behind,
+        "planned": status_counts.get("Planned", 0),
+        "running": status_counts.get("Running", 0) + status_counts.get("In Progress", 0),
+        "completed": status_counts.get("Completed", 0),
+        "behind": status_counts.get("Behind", 0),
         # The catch-all that keeps the breakdown reconciled with the headline for
         # On Hold / Cancelled / NULL / any future status (see above).
         "other": other,

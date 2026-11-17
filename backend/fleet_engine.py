@@ -262,11 +262,21 @@ def advance(db, seconds, stations=None, now=None, rng=None):
 
         # Tasked and moving. Critical battery aborts first: the task goes
         # back to the queue, the vehicle pleads and limps to the dock.
-        if (v.battery_pct or 0) <= CRITICAL_BATTERY:
+        # Coalesce battery_pct the same way the guard does: it is Column(Float,
+        # default=100.0) — nullable, Python-side default only — so a legacy /
+        # migration / raw-SQL / cleared-field row can hold a true NULL. The
+        # guard reads `(v.battery_pct or 0)`, so such a row ENTERS this branch
+        # (0 <= CRITICAL_BATTERY), but the message formatted the raw column, and
+        # `format(None, '.0f')` raises TypeError. advance() has no per-vehicle
+        # guard, so that one malformed row 500'd the whole tenant's /fleet/state
+        # — and the vehicle never got its task released or sent to charge. Same
+        # `or 0` the six other battery reads in this function already use.
+        battery = v.battery_pct or 0
+        if battery <= CRITICAL_BATTERY:
             db.add(models.FleetAlert(
                 vehicle_id=v.id, task_id=task.id, kind="LowBattery",
                 severity="Critical",
-                message=f"{v.name}: battery {v.battery_pct:.0f}% with task #{task.id} "
+                message=f"{v.name}: battery {battery:.0f}% with task #{task.id} "
                         f"({task.origin} → {task.destination}); task returned to queue."))
             _release_task(task, now)
             v.current_task_id = None

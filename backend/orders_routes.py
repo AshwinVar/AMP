@@ -24,6 +24,7 @@ import paging
 from csv_safe import import_row_error, read_upload_text
 import schemas
 import stock_events
+from inventory_routes import check_stock_levels
 from auth import get_current_user, require_roles
 from database import SessionLocal
 import ai.escalations
@@ -619,7 +620,28 @@ def update_purchase_order(
             # >= 0, the invariant every other mutation in this codebase maintains,
             # and the ledger records what ACTUALLY moved so the two still reconcile.
             applied = received_delta if received_delta > 0 else -min(-received_delta, on_hand)
-            item.current_stock = on_hand + applied
+            new_stock = on_hand + applied
+            # The RESULTING stock must stay within the same [0, MAX_QTY] bound every
+            # other stock writer enforces (inventory create / PATCH / the transaction
+            # ledger, #766). This auto stock receipt — the receipt side of a PO PATCH —
+            # was the one stock mutation that skipped it. The downward correction is
+            # floored at 0 above, but the upward receipt (`applied = received_delta`)
+            # had NO ceiling, and PO order_quantity / received_quantity carry no
+            # MAX_QTY guard, so a large received figure against an item already near
+            # the cap could drive current_stock past MAX_QTY and, on PostgreSQL's
+            # INTEGER column, past 2,147,483,647 into an `integer out of range`
+            # DataError — an unhandled 500 that leaves the session aborted (the exact
+            # overflow #766/#772 refuse elsewhere). On SQLite it stores a stock those
+            # same inventory endpoints would reject, corrupting the low-stock
+            # read-model (generate_low_stock_escalations reads it). Route the result
+            # through the shared bound so a receipt can never leave the item in a
+            # state create/PATCH would have refused — a clean 400 instead of a 500 or
+            # a phantom figure. reorder_level is unchanged here, so a legacy NULL is
+            # coalesced to 0 for the pair check. Checked BEFORE the stock and ledger
+            # row are written, so a refused receipt (session closed without commit)
+            # persists nothing.
+            check_stock_levels(new_stock, item.reorder_level or 0)
+            item.current_stock = new_stock
             stock_events.stock_dropped(db, item, on_hand)
 
             if applied:

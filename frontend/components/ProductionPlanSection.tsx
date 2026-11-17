@@ -76,6 +76,7 @@ export default function ProductionPlanSection({
         <Kpi title="Running" value={analytics?.running ?? 0} />
         <Kpi title="Completed" value={analytics?.completed ?? 0} />
         <Kpi title="Behind" value={analytics?.behind ?? 0} />
+        <Kpi title="Other" value={analytics?.other ?? 0} />
       </div>
 
       <form

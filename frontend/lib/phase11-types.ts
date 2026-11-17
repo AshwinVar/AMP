@@ -22,4 +22,7 @@ export type ProductionPlanAnalytics = {
   running: number;
   completed: number;
   behind: number;
+  /** Every status outside the four named buckets (On Hold / Cancelled / NULL),
+   *  so planned+running+completed+behind+other === total_plans. */
+  other: number;
 };

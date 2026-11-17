@@ -77,6 +77,16 @@ def case_reader(tmp):
          "machine,date,shots\nIMM-01,Tuesday,5\n", "not a date"),
         ("shots that are not a number",
          "machine,date,shots\nIMM-01,2026-10-09,lots\n", "not a number"),
+        # float() accepts 'nan'/'inf', which slip past the `< 0` checks (nan < 0
+        # and inf < 0 are both False) and would then crash int() in plan()
+        # (int(nan) -> ValueError, int(inf) -> OverflowError), aborting the
+        # import with a raw traceback instead of this clean refusal.
+        ("shots reading NaN",
+         "machine,date,shots\nIMM-01,2026-10-09,nan\n", "not a finite number"),
+        ("shots reading infinity",
+         "machine,date,shots\nIMM-01,2026-10-09,inf\n", "not a finite number"),
+        ("a meter reading infinity",
+         "machine,date,shots,kwh\nIMM-01,2026-10-09,5,inf\n", "not a finite number"),
         ("a counter that went backwards",
          "machine,date,shots\nIMM-01,2026-10-09,-5\n", "does not go back"),
         ("a meter that went backwards",
@@ -99,6 +109,16 @@ def case_reader(tmp):
         check("refuses hour 24", False, "it was accepted")
     except hmi_sheet.HmiSheetError as exc:
         check("refuses hour 24", "hours 0..23" in str(exc), f"said {exc!r}")
+
+    # A non-finite hour would reach `hour != int(hour)` and die in int(nan)
+    # before the 0..23 range check could refuse it; the finite guard turns it
+    # into the same clean refusal, not a traceback.
+    path = write(tmp, "h.csv", "machine,date,hour,shots\nIMM-01,2026-10-09,nan,5\n")
+    try:
+        hmi_sheet.read_sheet(path, "hmi-hour")
+        check("refuses a NaN hour", False, "it was accepted")
+    except hmi_sheet.HmiSheetError as exc:
+        check("refuses a NaN hour", "not a finite number" in str(exc), f"said {exc!r}")
 
 
 def case_blank_kwh_is_not_zero(tmp):

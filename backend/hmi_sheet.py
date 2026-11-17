@@ -42,6 +42,7 @@ so it can always be told apart from a figure that arrived by wire, and so that
 every one of these rows can be deleted the day a gateway replaces them.
 """
 import csv
+import math
 import os
 from datetime import datetime, timedelta
 
@@ -100,11 +101,26 @@ def _parse_number(value, where, field, allow_blank=False):
             return None
         raise HmiSheetError(f"{where}: {field} is empty.")
     try:
-        return float(text)
+        number = float(text)
     except ValueError:
         raise HmiSheetError(
             f"{where}: {field} is {text!r}, which is not a number. A screen "
             f"that was too dark to read is left blank, not guessed.")
+    # float() ALSO accepts 'nan', 'inf' and 'infinity' (any case). Those pass
+    # the `< 0` sanity checks below (nan < 0 is False; inf < 0 is False) and
+    # then crash int() downstream -- int(nan) raises ValueError, int(inf)
+    # OverflowError -- turning this parser's promised clean refusal into a raw
+    # traceback that aborts the whole import. A machine counter reads a real,
+    # finite figure, so a non-finite cell is a bad reading, refused at the door
+    # like any other unreadable value (the same guard machine_status
+    # .clamp_utilization keeps on inbound telemetry, where a disconnected analog
+    # input commonly reads NaN).
+    if not math.isfinite(number):
+        raise HmiSheetError(
+            f"{where}: {field} is {text!r}, which is not a finite number. A "
+            f"counter reads a real figure, not infinity or 'not a number'; an "
+            f"unreadable screen is left blank, not guessed.")
+    return number
 
 
 def read_sheet(path, kind):

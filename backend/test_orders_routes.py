@@ -19,6 +19,7 @@ import orders_routes
 import schemas
 import tenancy as T
 from database import Base
+from payload_fields import MAX_QTY
 
 EXPECTED = {
     "/customer-orders", "/customer-orders/export", "/customer-orders/{order_id}",
@@ -922,6 +923,69 @@ def test_a_no_op_patch_writes_no_ledger_row():
     print("PASS a repeat PATCH with the same received figure moves nothing")
 
 
+def test_po_receipt_cannot_push_stock_past_max_qty():
+    """A PO receipt is the one stock writer that skipped the shared [0, MAX_QTY]
+    bound (#766/#772). PO order_quantity / received_quantity carry no MAX_QTY cap,
+    so a large received figure against an item already near the ceiling drove
+    current_stock past MAX_QTY and, on PostgreSQL's INTEGER column, past
+    2,147,483,647 into an `integer out of range` 500 (on SQLite, a stored stock the
+    inventory endpoints would reject — a corrupt low-stock read-model). The
+    receipt must now be refused with a clean 400, and a refused receipt must
+    persist NOTHING: stock, PO received figure and ledger all unchanged.
+    """
+    on_hand = MAX_QTY                       # item already at the cap (a legal inventory value)
+    received = 600_000_000                  # a large genuine receipt
+    # Independently derived: on_hand + received = 1_600_000_000 > MAX_QTY (1e9).
+    assert on_hand + received > MAX_QTY
+
+    db = _iso_session()
+    tok = T.set_current_tenant("TA")
+    try:
+        item, po = _po_with_stock(db, "PO-OVF", stock=on_hand, order_qty=received)
+        raised = None
+        try:
+            _receive(db, po.id, received)
+        except HTTPException as e:
+            raised = e
+        # The session is closed without commit on the raised request, discarding
+        # the in-flight (uncommitted) PO change — mimic that here before reading back.
+        db.rollback()
+        stock, ledger = _stock_and_ledger(db, item.id, "PO-OVF")
+        po_after = db.query(models.PurchaseOrder).filter(models.PurchaseOrder.id == po.id).first()
+    finally:
+        T.reset_current_tenant(tok)
+
+    assert raised is not None, "a receipt that overflows MAX_QTY must be refused"
+    assert raised.status_code == 400, raised.status_code
+    assert "at most" in raised.detail, raised.detail          # the shared bound's message
+    assert stock == on_hand, stock                            # stock unchanged, not 1.6e9
+    assert ledger == [], ledger                               # no receipt row written
+    assert po_after.received_quantity == 0, po_after.received_quantity  # PO figure not advanced
+    print("PASS a PO receipt that would push stock past MAX_QTY is refused 400 and persists nothing")
+
+
+def test_po_receipt_at_the_max_qty_boundary_is_allowed():
+    """The bound is an INCLUSIVE ceiling, not off-by-one: a receipt landing EXACTLY
+    at MAX_QTY succeeds and books the full delta, so a legitimate large receipt is
+    not blocked. Pins that stock and ledger reconcile — the Receive quantity equals
+    what the stock moved by."""
+    received = MAX_QTY                       # exactly to the cap from an empty shelf
+    db = _iso_session()
+    tok = T.set_current_tenant("TA")
+    try:
+        item, po = _po_with_stock(db, "PO-CAP", stock=0, order_qty=received)
+        updated = _receive(db, po.id, received)
+        stock, ledger = _stock_and_ledger(db, item.id, "PO-CAP")
+    finally:
+        T.reset_current_tenant(tok)
+
+    assert updated.received_quantity == MAX_QTY, updated.received_quantity
+    assert updated.status == "Received", updated.status       # received == order_quantity
+    assert stock == MAX_QTY, stock                            # 0 + MAX_QTY, allowed at the boundary
+    assert ledger == [("Receive", MAX_QTY)], ledger           # full delta booked; stock == ledger
+    print("PASS a PO receipt landing exactly at MAX_QTY is allowed and books the full delta")
+
+
 def test_create_customer_order_rejects_negative_quantities():
     # Parity with the production-record (#266) and quality (#324) ingests: the
     # schema types order_quantity / dispatched_quantity as plain ints (no ge=0), so
@@ -1117,6 +1181,8 @@ if __name__ == "__main__":
     test_a_correction_cannot_drive_stock_negative()
     test_a_correction_against_an_empty_shelf_writes_no_ledger_row()
     test_a_no_op_patch_writes_no_ledger_row()
+    test_po_receipt_cannot_push_stock_past_max_qty()
+    test_po_receipt_at_the_max_qty_boundary_is_allowed()
     test_create_customer_order_rejects_negative_quantities()
     test_update_customer_order_rejects_negative_dispatched()
     test_create_purchase_order_rejects_negative_quantities()

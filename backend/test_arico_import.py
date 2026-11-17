@@ -206,6 +206,23 @@ def main():
         except arico_import.AricoImportError as e:
             check("an empty file is refused", "empty" in str(e).lower(), str(e))
 
+        # float() accepts 'nan'/'inf', so a corrupt cell parses and then crashes
+        # int() in plan() (int(nan) -> ValueError, int(inf) -> OverflowError),
+        # aborting the import with a raw traceback. A non-finite cell is refused
+        # at read_export with the same clear sentence a non-numeric one gets.
+        for label, bad_value in (("NaN", float("nan")), ("infinity", float("inf"))):
+            corrupt = write("corrupt.CSV", {"2026/10/09": [bad_value] + [0.0] * 23})
+            try:
+                days = arico_import.read_export(corrupt)
+                arico_import.plan(days, {}, "IMM-12")
+                check(f"a {label} cell is refused, not crashed", False, "accepted")
+            except arico_import.AricoImportError as e:
+                check(f"a {label} cell is refused, not crashed",
+                      "finite" in str(e), str(e))
+            except Exception as e:  # the pre-fix behaviour this guards against
+                check(f"a {label} cell is refused, not crashed", False,
+                      f"raw {type(e).__name__}: {e}")
+
         other = models.Machine(tenant_code="SOMEONE-ELSE", site="", name="THEIRS",
                                status="Idle")
         db.add(other)

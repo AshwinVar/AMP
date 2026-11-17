@@ -41,6 +41,7 @@ measured per hour, not a claim that nothing was rejected; the machine's own FAIL
 counter is a day-level figure and belongs to a different import.
 """
 import io
+import math
 import os
 import re
 from datetime import datetime, timedelta
@@ -99,11 +100,24 @@ def read_export(path):
                 f"{os.path.basename(path)}: the row for {cells[0]} has "
                 f"{len(hours)} hourly columns, not {HOURS}.")
         try:
-            days[cells[0]] = [float(h or 0) for h in hours]
+            values = [float(h or 0) for h in hours]
         except ValueError as exc:
             raise AricoImportError(
                 f"{os.path.basename(path)}: the row for {cells[0]} has a value "
                 f"that is not a number ({exc}).")
+        # float() accepts 'nan'/'inf'/'infinity' (any case) too. Those survive
+        # the parse and then crash int() in plan() -- int(nan) raises
+        # ValueError, int(inf) OverflowError -- aborting the whole import with a
+        # raw traceback. (An inf in the energy file is worse still: _energy's
+        # `value > 0` passes it through and inf is stored in the Float column
+        # and summed into the report.) A controller counts whole shots and
+        # metered kWh, both finite, so a non-finite cell is a corrupt export,
+        # refused here with the same clear sentence as a non-numeric one.
+        if not all(math.isfinite(v) for v in values):
+            raise AricoImportError(
+                f"{os.path.basename(path)}: the row for {cells[0]} has a value "
+                f"that is not a finite number (infinity or NaN).")
+        days[cells[0]] = values
     if not days:
         raise AricoImportError(
             f"{os.path.basename(path)} has a header and no day rows.")

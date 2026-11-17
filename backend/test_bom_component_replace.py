@@ -100,7 +100,7 @@ def components_of(rows):
             for r in rows if r["component_code"]}
 
 
-def run():
+def test_bom_component_replace():
     # ── the bug: re-editing a line that keeps its own component_code ──────────
     db = fresh_db()
     created = create(db, part_number="SHAFT-001", revision="A",
@@ -179,4 +179,4 @@ def run():
 
 
 if __name__ == "__main__":
-    run()
+    test_bom_component_replace()

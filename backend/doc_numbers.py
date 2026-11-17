@@ -89,16 +89,32 @@ def allocate(db, tenant, doc_type, model, column, prefix, start=0):
 
     if row is None:
         seed = max(start, _highest_existing(db, model, column, prefix, tenant))
-        row = models.DocumentSequence(tenant_code=tenant, doc_type=doc_type,
-                                      next_value=seed + 1)
-        db.add(row)
         try:
-            db.flush()
+            # A SAVEPOINT, not a bare flush. If another allocator INSERTs this
+            # (tenant, doc_type) counter row first, the UNIQUE constraint trips,
+            # and the recovery below must undo ONLY this failed INSERT — never the
+            # caller's transaction. allocate reserves a number INSIDE the caller's
+            # open transaction and deliberately does not commit (see the docstring
+            # above), so the caller has usually already written the very document
+            # the number is for: the GRN header, the issue slip, the proforma. A
+            # bare `db.rollback()` here threw ALL of that away — the handler went
+            # on to attach the number to a row the rollback had discarded. The
+            # seam is narrow (it only opens on the first-ever allocation for a
+            # (tenant, doc_type), when two requests race to create the counter),
+            # but on it the bare rollback silently dropped a half-built document.
+            # A savepoint rolls back just the collided INSERT and leaves the
+            # caller's work intact — the same db.begin_nested() per-fallible-step
+            # pattern the CSV importers already use.
+            with db.begin_nested():
+                row = models.DocumentSequence(tenant_code=tenant, doc_type=doc_type,
+                                              next_value=seed + 1)
+                db.add(row)
+                db.flush()
         except IntegrityError:
-            # Another allocator created the row between the SELECT and the
-            # INSERT. Its value is authoritative — take it rather than
+            # The other allocator's row is authoritative — take it rather than
             # overwriting, which would hand out a number it has already issued.
-            db.rollback()
+            # Only the savepoint rolled back, so the caller's own pending writes
+            # are untouched and still commit alongside this reservation.
             row = (db.query(models.DocumentSequence)
                      .filter(models.DocumentSequence.tenant_code == tenant,
                              models.DocumentSequence.doc_type == doc_type)

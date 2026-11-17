@@ -36,7 +36,7 @@ import doc_numbers
 import models
 import paging
 import tenancy
-from payload_fields import int_cell, int_field, str_field
+from payload_fields import MAX_QTY, int_cell, int_field, str_field
 from csv_safe import read_upload_text
 from auth import get_current_user, require_roles
 from database import SessionLocal
@@ -287,6 +287,21 @@ def gmats_stock_in(item_id: int, payload: dict, db: Session = Depends(get_db), c
     _guard_record(current_user, item.tenant_code)
     qty = int_field(payload, "qty", minimum=1)
     _heal_stock(item)
+    # Bound the RESULTING physical_stock to MAX_QTY — the same ceiling every other
+    # GMATS stock write already obeys (the JSON create/update via int_field, the CSV
+    # import via int_cell; see the import comment in test_gmats_inventory_routes.py).
+    # `qty` is itself [1, MAX_QTY], but the ACCUMULATED column is not: a stock-in
+    # against an item already near the ceiling, or a repeated stock-in, drives
+    # physical_stock past MAX_QTY and, on PostgreSQL's INTEGER column, past
+    # 2,147,483,647 into an `integer out of range` DataError — an unhandled 500 that
+    # aborts the session. This is the exact overflow inventory_routes.check_stock_levels
+    # already refuses with a 400 ("a typo, not a stock", #766); stock-in was the one
+    # GMATS stock writer still missing it. Checked BEFORE the add and the commit, so a
+    # refused stock-in leaves the item untouched.
+    if item.physical_stock + qty > MAX_QTY:
+        raise HTTPException(
+            status_code=400,
+            detail=f"stock-in would take {item.item_code} past the maximum stock of {MAX_QTY:,}")
     before = {"physical_stock": item.physical_stock, "purchase_rate": item.purchase_rate}
     item.physical_stock += qty
     if payload.get("purchase_rate"):

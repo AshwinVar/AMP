@@ -294,6 +294,69 @@ def test_stock_in_heals_null_physical_before_adding():
     print("PASS stock-in heals a NULL physical_stock to 0 before adding (no 500)")
 
 
+# --- Stock-in resulting-ceiling bound. `qty` is bounded to [1, MAX_QTY] by
+# int_field, but the ACCUMULATED physical_stock was not — so a stock-in against an
+# item already near the ceiling (or a repeated stock-in) drove physical_stock past
+# MAX_QTY and, on PostgreSQL's INTEGER column, past 2,147,483,647 into an
+# `integer out of range` 500. Every OTHER GMATS stock write already bounds the
+# column to [0, MAX_QTY] (int_field on create/update, int_cell on CSV import); this
+# was the one accumulating write still missing it, the direct analog of the
+# inventory_routes "Receive" overflow fixed in #766. Expected values derived by hand
+# (MAX_QTY = 1,000,000,000). ---
+
+
+def test_stock_in_rejects_result_over_max_qty():
+    # Item sits at exactly the ceiling. A stock-in of even 1 would make 1,000,000,001
+    # (> MAX_QTY, and on the way to the INTEGER overflow a repeated stock-in reaches):
+    # reject with a 400 and leave the stock untouched, never a 500.
+    db = _db()
+    db.add(models.GmatsItem(id=1, tenant_code="GMATS", item_code="C1", item_name="Part",
+                            physical_stock=MAX_QTY, reserved_stock=0, reorder_level=0,
+                            purchase_rate=0, unit="ea"))
+    db.commit()
+    try:
+        gmats.gmats_stock_in(1, {"qty": 1}, db=db, current_user=_ADMIN)
+        assert False, "a stock-in that pushes physical_stock past MAX_QTY should 400"
+    except HTTPException as e:
+        assert e.status_code == 400, e.status_code
+    assert _stock(db).physical_stock == MAX_QTY   # refused stock-in left stock untouched
+    print("PASS stock-in rejects a result over MAX_QTY (no INTEGER overflow 500)")
+
+
+def test_stock_in_up_to_exactly_max_qty_is_allowed():
+    # The boundary is inclusive: an item at MAX_QTY - 5 may receive exactly 5, landing
+    # on MAX_QTY (a legitimate stock, not a typo). The add applies and persists.
+    db = _db()
+    db.add(models.GmatsItem(id=1, tenant_code="GMATS", item_code="C1", item_name="Part",
+                            physical_stock=MAX_QTY - 5, reserved_stock=0, reorder_level=0,
+                            purchase_rate=0, unit="ea"))
+    db.commit()
+    out = gmats.gmats_stock_in(1, {"qty": 5}, db=db, current_user=_ADMIN)
+    assert out["physical_stock"] == MAX_QTY       # (MAX_QTY - 5) + 5, exactly on the ceiling
+    assert _stock(db).physical_stock == MAX_QTY   # persisted
+    print("PASS stock-in landing exactly on MAX_QTY is allowed (inclusive ceiling)")
+
+
+def test_stock_in_from_near_ceiling_rejects_the_overshoot():
+    # Independently derived: physical 999,999,998 + a qty of 3 = 1,000,000,001 > MAX_QTY
+    # -> rejected; the item keeps its 999,999,998. A subsequent qty of 2 lands exactly on
+    # MAX_QTY and is accepted, proving the bound is on the RESULT, not the input qty.
+    db = _db()
+    db.add(models.GmatsItem(id=1, tenant_code="GMATS", item_code="C1", item_name="Part",
+                            physical_stock=MAX_QTY - 2, reserved_stock=0, reorder_level=0,
+                            purchase_rate=0, unit="ea"))
+    db.commit()
+    try:
+        gmats.gmats_stock_in(1, {"qty": 3}, db=db, current_user=_ADMIN)
+        assert False, "999,999,998 + 3 = 1,000,000,001 > MAX_QTY should 400"
+    except HTTPException as e:
+        assert e.status_code == 400, e.status_code
+    assert _stock(db).physical_stock == MAX_QTY - 2   # untouched by the refused overshoot
+    out = gmats.gmats_stock_in(1, {"qty": 2}, db=db, current_user=_ADMIN)
+    assert out["physical_stock"] == MAX_QTY           # the exact-fit top-up is allowed
+    print("PASS stock-in bounds the RESULT, not the input qty (overshoot refused, exact fit allowed)")
+
+
 def test_create_proforma_reserves_against_null_reserved():
     db = _db()
     _item(db, 1, "GMATS", "Part")                       # physical 10 (real)
@@ -953,6 +1016,9 @@ if __name__ == "__main__":
     test_items_list_survives_one_null_row_among_healthy()
     test_summary_treats_null_as_zero_and_reconciles()
     test_stock_in_heals_null_physical_before_adding()
+    test_stock_in_rejects_result_over_max_qty()
+    test_stock_in_up_to_exactly_max_qty_is_allowed()
+    test_stock_in_from_near_ceiling_rejects_the_overshoot()
     test_create_proforma_reserves_against_null_reserved()
     test_create_proforma_null_stock_reports_insufficient_not_500()
     test_cancel_proforma_releases_null_reservation()

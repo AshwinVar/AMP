@@ -397,6 +397,19 @@ def project_service_date(installation, model, history, today=None):
     remaining = svc.get("hours_remaining")
     if remaining is None:
         return None
+    if remaining <= 0:
+        # Already AT or PAST the service threshold (service_state's own `overdue`
+        # boundary is remaining <= 0, line 274). There is nothing to project
+        # FORWARD, and this function answers "when the counter will REACH the next
+        # service, IF usage continues" — a threshold already crossed has no such
+        # date. With a rising hours trend (gained > 0, so per_day > 0) a negative
+        # `remaining` made `days_out` negative, sailed past the `> 180` far-future
+        # filter below, and emitted a confident "Expect service in about -N days"
+        # beside the correct overdue alert — a number the data cannot support
+        # (ADR-0010). The overdue state is already surfaced by the `service_due`
+        # recommendation above; a backward-running countdown is not a second,
+        # truer reading of it. Mirrors the `remaining is None` guard directly above.
+        return None
     days_out = remaining / per_day
     if days_out > 180:
         return None                       # too far out to be worth saying

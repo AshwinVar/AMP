@@ -162,10 +162,64 @@ def section_csv():
     db.close()
 
 
+def _item_stock(db, item_id):
+    return _as_beta(lambda: db.query(models.InventoryItem).filter(
+        models.InventoryItem.id == item_id).one()).current_stock
+
+
+def _txn(db, item_id, ttype, qty):
+    payload = schemas.InventoryTransactionCreate(
+        item_id=item_id, transaction_type=ttype, quantity=qty)
+    return _as_beta(lambda: inventory_routes.create_inventory_transaction(
+        payload, db=db, current_user=ADMIN))
+
+
+def section_transaction():
+    print()
+    print("=" * 74)
+    print("4. THE TRANSACTION LEDGER — THE PRIMARY STOCK WRITE — KEEPS THE SAME CEILING")
+    print("=" * 74)
+    db = _sess()
+    item = _as_beta(lambda: inventory_routes.create_inventory_item(
+        _item("T-1", current_stock=100, reorder_level=10), db=db, current_user=ADMIN))
+
+    # Independently-derived running total: each accepted transaction moves the
+    # stored stock by exactly its quantity (Issue down, Return/Receive up, Adjust
+    # sets), and a Receive/Return/Adjust/Issue in sequence must land on the value
+    # computed here by hand — NOT a stub. 100 +50 -> 150, +25 -> 175, -30 -> 145.
+    _txn(db, item.id, "Receive", 50)
+    check("Receive 50 lands the stored stock at 100+50=150", _item_stock(db, item.id) == 150,
+          str(_item_stock(db, item.id)))
+    _txn(db, item.id, "Return", 25)
+    check("Return 25 lands at 150+25=175", _item_stock(db, item.id) == 175, str(_item_stock(db, item.id)))
+    _txn(db, item.id, "Issue", 30)
+    check("Issue 30 lands at 175-30=145", _item_stock(db, item.id) == 145, str(_item_stock(db, item.id)))
+
+    # THE CEILING (the gap this file's title promises on EVERY write). A Receive /
+    # Return / Adjust that would push the resulting stock past MAX_QTY is refused
+    # (400) through the same check_stock_levels every other write path calls —
+    # BEFORE it bounded only the Issue floor, these three branches were unbounded
+    # and overflowed the INTEGER column into a 500 on PostgreSQL.
+    for ttype, qty in (("Receive", MAX_QTY), ("Return", MAX_QTY), ("Adjust", MAX_QTY + 1),
+                       ("Receive", 2_000_000_000)):
+        check(f"{ttype} {qty:,} that would exceed MAX_QTY is refused (400)",
+              _refused(lambda t=ttype, q=qty: _txn(db, item.id, t, q)))
+        db.rollback()
+    check("...and the stored stock is unchanged after every refused transaction",
+          _item_stock(db, item.id) == 145, str(_item_stock(db, item.id)))
+
+    # CONTROL: a transaction that lands EXACTLY on the MAX_QTY edge is accepted, so
+    # the bound rejects only what breaches it. Adjust to MAX_QTY sets the stock there.
+    _txn(db, item.id, "Adjust", MAX_QTY)
+    check("CONTROL: Adjust to exactly MAX_QTY is accepted", _item_stock(db, item.id) == MAX_QTY,
+          str(_item_stock(db, item.id)))
+    db.close()
+
+
 def section_one_rule():
     print()
     print("=" * 74)
-    print("4. ONE RULE FOR EACH KIND OF WRITE")
+    print("5. ONE RULE FOR EACH KIND OF WRITE")
     print("=" * 74)
     routes = ast.parse(open(os.path.join(HERE, "inventory_routes.py"), encoding="utf-8").read())
     fns = {f.name: f for f in ast.walk(routes) if isinstance(f, ast.FunctionDef)}
@@ -174,9 +228,10 @@ def section_one_rule():
         return any(isinstance(n, ast.Call) and getattr(n.func, "id", getattr(n.func, "attr", None)) == name
                    for n in ast.walk(fn))
 
-    check("create and PATCH both call check_stock_levels",
+    check("create, PATCH and the transaction ledger all call check_stock_levels",
           calls(fns["create_inventory_item"], "check_stock_levels")
-          and calls(fns["update_inventory_item"], "check_stock_levels"))
+          and calls(fns["update_inventory_item"], "check_stock_levels")
+          and calls(fns["create_inventory_transaction"], "check_stock_levels"))
     importer = ast.parse(open(os.path.join(HERE, "enterprise_inventory_routes.py"), encoding="utf-8").read())
     imp = next(f for f in ast.walk(importer)
                if isinstance(f, ast.AsyncFunctionDef) and f.name == "import_inventory_csv")
@@ -190,6 +245,7 @@ def main():
     section_create()
     section_patch()
     section_csv()
+    section_transaction()
     section_one_rule()
     print()
     print("=" * 74)

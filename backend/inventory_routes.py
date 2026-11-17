@@ -231,6 +231,22 @@ def create_inventory_transaction(
     else:
         raise HTTPException(status_code=400, detail="Invalid transaction type")
 
+    # The RESULTING stock must stay within the same [0, MAX_QTY] bound every other
+    # stock write enforces (create / PATCH / CSV import). This ledger endpoint is the
+    # PRIMARY way stock actually changes — and the only one open to the Operator role
+    # — yet it bounded ONLY the "Issue" branch (the insufficient-stock floor). A
+    # Return / Receive / Adjust added or set `quantity` with no ceiling, so a single
+    # transaction could drive current_stock past MAX_QTY (a typo, not a stock — see
+    # check_stock_levels) and, on PostgreSQL's INTEGER column, past 2,147,483,647 into
+    # an `integer out of range` DataError: an unhandled 500 that leaves the session
+    # aborted, the exact overflow the item create/PATCH paths already refuse with a
+    # 400. Route the new stock through that same shared helper so a transaction can
+    # never leave the item in a state those paths would have rejected. reorder_level
+    # is unchanged here, so a legacy NULL is coalesced to 0 for the pair check — the
+    # same heal the stock read above applies. Checked BEFORE the ledger row is added
+    # and the reorder event fires, so a refused transaction writes nothing.
+    check_stock_levels(item.current_stock, item.reorder_level or 0)
+
     new_transaction = models.InventoryTransaction(
         item_id=transaction.item_id,
         transaction_type=transaction.transaction_type,

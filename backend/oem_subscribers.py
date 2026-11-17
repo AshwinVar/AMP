@@ -29,6 +29,7 @@ for data the sharing policy withholds.
 """
 import models
 import oem_auth
+import oem_sharing
 from events import event_bus
 from oem_events import (AmendmentProposed, ContractAccepted, ContractProposed,
                         CoverageEnded, DisputeRaised, DisputeResolved,
@@ -100,16 +101,30 @@ def notify_both_parties_of_claim(event: MachineClaimed, db) -> None:
     machine reached the customer and can be commissioned. Two rows, one per
     party, in two different tenants — and neither can read the other's.
     """
-    granted = [g for g in (event.granted or "").split(",") if g]
+    # The "N of M data categories" the factory is told must reconcile with the
+    # offer it actually chose from. The denominator was the literal 7 — the size
+    # of the full grant VOCABULARY (oem_sharing.ALL_GRANTS) — but a factory is
+    # offered only the grants something in AMP reads (oem_sharing.OFFERED_GRANTS,
+    # four of them; the other three are reserved and refused_grants() rejects
+    # them). So a factory sharing everything it CAN read "You are sharing 4 of 7",
+    # understating its consent and implying three categories it withheld that it
+    # was never able to give. Count the OFFERED grants it shares against the
+    # number offered — the exact set, and basis, the Connected Equipment screen
+    # (oem_sharing.offered_grant_choices) shows and lets it toggle. The
+    # intersection also drops a legacy/reserved grant a pre-existing policy may
+    # still carry (the vocabulary keeps parsing them) from a count whose
+    # denominator does not include them.
+    offered = len(oem_sharing.OFFERED_GRANTS)
+    shared = oem_sharing.parse_grants(event.granted) & set(oem_sharing.OFFERED_GRANTS)
     _notify(
         db, event.tenant_code, "equipment_claimed", "Info",
         f"{event.serial_number} added to your connected equipment",
         f"You accepted machine {event.serial_number}"
         + (f" ({event.model_code})" if event.model_code else "")
         + f" from {event.oem_code}. "
-        + (f"You are sharing {len(granted)} of 7 data categories with them; "
+        + (f"You are sharing {len(shared)} of {offered} data categories with them; "
            "you can change that at any time under Connected Equipment."
-           if granted else
+           if shared else
            "You are sharing nothing with them; you can change that at any time "
            "under Connected Equipment."),
     )

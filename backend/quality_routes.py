@@ -17,6 +17,7 @@ from sqlalchemy.orm import Session
 import models
 import paging
 import schemas
+from analytics_engine import quality_fail_rate
 from auth import get_current_user, require_roles
 from database import SessionLocal
 from events import event_bus, QualityInspectionFailed
@@ -266,7 +267,12 @@ def generate_defect_escalations(
         scrap = inspection.scrap_quantity or 0
         rework = inspection.rework_quantity or 0
         # inspected_quantity > 0 is guaranteed by the query, so the divide is safe.
-        fail_rate = (failed / inspection.inspected_quantity) * 100
+        # One shared, clamped definition (analytics_engine.quality_fail_rate),
+        # reconciled with the AI quality recommendation and the OEE quality
+        # component: a fail rate can't exceed 100%, so a corrupt row with
+        # failed > inspected drives the severity and the displayed note off the
+        # honest ceiling rather than printing e.g. "Fail rate 250%".
+        fail_rate = quality_fail_rate(failed, inspection.inspected_quantity)
 
         title = f"Quality issue: {inspection.inspection_no}"
 

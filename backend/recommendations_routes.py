@@ -19,7 +19,7 @@ from sqlalchemy.orm import Session
 import models
 import paging
 import schemas
-from analytics_engine import parse_duration_to_minutes
+from analytics_engine import parse_duration_to_minutes, quality_fail_rate
 from auth import get_current_user, require_roles
 from database import SessionLocal
 
@@ -214,7 +214,10 @@ def generate_ai_recommendations(db: Session = Depends(_get_db), current_user: di
     # windowed rows so the rate reconciles.
     inspected = sum((row.inspected_quantity or 0) for row in quality_rows)
     failed = sum((row.failed_quantity or 0) for row in quality_rows)
-    fail_rate = round((failed / inspected) * 100) if inspected else 0
+    # One shared, clamped definition (analytics_engine.quality_fail_rate): a
+    # pooled fail rate can't exceed 100% any more than the per-row one can, and a
+    # corrupt row summing to failed > inspected must not print e.g. "250%".
+    fail_rate = round(quality_fail_rate(failed, inspected))
     if fail_rate >= 10:
         add_rec("Quality Prediction", "High", "Quality failure trend detected", f"Fail rate over the last {RECOMMENDATION_WINDOW_DAYS} days is {fail_rate}%. Trigger root-cause analysis.", None, 84)
 

@@ -277,6 +277,37 @@ def shift_attainment(actual, target):
     return round(actual / target * 100) if target else None
 
 
+def quality_fail_rate(failed, inspected):
+    """Failed units as a % of inspected, clamped to [0, 100] — the ONE definition
+    of a quality fail rate, shared by the quality escalation generator
+    (quality_routes) and the AI quality recommendation (recommendations_routes),
+    each of which kept its own copy of `failed / inspected * 100`.
+
+    A fail rate cannot physically exceed 100% (you cannot fail more units than you
+    inspected), the SAME ceiling the OEE quality component (good / total) is already
+    clamped to in calculate_oee_from_record above. The write paths enforce
+    passed + failed <= inspected (quality_routes create/update), so a valid row is
+    always <= 100% and this clamp is a strict no-op; but a legacy / raw-SQL /
+    migration row that violates that invariant (failed > inspected) would otherwise
+    surface as e.g. "Fail rate 250%" in an escalation note / recommendation — a
+    number the metric can't support (ADR-0010: a metric can't exceed the bound the
+    data supports). The clamp is SYMMETRIC — floor at 0 as well — so a negative
+    failed on such a row can't print a sub-zero rate either, matching the symmetric
+    [0, 1] clamp calculate_oee_from_record / pooled_oee apply to good/total.
+
+    Returns 0.0 when nothing was inspected (no basis for a rate), matching the
+    `if inspected else 0` guard both call sites already applied. failed / inspected
+    are coalesced to 0 first, so a NULL column (the same nullable-without-default
+    rows coalesced across the engines) can't raise. Unrounded on purpose: the
+    recommendation rounds to a whole percent, the escalation to one decimal, so each
+    caller rounds at its own display."""
+    failed = failed or 0
+    inspected = inspected or 0
+    if inspected <= 0:
+        return 0.0
+    return max(0.0, min(100.0, failed / inspected * 100))
+
+
 def build_shift_kpis(shifts):
     rows = []
 

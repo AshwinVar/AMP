@@ -87,6 +87,32 @@ def parse(raw):
         agg = sig.get("aggregation", "last")
         if agg not in VALID_AGGREGATIONS:
             raise ProfileError(f"signal {name!r} has unknown aggregation {agg!r}")
+        # min / max bound a numeric signal's plausible range, and they are
+        # OPTIONAL (a signal with no band keeps None). But when present they MUST
+        # be numeric, because interpret() reads them as `float(min)` / `float(max)`
+        # on every reading. parse() validated datatype and aggregation but NOT the
+        # bounds, so a profile that stored a non-numeric min/max ("high", a list,
+        # an object) parsed cleanly here and then raised a RAW ValueError/TypeError
+        # deep inside interpret() — on the MQTT ingest path, where nothing catches
+        # it, dropping the WHOLE message (status, production, downtime) for every
+        # machine of that model, and on the OEM portal's profile read. The module's
+        # contract is that an untrustworthy profile is a ProfileError surfaced HERE
+        # (every caller already handles it — mqtt_service._record_installation_report
+        # catches ProfileError, keeps the timestamp and drops the hours), not an
+        # uncaught crash later. Validate the bound exactly where and how interpret
+        # reads it: only for a number signal (interpret only range-checks those),
+        # and by the same float() coercion, so a bound parse() accepts is a bound
+        # interpret() cannot choke on.
+        if sig["datatype"] == "number":
+            for bound in ("min", "max"):
+                raw_bound = sig.get(bound)
+                if raw_bound is None:
+                    continue
+                try:
+                    float(raw_bound)
+                except (TypeError, ValueError):
+                    raise ProfileError(
+                        f"signal {name!r} has non-numeric {bound} {raw_bound!r}")
         out.append({
             "name": name,
             "source": str(sig["source"]),

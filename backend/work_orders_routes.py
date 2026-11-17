@@ -186,6 +186,35 @@ def update_work_order(
     return work_order
 
 
+# Every row that carries a FOREIGN KEY to a work order (or to the production
+# plans deleted with it), paired with the two nullable link columns to clear.
+# models.py builds the schema with Base.metadata.create_all (main.py), so these
+# ForeignKey("work_orders.id") / ForeignKey("production_plans.id") constraints are
+# real columns in the database — and PostgreSQL (production / Railway) enforces
+# them. Deleting a work order that has a schedule, inspection, operator execution
+# or linked customer order — or deleting a plan that any of those reference via
+# production_plan_id — therefore raised a ForeignKeyViolation and 500-ed the
+# Admin "delete work order" action for essentially every seeded/real work order.
+# SQLite (CI/tests) does not enforce foreign keys by default, so the 500 never
+# surfaced in a test; the delete instead left those rows pointing at a work order
+# (and plans) that no longer existed — an orphan the schedule-load, workforce and
+# quality read-models would read as a live reference. (A reproduction with
+# PRAGMA foreign_keys=ON is pinned in test_work_orders_routes.py.)
+#
+# Each column here is nullable=True in the model, so NULL is a state the schema
+# already permits and every Response schema already types Optional.
+_WORK_ORDER_DEPENDENTS = (
+    (models.ProductionSchedule, models.ProductionSchedule.work_order_id,
+     models.ProductionSchedule.production_plan_id),
+    (models.QualityInspection, models.QualityInspection.work_order_id,
+     models.QualityInspection.production_plan_id),
+    (models.OperatorJobExecution, models.OperatorJobExecution.work_order_id,
+     models.OperatorJobExecution.production_plan_id),
+    (models.CustomerOrder, models.CustomerOrder.linked_work_order_id,
+     models.CustomerOrder.linked_production_plan_id),
+)
+
+
 @router.delete("/{work_order_id}")
 def delete_work_order(
     work_order_id: int,
@@ -195,7 +224,29 @@ def delete_work_order(
     work_order = db.query(models.WorkOrder).filter(models.WorkOrder.id == work_order_id).first()
     if not work_order:
         raise HTTPException(status_code=404, detail="Work order not found")
-    db.query(models.ProductionPlan).filter(models.ProductionPlan.work_order_id == work_order_id).delete()
+
+    # Detach the dependents BEFORE deleting the work order and its plans, or an
+    # FK-enforcing database raises and 500s the delete (see _WORK_ORDER_DEPENDENTS).
+    # These rows are independent history — a schedule booked, an inspection done,
+    # an operator's run, a customer's order — so they are DETACHED (nullable link
+    # set to NULL) and kept, not deleted with the work order. Only the tightly
+    # coupled production plans are deleted, as before, now safely because the rows
+    # that reference them are cleared first. Every model touched here is in
+    # tenancy.SCOPED_MODELS, so each bulk UPDATE/DELETE is tenant-scoped by the
+    # ADR-0002 do_orm_execute hook; all of it commits in one transaction with the
+    # work-order delete below.
+    plan_ids = [pid for (pid,) in
+                db.query(models.ProductionPlan.id)
+                  .filter(models.ProductionPlan.work_order_id == work_order_id)]
+    for model, wo_col, plan_col in _WORK_ORDER_DEPENDENTS:
+        db.query(model).filter(wo_col == work_order_id).update(
+            {wo_col: None}, synchronize_session=False)
+        if plan_ids:
+            db.query(model).filter(plan_col.in_(plan_ids)).update(
+                {plan_col: None}, synchronize_session=False)
+
+    db.query(models.ProductionPlan).filter(
+        models.ProductionPlan.work_order_id == work_order_id).delete(synchronize_session=False)
     db.delete(work_order)
     db.commit()
     return {"message": "Work order deleted successfully"}

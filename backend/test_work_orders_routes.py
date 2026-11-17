@@ -11,8 +11,10 @@ assert the routes moved and are owned by the module.
 
 Run:  python backend/test_work_orders_routes.py     (exit 0 = pass)
 """
+import datetime
+
 from fastapi import HTTPException
-from sqlalchemy import create_engine, text
+from sqlalchemy import create_engine, event, text
 from sqlalchemy.orm import sessionmaker
 
 import main
@@ -52,6 +54,24 @@ def test_completing_wo_still_publishes_production_completed():
 def _iso_session():
     T.install_scoping()
     engine = create_engine("sqlite://", connect_args={"check_same_thread": False})
+    Base.metadata.create_all(bind=engine)
+    return sessionmaker(bind=engine)()
+
+
+def _fk_session():
+    """A session on a SQLite that ENFORCES foreign keys, the way PostgreSQL does
+    in production (Railway). SQLite leaves FK enforcement OFF by default — which is
+    exactly why the delete-cascade 500 never surfaced in CI — so this turns the
+    PRAGMA on per connection to reproduce the production database's behaviour."""
+    T.install_scoping()
+    engine = create_engine("sqlite://", connect_args={"check_same_thread": False})
+
+    @event.listens_for(engine, "connect")
+    def _fk_on(dbapi_conn, _record):      # noqa: ANN001
+        cur = dbapi_conn.cursor()
+        cur.execute("PRAGMA foreign_keys=ON")
+        cur.close()
+
     Base.metadata.create_all(bind=engine)
     return sessionmaker(bind=engine)()
 
@@ -706,6 +726,108 @@ def test_the_backfill_is_actually_wired_at_startup():
     print("PASS the completed_at backfill is wired at startup")
 
 
+def _seed_wo_with_every_dependent(db, tenant):
+    """A work order wired to one of every row that carries an FK to it (and to its
+    production plan): a plan, a schedule, an inspection, an operator execution and
+    a linked customer order. Returns (work_order_id, plan_id)."""
+    machine = _seed_machine(db, tenant)
+    tok = T.set_current_tenant(tenant)
+    try:
+        # utcnow().date(), not date.today(): request-time code dates rows against
+        # UTC, and test_date_basis_guard.py fails any fixture built from the local date.
+        today = datetime.datetime.utcnow().date()
+        wo = models.WorkOrder(work_order_no="WO-DEP", part_number="P-1", batch_number="B-1",
+                              machine_id=machine.id, target_quantity=100, actual_quantity=0,
+                              status="Planned")
+        db.add(wo); db.commit(); db.refresh(wo)
+        plan = models.ProductionPlan(plan_no="PP-DEP", work_order_id=wo.id, machine_id=machine.id,
+                                     planned_quantity=100, actual_quantity=0, plan_date=today,
+                                     shift_name="A", status="Planned")
+        db.add(plan); db.commit(); db.refresh(plan)
+        db.add_all([
+            models.ProductionSchedule(schedule_no="SC-DEP", work_order_id=wo.id,
+                                      production_plan_id=plan.id, machine_id=machine.id,
+                                      shift_name="A", scheduled_date=today, planned_quantity=50,
+                                      estimated_minutes=240, status="Scheduled"),
+            models.QualityInspection(inspection_no="QI-DEP", work_order_id=wo.id,
+                                     production_plan_id=plan.id, machine_id=machine.id,
+                                     inspector="Insp", inspected_quantity=10, passed_quantity=10,
+                                     failed_quantity=0),
+            models.OperatorJobExecution(execution_no="OE-DEP", operator_name="Op",
+                                        machine_id=machine.id, work_order_id=wo.id,
+                                        production_plan_id=plan.id, good_count=0, rejected_count=0),
+            models.CustomerOrder(order_no="CO-DEP", customer_name="Cust", product_name="Prod",
+                                 order_quantity=10, due_date=today, linked_work_order_id=wo.id,
+                                 linked_production_plan_id=plan.id),
+        ])
+        db.commit()
+        return wo.id, plan.id
+    finally:
+        T.reset_current_tenant(tok)
+
+
+def test_deleting_a_work_order_detaches_its_dependents_without_500():
+    # THE BUG: models.py builds the schema with Base.metadata.create_all, so the
+    # ForeignKey("work_orders.id") / ForeignKey("production_plans.id") constraints
+    # are real in the database. PostgreSQL (production) enforces them, so deleting a
+    # work order that has a schedule / inspection / operator execution / linked
+    # order — or deleting a plan any of those reference — raised ForeignKeyViolation
+    # and 500-ed. SQLite leaves FK enforcement off by default, so CI never saw it
+    # (and the delete silently ORPHANED those rows). _fk_session() turns the PRAGMA
+    # on to reproduce production exactly.
+    db = _fk_session()
+    wo_id, plan_id = _seed_wo_with_every_dependent(db, "TA")
+
+    tok = T.set_current_tenant("TA")
+    try:
+        result = WO.delete_work_order(wo_id, db=db, current_user={"tenant": "TA"})
+        assert result["message"] == "Work order deleted successfully", result
+
+        # The work order and its tightly-coupled plan are gone.
+        assert db.query(models.WorkOrder).filter_by(id=wo_id).first() is None
+        assert db.query(models.ProductionPlan).filter_by(id=plan_id).first() is None
+
+        # Every independent dependent SURVIVED, detached — no row is left pointing at
+        # the deleted work order or plan (no 500, and no orphan).
+        s = db.query(models.ProductionSchedule).filter_by(schedule_no="SC-DEP").first()
+        assert s is not None and s.work_order_id is None and s.production_plan_id is None, s
+        q = db.query(models.QualityInspection).filter_by(inspection_no="QI-DEP").first()
+        assert q is not None and q.work_order_id is None and q.production_plan_id is None, q
+        o = db.query(models.OperatorJobExecution).filter_by(execution_no="OE-DEP").first()
+        assert o is not None and o.work_order_id is None and o.production_plan_id is None, o
+        c = db.query(models.CustomerOrder).filter_by(order_no="CO-DEP").first()
+        assert c is not None and c.linked_work_order_id is None and c.linked_production_plan_id is None, c
+    finally:
+        T.reset_current_tenant(tok)
+    print("PASS deleting a work order detaches its dependents (no FK 500, no orphans)")
+
+
+def test_deleting_a_work_order_with_no_dependents_still_works():
+    # Regression: the common case — a lone work order — still deletes cleanly on an
+    # FK-enforcing database.
+    db = _fk_session()
+    machine = _seed_machine(db, "TA")
+    ok = _create_as(db, "TA", _wo("WO-SOLO", machine.id, 100, 0))
+    tok = T.set_current_tenant("TA")
+    try:
+        res = WO.delete_work_order(ok.id, db=db, current_user={"tenant": "TA"})
+        assert res["message"] == "Work order deleted successfully", res
+        assert db.query(models.WorkOrder).filter_by(id=ok.id).first() is None
+    finally:
+        T.reset_current_tenant(tok)
+    print("PASS deleting a work order with no dependents still works")
+
+
+def test_deleting_a_missing_work_order_is_404():
+    db = _fk_session()
+    try:
+        WO.delete_work_order(999999, db=db, current_user={"tenant": "TA"})
+        assert False, "deleting an absent work order should 404"
+    except HTTPException as e:
+        assert e.status_code == 404, e.status_code
+    print("PASS deleting a missing work order -> 404")
+
+
 if __name__ == "__main__":
     test_work_orders_paths_owned_by_module()
     test_completing_wo_still_publishes_production_completed()
@@ -728,4 +850,7 @@ if __name__ == "__main__":
     test_an_order_created_already_completed_never_moves_the_bom()
     test_the_backfill_stamps_existing_completed_orders()
     test_the_backfill_is_actually_wired_at_startup()
+    test_deleting_a_work_order_detaches_its_dependents_without_500()
+    test_deleting_a_work_order_with_no_dependents_still_works()
+    test_deleting_a_missing_work_order_is_404()
     print("ALL WORK-ORDERS ROUTE TESTS PASSED")

@@ -449,7 +449,16 @@ def _quality(db):
         return
     wos      = db.query(models.WorkOrder).all()
     machines = db.query(models.Machine).all()
-    if not wos:
+    # Guard BOTH, not just wos. `random.choice(machines)` below is the DEFAULT
+    # arg of next(), which Python evaluates EAGERLY every iteration — so with
+    # machines == [] it raises `IndexError: Cannot choose from an empty
+    # sequence` even when the generator would have matched. The three sibling
+    # seeders that use this exact idiom all guard machines (_production_plans
+    # and _schedules: `if not wos or not machines`; the live tick_quality the
+    # same) — this one path was the lone omission, so a partial reseed holding
+    # work orders but no machine rows 500'd here while the others returned
+    # cleanly. Same rule, one convention (test_sim_quality_empty_machines.py).
+    if not wos or not machines:
         return
     for i in range(1, 13):
         wo      = wos[i % len(wos)]

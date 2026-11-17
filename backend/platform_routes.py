@@ -374,6 +374,19 @@ def update_tenant_config(payload: dict, db: Session = Depends(get_db),
                 val = float(raw)
             except (TypeError, ValueError):
                 raise HTTPException(status_code=400, detail="unit_value_gbp must be a number")
+            # Reject a non-finite rate (NaN / +-Inf) at the door, the same finite
+            # guard part_spec_routes._positive applies ("NaN and infinity print as
+            # figures and mean nothing") and that clamp_utilization / mqtt_service
+            # ._non_negative_int apply to inbound sensor numbers. float() accepts
+            # "inf"/"nan"/"Infinity"/"NaN" (and Starlette's json.loads decodes bare
+            # Infinity/NaN), and `val < 0` lets +inf and nan through — they are not
+            # < 0. Stored, that rate is read straight back by tenant_unit_value into
+            # every money surface, where loss_value.whole(units * inf) raised
+            # OverflowError / ValueError and 500-ed the cost-of-losses, recovery,
+            # scorecard and management-summary reads for the whole tenant. A rate
+            # the data cannot support never becomes a stored figure.
+            if val != val or val in (float("inf"), float("-inf")):
+                raise HTTPException(status_code=400, detail="unit_value_gbp must be a finite number")
             if val < 0:
                 raise HTTPException(status_code=400, detail="unit_value_gbp must be >= 0")
             c.unit_value_gbp = val

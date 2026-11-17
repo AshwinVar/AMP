@@ -63,6 +63,31 @@ def test_validation_rejects_bad_values():
     print("PASS unit_value_gbp rejects negatives / non-numbers, coerces valid strings")
 
 
+def test_validation_rejects_non_finite():
+    # float() accepts "inf"/"nan"/"Infinity"/"NaN" and Starlette's json.loads
+    # decodes bare Infinity/NaN, and the old `val < 0` let +inf and nan through
+    # (neither is < 0). A stored non-finite rate is read straight back into every
+    # money surface and 500s it (loss_value.whole(units x inf) -> OverflowError /
+    # ValueError). It must be refused at the door exactly like a negative, the same
+    # finite guard part_spec_routes._positive keeps.
+    from fastapi import HTTPException
+    db = _session()
+    for bad in ("inf", "-inf", "nan", "Infinity", "NaN", float("inf"),
+                float("-inf"), float("nan")):
+        try:
+            platform_routes.update_tenant_config({"unit_value_gbp": bad}, db=db, current_user=_ADMIN)
+            assert False, f"{bad!r} (non-finite) should have been rejected"
+        except HTTPException as e:
+            assert e.status_code == 400, f"{bad!r} -> {e.status_code}"
+    # the refusals left nothing behind: the tenant is still units-only.
+    assert recovery._unit_value(db, "DEFAULT") is None
+    # a real 0 is still a valid, stored rate (a ₹0 margin, not "unset").
+    out = platform_routes.update_tenant_config({"unit_value_gbp": 0}, db=db, current_user=_ADMIN)
+    assert out["unit_value_gbp"] == 0
+    assert recovery._unit_value(db, "DEFAULT") == 0
+    print("PASS unit_value_gbp rejects NaN / +-Inf (and stores a real 0)")
+
+
 def test_unset_reads_none():
     db = _session()
     assert recovery._unit_value(db, "DEFAULT") is None  # no config row yet
@@ -72,5 +97,6 @@ def test_unset_reads_none():
 if __name__ == "__main__":
     test_set_and_read_back()
     test_validation_rejects_bad_values()
+    test_validation_rejects_non_finite()
     test_unset_reads_none()
     print("ALL TENANT UNIT-VALUE TESTS PASSED")

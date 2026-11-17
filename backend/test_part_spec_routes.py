@@ -250,6 +250,67 @@ def main():
         check("...nor its material in the material dropdown",
               "SECRET ABS" not in listing["materials"], str(listing["materials"]))
 
+        section("8. A LEGACY NULL ROW CANNOT 500 THE WHOLE DROPDOWN LISTING")
+        # PartSpec.material and Machine.name are Column(String, nullable=False)
+        # WITHOUT a default. That constraint is not retro-applied to a row written
+        # by raw SQL / a migration / a legacy insert — the repo's documented
+        # threat model (the same justification as the costing / analytics NULL
+        # heals) — so such a row can hold a genuine NULL. The live SQLite schema
+        # enforces NOT NULL and refuses to STORE one (verified: UPDATE ... SET
+        # material=NULL is rejected), so the legacy row is simulated with a fake
+        # session returning prebuilt in-memory rows; the aggregation under test is
+        # pure Python (set/sorted over the rows), not SQL. Before the fix,
+        # sorted({None, "PP H 110"}) and sorted(..., key=<name>) with a None name
+        # raised TypeError ("'<' not supported between 'str' and 'NoneType'") and
+        # 500'd the ENTIRE listing — one poisoned row hiding every valid spec and
+        # machine from everyone signed in (the lists are readable by any user).
+        class _Q:
+            def __init__(self, rows): self._rows = rows
+            def filter(self, *a, **k): return self
+            def order_by(self, *a, **k): return self
+            def all(self): return list(self._rows)
+
+        class _FakeDB:
+            def __init__(self, by_model): self._by = by_model
+            def query(self, model): return _Q(self._by.get(model, []))
+
+        good_spec = models.PartSpec(
+            id=1, tenant_code=T, part_code="NN-1", part_name="Named", material="PP H 110",
+            part_weight_g=0.3, cavities=2, active_cavities=2, ideal_cycle_time_s=10.0,
+            price_per_piece=0.05, effective_from=date(2026, 1, 1))
+        null_spec = models.PartSpec(
+            id=2, tenant_code=T, part_code="NN-2", part_name="Legacy", material=None,
+            part_weight_g=0.3, cavities=2, active_cavities=2, ideal_cycle_time_s=10.0,
+            price_per_piece=0.05, effective_from=date(2026, 1, 1))
+        try:
+            listing = R.list_part_specs(
+                db=_FakeDB({models.PartSpec: [good_spec, null_spec]}), current_user=ADMIN)
+            check("a NULL material does not 500 the spec listing", True)
+            check("both specs are still listed — the valid one is not hidden by the NULL",
+                  len(listing["specs"]) == 2, str(len(listing["specs"])))
+            check("the real material is still offered in the dropdown",
+                  listing["materials"] == ["PP H 110"], str(listing["materials"]))
+            check("...and the NULL is dropped from the dropdown, never shown as a filter",
+                  None not in listing["materials"], str(listing["materials"]))
+        except Exception as e:
+            check("a NULL material does not 500 the spec listing", False,
+                  f"{type(e).__name__}: {e}")
+
+        m_named = models.Machine(id=1, tenant_code=T, site="", name="IMM-01", status="Idle")
+        m_null = models.Machine(id=2, tenant_code=T, site="", name=None, status="Idle")
+        try:
+            assigns = R.list_tool_assignments(
+                db=_FakeDB({models.ToolAsset: [], models.Machine: [m_named, m_null]}),
+                current_user=ADMIN)
+            check("a NULL machine name does not 500 the tool-assignment listing", True)
+            check("the nameless machine is KEPT in the list (not dropped), ids intact",
+                  {x["id"] for x in assigns["machines"]} == {1, 2}, str(assigns["machines"]))
+            check("...sorted by a None-safe key, the nameless machine first",
+                  [x["id"] for x in assigns["machines"]] == [2, 1], str(assigns["machines"]))
+        except Exception as e:
+            check("a NULL machine name does not 500 the tool-assignment listing", False,
+                  f"{type(e).__name__}: {e}")
+
         for M in (models.ToolAsset, models.PartSpec, models.Machine):
             db.query(M).filter(M.tenant_code.in_([T, "SOMEONE-ELSE"])).delete(
                 synchronize_session=False)

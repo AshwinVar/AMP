@@ -23,6 +23,8 @@ What is pinned here, in order:
 Run:  python backend/test_fleet_vda5050.py     (exit 0 = pass)
 Also collectable by pytest (nothing binds a tenant at module level).
 """
+import json
+import math
 from datetime import datetime
 
 from fastapi import HTTPException
@@ -339,6 +341,62 @@ def test_state_facts_are_clamped():
     print("PASS battery is clamped to [0, 100] and garbage readings are ignored")
 
 
+def test_non_finite_facts_are_ignored_and_the_row_stays_serialisable():
+    # A VDA 5050 vehicle with a disconnected odometry/battery sensor can report
+    # NaN / Infinity, and JSON permits both (paho + json.loads decode them off the
+    # wire). Those pass an isinstance(…, float) check, so WITHOUT a finiteness guard
+    # they land on the row's Float columns — and the very next GET /fleet/state then
+    # raises during JSON serialisation (Starlette's JSONResponse sets allow_nan=False),
+    # a 500 on the WHOLE tenant's fleet view from one message. Same class as #776's
+    # NULL battery, reached through the one writer that fix did not cover.
+    db = _db()
+    vehicle = _register(db)
+    # Pin a known-good starting point (values chosen independently of the code).
+    vehicle.x, vehicle.y, vehicle.battery_pct, vehicle.odometer_m = 12.5, 20.0, 60.0, 5.0
+    db.commit()
+    wire = Wire()
+
+    def _msg(x, y, charge):
+        state = Vehicle("RobotCompany", "carter-01").state_message()
+        state["agvPosition"]["x"] = x
+        state["agvPosition"]["y"] = y
+        state["batteryState"]["batteryCharge"] = charge
+        return state
+
+    # Each message is built so that a CORRECT implementation leaves the row exactly
+    # where it started: the field(s) under test are non-finite (and must be ignored),
+    # and every other field is set to the row's CURRENT value (a no-op). A build
+    # WITHOUT the finiteness guard instead stores a NaN / ±inf — caught by the
+    # equality asserts and by the allow_nan=False serialisation below.
+    inf, nan = float("inf"), float("nan")
+    for x, y, charge in [(nan, nan, nan),       # all three non-finite
+                         (inf, inf, inf),
+                         (-inf, -inf, -inf),
+                         (nan, 20.0, 60.0),     # one bad coordinate rejects the pair
+                         (12.5, inf, 60.0),     # (y alone) — x/charge held at current
+                         (12.5, 20.0, nan),     # non-finite battery, position a no-op
+                         (12.5, 20.0, -inf)]:
+        fleet_vda5050.handle_state(db, vehicle, _msg(x, y, charge), wire)
+        # A non-finite reading is "no usable value": the row keeps its last good one.
+        assert (vehicle.x, vehicle.y) == (12.5, 20.0)
+        assert vehicle.battery_pct == 60.0
+        assert vehicle.odometer_m == 5.0
+        for field in (vehicle.x, vehicle.y, vehicle.battery_pct, vehicle.odometer_m):
+            assert math.isfinite(field)
+        # The row serialises exactly as GET /fleet/state would (allow_nan=False) —
+        # which a stored NaN / ±inf would make raise.
+        json.dumps(fleet_routes._vehicle_out(vehicle), allow_nan=False)
+
+    # A finite reading still updates and clamps (the guard rejects only bad values).
+    # From (12.5, 20.0) to (16.5, 23.0) the odometer gains hypot(4, 3) = 5.0 m.
+    fleet_vda5050.handle_state(db, vehicle, _msg(16.5, 23.0, 150.0), wire)
+    assert (vehicle.x, vehicle.y) == (16.5, 23.0)
+    assert vehicle.battery_pct == 100.0          # 150 clamps to 100
+    assert vehicle.odometer_m == 10.0            # 5.0 + 5.0
+    print("PASS a non-finite position/battery is ignored (the row stays "
+          "JSON-serialisable); a finite one still updates and clamps")
+
+
 if __name__ == "__main__":
     test_topic_parsing()
     test_unregistered_identity_is_nobody()
@@ -349,4 +407,5 @@ if __name__ == "__main__":
     test_engine_never_moves_a_vda_vehicle()
     test_connection_round_trip()
     test_state_facts_are_clamped()
+    test_non_finite_facts_are_ignored_and_the_row_stays_serialisable()
     print("ALL PASS")

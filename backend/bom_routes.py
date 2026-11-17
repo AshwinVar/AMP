@@ -237,7 +237,22 @@ def update_bom(bom_id: int, payload: dict, db: Session = Depends(_get_db),
                            "unit": (line.get("unit") or "").strip()})
         # Replace wholesale. A BOM is one document: sending five lines means the
         # recipe is those five, not those five plus whatever was there before.
+        #
+        # FLUSH THE DELETES BEFORE THE NEW INSERTS. bom_components carries
+        # UNIQUE (bom_id, component_code) (uq_bom_component). The clear() marks the
+        # old lines for deletion and the append() queues the new ones, but in a
+        # single flush SQLAlchemy's unit of work emits the INSERTs before those
+        # DELETEs — so the moment a replacement reuses a component_code that was
+        # already on the recipe (changing steel from 2kg to 2.5kg per unit, the
+        # single most ordinary BOM edit, keeps component_code "STEEL"), the new row
+        # collides with the not-yet-deleted old one: IntegrityError -> an unhandled
+        # HTTP 500 on a routine save. Flushing right after the clear() issues the
+        # DELETEs first, so the unique key is free when the INSERTs land. (A brand
+        # new component_code never collided, which is why this hid until a recipe's
+        # own line was edited.) Inside the request's transaction — nothing commits
+        # until the commit below, so a later failure still rolls the whole edit back.
         bom.components.clear()
+        db.flush()
         for p in parsed:
             bom.components.append(models.BomComponent(tenant_code=tenant, **p))
 

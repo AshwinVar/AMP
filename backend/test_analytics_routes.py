@@ -357,6 +357,86 @@ def test_production_plan_analytics_folds_in_progress_into_running_and_reconciles
           "buckets reconcile with total=6 (600 planned / 200 actual / 33%)")
 
 
+def test_work_order_analytics_other_bucket_reconciles_off_bucket_statuses():
+    # Folding "In Progress" into "running" fixed ONE way the breakdown fell short
+    # of total_work_orders. The other way: a status that is in NONE of the four
+    # named buckets — "On Hold" (a real status the dropdown and the simulator both
+    # write), "Cancelled", or a legacy NULL (status is String default="Planned",
+    # not NOT NULL, so a raw-SQL row can hold one and func.count still tallies it).
+    # Each was counted in the "Total WO" headline and shown in no bar, so the KPI
+    # row summed to LESS than the total beside it. The `other` catch-all must carry
+    # exactly those rows so the five buckets partition the total (rule-3). Every
+    # expected number is derived by hand.
+    db = _fresh_session()
+    db.add(_work_order(id=1, work_order_no="W1", status="Planned",     target_quantity=10, actual_quantity=0))
+    db.add(_work_order(id=2, work_order_no="W2", status="Running",     target_quantity=10, actual_quantity=5))
+    db.add(_work_order(id=3, work_order_no="W3", status="In Progress", target_quantity=10, actual_quantity=5))
+    db.add(_work_order(id=4, work_order_no="W4", status="Completed",   target_quantity=10, actual_quantity=10))
+    db.add(_work_order(id=5, work_order_no="W5", status="Delayed",     target_quantity=10, actual_quantity=1))
+    db.add(_work_order(id=6, work_order_no="W6", status="On Hold",     target_quantity=10, actual_quantity=0))
+    db.add(_work_order(id=7, work_order_no="W7", status="Cancelled",   target_quantity=10, actual_quantity=0))
+    db.add(_work_order(id=8, work_order_no="W8", status="Planned",     target_quantity=10, actual_quantity=0))
+    db.commit()
+    # A genuine SQL NULL status on W8 (passing status=None stores the "Planned"
+    # default Python-side, so a raw UPDATE is the only way to get a real NULL).
+    db.execute(text("UPDATE work_orders SET status = NULL WHERE work_order_no = 'W8'"))
+    db.commit()
+    db.expire_all()
+
+    out = analytics_routes.get_work_order_analytics(db=db, current_user={})
+    assert out["total_work_orders"] == 8, out
+    assert out["planned"] == 1, out                 # W1 (W8 is now NULL, not "Planned")
+    assert out["running"] == 2, out                 # Running(1) + In Progress(1)
+    assert out["completed"] == 1 and out["delayed"] == 1, out
+    # On Hold(1) + Cancelled(1) + NULL(1) = 3, in none of the named buckets.
+    assert out["other"] == 3, out
+    # The five buckets partition every row -> they sum to the headline exactly.
+    assert out["planned"] + out["running"] + out["completed"] + out["delayed"] \
+        + out["other"] == out["total_work_orders"], out
+    print("PASS work-order analytics: On Hold / Cancelled / NULL land in other=3, "
+          "five buckets reconcile with total=8")
+
+
+def test_production_plan_analytics_other_bucket_reconciles_off_bucket_statuses():
+    # The plan rollup's mirror of the work-order test above: an "On Hold" /
+    # "Cancelled" / NULL-status plan is counted in total_plans but in none of the
+    # four named buckets, so without `other` the KPI row summed to less than the
+    # "Plans" headline. Hand-derived numbers.
+    db = _fresh_session()
+    db.add(models.ProductionPlan(id=1, plan_no="P1", status="Planned",     planned_quantity=10,
+                                 actual_quantity=0,  plan_date=date(2026, 1, 1), shift_name="A"))
+    db.add(models.ProductionPlan(id=2, plan_no="P2", status="Running",     planned_quantity=10,
+                                 actual_quantity=5,  plan_date=date(2026, 1, 1), shift_name="A"))
+    db.add(models.ProductionPlan(id=3, plan_no="P3", status="In Progress", planned_quantity=10,
+                                 actual_quantity=5,  plan_date=date(2026, 1, 1), shift_name="B"))
+    db.add(models.ProductionPlan(id=4, plan_no="P4", status="Completed",   planned_quantity=10,
+                                 actual_quantity=10, plan_date=date(2026, 1, 1), shift_name="C"))
+    db.add(models.ProductionPlan(id=5, plan_no="P5", status="Behind",      planned_quantity=10,
+                                 actual_quantity=1,  plan_date=date(2026, 1, 1), shift_name="C"))
+    db.add(models.ProductionPlan(id=6, plan_no="P6", status="On Hold",     planned_quantity=10,
+                                 actual_quantity=0,  plan_date=date(2026, 1, 1), shift_name="A"))
+    db.add(models.ProductionPlan(id=7, plan_no="P7", status="Cancelled",   planned_quantity=10,
+                                 actual_quantity=0,  plan_date=date(2026, 1, 1), shift_name="A"))
+    db.add(models.ProductionPlan(id=8, plan_no="P8", status="Planned",     planned_quantity=10,
+                                 actual_quantity=0,  plan_date=date(2026, 1, 1), shift_name="A"))
+    db.commit()
+    db.execute(text("UPDATE production_plans SET status = NULL WHERE plan_no = 'P8'"))
+    db.commit()
+    db.expire_all()
+
+    out = analytics_routes.get_production_plan_analytics(db=db, current_user={})
+    assert out["total_plans"] == 8, out
+    assert out["planned"] == 1, out                 # P1 (P8 is now NULL)
+    assert out["running"] == 2, out                 # Running(1) + In Progress(1)
+    assert out["completed"] == 1 and out["behind"] == 1, out
+    # On Hold(1) + Cancelled(1) + NULL(1) = 3.
+    assert out["other"] == 3, out
+    assert out["planned"] + out["running"] + out["completed"] + out["behind"] \
+        + out["other"] == out["total_plans"], out
+    print("PASS production-plan analytics: On Hold / Cancelled / NULL land in other=3, "
+          "five buckets reconcile with total=8")
+
+
 def _schedule(**kw):
     kw.setdefault("shift_name", "A")
     kw.setdefault("scheduled_date", date(2026, 1, 1))
@@ -1918,9 +1998,11 @@ if __name__ == "__main__":
     test_work_order_analytics_null_actual_and_reconciled_totals()
     test_work_order_analytics_empty_table_is_unmeasured_not_zero()
     test_work_order_analytics_folds_in_progress_into_running_and_reconciles()
+    test_work_order_analytics_other_bucket_reconciles_off_bucket_statuses()
     test_production_plan_analytics_null_actual_and_reconciled_totals()
     test_production_plan_analytics_empty_table_is_unmeasured_not_zero()
     test_production_plan_analytics_folds_in_progress_into_running_and_reconciles()
+    test_production_plan_analytics_other_bucket_reconciles_off_bucket_statuses()
     test_production_schedule_analytics_folds_in_progress_into_running_and_reconciles()
     test_production_schedule_analytics_empty_table_is_zero_not_a_crash()
     test_analytics_summary_null_utilization_averages_only_readings()

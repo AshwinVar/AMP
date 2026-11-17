@@ -19,6 +19,9 @@ export type WorkOrderAnalytics = {
   running: number;
   completed: number;
   delayed: number;
+  /** Every status outside the four named buckets (On Hold / Cancelled / NULL),
+   *  so planned+running+completed+delayed+other === total_work_orders. */
+  other: number;
   total_target: number;
   total_actual: number;
   /** Null when the denominator was empty — never 0, which is a real reading on this scale. */

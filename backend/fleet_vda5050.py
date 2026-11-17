@@ -58,6 +58,7 @@ Every behaviour worth testing lives in the pure handlers above it, callable
 with a Session, a dict and a fake `publish` — no broker in any test.
 """
 import json
+import math
 import os
 import threading
 import time
@@ -232,6 +233,35 @@ def ensure_order(db, vehicle, publish, stations=None, now=None):
 
 # ── Inbound: state and connection ────────────────────────────────────────
 
+def _finite_number(value) -> bool:
+    """A usable numeric reading: a real number that is neither NaN nor ±inf.
+
+    agvPosition.x/y and batteryState.batteryCharge are written straight onto
+    FleetVehicle's Float columns. JSON permits NaN / Infinity / -Infinity and
+    paho + json.loads decode them by default (on_message reads raw json off the
+    wire), so a real AMR with a disconnected odometry or battery sensor — or a
+    buggy/hostile publisher — can hand one of those in. isinstance(…, float) is
+    True for a non-finite float AND for bool (an int subclass), so the plain type
+    check these facts used let a NaN / ±inf straight through onto the row. That is
+    not a cosmetic bad value: a stored non-finite float makes the very next
+    GET /fleet/state raise `Out of range float values are not JSON compliant`
+    during response serialisation (Starlette's JSONResponse sets allow_nan=False)
+    — a 500 on the WHOLE tenant's fleet view from one message, the same
+    "one bad value crashed the fleet view" class #776 fixed for a NULL battery,
+    reached here through the one writer that fix did not cover.
+
+    A non-finite / non-numeric reading is therefore "no usable value": the caller
+    leaves the row's last good position/battery untouched (the row already holds
+    the last report, which is the truth between two reports), exactly as the
+    telemetry ingest drops a non-finite reading (machine_status.clamp_utilization,
+    mqtt_service.reading_time) and as the existing "garbage keeps the last good
+    value" branch already intends for a non-numeric batteryCharge. bool is
+    excluded for the same reason reading_time excludes it: True is not a coordinate.
+    """
+    return (isinstance(value, (int, float)) and not isinstance(value, bool)
+            and math.isfinite(value))
+
+
 def _has_fatal_error(state: dict) -> bool:
     return any((e or {}).get("errorLevel", "").upper() == "FATAL"
                for e in state.get("errors") or [])
@@ -256,15 +286,18 @@ def handle_state(db, vehicle, state: dict, publish, now=None):
     import fleet_engine
     now = now or datetime.utcnow()
 
-    # 1. Position and battery — facts, whatever else is going on.
+    # 1. Position and battery — facts, whatever else is going on. Each must be a
+    # FINITE number before it lands on a Float column: a NaN / ±inf reading (which
+    # the type check alone let through) would 500 the next /fleet/state for the
+    # whole tenant — see _finite_number. An unusable reading keeps the last good value.
     pos = state.get("agvPosition") or {}
-    if isinstance(pos.get("x"), (int, float)) and isinstance(pos.get("y"), (int, float)):
+    if _finite_number(pos.get("x")) and _finite_number(pos.get("y")):
         moved = fleet_engine._dist(vehicle.x or 0, vehicle.y or 0,
                                    float(pos["x"]), float(pos["y"]))
         vehicle.x, vehicle.y = float(pos["x"]), float(pos["y"])
         vehicle.odometer_m = (vehicle.odometer_m or 0) + moved
     battery = (state.get("batteryState") or {}).get("batteryCharge")
-    if isinstance(battery, (int, float)):
+    if _finite_number(battery):
         vehicle.battery_pct = max(0.0, min(100.0, float(battery)))
 
     # 2. Task progress, read from the vehicle's own order echo.

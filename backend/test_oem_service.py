@@ -80,7 +80,11 @@ def test_a_profile_keeps_machine_vocabulary_out_of_core():
                      ('[{"source":"X","datatype":"number"}]', "no name"),
                      ('[{"name":"a","source":"X","datatype":"wat"}]', "bad datatype"),
                      ('[{"name":"a","source":"X","datatype":"number"},'
-                      '{"name":"a","source":"Y","datatype":"number"}]', "duplicate name")):
+                      '{"name":"a","source":"Y","datatype":"number"}]', "duplicate name"),
+                     ('[{"name":"a","source":"X","datatype":"number","min":"low"}]',
+                      "non-numeric min"),
+                     ('[{"name":"a","source":"X","datatype":"number","max":["x"]}]',
+                      "non-numeric max")):
         try:
             oem_telemetry.parse(bad)
             check(f"a profile with {why} is refused", False, "accepted")
@@ -116,6 +120,67 @@ def test_out_of_range_is_flagged_never_clamped():
     check("a non-numeric reading becomes None + out-of-range, never 0",
           named2["pressure"]["value"] is None and "pressure" in out2,
           str(named2))
+
+
+def test_a_numeric_bound_is_validated_where_interpret_reads_it():
+    print()
+    print("=" * 74)
+    print("2b. A SIGNAL min/max MUST BE NUMERIC — REFUSED AT PARSE, NEVER A CRASH")
+    print("=" * 74)
+    # THE BUG. parse() validated datatype and aggregation but NOT the min/max
+    # bounds, so a profile with a non-numeric bound ("high", a list, an object)
+    # parsed cleanly and then raised a RAW ValueError/TypeError inside interpret()'s
+    # `float(min)` / `float(max)` — on the MQTT ingest path, where nothing catches
+    # it, dropping the WHOLE message (status, production, downtime) for every
+    # machine of that model. A bad bound must be a ProfileError surfaced at parse
+    # (every caller handles that), never an uncaught crash later.
+    for bad_bound in ('[{"name":"t","source":"T","datatype":"number","min":"high"}]',
+                      '[{"name":"t","source":"T","datatype":"number","max":{}}]',
+                      '[{"name":"t","source":"T","datatype":"number","min":[1]}]'):
+        raised = None
+        try:
+            oem_telemetry.parse(bad_bound)
+        except oem_telemetry.ProfileError:
+            raised = "ProfileError"
+        except Exception as e:  # noqa: BLE001 - the pre-fix failure we are pinning out
+            raised = type(e).__name__
+        check("a non-numeric bound raises ProfileError at parse, not a raw crash",
+              raised == "ProfileError", f"got {raised}")
+
+    # THE PROPERTY THE FIX GUARANTEES: any bound parse() accepts, interpret() can
+    # float() without crashing. A numeric STRING bound is legal (float('10')
+    # works), so it must parse AND then enforce the band. Expected values below are
+    # derived by hand from the band [10, 20], not from the code under test.
+    profile = oem_telemetry.parse(json.dumps(
+        [{"name": "temp", "source": "T", "datatype": "number",
+          "unit": "degC", "min": "10", "max": "20"}]))
+    named, _, out = oem_telemetry.interpret(profile, {"T": 25})   # 25 > 20 -> flagged
+    check("a reading above a string-typed max is flagged, kept as measured",
+          named["temp"]["value"] == 25.0 and named["temp"]["in_range"] is False
+          and out == ["temp"], str((named, out)))
+    named2, _, out2 = oem_telemetry.interpret(profile, {"T": 15})  # 10 <= 15 <= 20
+    check("a reading inside the band is in range",
+          named2["temp"]["in_range"] is True and out2 == [], str((named2, out2)))
+    named3, _, out3 = oem_telemetry.interpret(profile, {"T": 5})   # 5 < 10 -> flagged
+    check("a reading below the min is flagged out of range",
+          named3["temp"]["in_range"] is False and out3 == ["temp"],
+          str((named3, out3)))
+
+    # A bound with no band at all stays optional: a numeric signal with neither
+    # min nor max still parses and never flags (the EXAMPLE profiles rely on this).
+    unbounded = oem_telemetry.parse(json.dumps(
+        [{"name": "hrs", "source": "H", "datatype": "number"}]))
+    n4, _, o4 = oem_telemetry.interpret(unbounded, {"H": 9_999_999})
+    check("a numeric signal with no min/max never flags a reading",
+          n4["hrs"]["in_range"] is True and o4 == [], str((n4, o4)))
+
+    # We validate ONLY where interpret reads a bound — a number signal. interpret
+    # never floats a bound on a bool/string signal, so such a bound is meaningless
+    # but harmless, and parse leaves it alone rather than over-rejecting.
+    ok = oem_telemetry.parse(json.dumps(
+        [{"name": "code", "source": "C", "datatype": "string", "min": "n/a"}]))
+    check("a bound on a non-number signal does not invalidate the profile",
+          len(ok) == 1 and ok[0]["name"] == "code", str(ok))
 
 
 def test_the_lifecycle_cannot_be_skipped():
@@ -503,6 +568,7 @@ def test_the_service_queue_leads_with_the_worst():
 def run_all():
     test_a_profile_keeps_machine_vocabulary_out_of_core()
     test_out_of_range_is_flagged_never_clamped()
+    test_a_numeric_bound_is_validated_where_interpret_reads_it()
     test_the_lifecycle_cannot_be_skipped()
     test_commissioning_names_what_is_missing()
     test_it_refuses_to_invent_a_service_interval()

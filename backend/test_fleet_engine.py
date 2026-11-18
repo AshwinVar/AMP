@@ -30,7 +30,9 @@ back from the code under test):
   7  KPIS       an empty fleet reports None averages (not a ZeroDivisionError);
                 a populated fleet's average battery, average wait and totals are
                 the exact hand-computed figures, and a Delivered task missing a
-                timestamp is left out of the wait average but still counted.
+                timestamp — or carrying out-of-order timestamps (assigned before
+                requested) — is left out of the wait average but still counted,
+                so the average is never dragged below zero.
   8  CLOCK      the lazy tick defaults to 3 s on first read and caps a long
                 absence at MAX_TICK_SECONDS instead of replaying it.
 
@@ -455,6 +457,43 @@ def test_kpis_populated():
     db.close()
 
 
+def test_kpis_out_of_order_timestamps_excluded_from_wait():
+    # A delivered task whose assigned_at PRECEDES its requested_at is an impossible
+    # wait (a clock stepped backwards between the request and the assignment, or a
+    # legacy / out-of-order row). It must be left out of the wait average exactly
+    # as a task with a missing timestamp is — never averaged in as a negative span,
+    # which would drag the mission-control avg_wait below zero (ADR-0010: a figure
+    # the data cannot support). But it is still a real delivery, so it counts
+    # toward delivered_24h.
+    db = fresh_db()
+    now = datetime(2025, 1, 2, 12, 0, 0)
+
+    # (a) ONLY an out-of-order task: no measurable wait at all, so avg_wait_s is
+    #     None — not a negative number, and not a ZeroDivisionError.
+    db.add(models.TransportTask(tenant_code=T, origin="Warehouse", destination="Packing",
+                                status="Delivered",
+                                requested_at=now - timedelta(seconds=100),   # requested LATER
+                                assigned_at=now - timedelta(seconds=300),    # "assigned" EARLIER
+                                completed_at=now - timedelta(seconds=10)))
+    db.commit()
+    k = fleet_engine.kpis(db, now=now)
+    check("out-of-order-only avg_wait is None", k["avg_wait_s"] is None, k["avg_wait_s"])
+    check("out-of-order task still counted delivered", k["delivered_24h"] == 1, k["delivered_24h"])
+
+    # (b) A valid task (wait = 420 - 60 = 360 s) ALONGSIDE the out-of-order one:
+    #     the average is the valid task's 360 s alone (360 / 1), never (360 + -200) / 2 = 80.
+    db.add(models.TransportTask(tenant_code=T, origin="Packing", destination="Dispatch",
+                                status="Delivered",
+                                requested_at=now - timedelta(seconds=420),
+                                assigned_at=now - timedelta(seconds=60),
+                                completed_at=now - timedelta(seconds=5)))
+    db.commit()
+    k = fleet_engine.kpis(db, now=now)
+    check("avg_wait excludes the out-of-order span", approx(k["avg_wait_s"], 360.0), k["avg_wait_s"])
+    check("both deliveries counted", k["delivered_24h"] == 2, k["delivered_24h"])
+    db.close()
+
+
 # ── 8  CLOCK ─────────────────────────────────────────────────────────────
 
 def test_tick_default_and_cap():
@@ -490,6 +529,7 @@ ALL = [
     test_advise_resume_returns_and_charge,
     test_kpis_empty_fleet,
     test_kpis_populated,
+    test_kpis_out_of_order_timestamps_excluded_from_wait,
     test_tick_default_and_cap,
 ]
 

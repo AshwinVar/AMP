@@ -159,6 +159,66 @@ def test_variance_report_empty_tables_is_safe():
     print("PASS variance report is safe on empty tables")
 
 
+def _draft_count(db, count_no, lines):
+    """A Draft cycle count with its item lines, ready for approve_cycle_count.
+
+    `lines` is a list of (item_id, physical_qty, variance, book_qty). The count is
+    flushed first so its real id can be stamped onto each line's count_id (approve
+    selects lines by count_id == cid).
+    """
+    c = models.CycleCount(count_no=count_no, counted_by="tester", status="Draft")
+    db.add(c)
+    db.flush()
+    for item_id, physical, variance, book in lines:
+        db.add(models.CycleCountItem(count_id=c.id, item_id=item_id,
+                                     book_qty=book, physical_qty=physical, variance=variance))
+    db.commit()
+    return c.id
+
+
+def test_approve_cycle_count_never_drives_stock_negative():
+    # A cycle count is taken on the floor and approved later; approve applies the
+    # variance as a DELTA to current_stock. If stock is drawn down between the count
+    # and the approval, before + variance can go negative — a physically-impossible
+    # on-hand quantity. The approve path was the one signed stock writer with no
+    # floor, so it stored the negative; every other writer refuses/floors < 0.
+    #
+    # Scenario (independently derived): item counted at 0 on a book of 5 (variance
+    # -5); 3 units issued before approval drop current_stock to 2; approve then
+    # computes 2 + (-5) = -3, which must be floored to 0, not stored as -3.
+    db = _fresh_session()
+    item = _add_item(db, "ITM-NEG", current_stock=5, reorder_level=100)   # level > stock: no low-stock crossing
+    cid = _draft_count(db, "CC-NEG", [(item.id, 0, -5, 5)])
+    item.current_stock = 2                                                # drawn down between count and approve
+    db.commit()
+
+    eir.approve_cycle_count(cid=cid, db=db, current_user={})
+    db.refresh(item)
+    assert item.current_stock == 0, item.current_stock                    # max(0, 2 + (-5)) == 0, never -3
+    print("PASS approve_cycle_count floors stock at 0 (no physically-impossible negative)")
+
+
+def test_approve_cycle_count_applies_signed_delta_unchanged_on_valid_rows():
+    # The floor must be a STRICT NO-OP on a well-formed approval, in both directions:
+    # a counted shortfall reduces stock by the variance, a found-stock surplus raises
+    # it. Pins that the fix changes nothing when before + variance is already >= 0.
+    #   short: 100 + (-10) = 90        found: 50 + (+10) = 60
+    db = _fresh_session()
+    short = _add_item(db, "ITM-SHORT", current_stock=100, reorder_level=0)
+    found = _add_item(db, "ITM-FOUND", current_stock=50, reorder_level=0)
+    cid = _draft_count(db, "CC-NORM", [
+        (short.id, 90, -10, 100),      # counted short by 10
+        (found.id, 60, 10, 50),        # found 10 extra
+    ])
+
+    eir.approve_cycle_count(cid=cid, db=db, current_user={})
+    db.refresh(short)
+    db.refresh(found)
+    assert short.current_stock == 90, short.current_stock                 # 100 + (-10), floor is a no-op
+    assert found.current_stock == 60, found.current_stock                 # 50 + 10
+    print("PASS approve_cycle_count applies the signed variance delta unchanged on valid rows")
+
+
 def test_variance_report_is_tenant_isolated():
     # With the ORM scoping hook live, a tenant's variance report must contain ONLY
     # its own items and its own latest counts — never another tenant's, even though
@@ -210,5 +270,7 @@ if __name__ == "__main__":
     test_variance_report_movement_totals_count_only_real_movements()
     test_variance_report_adjust_only_item_reports_zero_movement()
     test_variance_report_empty_tables_is_safe()
+    test_approve_cycle_count_never_drives_stock_negative()
+    test_approve_cycle_count_applies_signed_delta_unchanged_on_valid_rows()
     test_variance_report_is_tenant_isolated()
     print("ALL ENTERPRISE-INVENTORY ROUTE TESTS PASSED")

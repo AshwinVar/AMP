@@ -47,6 +47,9 @@ export type PurchasingAnalytics = {
   overdue: number;
   ordered_qty: number;
   received_qty: number;
-  receipt_rate: number;
+  // null ("—") when nothing was ordered: a rate over an empty denominator is not
+  // measured, not 0% (matches the backend's None + receipt_measured).
+  receipt_rate: number | null;
+  receipt_measured?: boolean;
   supplier_pending: Record<string, number>;
 };

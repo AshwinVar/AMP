@@ -113,7 +113,7 @@ export default function PurchasingSection({
         <Kpi title="Overdue" value={analytics?.overdue ?? 0} />
         <Kpi title="Ordered" value={analytics?.ordered_qty ?? 0} />
         <Kpi title="Received Qty" value={analytics?.received_qty ?? 0} />
-        <Kpi title="Receipt Rate" value={`${analytics?.receipt_rate ?? 0}%`} />
+        <Kpi title="Receipt Rate" value={analytics?.receipt_rate == null ? "—" : `${analytics.receipt_rate}%`} />
       </div>
 
       <form

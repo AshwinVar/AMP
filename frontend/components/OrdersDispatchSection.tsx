@@ -102,7 +102,7 @@ export default function OrdersDispatchSection({
         <Kpi title="Late" value={analytics?.late ?? 0} />
         <Kpi title="Order Qty" value={analytics?.total_order_qty ?? 0} />
         <Kpi title="Dispatch Qty" value={analytics?.total_dispatched_qty ?? 0} />
-        <Kpi title="Dispatch Rate" value={`${analytics?.dispatch_rate ?? 0}%`} />
+        <Kpi title="Dispatch Rate" value={analytics?.dispatch_rate == null ? "—" : `${analytics.dispatch_rate}%`} />
         <Kpi title="Cancelled" value={analytics?.cancelled ?? 0} />
       </div>
 

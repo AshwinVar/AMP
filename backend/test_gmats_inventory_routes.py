@@ -357,6 +357,115 @@ def test_stock_in_from_near_ceiling_rejects_the_overshoot():
     print("PASS stock-in bounds the RESULT, not the input qty (overshoot refused, exact fit allowed)")
 
 
+# --- Restore-path resulting-ceiling bound. undo-issue and void-min ADD the issued
+# qty back onto the accumulated stock columns. #772 capped stock-in but explicitly
+# (and wrongly) called it "the one GMATS stock writer still missing" the ceiling —
+# these two restore writers accumulate too and were uncapped, so an item replenished
+# near MAX_QTY between the issue/MIN and the undo/void drove physical_stock (and, for
+# undo, reserved_stock) past the INTEGER column into a 500. These pin the same
+# RESULT-bound guard on both restore paths. MAX_QTY = 1,000,000,000 is a legal stock
+# an Admin can set via /correct or CSV import, so this state is reachable. ---
+
+
+def _issued_proforma_with_line(db, iid, qty, physical, reserved=0):
+    """An item at `physical`/`reserved` with an ISSUED proforma holding one line of
+    `qty` — the exact state undo-issue acts on, built directly so the item can sit at
+    the ceiling without routing through issue (which would deduct it first)."""
+    db.add(models.GmatsItem(id=iid, tenant_code="GMATS", item_code=f"C{iid}",
+                            item_name=f"Part {iid}", physical_stock=physical,
+                            reserved_stock=reserved, reorder_level=0, purchase_rate=0, unit="ea"))
+    db.add(models.GmatsProforma(id=1, tenant_code="GMATS", proforma_no="PI-1",
+                                customer_name="Cust", status="Issued"))
+    db.add(models.GmatsProformaLine(id=1, proforma_id=1, item_id=iid, qty=qty))
+    db.commit()
+
+
+def test_undo_issue_rejects_result_over_max_qty():
+    # Item at the ceiling with a 5-unit issue to undo: physical MAX_QTY + 5 would exceed
+    # MAX_QTY (and on PostgreSQL overflow the INTEGER column). Reject with a 400 and leave
+    # the item AND the proforma untouched — never a 500.
+    db = _db()
+    _issued_proforma_with_line(db, iid=1, qty=5, physical=MAX_QTY)
+    try:
+        gmats.gmats_undo_issue(1, db=db, current_user=_ADMIN)
+        assert False, "undoing an issue that pushes physical_stock past MAX_QTY should 400"
+    except HTTPException as e:
+        assert e.status_code == 400, e.status_code
+    it = _stock(db)
+    assert it.physical_stock == MAX_QTY                 # refused undo left physical untouched
+    assert _proforma_status(db, 1) == "Issued"          # ...and the proforma still Issued, not reopened
+    print("PASS undo-issue rejects a result over MAX_QTY (no INTEGER overflow 500)")
+
+
+def test_undo_issue_rejects_when_only_reserved_would_overflow():
+    # physical has room (0) but reserved_stock is already at the ceiling: undo restores
+    # onto BOTH columns, so reserved MAX_QTY + 5 would overflow even though physical would
+    # not. The guard must check reserved too — independently derived to isolate that column.
+    db = _db()
+    _issued_proforma_with_line(db, iid=1, qty=5, physical=0, reserved=MAX_QTY)
+    try:
+        gmats.gmats_undo_issue(1, db=db, current_user=_ADMIN)
+        assert False, "undo that overflows reserved_stock (not physical) should still 400"
+    except HTTPException as e:
+        assert e.status_code == 400, e.status_code
+    it = _stock(db)
+    assert it.physical_stock == 0 and it.reserved_stock == MAX_QTY   # neither column touched
+    print("PASS undo-issue bounds reserved_stock too, not only physical_stock")
+
+
+def test_undo_issue_landing_exactly_on_max_qty_is_allowed():
+    # Inclusive ceiling: physical MAX_QTY - 5, reserved 0, a 5-unit undo lands physical
+    # exactly on MAX_QTY and reserved on 5 — a legitimate restore, applied and persisted,
+    # and the proforma reopens. Proves the guard bounds the overshoot, not every undo.
+    db = _db()
+    _issued_proforma_with_line(db, iid=1, qty=5, physical=MAX_QTY - 5)
+    gmats.gmats_undo_issue(1, db=db, current_user=_ADMIN)
+    it = _stock(db)
+    assert it.physical_stock == MAX_QTY                 # (MAX_QTY - 5) + 5, exactly on the ceiling
+    assert it.reserved_stock == 5                       # spoken for again
+    assert _proforma_status(db, 1) == "Open"            # a within-bounds undo still reopens the proforma
+    print("PASS undo-issue landing exactly on MAX_QTY is allowed (inclusive ceiling, still reopens)")
+
+
+def _min_with_line(db, iid, qty, physical):
+    """An item at `physical` with an issued MIN holding one line of `qty` — the state
+    void-min acts on, built directly so the item can sit at the ceiling."""
+    db.add(models.GmatsItem(id=iid, tenant_code="GMATS", item_code=f"C{iid}",
+                            item_name=f"Part {iid}", physical_stock=physical,
+                            reserved_stock=0, reorder_level=0, purchase_rate=0, unit="ea"))
+    db.add(models.GmatsMIN(id=1, tenant_code="GMATS", min_no="MIN-1",
+                           customer_name="Cust", machine_ref="Rig", status="Issued"))
+    db.add(models.GmatsMINLine(id=1, min_id=1, item_id=iid, qty=qty))
+    db.commit()
+
+
+def test_void_min_rejects_result_over_max_qty():
+    # Item at the ceiling with a 5-unit MIN to void: physical MAX_QTY + 5 would overflow
+    # the INTEGER column. Reject with a 400 and leave BOTH the item and the MIN intact —
+    # never a 500, and never a half-voided MIN whose stock was not restored.
+    db = _db()
+    _min_with_line(db, iid=1, qty=5, physical=MAX_QTY)
+    try:
+        gmats.gmats_void_min(1, db=db, current_user=_ADMIN)
+        assert False, "voiding a MIN that pushes physical_stock past MAX_QTY should 400"
+    except HTTPException as e:
+        assert e.status_code == 400, e.status_code
+    assert _stock(db).physical_stock == MAX_QTY         # refused void left physical untouched
+    assert db.query(models.GmatsMIN).count() == 1       # ...and the MIN was not deleted
+    print("PASS void-min rejects a result over MAX_QTY (no INTEGER overflow 500, MIN preserved)")
+
+
+def test_void_min_landing_exactly_on_max_qty_is_allowed():
+    # Inclusive ceiling: physical MAX_QTY - 5, a 5-unit void lands exactly on MAX_QTY and
+    # the MIN is deleted. Proves the guard bounds the overshoot, not every void.
+    db = _db()
+    _min_with_line(db, iid=1, qty=5, physical=MAX_QTY - 5)
+    gmats.gmats_void_min(1, db=db, current_user=_ADMIN)
+    assert _stock(db).physical_stock == MAX_QTY         # (MAX_QTY - 5) + 5, exactly on the ceiling
+    assert db.query(models.GmatsMIN).count() == 0       # a within-bounds void still deletes the MIN
+    print("PASS void-min landing exactly on MAX_QTY is allowed (inclusive ceiling, still voids)")
+
+
 def test_create_proforma_reserves_against_null_reserved():
     db = _db()
     _item(db, 1, "GMATS", "Part")                       # physical 10 (real)
@@ -1019,6 +1128,11 @@ if __name__ == "__main__":
     test_stock_in_rejects_result_over_max_qty()
     test_stock_in_up_to_exactly_max_qty_is_allowed()
     test_stock_in_from_near_ceiling_rejects_the_overshoot()
+    test_undo_issue_rejects_result_over_max_qty()
+    test_undo_issue_rejects_when_only_reserved_would_overflow()
+    test_undo_issue_landing_exactly_on_max_qty_is_allowed()
+    test_void_min_rejects_result_over_max_qty()
+    test_void_min_landing_exactly_on_max_qty_is_allowed()
     test_create_proforma_reserves_against_null_reserved()
     test_create_proforma_null_stock_reports_insufficient_not_500()
     test_cancel_proforma_releases_null_reservation()

@@ -1155,6 +1155,121 @@ def test_overdue_po_generator_dedups_against_null_status_open_escalation():
     print("PASS overdue-PO generator dedups against a NULL-status open escalation")
 
 
+# ── order_quantity NULL (the un-retro-applied nullable=False case) ──────────
+# order_quantity is Column(Integer, nullable=False) but with NO default. Unlike the
+# dispatched_quantity / received_quantity siblings above (default=0, NO nullable=False,
+# so the DB permits a NULL a raw UPDATE can inject), this column's NOT NULL constraint
+# is enforced on any table create_all builds — so a legacy NULL cannot be written here.
+# But that constraint is NOT retro-applied to a pre-existing / migrated / raw-SQL row in
+# production (the SAME threat model tick_customer_order and the WorkOrder/plan PATCHes
+# already guard, documented at factory_simulator.py:1190), so a row LOADED from such a
+# DB can present order_quantity == None. order_quantity was the one reader/handler left
+# un-guarded: the int-typed response serializer ValidationError-500'd the whole list, and
+# the PATCH comparisons evaluated `int > None` -> TypeError 500.
+#
+# SQLite would reject an on-disk NULL, so these reproduce the LOADED-row attribute state
+# the way the sibling nullable=False heals already do (test_work_orders_routes.py): a
+# SimpleNamespace for the from_attributes serializer path, and set_committed_value for the
+# PATCH path (sets the loaded attribute to None WITHOUT marking the row dirty, so the
+# handler's own commit never tries to persist the NULL SQLite forbids). Expected value 0
+# is independently derived: it is what the CSV export (`o.order_quantity or 0`) and the
+# /analytics COALESCE already read this NULL as.
+from datetime import date as _date
+from types import SimpleNamespace
+from sqlalchemy.orm.attributes import set_committed_value
+
+
+def test_customer_order_response_heals_null_order_quantity():
+    # GET /customer-orders returns raw ORM rows FastAPI serialises through
+    # CustomerOrderResponse (from_attributes). A single legacy NULL-order_quantity row
+    # made that serialisation raise (int <- None) and 500 the WHOLE list. The heal reads
+    # NULL as 0; a real recorded value is untouched.
+    fields = dict(id=1, order_no="CO-OK", customer_name="Acme", product_name="Widget",
+                  linked_work_order_id=None, linked_production_plan_id=None,
+                  dispatched_quantity=10, priority="Medium", due_date=_date(2026, 1, 1),
+                  status="Pending", notes=None, created_at=None)
+    good = SimpleNamespace(order_quantity=100, **fields)
+    legacy = SimpleNamespace(order_quantity=None, **{**fields, "id": 2, "order_no": "CO-NULLQ"})
+
+    good_s = schemas.CustomerOrderResponse.model_validate(good)    # must NOT raise
+    bad_s = schemas.CustomerOrderResponse.model_validate(legacy)   # was a 500
+
+    assert good_s.order_quantity == 100, good_s.order_quantity
+    assert bad_s.order_quantity == 0 and isinstance(bad_s.order_quantity, int), bad_s.order_quantity
+    print("PASS customer-order response heals NULL order_quantity -> 0 (list no longer 500s)")
+
+
+def test_update_customer_order_survives_null_order_quantity():
+    # A PATCH that only touches notes on a loaded legacy NULL-order_quantity row hit
+    # `dispatched_quantity > order.order_quantity` == `int > None` -> TypeError 500. With
+    # no known order quantity the handler must not 500, must not fabricate a status
+    # transition, and the NULL must read as 0 on the way out.
+    db = _iso_session()
+    tok = T.set_current_tenant("TA")
+    try:
+        co = orders_routes.create_customer_order(_co("CO-Q2", 100, 0), db=db, current_user={"tenant": "TA"})
+        before_status = co.status
+        row = db.query(models.CustomerOrder).filter(models.CustomerOrder.id == co.id).first()
+        set_committed_value(row, "order_quantity", None)   # loaded legacy-NULL state
+        updated = orders_routes.update_customer_order(
+            co.id, schemas.CustomerOrderUpdate(notes="checked"),
+            db=db, current_user={"tenant": "TA"},
+        )
+    finally:
+        T.reset_current_tenant(tok)
+    # No TypeError 500 (the point), the requested field applied, and — with no known
+    # order quantity — NO fabricated status transition. (db.refresh reloads the real
+    # on-disk order_quantity, so the None->0 reading is pinned by the serializer test
+    # above, not here; this test's job is the crash + the honest status.)
+    assert updated.notes == "checked", updated.notes
+    assert updated.status == before_status, (updated.status, before_status)  # unknown target -> not auto-completed
+    print("PASS update customer order: NULL order_quantity (no 500, no fabricated dispatch)")
+
+
+def test_purchase_order_response_heals_null_order_quantity():
+    # PurchaseOrderResponse sibling of the customer-order serializer test above.
+    fields = dict(id=1, po_no="PO-OK", supplier_id=1, item_id=None, item_name="Widget",
+                  received_quantity=10, unit="ea", expected_delivery_date=_date(2026, 1, 1),
+                  status="Open", notes=None, created_at=None, awaiting_approval=None)
+    good = SimpleNamespace(order_quantity=100, **fields)
+    legacy = SimpleNamespace(order_quantity=None, **{**fields, "id": 2, "po_no": "PO-NULLQ"})
+
+    good_s = schemas.PurchaseOrderResponse.model_validate(good)    # must NOT raise
+    bad_s = schemas.PurchaseOrderResponse.model_validate(legacy)   # was a 500
+
+    assert good_s.order_quantity == 100, good_s.order_quantity
+    assert bad_s.order_quantity == 0 and isinstance(bad_s.order_quantity, int), bad_s.order_quantity
+    print("PASS purchase-order response heals NULL order_quantity -> 0 (list no longer 500s)")
+
+
+def test_update_purchase_order_survives_null_order_quantity():
+    # A notes-only PATCH on a loaded legacy NULL-order_quantity PO hit
+    # `received_quantity > po.order_quantity` == `int > None` -> TypeError 500. No crash,
+    # no fabricated "Received", NULL reads as 0 out, and no phantom stock movement.
+    db = _iso_session()
+    tok = T.set_current_tenant("TA")
+    try:
+        s1 = orders_routes.create_supplier(_supplier("S1", "Acme"), db=db, current_user={"tenant": "TA"})
+        po = orders_routes.create_purchase_order(_po("PO-Q2", s1.id, 100, 0), db=db, current_user={"tenant": "TA"})
+        before_status = po.status
+        row = db.query(models.PurchaseOrder).filter(models.PurchaseOrder.id == po.id).first()
+        set_committed_value(row, "order_quantity", None)   # loaded legacy-NULL state
+        updated = orders_routes.update_purchase_order(
+            po.id, schemas.PurchaseOrderUpdate(notes="noted"),
+            db=db, current_user={"tenant": "TA"},
+        )
+        txns = db.query(models.InventoryTransaction).count()
+    finally:
+        T.reset_current_tenant(tok)
+    # No TypeError 500 (the point), the field applied, no fabricated "Received" from an
+    # unknown target, and no phantom stock movement. (db.refresh reloads the real on-disk
+    # order_quantity; the None->0 reading is pinned by the serializer test above.)
+    assert updated.notes == "noted", updated.notes
+    assert updated.status == before_status, (updated.status, before_status)  # unknown target -> not auto-completed
+    assert txns == 0, f"a notes-only PATCH must not fabricate a stock receipt (got {txns})"
+    print("PASS update purchase order: NULL order_quantity (no 500, no fabricated receipt)")
+
+
 if __name__ == "__main__":
     test_procurement_paths_owned_by_orders_routes()
     test_duplicate_order_no_across_tenants_now_succeeds()
@@ -1189,4 +1304,8 @@ if __name__ == "__main__":
     test_update_purchase_order_rejects_negative_received()
     test_late_order_generator_dedups_against_null_status_open_escalation()
     test_overdue_po_generator_dedups_against_null_status_open_escalation()
+    test_customer_order_response_heals_null_order_quantity()
+    test_update_customer_order_survives_null_order_quantity()
+    test_purchase_order_response_heals_null_order_quantity()
+    test_update_purchase_order_survives_null_order_quantity()
     print("ALL ORDERS ROUTE TESTS PASSED")

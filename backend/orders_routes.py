@@ -185,17 +185,29 @@ def update_customer_order(
     # #266 and quality #324 ingests). A NULL heals to 0 above and is fine; a negative
     # (`{"dispatched_quantity": -5}`) is physically impossible and would corrupt the
     # dispatch-rate window exactly as on create — so a clean 400, not a stored
-    # negative. order_quantity isn't settable via this schema, so it needs no guard.
+    # negative. order_quantity isn't settable via this schema, so it needs no negative guard.
     if order.dispatched_quantity < 0:
         raise HTTPException(status_code=400, detail="quantities must be non-negative")
 
-    if order.dispatched_quantity > order.order_quantity:
-        raise HTTPException(status_code=400, detail="Dispatched quantity cannot exceed order quantity")
+    # order_quantity is Column(Integer, nullable=False) but with NO default, and that
+    # constraint is not retro-applied to a raw-SQL / migration / legacy row — so such a
+    # row can carry a genuine NULL (the same case tick_customer_order and the
+    # WorkOrder/plan PATCHes already guard, and that CustomerOrderResponse now heals on
+    # the way out). `dispatched_quantity > order.order_quantity` was `int > None` ->
+    # TypeError, 500-ing even a PATCH that only touches notes. With no known order
+    # quantity we cannot say the dispatch exceeds it or that the order is complete, so
+    # skip both the over-dispatch refusal and the status transition rather than fabricate
+    # a "Dispatched" from an unknown target (ADR-0010; mirrors production_planning_routes'
+    # NULL-target guard). The NULL reaches the response as the column's own 0 via the
+    # serializer heal.
+    if order.order_quantity is not None:
+        if order.dispatched_quantity > order.order_quantity:
+            raise HTTPException(status_code=400, detail="Dispatched quantity cannot exceed order quantity")
 
-    if order.dispatched_quantity >= order.order_quantity:
-        order.status = "Dispatched"
-    elif order.dispatched_quantity > 0 and order.status != "Cancelled":
-        order.status = "Partial"
+        if order.dispatched_quantity >= order.order_quantity:
+            order.status = "Dispatched"
+        elif order.dispatched_quantity > 0 and order.status != "Cancelled":
+            order.status = "Partial"
 
     db.commit()
     db.refresh(order)
@@ -583,17 +595,29 @@ def update_purchase_order(
     # #266 and quality #324 ingests). A NULL heals to 0 above and is fine; a negative
     # (`{"received_quantity": -5}`) is physically impossible and would corrupt the
     # receipt-rate window — so a clean 400 before the receipt delta and status logic
-    # run. order_quantity isn't settable via this schema, so it needs no guard.
+    # run. order_quantity isn't settable via this schema, so it needs no negative guard.
     if po.received_quantity < 0:
         raise HTTPException(status_code=400, detail="quantities must be non-negative")
 
-    if po.received_quantity > po.order_quantity:
-        raise HTTPException(status_code=400, detail="Received quantity cannot exceed order quantity")
+    # order_quantity is Column(Integer, nullable=False) but with NO default, and that
+    # constraint is not retro-applied to a raw-SQL / migration / legacy row — so such a
+    # row can carry a genuine NULL (the same case tick_customer_order and the
+    # WorkOrder/plan PATCHes already guard, and that PurchaseOrderResponse now heals on
+    # the way out). `received_quantity > po.order_quantity` was `int > None` -> TypeError,
+    # 500-ing even an ordinary notes/receive PATCH. With no known order quantity we
+    # cannot say the receipt exceeds it or that the PO is complete, so skip both the
+    # over-receive refusal and the status transition rather than fabricate a "Received"
+    # from an unknown target (ADR-0010; mirrors production_planning_routes' NULL-target
+    # guard). The receipt delta below is independent of order_quantity and still runs;
+    # the NULL reaches the response as the column's own 0 via the serializer heal.
+    if po.order_quantity is not None:
+        if po.received_quantity > po.order_quantity:
+            raise HTTPException(status_code=400, detail="Received quantity cannot exceed order quantity")
 
-    if po.received_quantity >= po.order_quantity:
-        po.status = "Received"
-    elif po.received_quantity > 0 and po.status != "Cancelled":
-        po.status = "Partial"
+        if po.received_quantity >= po.order_quantity:
+            po.status = "Received"
+        elif po.received_quantity > 0 and po.status != "Cancelled":
+            po.status = "Partial"
 
     # SIGNED. `max(..., 0)` meant a received figure could only ever be revised UP:
     # correcting a mistyped receipt did nothing to stock, so the over-received units

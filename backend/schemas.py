@@ -819,6 +819,20 @@ class CustomerOrderResponse(BaseModel):
     # untouched (mode="before" only rewrites None).
     _heal_dispatched_quantity = field_validator("dispatched_quantity", mode="before")(_coalesce_null_count)
 
+    # order_quantity is Column(Integer, nullable=False) but with NO ORM/server default,
+    # and nullable=False is NOT retro-applied to a raw-SQL / migration / legacy row — so
+    # such a row can hold a genuine NULL (the same threat model this file heals the
+    # count columns against, e.g. predictive_engine._int's docstring: "the nullable=False
+    # count columns because that constraint isn't retro-applied to pre-existing rows").
+    # Typed non-optional here, so one such NULL row raised Pydantic ValidationError during
+    # response serialisation and 500-ed the WHOLE GET /customer-orders list — one bad row
+    # hiding every good order, on an endpoint the order-book dashboard polls. The compute
+    # paths already read this NULL as 0 (the CSV export reads `o.order_quantity or 0`,
+    # /analytics/customer-orders COALESCEs it); the raw-ORM list serializer was the reader
+    # left un-healed. Coalesce a NULL to the column's own 0 on the way out — a real
+    # recorded value is untouched (mode="before" only rewrites None).
+    _heal_order_quantity = field_validator("order_quantity", mode="before")(_coalesce_null_count)
+
     class Config:
         from_attributes = True
     _heal_priority = field_validator("priority", mode="before")(_coalesce_null_text('Medium'))
@@ -912,6 +926,13 @@ class PurchaseOrderResponse(BaseModel):
     # left un-healed. Coalesce a NULL to the column's own default of 0 on the way out,
     # matching the #375/#395 heals; a real recorded 0 is untouched.
     _heal_received_quantity = field_validator("received_quantity", mode="before")(_coalesce_null_count)
+
+    # order_quantity is Column(Integer, nullable=False) with NO default — the same
+    # un-retro-applied-constraint NULL case as CustomerOrderResponse.order_quantity above.
+    # Typed non-optional here, so a single legacy NULL-order_quantity row 500-ed the WHOLE
+    # GET /purchase-orders list during serialisation. The CSV export and /analytics/purchasing
+    # already read it as 0; coalesce the serializer too so one corrupt row can't hide the list.
+    _heal_order_quantity = field_validator("order_quantity", mode="before")(_coalesce_null_count)
 
     class Config:
         from_attributes = True

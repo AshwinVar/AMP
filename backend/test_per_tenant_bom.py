@@ -284,6 +284,129 @@ def test_a_zero_rate_line_writes_no_ledger_row():
           str([(t.transaction_type, t.quantity) for t in txns]))
 
 
+def test_finished_goods_receive_is_bounded_like_every_other_stock_writer():
+    """A completion cannot drive finished-goods stock past the INTEGER ceiling.
+
+    The finished-goods receive (subscribers.move_bom_on_production_completed) adds
+    the completed quantity to current_stock. A finished good accumulates across
+    every completion over the factory's life, so without a ceiling current_stock
+    grows unbounded — and on PostgreSQL's INTEGER column a value past 2,147,483,647
+    is an `integer out of range` DataError (a subscriber error propagates by design,
+    so it 500s the whole completion). Every other stock writer refuses this
+    (#766/#772/#779) via the shared check_stock_levels bound; this one must too.
+
+    MAX_QTY = 1,000,000,000 (payload_fields) is the shared cap — "a typo, not a
+    stock". Independently-derived expectations below, not read back from the code.
+    """
+    from payload_fields import MAX_QTY
+    db = fresh_db()
+    print()
+    print("=" * 74)
+    print("4b. A FINISHED-GOODS RECEIVE IS BOUNDED LIKE EVERY OTHER STOCK WRITER")
+    print("=" * 74)
+    tok = tenancy.set_current_tenant(None)
+    # A finished good already sitting one unit below the cap, and a raw component
+    # with plenty of stock so the consume side never limits the completion.
+    near_cap = MAX_QTY - 1            # 999,999,999
+    db.add(models.InventoryItem(tenant_code="T", item_code="RM", item_name="bar",
+                                category="Raw", unit="kg", current_stock=MAX_QTY,
+                                reorder_level=1))
+    db.add(models.InventoryItem(tenant_code="T", item_code="FG", item_name="good",
+                                category="Finished", unit="pc",
+                                current_stock=near_cap, reorder_level=0))
+    db.commit()
+    b = models.BillOfMaterials(tenant_code="T", part_number="P", revision="A",
+                               output_item_code="FG", active=True, created_by="s")
+    b.components.append(models.BomComponent(tenant_code="T", component_code="RM",
+                                            quantity_per_unit=1, unit="kg"))
+    db.add(b)
+    db.commit()
+    tenancy.reset_current_tenant(tok)
+
+    # near_cap (999,999,999) + 1 = MAX_QTY exactly: the boundary is INCLUSIVE, so
+    # this completion is allowed and lands the stock exactly on the cap.
+    complete(db, "T", "P", 1, wo="WO-AT-CAP")
+    check("a receipt landing exactly on MAX_QTY is allowed",
+          stock(db, "T", "FG") == MAX_QTY, str(stock(db, "T", "FG")))
+    check("the raw component was consumed (1/unit x 1)",
+          stock(db, "T", "RM") == MAX_QTY - 1, str(stock(db, "T", "RM")))
+
+    # One more unit would be MAX_QTY + 1 > MAX_QTY: refused with a 400, and NOTHING
+    # moves — not the finished good, not the raw component already decremented
+    # earlier in the same handler, and no ledger row for this completion.
+    tok = tenancy.set_current_tenant(None)
+    rm_before = stock(db, "T", "RM")
+    fg_before = stock(db, "T", "FG")
+    txns_before = db.query(models.InventoryTransaction).count()
+    tenancy.reset_current_tenant(tok)
+    raised = None
+    tok = tenancy.set_current_tenant("T")
+    try:
+        subscribers.move_bom_on_production_completed(
+            ProductionCompleted(tenant_code="T", work_order_id=2,
+                                work_order_no="WO-OVER", part_number="P", quantity=1), db)
+        db.commit()
+    except HTTPException as e:
+        db.rollback()
+        raised = e
+    finally:
+        tenancy.reset_current_tenant(tok)
+    check("a receipt that would exceed MAX_QTY is refused with a 400",
+          raised is not None and raised.status_code == 400,
+          "no HTTPException raised" if raised is None else str(raised.status_code))
+    tok = tenancy.set_current_tenant(None)
+    rm_after = stock(db, "T", "RM")
+    fg_after = stock(db, "T", "FG")
+    txns_after = db.query(models.InventoryTransaction).count()
+    tenancy.reset_current_tenant(tok)
+    check("the refused completion left the finished good untouched",
+          fg_after == fg_before, f"{fg_before} -> {fg_after}")
+    check("the refused completion left the raw component untouched (atomic)",
+          rm_after == rm_before, f"{rm_before} -> {rm_after}")
+    check("the refused completion wrote no ledger row",
+          txns_after == txns_before, f"{txns_before} -> {txns_after}")
+
+
+def test_finished_goods_receive_and_ledger_reconcile():
+    """On an ordinary completion the Receive ledger quantity equals the stock delta.
+
+    The guard is a strict no-op on every realistic completion, and the amount
+    received onto the shelf must match the amount recorded in the ledger (rule-3:
+    a stock figure and the ledger that explains it must reconcile).
+    """
+    db = fresh_db()
+    print()
+    print("=" * 74)
+    print("4c. AN ORDINARY RECEIVE: LEDGER QUANTITY == STOCK DELTA")
+    print("=" * 74)
+    tok = tenancy.set_current_tenant(None)
+    db.add(models.InventoryItem(tenant_code="T", item_code="RM", item_name="bar",
+                                category="Raw", unit="kg", current_stock=1000,
+                                reorder_level=1))
+    db.add(models.InventoryItem(tenant_code="T", item_code="FG", item_name="good",
+                                category="Finished", unit="pc", current_stock=40,
+                                reorder_level=0))
+    db.commit()
+    b = models.BillOfMaterials(tenant_code="T", part_number="P", revision="A",
+                               output_item_code="FG", active=True, created_by="s")
+    b.components.append(models.BomComponent(tenant_code="T", component_code="RM",
+                                            quantity_per_unit=2, unit="kg"))
+    db.add(b)
+    db.commit()
+    tenancy.reset_current_tenant(tok)
+
+    complete(db, "T", "P", 25, wo="WO-OK")
+    check("finished-goods stock rose by the completed quantity (40 + 25)",
+          stock(db, "T", "FG") == 65, str(stock(db, "T", "FG")))
+    tok = tenancy.set_current_tenant(None)
+    receive = (db.query(models.InventoryTransaction)
+               .filter(models.InventoryTransaction.transaction_type == "Receive").all())
+    tenancy.reset_current_tenant(tok)
+    check("exactly one Receive row, its quantity equal to the stock delta (25)",
+          len(receive) == 1 and receive[0].quantity == 25,
+          str([(t.transaction_type, t.quantity) for t in receive]))
+
+
 def test_resolution_picks_the_right_revision():
     db = fresh_db()
     print()
@@ -464,6 +587,8 @@ if __name__ == "__main__":
     test_a_product_the_platform_never_heard_of_now_works()
     test_a_part_with_no_recipe_still_moves_nothing()
     test_a_zero_rate_line_writes_no_ledger_row()
+    test_finished_goods_receive_is_bounded_like_every_other_stock_writer()
+    test_finished_goods_receive_and_ledger_reconcile()
     test_resolution_picks_the_right_revision()
     test_the_api_validates_and_isolates()
     test_rbac_is_admin_only()

@@ -8,6 +8,7 @@ import bom
 import models
 import stock_events
 from events import ProductionCompleted, event_bus
+from inventory_routes import check_stock_levels
 
 
 def move_bom_on_production_completed(event: ProductionCompleted, db) -> None:
@@ -102,7 +103,29 @@ def move_bom_on_production_completed(event: ProductionCompleted, db) -> None:
         if fg_item:
             # Same nullable-column guard as the component side: a NULL
             # finished-goods stock must not TypeError-500 the completion write.
-            fg_item.current_stock = (fg_item.current_stock or 0) + qty
+            on_hand = fg_item.current_stock or 0
+            new_stock = on_hand + qty
+            # Bound the RESULTING stock to [0, MAX_QTY] through the shared helper,
+            # the SAME ceiling every other stock writer enforces (inventory create /
+            # PATCH / the transaction ledger #766, the GMATS stock-in #772, the PO
+            # receipt #779). This finished-goods receive was the one stock mutation
+            # still skipping it. A finished good accumulates across every completion
+            # over the factory's life, so current_stock grows without bound, and a
+            # completion that drives it past MAX_QTY would — on PostgreSQL's INTEGER
+            # column — overflow past 2,147,483,647 into an `integer out of range`
+            # DataError. A subscriber error propagates by design (events.py), so that
+            # 500s the whole work-order-completion write (the exact overflow the
+            # sibling writers refuse elsewhere); on SQLite it stores a stock the
+            # inventory endpoints would reject, corrupting the low-stock read-model
+            # (generate_low_stock_escalations reads it). check_stock_levels raises a
+            # clean 400 BEFORE the stock and ledger row are written — this subscriber
+            # runs synchronously inside the completion's request and nothing commits
+            # until after publish, so a refused completion persists nothing — the same
+            # outcome the PO-receipt path (#779) chose for the identical overflow.
+            # reorder_level is unchanged here, so a legacy NULL is coalesced to 0 for
+            # the pair check.
+            check_stock_levels(new_stock, fg_item.reorder_level or 0)
+            fg_item.current_stock = new_stock
             db.add(models.InventoryTransaction(
                 item_id=fg_item.id,
                 transaction_type="Receive",

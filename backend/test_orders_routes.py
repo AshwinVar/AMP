@@ -201,6 +201,7 @@ def test_purchasing_analytics_supplier_pending_reconciled_and_no_n_plus_1():
     # ordered = 100+50+10+40+20+10 = 230 ; received = 30+50+10+0+5+0 = 95 -> round(95/230*100)=41
     assert result["ordered_qty"] == 230 and result["received_qty"] == 95, result
     assert result["receipt_rate"] == 41, result["receipt_rate"]
+    assert result["receipt_measured"] is True, result["receipt_measured"]  # ordered > 0 -> a real reading
 
     # 6 purchase orders, but the analytics must not run ~6 supplier lookups. The
     # bounded query count (a small constant) is what the N+1 removal guarantees;
@@ -210,7 +211,11 @@ def test_purchasing_analytics_supplier_pending_reconciled_and_no_n_plus_1():
 
 
 def test_purchasing_analytics_empty_book():
-    # No suppliers, no POs: no crash, honest zeros, empty breakdown.
+    # No suppliers, no POs: no crash, empty breakdown, and an UNMEASURED receipt
+    # rate — nothing ordered means no basis for a rate, so None ("—"), not a "0%"
+    # that reads as suppliers delivering nothing (ADR-0010; the rule
+    # test_rates_say_not_measured.py applies to the sibling tiles). A COUNT over an
+    # empty book really is 0, so purchase_orders stays 0.
     db = _iso_session()
     tok = T.set_current_tenant("TA")
     try:
@@ -218,9 +223,10 @@ def test_purchasing_analytics_empty_book():
     finally:
         T.reset_current_tenant(tok)
     assert result["purchase_orders"] == 0
-    assert result["receipt_rate"] == 0  # ordered_qty == 0 -> no divide-by-zero
+    assert result["receipt_rate"] is None, result["receipt_rate"]  # nothing ordered -> not measured
+    assert result["receipt_measured"] is False, result["receipt_measured"]
     assert result["supplier_pending"] == {}
-    print("PASS purchasing analytics on an empty order book -> honest zeros, no crash")
+    print("PASS purchasing analytics on an empty order book -> receipt rate not measured (None), counts 0, no crash")
 
 
 def test_purchasing_analytics_survives_null_received_quantity():
@@ -250,6 +256,7 @@ def test_purchasing_analytics_survives_null_received_quantity():
     assert result["received_qty"] == 30, result["received_qty"]
     # receipt_rate = round(30/140*100) = round(21.43) = 21 (NOT a crash, NOT dropping the NULL PO).
     assert result["receipt_rate"] == 21, result["receipt_rate"]
+    assert result["receipt_measured"] is True, result["receipt_measured"]
     # supplier_pending under Acme: (100-30) + (40 - NULL->0) = 70 + 40 = 110.
     assert result["supplier_pending"] == {"Acme": 110}, result["supplier_pending"]
     print("PASS purchasing analytics: NULL received_quantity -> 0, totals reconcile (140/30/21%, pending 110)")
@@ -287,6 +294,7 @@ def test_customer_order_analytics_survives_null_dispatched_quantity():
     assert result["total_dispatched_qty"] == 40, result["total_dispatched_qty"]
     # dispatch_rate = round(40/150*100) = round(26.67) = 27.
     assert result["dispatch_rate"] == 27, result["dispatch_rate"]
+    assert result["dispatch_measured"] is True, result["dispatch_measured"]
     assert result["total_orders"] == 2, result["total_orders"]
     print("PASS customer-order analytics: NULL dispatched_quantity -> 0, totals reconcile (150/40/27%)")
 
@@ -336,6 +344,7 @@ def test_customer_order_analytics_buckets_and_reconciles():
     assert result["total_dispatched_qty"] == 52, result["total_dispatched_qty"]
     # dispatch_rate = round(52/240*100) = round(21.67) = 22.
     assert result["dispatch_rate"] == 22, result["dispatch_rate"]
+    assert result["dispatch_measured"] is True, result["dispatch_measured"]
     assert result["priority_counts"] == {"High": 2, "Medium": 2, "Low": 1}, result["priority_counts"]
     assert result["customer_counts"] == {"Acme": 140, "Beta": 50, "Gamma": 50}, result["customer_counts"]
 
@@ -348,8 +357,12 @@ def test_customer_order_analytics_buckets_and_reconciles():
 
 
 def test_customer_order_analytics_empty_book():
-    # Empty table: COALESCE(SUM(..),0) must not surface a NULL, dispatch_rate must
-    # guard the zero divisor, and the group-by breakdowns are empty dicts.
+    # Empty table: COALESCE(SUM(..),0) must not surface a NULL, the group-by
+    # breakdowns are empty dicts, and the dispatch rate is UNMEASURED — no order
+    # quantity means no basis for a rate, so None ("—"), not a "0%" that reads as a
+    # total failure to dispatch (ADR-0010; the SAME answer
+    # /analytics/final-executive-summary gives the same empty book). Counts and sums
+    # over an empty table really are 0.
     db = _iso_session()
     tok = T.set_current_tenant("TA")
     try:
@@ -360,13 +373,44 @@ def test_customer_order_analytics_empty_book():
     assert result["total_orders"] == 0, result["total_orders"]
     assert result["total_order_qty"] == 0, result["total_order_qty"]
     assert result["total_dispatched_qty"] == 0, result["total_dispatched_qty"]
-    assert result["dispatch_rate"] == 0, result["dispatch_rate"]
+    assert result["dispatch_rate"] is None, result["dispatch_rate"]  # nothing ordered -> not measured
+    assert result["dispatch_measured"] is False, result["dispatch_measured"]
     assert result["late"] == 0, result["late"]
     assert result["partial"] == 0, result["partial"]
     assert result["status_counts"] == {}, result["status_counts"]
     assert result["priority_counts"] == {}, result["priority_counts"]
     assert result["customer_counts"] == {}, result["customer_counts"]
-    print("PASS customer-order analytics: empty book returns zeroes, no NULL, no divide-by-zero")
+    print("PASS customer-order analytics: empty book -> dispatch rate not measured (None), counts/sums 0, no NULL")
+
+
+def test_order_rates_distinguish_measured_zero_from_no_basis():
+    # The honesty rule is about an empty DENOMINATOR, not an empty numerator: a book
+    # that ORDERED units but dispatched/received none has a real 0% rate (a measured
+    # reading a manager should see), while a book with NOTHING ordered has no basis
+    # at all (None, shown as "—"). Pin both so a future "simplify to `or 0`" can't
+    # collapse the two back together — the exact regression the *_measured flag
+    # exists to prevent.
+    db = _iso_session()
+    tok = T.set_current_tenant("TA")
+    try:
+        # Customer orders: 100+50 ordered, 0 dispatched -> a MEASURED 0% dispatch.
+        orders_routes.create_customer_order(_co("CO-A", 100, 0), db=db, current_user={"tenant": "TA"})
+        orders_routes.create_customer_order(_co("CO-B", 50, 0), db=db, current_user={"tenant": "TA"})
+        co = orders_routes.get_customer_order_analytics(db=db, current_user={"tenant": "TA"})
+
+        # Purchasing: 60 ordered, 0 received -> a MEASURED 0% receipt.
+        s1 = orders_routes.create_supplier(_supplier("S1", "Acme"), db=db, current_user={"tenant": "TA"})
+        orders_routes.create_purchase_order(_po("PO-A", s1.id, 60, 0), db=db, current_user={"tenant": "TA"})
+        po = orders_routes.get_purchasing_analytics(db=db, current_user={"tenant": "TA"})
+    finally:
+        T.reset_current_tenant(tok)
+
+    # A genuine 0% rate is the integer 0 and IS measured — never None.
+    assert co["total_order_qty"] == 150 and co["total_dispatched_qty"] == 0, co
+    assert co["dispatch_rate"] == 0 and co["dispatch_measured"] is True, co["dispatch_rate"]
+    assert po["ordered_qty"] == 60 and po["received_qty"] == 0, po
+    assert po["receipt_rate"] == 0 and po["receipt_measured"] is True, po["receipt_rate"]
+    print("PASS order/purchasing rates: a measured 0% stays 0 (measured), only an empty denominator is None")
 
 
 def _seed_order(db, no, status, qty=10, dispatched=0, customer="Acme"):
@@ -1165,6 +1209,7 @@ if __name__ == "__main__":
     test_customer_order_analytics_survives_null_dispatched_quantity()
     test_customer_order_analytics_buckets_and_reconciles()
     test_customer_order_analytics_empty_book()
+    test_order_rates_distinguish_measured_zero_from_no_basis()
     test_customer_order_analytics_folds_partial_synonym_and_reconciles()
     test_customer_order_analytics_status_counts_null_status_is_unknown()
     test_customer_order_analytics_null_status_overdue_counts_as_late()

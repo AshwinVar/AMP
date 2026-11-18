@@ -23,7 +23,10 @@ export type CustomerOrderAnalytics = {
   late: number;
   total_order_qty: number;
   total_dispatched_qty: number;
-  dispatch_rate: number;
+  // null ("—") when nothing was ordered: a rate over an empty denominator is not
+  // measured, not 0% (matches the backend's None + dispatch_measured).
+  dispatch_rate: number | null;
+  dispatch_measured?: boolean;
   priority_counts: Record<string, number>;
   customer_counts: Record<string, number>;
 };

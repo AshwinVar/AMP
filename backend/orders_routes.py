@@ -270,7 +270,18 @@ def get_customer_order_analytics(
     ).one()
     total_order_qty = int(total_order_qty)
     total_dispatched_qty = int(total_dispatched_qty)
-    dispatch_rate = round((total_dispatched_qty / total_order_qty) * 100) if total_order_qty else 0
+    # A RATE OVER NOTHING IS NOT ZERO (ADR-0010 honesty; the defect #697 closed on
+    # the machine-health score, #698 on shift attainment, #699 on the quality rates,
+    # and test_rates_say_not_measured.py on six more tiles). With no order quantity
+    # on the book, a "0% Dispatch Rate" is a lie a sales manager can act on — the
+    # book reads as a total failure to dispatch. None instead, with a
+    # `dispatch_measured` flag beside it so the tile can say "—". This is the SAME
+    # dispatched/ordered ratio /analytics/final-executive-summary already reports as
+    # None for an empty book (analytics_routes.py — `... if order_qty else None` with
+    # `dispatch_measured`); this surface was simply missed by that sweep and
+    # disagreed with it (0 vs None) over the same empty book (rule-3: one metric,
+    # one answer across surfaces).
+    dispatch_rate = round((total_dispatched_qty / total_order_qty) * 100) if total_order_qty else None
 
     # Late = past due and not already dispatched/cancelled. status is String
     # default="Pending" (not NOT NULL); the old Python `row.status not in [...]`
@@ -318,6 +329,9 @@ def get_customer_order_analytics(
         "total_order_qty": total_order_qty,
         "total_dispatched_qty": total_dispatched_qty,
         "dispatch_rate": dispatch_rate,
+        # Says which of "0%" / "—" the dispatch_rate above is: a measured zero or
+        # no basis at all. Mirrors final-executive-summary's `dispatch_measured`.
+        "dispatch_measured": total_order_qty > 0,
         "status_counts": status_breakdown,
         "priority_counts": priority_counts,
         "customer_counts": customer_counts,
@@ -740,7 +754,15 @@ def get_purchasing_analytics(
         if status not in ("Received", "Cancelled"):
             overdue += int(overdue_in_group)
 
-    receipt_rate = round((received_qty / ordered_qty) * 100) if ordered_qty else 0
+    # A RATE OVER NOTHING IS NOT ZERO — the same rule as the dispatch rate above and
+    # the six tiles test_rates_say_not_measured.py fixed (ADR-0010 honesty). With
+    # nothing on order, a "0% Receipt Rate" reads as suppliers delivering none of
+    # what was asked, when nothing was asked at all. None instead, with a
+    # `receipt_measured` flag so the tile can say "—".
+    # (ai/supply's per-supplier receipt_rate deliberately keeps 0 for an empty book:
+    # it is a SORT KEY there — `-receipt_rate` — not a display tile, and a None would
+    # break the ordering. This is a display KPI, so None is both correct and safe.)
+    receipt_rate = round((received_qty / ordered_qty) * 100) if ordered_qty else None
 
     # Per-supplier outstanding (order minus received, floored at 0 per PO, then
     # summed) in one GROUP BY supplier_id — at most one row per supplier, not a
@@ -793,6 +815,9 @@ def get_purchasing_analytics(
         "ordered_qty": ordered_qty,
         "received_qty": received_qty,
         "receipt_rate": receipt_rate,
+        # Says which of "0%" / "—" the receipt_rate above is: a measured zero or no
+        # basis at all (nothing ordered). Mirrors the dispatch_measured flag.
+        "receipt_measured": ordered_qty > 0,
         "supplier_pending": supplier_pending,
     }
 

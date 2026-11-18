@@ -1459,7 +1459,7 @@ export default function DashboardPage() {
     await runOnce("customer-order", async () => {
 
     try {
-      await apiPost<CustomerOrder>("/customer-orders", {
+      const created = await apiPost<CustomerOrder>("/customer-orders", {
         ...customerOrderForm,
         linked_work_order_id: customerOrderForm.linked_work_order_id
           ? Number(customerOrderForm.linked_work_order_id)
@@ -1470,6 +1470,10 @@ export default function DashboardPage() {
         order_quantity: Number(customerOrderForm.order_quantity),
         dispatched_quantity: Number(customerOrderForm.dispatched_quantity),
       });
+
+      // Show the new order immediately; fetchAll() below reconciles the
+      // derived cards without the row waiting on the full dashboard refresh.
+      if (created && typeof created === "object") setCustomerOrders((prev) => [created, ...prev]);
 
       setCustomerOrderForm({
         order_no: "",
@@ -1805,7 +1809,11 @@ export default function DashboardPage() {
     e.preventDefault();
     await runOnce("operator-execution", async () => {
     try {
-      await apiPost<OperatorJobExecution>("/operator/executions", { ...operatorForm, machine_id: Number(operatorForm.machine_id), work_order_id: operatorForm.work_order_id ? Number(operatorForm.work_order_id) : null, production_plan_id: operatorForm.production_plan_id ? Number(operatorForm.production_plan_id) : null, good_count: Number(operatorForm.good_count), rejected_count: Number(operatorForm.rejected_count) });
+      const created = await apiPost<OperatorJobExecution>("/operator/executions", { ...operatorForm, machine_id: Number(operatorForm.machine_id), work_order_id: operatorForm.work_order_id ? Number(operatorForm.work_order_id) : null, production_plan_id: operatorForm.production_plan_id ? Number(operatorForm.production_plan_id) : null, good_count: Number(operatorForm.good_count), rejected_count: Number(operatorForm.rejected_count) });
+      // Show the new row immediately. fetchAll() below still reconciles the
+      // derived cards, but awaiting its ~49-call dashboard refresh before the
+      // row appeared is what made the click feel like it did nothing.
+      if (created && typeof created === "object") setOperatorExecutions((prev) => [created, ...prev]);
       setOperatorForm({ execution_no: "", operator_name: "", machine_id: "", work_order_id: "", production_plan_id: "", job_status: "Started", good_count: 0, rejected_count: 0, notes: "" });
       fetchAll();
     } catch (error) { report(error, "create operator execution"); }

@@ -307,6 +307,30 @@ def test_it_refuses_to_invent_a_service_interval():
           svc["state"] == "unknown", str(svc))
     check("...and says the counter was probably reset",
           "reset" in svc["reason"], svc["reason"])
+    # ...and it still names the last service figure (the last-is-a-number branch).
+    check("...and names the last recorded service hours",
+          "2000" in svc["reason"], svc["reason"])
+
+    # A NEGATIVE hour meter on a NEVER-serviced machine. operating_hours carries
+    # no min/max band, so a negative reading passes interpret() in-range (it is
+    # finite, which the #783 guard allows) and is stored as the first value; a
+    # legacy / raw-SQL row can hold one too. last_service_hours is None, so
+    # since = hours - 0.0 = hours < 0 takes the same `since < 0` branch — where the
+    # old code did round(None, 1) and raised TypeError, 500-ing every OEM/factory
+    # view that reads this installation. It must degrade to the honest "unknown",
+    # not crash.
+    svc = oem_service.service_state(
+        FakeInstall(hours=-5.0, last_service=None), FakeModel(2000))
+    check("a negative counter with no service on record is 'unknown', not a 500",
+          svc["state"] == "unknown", str(svc))
+    check("...and offers no hours_remaining (the data can't support one)",
+          svc["hours_remaining"] is None, str(svc))
+    check("...and names the negative counter it read, without rounding None",
+          "-5" in svc["reason"] and "negative" in svc["reason"], svc["reason"])
+    # The whole dict must be JSON-serialisable — this is what the OEM/factory
+    # views do with it, and the crash class this guards is a view-level 500.
+    check("...and the state serialises cleanly (no NaN/None arithmetic leaked)",
+          json.dumps(svc) and svc["hours_remaining"] is None, str(svc))
 
 
 def test_warranty_never_guesses():

@@ -172,6 +172,33 @@ def test_null_production_counts_mixed_with_real_rows():
     print("PASS calculate_predictive_risk ignores NULL-count rows when pooling reject rate")
 
 
+def test_reject_rate_clamped_to_100_on_corrupt_row():
+    # The ingest enforces good + rejected == total (so rejected <= total) and
+    # non-negativity, but that nullable=False invariant isn't retro-applied: a
+    # legacy / raw-SQL / migration ProductionRecord can hold rejected_count >
+    # total_count. The scorer's own `rejected / total * 100` was UNCLAMPED, so it
+    # DISPLAYED a reject_rate above 100% — a number the data cannot support
+    # (ADR-0010), the same honesty violation #777 clamped for the quality fail
+    # rate. It now routes through the shared analytics_engine.quality_fail_rate,
+    # which caps at 100.
+    #
+    # Independently derived: 15 / 10 * 100 = 150.0 raw -> clamped to 100.0.
+    machines = [SimpleNamespace(id=1, name="M1", status="Running", utilization=70)]
+    records = [SimpleNamespace(machine_id=1, rejected_count=15, total_count=10)]
+    rows = pe.calculate_predictive_risk(machines, [], records, [], [])
+    row = rows[0]
+    assert row["reject_rate"] == 100.0, row            # not the unclamped 150.0
+    # The explanation (ADR-0027) travels with the score and must not show 150 either.
+    reject_component = next(c for c in row["components"] if c["key"] == "reject_high")
+    assert reject_component["measured"] == 100.0, reject_component
+    assert reject_component["fired"] is True and reject_component["points"] == 20
+    # Score is unchanged by the clamp: reject_high (>= 8) fires on 150 or 100 alike,
+    # so the only rule that fires is +20 on a clean 70% Running machine.
+    assert row["risk_score"] == 20, row
+    assert "high reject rate" in row["reasons"]
+    print("PASS calculate_predictive_risk clamps a corrupt reject_rate to 100%, score unchanged")
+
+
 def test_null_target_quantity_counts_as_zero_pressure():
     # WorkOrder.target_quantity is nullable=False, but a legacy / raw-SQL / migration
     # row can hold NULL. `None - actual` raised TypeError on the same line that already
@@ -198,5 +225,6 @@ if __name__ == "__main__":
     test_null_actual_quantity_counts_as_zero()
     test_null_production_counts_counted_as_zero()
     test_null_production_counts_mixed_with_real_rows()
+    test_reject_rate_clamped_to_100_on_corrupt_row()
     test_null_target_quantity_counts_as_zero_pressure()
     print("ALL PREDICTIVE-ENGINE TESTS PASSED")

@@ -4,6 +4,10 @@ from collections import defaultdict
 # minute), understating downtime in the risk score. Use the shared correct one.
 import work_order_status
 from duration import parse_duration_to_minutes
+# The one clamped reject/fail-rate definition, shared with the quality surfaces
+# (see the reject_rate read below). Its home module imports no DB session at
+# call time, only at import — same as work_order_status, already imported above.
+from analytics_engine import quality_fail_rate
 
 
 def _int(value):
@@ -163,9 +167,26 @@ def calculate_predictive_risk(machines, downtime_logs, production_records,
 
         utilization = _int(machine.utilization)
 
-        reject_rate = 0
-        if total_by_machine[machine.id]:
-            reject_rate = round((reject_by_machine[machine.id] / total_by_machine[machine.id]) * 100, 1)
+        # Reject rate as a % of units produced, through the ONE shared, clamped
+        # definition (analytics_engine.quality_fail_rate) the quality escalation
+        # generator and the AI quality recommendation already use. This read kept
+        # its own `rejected / total * 100`, UNCLAMPED: the ingest enforces
+        # good + rejected == total (machines_routes.create_production_record), so a
+        # well-formed plant is always <= 100% and this is a strict no-op — but the
+        # nullable=False count columns aren't retro-constrained, so a legacy /
+        # raw-SQL / migration row holding rejected_count > total_count drove the
+        # DISPLAYED reject_rate above 100% (e.g. 150%) on the predictive-maintenance
+        # surface AND in the ADR-0027 explanation's `measured` field — a number the
+        # data cannot support (ADR-0010), the same honesty violation the quality
+        # fail rate was clamped against in #777 and that calculate_oee_from_record /
+        # pooled_oee already apply to the good/total quality component. The helper
+        # coalesces NULL -> 0, floors at 0, caps at 100 and returns 0.0 for a
+        # non-positive denominator (the old `if total:` divide guard), so it
+        # reconciles reject_rate with that quality ceiling. The risk SCORE is
+        # untouched: the >= 8 / >= 5 thresholds fire identically whether a corrupt
+        # row's rate reads 150 or the clamped 100.
+        reject_rate = round(quality_fail_rate(reject_by_machine[machine.id],
+                                              total_by_machine[machine.id]), 1)
 
         if check("breakdown_now", "Currently in breakdown", 35, machine.status == "Breakdown",
                  machine.status, "", "status is Breakdown", "machine currently in breakdown"):

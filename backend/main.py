@@ -714,6 +714,37 @@ async def startup_event():
                 except Exception as e:
                     db.rollback()
                     log.info(f"[DEMO] demo reseed skipped: {e}")
+        # The MERIDIAN moulding demo (demo_moulding.py) — a de-identified
+        # injection-moulding plant, calibrated on the real first-node signature.
+        # Same single-shot shape: each flag VALUE is consumed exactly once, so a
+        # variable left set cannot rebuild it on every boot. It cannot touch a
+        # customer — demo_moulding refuses unless its tenant is named DEMO_*, and
+        # every delete it issues is filtered to that tenant. A missing
+        # DEMO_PASSWORD raises DemoRefused (not SystemExit), so a misconfigured
+        # flag skips the rebuild instead of failing the deployment.
+        moulding_flag = os.environ.get("RESEED_DEMO_MOULDING")
+        if moulding_flag:
+            import json as _json
+            import demo_moulding
+            consumed = (db.query(models.EventLog)
+                        .filter(models.EventLog.event_type == "DemoMouldingReseeded",
+                                models.EventLog.payload.contains(f'"flag": "{moulding_flag}"'))
+                        .first())
+            if consumed:
+                log.info(f"[DEMO] moulding flag '{moulding_flag}' already consumed — skipping")
+            else:
+                try:
+                    demo_moulding.seed(db)
+                    db.add(models.EventLog(tenant_code="DEFAULT",
+                                           event_type="DemoMouldingReseeded",
+                                           event_version=1,
+                                           payload=_json.dumps({"flag": moulding_flag})))
+                    db.commit()
+                    log.info(f"[DEMO] MERIDIAN moulding demo rebuilt in {demo_moulding.DEMO_TENANT} "
+                             f"(flag '{moulding_flag}' consumed)")
+                except Exception as e:
+                    db.rollback()
+                    log.info(f"[DEMO] moulding demo reseed skipped: {e}")
 
         gmats_inventory_routes.seed_gmats(db)
         # Core MES: ensure OEE + timeline have data (production records & machine events).

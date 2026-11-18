@@ -285,11 +285,24 @@ async def import_machines_csv(
                     # PATCH endpoint keeps its strict 400 for manual edits).
                     status = normalize_machine_status(
                         (row.get("status") or row.get("Status") or "Idle").strip() or "Idle") or "Idle"
-                    try:
-                        utilization = int(float((row.get("utilization") or row.get("Utilization") or "0").strip() or 0))
-                    except (TypeError, ValueError):
-                        utilization = 0
-                    utilization = max(0, min(100, utilization))
+                    # Parse + clamp utilization through the ONE shared helper
+                    # (clamp_utilization), exactly as POST /machines and every ingest
+                    # path (MQTT on_message, industrial IoT) already do — not a
+                    # hand-rolled int(float(...)) + max/min that re-implements it. The
+                    # bare parse caught only (TypeError, ValueError): a non-finite cell
+                    # ("inf"/"-inf"/"Infinity", which Excel and a disconnected analog
+                    # sensor both emit) makes int(float("inf")) raise OverflowError —
+                    # NOT in that tuple — so it escaped the inner guard to the per-row
+                    # handler and LOST the whole machine (name, line, status) over one
+                    # bad utilization cell, while a "nan" cell (ValueError) defaulted
+                    # cleanly to 0. clamp_utilization maps any non-finite / non-numeric
+                    # reading to None (no usable value), which becomes the documented
+                    # new-machine default of 0; a real value is rounded and clamped into
+                    # [0, 100]. Same OverflowError class already fixed for the MQTT
+                    # counts (_non_negative_int), the production CSV import (#774) and
+                    # the shared payload_fields.int_field guard.
+                    clamped = clamp_utilization(row.get("utilization") or row.get("Utilization"))
+                    utilization = clamped if clamped is not None else 0
                     existing = db.query(models.Machine).filter(models.Machine.name == name).first()
                     if existing:
                         if line:

@@ -94,6 +94,24 @@ def read_export(path):
         cells = [c.strip() for c in line.split(",")]
         if not cells or not DATE.match(cells[0]):
             continue
+        # DATE above checks only the SHAPE (dddd/dd/dd); it accepts an IMPOSSIBLE
+        # calendar date a controller with a bad real-time clock, or a bit-flipped
+        # date field, can still write -- '2026/02/30', '2026/13/01', '2026/00/00'.
+        # The real parse happens only later, in _as_datetime() via plan(), where
+        # datetime.strptime raises ValueError ('day is out of range for month')
+        # that NOTHING catches -- so a single corrupt date aborts the whole import
+        # with a raw traceback, breaking exactly the promise read_export makes: a
+        # clean refusal, not a 500. (Same promise a non-finite cell used to break,
+        # #786.) Validate the day HERE, beside the other refusals, so a corrupt
+        # date is refused with an actionable sentence the moment it is read --
+        # exactly as hmi_sheet._parse_date does on the transcription path.
+        try:
+            datetime.strptime(cells[0], "%Y/%m/%d")
+        except ValueError:
+            raise AricoImportError(
+                f"{os.path.basename(path)}: {cells[0]!r} is not a real date "
+                f"(a day the calendar does not have). Check the controller's "
+                f"clock and re-export.")
         hours = cells[1:1 + HOURS]
         if len(hours) < HOURS:
             raise AricoImportError(

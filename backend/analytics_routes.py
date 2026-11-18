@@ -13,7 +13,7 @@ analytics_summary is defined at MODULE LEVEL (not nested in register) because
 main's /reports/daily-summary.txt calls it directly; it is registered as
 /analytics/summary here and imported by main.
 """
-from datetime import datetime
+from datetime import MAXYEAR, MINYEAR, datetime
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import func, or_
@@ -284,6 +284,29 @@ def oee_summary(db: Session = Depends(_get_db), current_user: dict = Depends(get
 router.get("/analytics/summary")(analytics_summary)
 
 
+# The plant board's day/month windows are computed as `datetime(year, ...) -
+# IST_OFFSET` (ai.plant_board), so a year at the very edge of datetime's
+# representable range blows the arithmetic up: at MINYEAR the IST offset
+# subtraction underflows below datetime.min (`datetime(1,1,1) - 5h30m` raises
+# OverflowError), and the month view's December boundary `datetime(year + 1, 1, 1)`
+# overflows past datetime.max at MAXYEAR (`datetime(10000, 1, 1)` raises
+# ValueError). A client-supplied `year`/`on` outside this band — and the month
+# endpoint takes a raw unbounded `int` — raised that exception uncaught and 500-ed
+# the board with a bare traceback, where a bad `month` or a malformed `on` already
+# return a clean 400. Reject an out-of-range year the same way. A real plant's
+# operating dates are nowhere near these limits, so this rejects only nonsensical
+# input, never a date the board could actually report on.
+_MIN_BOARD_YEAR = MINYEAR + 1   # 2    — datetime(1, 1, 1) - IST_OFFSET underflows
+_MAX_BOARD_YEAR = MAXYEAR - 1   # 9998 — the month view's datetime(year + 1, ...) overflows
+
+
+def _require_board_year(year: int) -> None:
+    if not _MIN_BOARD_YEAR <= year <= _MAX_BOARD_YEAR:
+        raise HTTPException(
+            status_code=400,
+            detail=f"year must be between {_MIN_BOARD_YEAR} and {_MAX_BOARD_YEAR}, not {year}")
+
+
 @router.get("/analytics/plant-board")
 def plant_board_day(on: str = "", db: Session = Depends(_get_db),
                     current_user: dict = Depends(get_current_user)):
@@ -302,6 +325,10 @@ def plant_board_day(on: str = "", db: Session = Depends(_get_db),
     except ValueError:
         raise HTTPException(status_code=400,
                             detail=f"`on` must be YYYY-MM-DD, not {on!r}")
+    # strptime accepts `0001-01-01`, whose IST-offset day boundary underflows
+    # datetime.min inside ai.plant_board.day — guard it before that 500s (see
+    # _require_board_year).
+    _require_board_year(when.year)
     return ai.plant_board.day(db, request_tenant(current_user), when)
 
 
@@ -315,6 +342,10 @@ def plant_board_month(year: int = 0, month: int = 0,
     month = month or now.month
     if not 1 <= month <= 12:
         raise HTTPException(status_code=400, detail=f"month must be 1-12, not {month}")
+    # `year` is a raw unbounded int from the query string: a negative, a huge, or an
+    # edge year made ai.plant_board.month's datetime arithmetic raise and 500 — reject
+    # it with a clean 400, the same way `month` above is bounded (see _require_board_year).
+    _require_board_year(year)
     return ai.plant_board.month(db, request_tenant(current_user), year, month)
 
 

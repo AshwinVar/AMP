@@ -132,9 +132,22 @@ def get_costing_analytics(db: Session = Depends(_get_db), current_user: dict = D
     # Spend by type / department, grouped in SQL (one row per distinct key — a
     # small, naturally-bounded result set), NULL-safe on the amount. The parts sum
     # to manual_cost by construction: both coalesce amount and cover every row, so
-    # the headline and its breakdowns reconcile. department keeps the endpoint's
-    # existing rule — a NULL *or empty* label collapses to "Unassigned" — merged in
-    # Python so both land in one bucket (SQL COALESCE alone would not fold "").
+    # the headline and its breakdowns reconcile. BOTH breakdowns also collapse an
+    # unlabelled grouping key to a named bucket — merged in Python so every such row
+    # lands in one place (SQL COALESCE alone would not fold "").
+    #
+    # cost_type is Column(String, nullable=False), but CostRecordCreate types it a
+    # bare `str` with no min_length, so an empty string passes validation and POST
+    # /cost-records stores it — and that empty cost_type then surfaced as a literal
+    # "" KEY in by_type (JSON `{"": 120}`), a blank slice on the costing chart: a
+    # stored non-value leaking straight into a displayed label (ADR-0010), the same
+    # class the downtime Pareto's "Unknown" fold and the department fold just below
+    # already close. An empty cost_type folds to "Other" — the SAME label the
+    # money-story cost read-model (ai/cost.py: `c.cost_type or "Other"`) already
+    # gives an unlabelled cost, so the two cost-by-type surfaces name it identically
+    # (one convention per dimension, exactly how normalize_downtime_reason matches
+    # ai.downtime's "Unknown"). The amount still counts — the parts/whole
+    # reconciliation is untouched — only the label is named instead of left blank.
     by_type = {}
     for cost_type, total in (
         db.query(models.CostRecord.cost_type,
@@ -142,7 +155,8 @@ def get_costing_analytics(db: Session = Depends(_get_db), current_user: dict = D
         .group_by(models.CostRecord.cost_type)
         .all()
     ):
-        by_type[cost_type] = by_type.get(cost_type, 0) + int(total)
+        key = cost_type or "Other"
+        by_type[key] = by_type.get(key, 0) + int(total)
 
     by_department = {}
     for department, total in (

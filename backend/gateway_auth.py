@@ -34,6 +34,7 @@ database, and keeps the tenancy decision where tenancy decisions already are.
 import hashlib
 import hmac
 import json
+import math
 import time
 
 #: Bumped only if the canonical form changes. A scheme AMP does not know is
@@ -80,6 +81,20 @@ def verify_signature(payload, secret, now=None, max_age=MAX_AGE_S):
         signed_at = float(payload.get("signed_at") or 0)
     except (TypeError, ValueError):
         return False, "signed_at is not a time"
+    # A non-finite signed_at (NaN / +-inf) is not a real signing time. It passes
+    # float() -- NaN and inf ARE floats, and JSON permits them (Python's
+    # json.loads decodes `Infinity`/`NaN`/`1e400`, and the MQTT ingest reads raw
+    # json), so an unauthenticated publisher can put one in the packet BEFORE AMP
+    # authenticates the gateway. inf then reached `int(-age)` in the "future"
+    # branch below and raised OverflowError, and NaN made both age comparisons
+    # false and fell through to a misleading "signature does not match" -- either
+    # way breaking the one guarantee this function documents ("Never raises -- a
+    # malformed packet is a refusal, not a crash"). A crash here is swallowed by
+    # the listener's catch-all and logged as an internal error, so the packet is
+    # NOT recorded as the gateway refusal it is and never reaches the operator's
+    # notification feed. isfinite() turns it into an honest, explicit refusal.
+    if not math.isfinite(signed_at):
+        return False, "signed_at is not a finite time"
     age = now - signed_at
     if age > max_age:
         return False, f"signed {int(age)}s ago, older than the {int(max_age)}s window"

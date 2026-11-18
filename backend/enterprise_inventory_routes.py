@@ -596,8 +596,28 @@ def approve_cycle_count(cid: int, db: Session = Depends(get_db), current_user: d
                 # never "set to 90". The stock mutation now matches the audit row
                 # instead of contradicting it. NULL current_stock (nullable
                 # Integer) coalesces to 0, the idiom accept_grn uses above.
+                #
+                # FLOOR THE RESULT AT 0. A count is taken on the floor and approved
+                # later, and stock booked OUT in between (an issue slip, a BOM
+                # consumption, a PATCH) can push `before + variance` below zero: an
+                # item counted at 0, then drawn down further before the count was
+                # approved, lands the delta on a smaller current_stock than the one
+                # the variance was measured against. Negative on-hand stock is
+                # physically impossible and corrupts the low-stock read-model —
+                # check_stock_levels refuses < 0 for exactly this reason, and the
+                # variance report would print "Low" against a sub-zero book_stock
+                # (neither "Stockout", since stock == 0 is false, nor a real level).
+                # Every OTHER stock writer already holds this floor: the inventory
+                # ledger and the PO-receipt bump via check_stock_levels, the gmats
+                # issue/cancel via max(0, ...); approve_cycle_count was the one
+                # signed stock writer missing it. On a well-formed approval (no
+                # interim draw-down, or a found-stock increase) before + variance is
+                # already >= 0 and the floor is a strict no-op. The UPPER bound needs
+                # no guard here: current_stock and physical_qty are each capped at
+                # MAX_QTY (payload_fields), so before + variance stays well inside
+                # the INTEGER column and cannot overflow it on Postgres.
                 before = item.current_stock or 0
-                item.current_stock = before + line.variance
+                item.current_stock = max(0, before + line.variance)
                 stock_events.stock_dropped(db, item, before)
                 db.add(models.InventoryTransaction(
                     item_id=item.id, transaction_type="Adjust",

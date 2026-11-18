@@ -262,14 +262,35 @@ def service_state(installation, model, today=None):
     last = getattr(installation, "last_service_hours", None)
     since = hours - (last or 0.0)
     if since < 0:
-        # The counter reads below the last recorded service: a replaced
-        # controller, or a counter reset. Say so rather than reporting a
-        # negative interval as if it were fresh.
+        # The counter reads below where a fresh reading should: either below the
+        # last recorded service (a replaced controller or a reset counter), or —
+        # with no service on record — a NEGATIVE counter, which an hour meter
+        # cannot be. Either way it is not a usable "fresh machine" reading, so say
+        # so rather than reporting a negative interval as if it were fresh.
+        #
+        # `last` is None on a machine that was never serviced, and `since < 0` is
+        # then reachable only when `hours` itself is negative: operating_hours has
+        # no min/max band (EXAMPLE_COMPRESSOR line 207), so a negative reading
+        # passes interpret() in-range (it is finite — the #783 guard only rejects
+        # NaN/+-inf) and is stored as the first value (the monotonic guard admits
+        # it against a NULL), and a legacy / raw-SQL / migration row can hold one
+        # too. `round(None, 1)` then raised TypeError and 500-ed every surface
+        # that reads this installation — the factory's connected-equipment view
+        # (connected_equipment_routes) and the OEM fleet/service rows (oem_routes)
+        # — the exact "one bad value crashed the whole OEM view" class #776/#778/
+        # #783 fixed for a non-finite reading, reaching service_state through the
+        # one branch those fixes did not cover. Never round(None): name the
+        # negative counter itself when there is no service to compare against.
+        if last is None:
+            reason = (f"the hours counter reads {round(hours, 1)} h — an hour meter "
+                      f"cannot run negative, so the tag is probably mis-mapped or "
+                      f"the counter was reset")
+        else:
+            reason = (f"the hours counter ({round(hours, 1)} h) reads below the last "
+                      f"recorded service ({round(last, 1)} h) — the counter was "
+                      f"probably reset or the controller replaced")
         return {"state": "unknown", "hours_remaining": None,
-                "interval_hours": interval,
-                "reason": f"the hours counter ({round(hours, 1)} h) reads below "
-                          f"the last recorded service ({round(last, 1)} h) — the "
-                          f"counter was probably reset or the controller replaced"}
+                "interval_hours": interval, "reason": reason}
     remaining = interval - since
     if remaining <= 0:
         state = "overdue"

@@ -43,6 +43,43 @@ def _coalesce_null_int(default: int):
     return _coalesce
 
 
+# The widest value a PostgreSQL INTEGER column (int4) can hold. IoTTelemetry and
+# IndustrialSignal both store ``numeric_value`` as ``Column(Integer)``, so a REST
+# ingest of a value outside this range commits fine on SQLite (arbitrary-precision,
+# the test DB) but raises ``DataError`` mid-write on PostgreSQL -> an unhandled 500
+# on the OT-facing ingest endpoint from one glitching or adversarial gateway packet.
+# This is the same "a value the INTEGER column can't hold 500s the write" class the
+# stock ledgers were hardened against (#766/#772/#779), which refuse the write at the
+# door. Here the reading is a RAW SENSOR VALUE that may legitimately be negative (a
+# sub-zero temperature, a differential pressure), so the bound is the column's own
+# SYMMETRIC capacity, not the ``[0, MAX_QTY]`` quantity bound ``int_field`` applies to
+# counted figures. Rejecting (a clean 422 at ingest) rather than clamping is the
+# honest choice: a value the column cannot store has no truthful truncation, and a
+# clamped reading would display a fabricated figure (ADR-0010). A value that actually
+# fits is untouched.
+PG_INT32_MIN = -2_147_483_648
+PG_INT32_MAX = 2_147_483_647
+
+
+def _reject_int32_overflow(value):
+    """Refuse a numeric reading the 32-bit INTEGER column that stores it cannot hold.
+
+    ``numeric_value`` is typed ``int`` with no bound on the ingest schemas, and a
+    Python int is arbitrary-precision, so ``3_000_000_000`` (or ``2_147_483_648`` —
+    one past the column's max) validated cleanly and reached the INSERT, where
+    PostgreSQL rejects it mid-commit with ``DataError`` and FastAPI can only answer
+    500. ``float('inf')`` is already refused upstream by ``int`` coercion; this guards
+    the FINITE out-of-range case that slips through. Runs after ``int`` coercion, so
+    ``value`` is already an int (or None on an optional field, left for the type to
+    judge). A ``ValueError`` here surfaces as a 422 naming the field.
+    """
+    if value is not None and not (PG_INT32_MIN <= value <= PG_INT32_MAX):
+        raise ValueError(
+            f"numeric_value {value} does not fit the 32-bit integer column that stores "
+            f"it (must be between {PG_INT32_MIN} and {PG_INT32_MAX})")
+    return value
+
+
 STORAGE_LINK_NOT_A_URL = ("A document's storage link is shown as a link, so it must be an http(s) URL "
                           "(or empty). Other schemes are refused: a `javascript:` or `file:` link on a "
                           "shared screen is not a document location.")
@@ -1108,6 +1145,11 @@ class IoTTelemetryCreate(BaseModel):
     unit: Optional[str] = None
     source: str = "MQTT"
 
+    # Refuse a numeric_value the INTEGER column cannot store, so a glitching edge
+    # reading is a clean 422 at ingest rather than a DataError 500 mid-commit on
+    # Postgres. The handler never runs with a value that would blow up the write.
+    _bound_numeric_value = field_validator("numeric_value")(_reject_int32_overflow)
+
 
 class IoTTelemetryResponse(BaseModel):
     id: int
@@ -1516,6 +1558,10 @@ class IndustrialSignalCreate(BaseModel):
     unit: Optional[str] = None
     quality: str = "Good"
     source_protocol: str = "MQTT"
+
+    # Refuse a numeric_value the INTEGER column cannot store (same guard as
+    # IoTTelemetryCreate): a clean 422 at ingest, not a DataError 500 on Postgres.
+    _bound_numeric_value = field_validator("numeric_value")(_reject_int32_overflow)
 
 
 class IndustrialSignalResponse(BaseModel):

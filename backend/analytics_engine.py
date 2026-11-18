@@ -273,8 +273,36 @@ def shift_attainment(actual, target):
     THE formula for a shift's efficiency / attainment. ai/shift.py stated it
     first; build_shift_kpis, the Executive OEE shift chart and shifts.csv each
     kept a copy that scored a no-target shift 0% and now call this
-    (test_no_target_no_shift_efficiency.py)."""
-    return round(actual / target * 100) if target else None
+    (test_no_target_no_shift_efficiency.py).
+
+    Defended against a corrupt row the same way its sibling quality_fail_rate is
+    (coalesce NULL, guard a non-positive denominator, floor the result):
+
+      * `actual` / `target` are coalesced to 0 first. Both shift_data columns are
+        Integer nullable=False WITHOUT a default, so a raw-SQL / migration / legacy
+        row can hold a genuine NULL, and `None / target` raised TypeError. The
+        hydrated-row callers already coalesce before calling; this makes the one
+        shared helper self-safe for every caller (ai/shift.py too).
+      * a NON-POSITIVE target reads as "no measurable target" (None), not a ratio.
+        The old `if target` returned None for 0 / None but a NEGATIVE target is
+        truthy and slipped through to a nonsensical percentage; `target <= 0`
+        closes it, the same guard quality_fail_rate applies to `inspected`.
+      * the result is FLOORED at 0: a shift cannot produce a negative number of
+        units, so a negative `actual` on such a legacy row (the write path rejects
+        it — machines_routes.create_shift) must not print a sub-zero attainment —
+        the same symmetric floor calculate_oee_from_record / pooled_oee /
+        quality_fail_rate apply. It is deliberately NOT capped at 100: a shift can
+        legitimately beat its plan (attainment > 100% is real output), unlike a
+        fail rate that cannot exceed the units inspected.
+
+    On every valid row (target > 0, actual >= 0) this is a strict no-op — the
+    floor never fires and the ratio is unchanged, including over-attainment > 100%.
+    """
+    actual = actual or 0
+    target = target or 0
+    if target <= 0:
+        return None
+    return max(0, round(actual / target * 100))
 
 
 def quality_fail_rate(failed, inspected):

@@ -121,6 +121,26 @@ def test_out_of_range_is_flagged_never_clamped():
           named2["pressure"]["value"] is None and "pressure" in out2,
           str(named2))
 
+    # NaN / +-inf PASS float() and slip through a min/max band (every comparison
+    # with NaN is False), so the pre-fix interpreter kept them "as measured" and a
+    # caller wrote the non-finite float onto a Float column — making the next JSON
+    # serialisation of that row 500 (allow_nan=False), the #776/#778 class. A
+    # non-finite reading is no more usable than a non-numeric one: value None,
+    # out-of-range, raw kept. JSON itself carries these (json.loads decodes them),
+    # so this is a shape the ingest path really receives. Both a float NaN/inf AND
+    # the string spellings float() would otherwise turn into one are covered.
+    for bad in (float("nan"), float("inf"), float("-inf"), "nan", "inf", "-inf"):
+        n, _, o = oem_telemetry.interpret(profile, {"P1": bad})
+        check(f"a non-finite reading {bad!r} becomes None + out-of-range, never stored",
+              n["pressure"]["value"] is None and "pressure" in o, str(n))
+    # A signal with NO band is where this bit hardest (operating_hours has none):
+    # the band check cannot catch it, so interpret itself must.
+    unbounded = oem_telemetry.parse(json.dumps(
+        [{"name": "hrs", "source": "H", "datatype": "number"}]))
+    nh, _, oh = oem_telemetry.interpret(unbounded, {"H": float("inf")})
+    check("a non-finite reading on an UNBOUNDED signal is still refused",
+          nh["hrs"]["value"] is None and oh == ["hrs"], str((nh, oh)))
+
 
 def test_a_numeric_bound_is_validated_where_interpret_reads_it():
     print()

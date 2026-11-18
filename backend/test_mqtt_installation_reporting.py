@@ -263,6 +263,29 @@ def run_all():
     check("an UNCONFIGURED tag never becomes operating hours",
           unknown["linked"][1] == 4100.0, str(unknown["linked"][1]))
 
+    # A NON-FINITE hour meter (NaN / +-inf) reaches here through the whole MQTT
+    # path: JSON permits NaN/Infinity and json.loads decodes them, so a
+    # disconnected sensor or a buggy gateway really can publish one. Pre-fix,
+    # interpret() kept it "as measured" (NaN slips every min/max band because each
+    # comparison with NaN is False) and _record_installation_report wrote the
+    # non-finite float onto the Float column — making the next OEM read of that
+    # installation 500 on `Out of range float values are not JSON compliant`
+    # (allow_nan=False), the #776/#778 "one bad value crashed the view" class in
+    # the one writer those fixes did not cover. The current hours are 4100.0; a
+    # +inf would have been STORED (inf >= 4100 is True, clearing the monotonic
+    # guard), so this is the exact scenario that corrupted the column.
+    for bad in (float("inf"), float("nan"), float("-inf")):
+        publish("PLANT_ONE", "-", {
+            "machine": "COMP-01", "status": "Running", "utilization": 70,
+            "readings": {"HrsRun": bad}})
+        nf = installations()
+        check(f"a non-finite hour meter {bad!r} is refused, last good value kept",
+              nf["linked"][1] == 4100.0, str(nf["linked"][1]))
+        from math import isfinite
+        check(f"...and the stored hours stay JSON-serialisable after {bad!r}",
+              nf["linked"][1] is not None and isfinite(nf["linked"][1]),
+              str(nf["linked"][1]))
+
     print()
     print("=" * 74)
     print("4. THE MACHINE'S OWN RECORD STILL WORKS")

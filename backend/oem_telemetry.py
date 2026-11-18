@@ -34,6 +34,7 @@ overheating machine into a healthy-looking one, which is the same class of lie a
 the fabricated OEE this platform already removed (ADR-0014).
 """
 import json
+import math
 
 VALID_TYPES = ("number", "bool", "string")
 VALID_AGGREGATIONS = ("last", "sum", "max", "min", "avg")
@@ -153,6 +154,20 @@ def interpret(profile, readings):
         if sig["datatype"] == "number":
             try:
                 number = float(value)
+                # NaN / +-inf PASS float() (they ARE floats) and slip a min/max
+                # band too: every comparison with NaN is False, and a signal like
+                # operating_hours carries no band at all, so a non-finite reading
+                # was kept "as measured" and written straight onto a Float column.
+                # The next JSON serialisation of that row then 500s the whole view
+                # (Starlette's JSONResponse sets allow_nan=False) — the #776/#778
+                # "one bad value crashed the fleet" class, reaching the OEM
+                # installation record through this one interpreter. JSON permits
+                # NaN/Infinity and json.loads decodes them, so a disconnected
+                # sensor or a buggy gateway can hand one in. A non-finite reading
+                # is no more a usable measurement than a non-numeric one, so treat
+                # it the SAME: value None, out of range, raw kept.
+                if not math.isfinite(number):
+                    raise ValueError("non-finite reading")
             except (TypeError, ValueError):
                 named[sig["name"]] = {"value": None, "unit": sig["unit"],
                                       "in_range": False, "raw": value}

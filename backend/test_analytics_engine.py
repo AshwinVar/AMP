@@ -166,6 +166,47 @@ def test_build_oee_trends_indexes_and_names_machines():
     print("PASS build_oee_trends indexes records and falls back on missing machine name")
 
 
+def test_build_oee_trends_coalesces_null_counts_to_reconcile_with_oee():
+    # A legacy / raw-SQL / migration row can hold NULL in the nullable=False
+    # total/good/rejected columns (the constraint is not retro-applied). The OEE
+    # calculate_oee_from_record returns ALREADY reads those as 0, but the raw counts
+    # used to be passed through untouched — so /analytics/oee-trends emitted a row
+    # whose oee was 0 while good/total came back `null`: the row disagreed with its
+    # own OEE (rule-3) and leaked a null the trend chart's numeric payload must
+    # re-handle (the exact null the sibling GET /production-records heals to 0 via
+    # ProductionResponse). Coalesced, the counts read 0 and reconcile with the OEE.
+
+    # All counts NULL: oee is 0 (no measured production) AND the counts are 0, not null.
+    allnull = _rec(machine_id=7, machine=SimpleNamespace(name="CNC-7"),
+                   runtime_minutes=None, planned_minutes=None,
+                   ideal_cycle_time_seconds=None, total_count=None,
+                   good_count=None, rejected_count=None)
+    # One NULL count beside real minutes: total/good NULL -> quality 0 -> oee 0,
+    # and the counts come back 0 rather than null.
+    partial = _rec(machine_id=8, machine=SimpleNamespace(name="CNC-8"),
+                   runtime_minutes=400, planned_minutes=480,
+                   ideal_cycle_time_seconds=30, total_count=None,
+                   good_count=None, rejected_count=None)
+    rows = ae.build_oee_trends([allnull, partial])
+
+    for row in rows:
+        for field in ("good_count", "rejected_count", "total_count"):
+            assert row[field] == 0, (row["machine_name"], field, row[field])
+            assert isinstance(row[field], int) and row[field] is not None, (field, row[field])
+        # the row reconciles with its own OEE: no counts -> no production -> oee 0.
+        assert row["oee"] == 0, row
+
+    # A real recorded 0 count is preserved (not confused with a healed NULL), and a
+    # real non-zero count is passed through unchanged.
+    real = _rec(machine_id=9, machine=SimpleNamespace(name="CNC-9"),
+                runtime_minutes=400, planned_minutes=480, ideal_cycle_time_seconds=30,
+                total_count=700, good_count=700, rejected_count=0)
+    real_row = ae.build_oee_trends([real])[0]
+    assert real_row["total_count"] == 700 and real_row["good_count"] == 700
+    assert real_row["rejected_count"] == 0
+    print("PASS build_oee_trends coalesces NULL counts to 0 (reconciles with OEE, no leaked null)")
+
+
 def test_normalize_downtime_reason():
     # A NULL / empty / whitespace-only reason coalesces to "Unknown" (matching the
     # canonical read-model ai.downtime._norm_reason); a real reason is untouched.
@@ -517,6 +558,7 @@ if __name__ == "__main__":
     test_build_shift_kpis_null_outputs_are_safe_and_honest()
     test_management_summary_null_shift_outputs_reconcile_with_sql_sums()
     test_build_oee_trends_indexes_and_names_machines()
+    test_build_oee_trends_coalesces_null_counts_to_reconcile_with_oee()
     test_normalize_downtime_reason()
     test_management_summary_null_reason_labels_unknown_not_null()
     test_management_summary_null_and_empty_reason_merge_into_one_bucket()

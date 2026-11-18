@@ -93,8 +93,75 @@ def test_iot_unknown_status_does_not_corrupt_machine_state():
     print("PASS IoT status ingest normalises known statuses and ignores unknown (no corruption)")
 
 
+# --- numeric_value must fit the INTEGER column that stores it, or be refused at
+# ingest (a clean 422) rather than 500 the write mid-commit on PostgreSQL. ---
+
+from pydantic import ValidationError
+
+# The 32-bit signed INTEGER range, derived from the column type (Column(Integer) ->
+# int4 on PostgreSQL), NOT read back from the code under test.
+INT32_MAX = 2_147_483_647          # 2**31 - 1
+INT32_MIN = -2_147_483_648         # -(2**31)
+
+
+def _creates(numeric_value):
+    """Build both ingest schemas with the same numeric_value; each must agree."""
+    return (
+        lambda: schemas.IoTTelemetryCreate(
+            machine_id=1, signal_name="pressure", signal_value="x",
+            numeric_value=numeric_value),
+        lambda: schemas.IndustrialSignalCreate(
+            device_id=1, signal_name="pressure", signal_value="x",
+            numeric_value=numeric_value),
+    )
+
+
+def test_numeric_value_outside_int32_is_rejected_not_500():
+    # One past the max, a value well past it, and one past the min: each would
+    # commit on SQLite but raise DataError on Postgres, so each must be refused at
+    # the schema (ValidationError -> 422) before the INSERT is ever attempted.
+    for bad in (INT32_MAX + 1, 3_000_000_000, INT32_MIN - 1, -5_000_000_000):
+        for build in _creates(bad):
+            raised = False
+            try:
+                build()
+            except ValidationError:
+                raised = True
+            assert raised, f"numeric_value {bad} should be refused, not accepted for a 32-bit INTEGER write"
+    # A JSON "1e999" decodes to float('inf'); int coercion already refuses it, so
+    # the whole out-of-range class (finite AND infinite) is covered.
+    for build in _creates(float("inf")):
+        raised = False
+        try:
+            build()
+        except ValidationError:
+            raised = True
+        assert raised, "an infinite numeric_value must be refused, not stored"
+    print("PASS an out-of-range numeric_value is refused at ingest (422), never a 500 mid-write")
+
+
+def test_numeric_value_at_and_within_int32_bounds_is_accepted():
+    # The exact column boundaries are valid readings and must pass untouched.
+    for ok in (INT32_MAX, INT32_MIN, 0, 67):
+        for build in _creates(ok):
+            assert build().numeric_value == ok, f"{ok} fits the INTEGER column and must be accepted as-is"
+    print(f"PASS the INTEGER-column boundary values ({INT32_MIN}..{INT32_MAX}) are accepted unchanged")
+
+
+def test_a_legitimate_negative_reading_still_passes():
+    # numeric_value is a raw sensor reading, not a counted quantity: a sub-zero
+    # temperature (-40) or a negative differential pressure is real data. The bound
+    # is symmetric precisely so this is not refused as a [0, MAX_QTY] quantity would be.
+    for build in _creates(-40):
+        assert build().numeric_value == -40, "a legitimate negative reading must not be rejected"
+    print("PASS a legitimate negative reading (-40) is preserved, not refused")
+
+
 if __name__ == "__main__":
     test_industrial_iot_paths_owned_by_module()
     test_iot_utilization_is_clamped_to_percentage_range()
     test_iot_unknown_status_does_not_corrupt_machine_state()
+    test_numeric_value_outside_int32_is_rejected_not_500()
+    test_numeric_value_at_and_within_int32_bounds_is_accepted()
+    test_a_legitimate_negative_reading_still_passes()
     print("ALL INDUSTRIAL-IOT ROUTE TESTS PASSED")

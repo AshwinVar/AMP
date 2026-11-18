@@ -1185,17 +1185,29 @@ def tick_customer_order(db):
     # dispatched_quantity is Column(Integer, default=0) WITHOUT nullable=False, so
     # a true NULL (raw SQL / migration / cleared update) made `None + int` raise
     # TypeError. Coalesce to the column's own default 0 before advancing — same
-    # NULL-count guard as the work-order / operator ticks. (order_quantity is
-    # nullable=False, so it stays a safe int on the other side of min().)
+    # NULL-count guard as the work-order / operator ticks.
     dispatched = order.dispatched_quantity or 0
-    order.dispatched_quantity = min(order.order_quantity,
-                                    dispatched + random.randint(10, 50))
-    if order.dispatched_quantity >= order.order_quantity:
+    # order_quantity is Column(Integer, nullable=False) WITHOUT a default, but that
+    # constraint is not retro-applied to a raw-SQL / migration / legacy row, so such
+    # a row can hold a genuine NULL — the SAME threat model tick_work_order_progress
+    # already guards for target_quantity. Bare (as it was here), `min(order.order_quantity,
+    # ...)` is `min(None, int)` and `order.dispatched_quantity >= order.order_quantity`
+    # is `int >= None`, both of which raise TypeError. Coalesce to the column's own
+    # default 0; with no known order quantity there is nothing to dispatch against,
+    # so leave the order untouched rather than reset its dispatched count to 0 and
+    # mislabel it "Dispatched" — mirroring that tick's "no known target -> leave the
+    # status untouched". (The old comment here wrongly reasoned that nullable=False
+    # kept it a safe int, exactly the mistaken rationale the sibling guard disproves.)
+    target = order.order_quantity or 0
+    if target <= 0:
+        return
+    order.dispatched_quantity = min(target, dispatched + random.randint(10, 50))
+    if order.dispatched_quantity >= target:
         order.status = "Dispatched"
     elif order.dispatched_quantity > 0:
         order.status = "Partially Dispatched"
     db.commit()
-    print(f"  Order {order.order_no}: dispatched {order.dispatched_quantity}/{order.order_quantity} [{order.status}]")
+    print(f"  Order {order.order_no}: dispatched {order.dispatched_quantity}/{target} [{order.status}]")
 
 
 def run_simulation(db):

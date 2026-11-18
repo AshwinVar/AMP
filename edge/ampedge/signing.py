@@ -28,6 +28,7 @@ failing to authenticate at 3am.
 import hashlib
 import hmac
 import json
+import math
 import time
 import uuid
 
@@ -90,6 +91,13 @@ def verify(payload: dict, key: str, now=None, max_age=MAX_AGE_S):
         signed_at = float(payload.get("signed_at") or 0)
     except (TypeError, ValueError):
         return False, "signed_at is not a time"
+    # A non-finite signed_at (NaN / +-inf) is not a real signing time. It passes
+    # float() -- NaN and inf ARE floats, and JSON permits them -- so inf reached
+    # `int(-age)` in the "future" branch below and raised OverflowError, breaking
+    # the "Never raises" guarantee. Refuse it explicitly. Kept byte-for-byte in
+    # step with backend/gateway_auth.verify_signature (test_gateway_signature_parity).
+    if not math.isfinite(signed_at):
+        return False, "signed_at is not a finite time"
     age = now - signed_at
     if age > max_age:
         return False, f"signed {int(age)}s ago, older than the {int(max_age)}s window"

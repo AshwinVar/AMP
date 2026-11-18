@@ -213,6 +213,59 @@ def _non_negative_int(value):
     return n if n >= 0 else None
 
 
+def _downtime_text(value):
+    """A safe free-text duration for the two String downtime columns.
+
+    The gateway payload's ``downtime`` is stored verbatim into
+    ``Machine.downtime`` (``Column(String, default="0 min")``) and, on a
+    transition INTO Breakdown, into ``DowntimeLog.duration``
+    (``Column(String, nullable=False)``) and the ``DowntimeStarted`` event. The
+    HTTP path validates that field through ``DowntimeCreate.duration`` (a
+    required ``str``); this MQTT path took it RAW, with only a ``"0 min"``
+    fallback for a MISSING key — so a gateway that sends ``"downtime": null``
+    (``JSON.stringify`` emits ``null`` for ``undefined``/``NaN``), or a number,
+    put a ``None`` or an ``int`` straight onto those columns.
+
+    ``None`` violates ``DowntimeLog``'s NOT NULL, and a number is a type
+    mismatch against the VARCHAR column on PostgreSQL; either way the breakdown
+    ``DowntimeLog`` INSERT raises. The breakdown's downtime log is then SILENTLY
+    DROPPED (``on_message``'s outer handler turns the error into an INFO line so
+    the listener never dies), ``Machine.downtime`` is left holding a NULL /
+    non-text value, and the ``DowntimeStarted`` event fires carrying that
+    unusable ``None``. So every downtime-derived figure — downtime minutes, the
+    stoppage count, MTBF/MTTR, the predictive risk score, the Pareto, the
+    cost-of-losses — under-counts the very breakdown that message reported, and
+    on PostgreSQL, where a failed commit poisons the whole transaction, the
+    status transition and production record in the same packet roll back with
+    it. This is the same ingest-guard class as ``_non_negative_int`` /
+    ``clamp_utilization`` / ``reading_time`` above: a glitching field must
+    degrade this one reading, never drop the record it belongs to.
+
+    Coerce to the column's own default, the honest reading the HTTP schema
+    already enforces:
+
+      * ``None`` / missing / blank / a non-finite number -> ``"0 min"`` (the
+        declared default; ``parse_duration_to_minutes`` reads it as 0);
+      * a finite number -> its plain string, which ``parse_duration_to_minutes``
+        reads back as that many minutes (its bare-number convention);
+      * any other text -> trimmed.
+
+    A ``bool`` (a JSON ``true``/``false``) is an ``int`` subclass but not a
+    duration, so it folds to the default too — the same ``bool``-first guard
+    ``reading_time`` applies to ``ts``.
+    """
+    if value is None or isinstance(value, bool):
+        return "0 min"
+    if isinstance(value, (int, float)):
+        # NaN / +-inf are not durations (the same non-finite reading
+        # clamp_utilization and reading_time reject); fold them to the default.
+        if value != value or value in (float("inf"), float("-inf")):
+            return "0 min"
+        return str(value)
+    text = str(value).strip()
+    return text or "0 min"
+
+
 def tenant_is_provisioned(db, tenant: str) -> bool:
     """Has this tenant actually been onboarded?
 
@@ -739,7 +792,12 @@ def on_message(client, userdata, msg):
         # explicit filters are the primary control.
         tenant_token = tenancy.set_current_tenant(route.tenant)
 
-        downtime_value = payload.get("downtime", "0 min")
+        # Coerce the raw gateway field to a safe VARCHAR / NOT NULL duration
+        # BEFORE it touches Machine.downtime and the breakdown DowntimeLog — a
+        # null or numeric downtime would otherwise fail that log's insert and
+        # silently drop the stoppage (see _downtime_text). A missing key still
+        # yields the "0 min" default.
+        downtime_value = _downtime_text(payload.get("downtime"))
 
         try:
             machine = get_or_create_machine(db, route, machine_name)

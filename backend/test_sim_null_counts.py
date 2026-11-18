@@ -6,9 +6,11 @@ a count column that is ``Column(Integer, default=0)`` WITHOUT ``nullable=False``
 — so a row written by raw SQL, a migration, or an update that clears the field
 can hold a true NULL:
 
-  * ``tick_work_order_progress`` -> ``WorkOrder.actual_quantity``
+  * ``tick_work_order_progress`` -> ``WorkOrder.actual_quantity`` and
+    ``WorkOrder.target_quantity`` (both operands of its ``min()``)
   * ``tick_operator``            -> ``OperatorJobExecution.good_count``
-  * ``tick_customer_order``      -> ``CustomerOrder.dispatched_quantity``
+  * ``tick_customer_order``      -> ``CustomerOrder.dispatched_quantity`` and
+    ``CustomerOrder.order_quantity`` (both operands of its ``min()``)
 
 ``None < target`` / ``None + int`` raised ``TypeError``, and because
 ``tick_work_order_progress`` runs first and unconditionally in the loop, that
@@ -241,6 +243,46 @@ def test_customer_order_tick_survives_null_dispatched_quantity():
           f"{healed.dispatched_quantity} (no crash)")
 
 
+def test_customer_order_tick_survives_null_order_quantity():
+    """order_quantity is Column(Integer, nullable=False) WITHOUT a default, so a
+    raw-SQL / migration / legacy row can hold a genuine NULL — the exact shape
+    tick_work_order_progress already guards for target_quantity. The tick's
+    `min(order.order_quantity, ...)` (min(None, int)) and `dispatched >=
+    order.order_quantity` (int >= None) both raised TypeError — the SAME crash the
+    sibling dispatched_quantity guard fixed for the other operand, but on the one
+    this tick still trusted. With order_quantity coalesced to 0, there is no known
+    order quantity to dispatch against, so the tick leaves the order untouched
+    rather than crash (and rather than reset dispatched to 0 and mislabel it).
+
+    SQLite enforces the nullable=False NOT NULL (a raw UPDATE ... SET order_quantity
+    = NULL is rejected), so — exactly as the target_quantity test above does —
+    set_committed_value reproduces the loaded legacy-NULL attribute state WITHOUT
+    marking the row dirty, so the tick's own path never tries to persist the NULL."""
+    from sqlalchemy.orm.attributes import set_committed_value
+
+    db = _fresh_session()
+    order = models.CustomerOrder(
+        order_no="CO-N", customer_name="Acme", product_name="Widget",
+        order_quantity=1000, dispatched_quantity=100, due_date=date(2030, 1, 1),
+        status="In Production", tenant_code="DEFAULT",
+    )
+    db.add(order)
+    db.commit()
+    set_committed_value(order, "order_quantity", None)   # loaded legacy-NULL state
+    assert db.query(models.CustomerOrder).one().order_quantity is None
+
+    tick_customer_order(db)                            # must not TypeError / roll back
+
+    healed = db.query(models.CustomerOrder).one()
+    # No known order quantity -> nothing to dispatch against, so the order is left
+    # exactly as recorded: dispatched_quantity unchanged (100) and still In
+    # Production. Independently derived from the "no known target, leave untouched"
+    # rule, not the crash path.
+    assert healed.dispatched_quantity == 100, healed.dispatched_quantity
+    assert healed.status == "In Production", healed.status
+    print("PASS customer-order tick survives a NULL order_quantity (no crash, order untouched)")
+
+
 if __name__ == "__main__":
     tenancy.set_current_tenant(tenancy.DEFAULT_TENANT)   # one process, one tenant
     test_work_order_progress_survives_null_actual_quantity()
@@ -249,4 +291,5 @@ if __name__ == "__main__":
     test_work_order_progress_preserves_normal_increment()
     test_operator_tick_survives_null_good_count()
     test_customer_order_tick_survives_null_dispatched_quantity()
+    test_customer_order_tick_survives_null_order_quantity()
     print("ALL SIM NULL-COUNT TESTS PASSED")

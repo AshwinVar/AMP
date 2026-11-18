@@ -143,6 +143,44 @@ def test_costing_empty_tables_all_zero():
     print("PASS costing rollup survives empty tables (all zeros, per-unit None)")
 
 
+def test_by_type_folds_empty_cost_type_to_other():
+    # cost_type is Column(String, nullable=False) but CostRecordCreate types it a
+    # bare `str` (no min_length), so POST /cost-records accepts an EMPTY string —
+    # which surfaced as a literal "" KEY in by_type (JSON `{"": 120}`), a blank
+    # slice on the costing chart: a stored non-value leaking into a displayed label
+    # (ADR-0010). The money-story cost read-model (ai/cost.py) already folds an
+    # unlabelled cost_type to "Other"; this by_type must name it identically (one
+    # convention per dimension) and by_department right beside it already folds a
+    # NULL/empty department to "Unassigned".
+    #
+    # Independently-derived expectations from THESE numbers:
+    #   by_type: Labour 300 + 150 (two rows, one type) = 450; ""->Other = 120
+    #   by_department: Assembly 300, "Line B" 150, None->Unassigned 120
+    #   manual_cost_total = 300 + 150 + 120 = 570, and BOTH breakdowns sum to it.
+    db = _fresh_session()
+    db.add(models.Machine(id=1, name="M1", status="Running", utilization=80))
+    db.add(models.CostRecord(cost_no="C-1", cost_type="Labour", department="Assembly",
+                             description="x", amount=300))
+    db.add(models.CostRecord(cost_no="C-2", cost_type="Labour", department="Line B",
+                             description="y", amount=150))
+    db.add(models.CostRecord(cost_no="C-3", cost_type="", department=None,
+                             description="empty type", amount=120))   # empty cost_type via POST
+    db.commit()
+
+    out = costing_routes.get_costing_analytics(db=db, current_user={})
+
+    assert out["manual_cost_total"] == 570, out
+    # The empty label is NAMED, never left blank, and never a `null`/`None` key.
+    assert "" not in out["by_type"] and None not in out["by_type"], out["by_type"]
+    assert out["by_type"] == {"Labour": 450, "Other": 120}, out["by_type"]
+    assert out["by_department"] == {"Assembly": 300, "Line B": 150, "Unassigned": 120}, out["by_department"]
+    # The fold moves the label, never the money: BOTH breakdowns still reconcile
+    # to the headline (parts sum to the whole).
+    assert sum(out["by_type"].values()) == out["manual_cost_total"], out
+    assert sum(out["by_department"].values()) == out["manual_cost_total"], out
+    print("PASS by_type folds an empty cost_type to 'Other' and still reconciles")
+
+
 def test_patch_null_amount_heals_to_zero_not_500():
     # A client (or a UI clearing the field) PATCHes {"amount": null}. amount is a
     # nullable Integer column and CostRecordUpdate types it Optional[int]=None, so
@@ -313,6 +351,7 @@ if __name__ == "__main__":
     test_cost_per_good_unit_is_none_when_no_production()
     test_costing_survives_null_amount_and_received_quantity()
     test_costing_empty_tables_all_zero()
+    test_by_type_folds_empty_cost_type_to_other()
     test_patch_null_amount_heals_to_zero_not_500()
     test_patch_unrelated_field_heals_preexisting_null_amount()
     test_patch_keeps_a_real_amount_and_zero_unchanged()

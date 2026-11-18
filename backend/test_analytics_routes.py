@@ -1988,6 +1988,74 @@ def test_oee_trends_empty_table_is_empty_not_a_crash():
     print("PASS oee-trends: empty table -> [] (no crash)")
 
 
+def test_oee_trends_resolves_machine_names_and_falls_back_for_missing():
+    # build_oee_trends renders `record.machine.name`. With a real roster the trend
+    # must carry each machine's NAME (not just its id), and a record whose machine
+    # row is absent (deleted under it / a legacy orphan) must fall back to the
+    # "Machine {id}" label rather than crash on a None relationship. Pin the
+    # hand-derived OEE (_oee_rec: 72%) so a broken join can't quietly pass.
+    db = _fresh_session()
+    db.add(models.Machine(id=1, name="Press-01", status="Running", utilization=80))
+    db.add(models.Machine(id=2, name="Lathe-02", status="Running", utilization=80))
+    db.add(_oee_rec(1))                        # -> Press-01
+    db.add(_oee_rec(2))                        # -> Lathe-02
+    db.add(_oee_rec(999))                      # no such machine -> fallback label
+    db.commit()
+
+    rows = analytics_routes.get_oee_trends(db=db, current_user={})
+    names = [r["machine_name"] for r in rows]
+    assert names == ["Press-01", "Lathe-02", "Machine 999"], names
+    # every row carries the same hand-derived OEE, join or fallback alike
+    assert [r["oee"] for r in rows] == [72, 72, 72], rows
+    print("PASS oee-trends: machine names resolved from the roster; missing machine -> 'Machine {id}' fallback")
+
+
+def test_oee_trends_does_not_lazy_load_machine_per_row():
+    # REGRESSION GUARD (rule-4 / N+1). build_oee_trends reads `record.machine.name`
+    # for every row; lazily that is one SELECT per distinct machine in the window —
+    # a per-machine round trip on a polled dashboard endpoint. The sibling
+    # /oee/summary (same `record.machine.name`) already eager-loads the machine;
+    # this endpoint was missed. Eager-loading collapses the whole render to a
+    # single SELECT, whatever the roster size — so count statements and assert the
+    # query count does NOT scale with the number of distinct machines.
+    from sqlalchemy import event
+
+    db = _fresh_session()
+    # Ten records across ten DISTINCT machines: lazily that is 10 extra SELECTs on
+    # top of the records query; eagerly it stays one.
+    for k in range(1, 11):
+        db.add(models.Machine(id=k, name=f"M{k}", status="Running", utilization=80))
+        db.add(_oee_rec(k))
+    db.commit()
+
+    engine = db.get_bind()
+    selects = []
+
+    def _count(conn, cursor, statement, parameters, context, executemany):
+        if statement.lstrip().upper().startswith("SELECT"):
+            selects.append(statement)
+
+    event.listen(engine, "before_cursor_execute", _count)
+    try:
+        rows = analytics_routes.get_oee_trends(db=db, current_user={})
+    finally:
+        event.remove(engine, "before_cursor_execute", _count)
+
+    # names still resolved (the eager load must carry the machine, not drop it)
+    assert [r["machine_name"] for r in rows] == [f"M{k}" for k in range(1, 11)], rows
+    # exactly ONE SELECT — the eager-loaded records query — and NOT 1 + 10 lazy loads
+    assert len(selects) == 1, (
+        f"expected a single eager-loaded SELECT, got {len(selects)} "
+        f"(a per-machine lazy load is the N+1 this guards)")
+
+    # and the fix is the established one: joinedload the many-to-one machine, exactly
+    # as /oee/summary does for the identical `record.machine.name` read.
+    src = inspect.getsource(analytics_routes.get_oee_trends)
+    assert "joinedload(models.ProductionRecord.machine)" in src, \
+        "oee-trends must eager-load ProductionRecord.machine (joinedload), like /oee/summary"
+    print("PASS oee-trends: one SELECT regardless of roster size (machine eager-loaded, no N+1)")
+
+
 if __name__ == "__main__":
     test_analytics_paths_owned_by_module()
     test_analytics_summary_is_module_level_and_shared()
@@ -2055,4 +2123,6 @@ if __name__ == "__main__":
     test_oee_trends_window_is_recent_200_not_frozen_on_oldest()
     test_oee_trends_small_table_returns_all_oldest_first()
     test_oee_trends_empty_table_is_empty_not_a_crash()
+    test_oee_trends_resolves_machine_names_and_falls_back_for_missing()
+    test_oee_trends_does_not_lazy_load_machine_per_row()
     print("ALL ANALYTICS ROUTE TESTS PASSED")

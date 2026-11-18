@@ -419,8 +419,19 @@ def get_oee_trends(db: Session = Depends(_get_db), current_user: dict = Depends(
     # table passes 200 rows and never shows a recent run again — a trend that can't
     # move. Ordering id DESC selects the newest 200; reversing restores the
     # oldest-first order build_oee_trends indexes onto record #1..N.
+    #
+    # Eager-load the machine: build_oee_trends reads `record.machine.name` for
+    # EVERY row, and lazily that is one SELECT per distinct machine in the window —
+    # up to a round trip per machine across these 200 records, on a dashboard
+    # endpoint that polls. The sibling /oee/summary (reading the identical
+    # `record.machine.name`) already loads it eagerly for exactly this reason; this
+    # trend endpoint was simply missed. joinedload rather than selectinload because
+    # `machine` is many-to-one — the LEFT OUTER JOIN cannot multiply rows, so it
+    # stays correct under .limit(200). Output is unchanged; only the query count
+    # drops to one.
     records = (
         db.query(models.ProductionRecord)
+        .options(joinedload(models.ProductionRecord.machine))
         .order_by(models.ProductionRecord.id.desc())
         .limit(200)
         .all()

@@ -409,8 +409,21 @@ def kpis(db, now=None):
     delivered = (db.query(models.TransportTask)
                  .filter(models.TransportTask.status == "Delivered",
                          models.TransportTask.completed_at >= day_ago).all())
-    waits = [(t.assigned_at - t.requested_at).total_seconds()
-             for t in delivered if t.assigned_at and t.requested_at]
+    # A task has a measurable wait only when it carries BOTH timestamps AND they
+    # are in order. A pair where assigned_at precedes requested_at is not a
+    # shorter wait but an impossible one — the clock stepped backwards between the
+    # request and the assignment (an NTP correction, a VM time adjustment, or a
+    # VDA 5050 vehicle reporting its own out-of-order clock), or the row was
+    # written by a legacy / raw-SQL path. Averaging a negative span in would drag
+    # the mission-control "avg wait" below zero, a wait time the data cannot
+    # support (ADR-0010). It is EXCLUDED, not floored to 0, for the same reason
+    # the missing timestamp on this very line is excluded: there is no basis for a
+    # wait, so it contributes nothing — a fleet whose only delivered task is
+    # out-of-order reports avg_wait_s: None, exactly as an empty fleet does.
+    waits = [span for span in
+             ((t.assigned_at - t.requested_at).total_seconds()
+              for t in delivered if t.assigned_at and t.requested_at)
+             if span >= 0]
     return {
         "fleet_size": len(vehicles),
         "by_status": by_status,

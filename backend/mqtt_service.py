@@ -898,10 +898,37 @@ def on_message(client, userdata, msg):
         total_count = _non_negative_int(payload.get("total_count", 0))
         good_count = _non_negative_int(payload.get("good_count", 0))
         rejected_count = _non_negative_int(payload.get("rejected_count", 0))
-        planned_minutes = _non_negative_int(payload.get("planned_minutes", 480))
+
+        # NO TIME WINDOW MEANS NO AVAILABILITY, NOT A FABRICATED SHIFT. The same
+        # "absent means absent" rule the utilization block above spells out, now
+        # applied to the OEE time window. A report that carries production COUNTS
+        # but no planned/runtime minutes — a counts-only publisher — cannot
+        # support availability or performance, only quality. Defaulting the
+        # absent window to a full 480-minute shift with 0 runtime and a 60s ideal
+        # cycle fabricated three displayed numbers off those defaults (ADR-0010):
+        #   * a 0% availability on the machine, from runtime 0 / planned 480;
+        #   * a DRAG on the plant's pooled availability — the record added 480 to
+        #     the planned denominator and 0 to the runtime numerator — and 480
+        #     minutes of phantom downtime to ai.cost.downtime_minutes
+        #     (max(0, planned - runtime) per record);
+        #   * a LIFT on pooled performance — that sums ideal_cycle × total in the
+        #     numerator but divides by runtime, so a 60s cycle with 0 runtime is
+        #     ideal time the machine never had the minutes to produce.
+        # Recording the window as 0/0/0 instead makes the record contribute to
+        # pooled QUALITY alone: oee_contract renders availability and performance
+        # as "not measurable" (planned 0 → None, runtime 0 → None) and the record
+        # adds nothing to any denominator. A report that DOES carry a window is
+        # unchanged — the AMP edge gateway always sends planned+runtime alongside
+        # counts (edge/ampedge/payload.py), so this only ever reshapes a
+        # counts-only third-party publisher, never a first-party one, and the
+        # production record is still written (good + rejected == total below).
+        has_time_window = (payload.get("planned_minutes") is not None
+                           or payload.get("runtime_minutes") is not None)
+        planned_minutes = _non_negative_int(
+            payload.get("planned_minutes", 480 if has_time_window else 0))
         runtime_minutes = _non_negative_int(payload.get("runtime_minutes", 0))
         ideal_cycle_time_seconds = _non_negative_int(
-            payload.get("ideal_cycle_time_seconds", 60)
+            payload.get("ideal_cycle_time_seconds", 60 if has_time_window else 0)
         )
 
         production_valid = None not in (

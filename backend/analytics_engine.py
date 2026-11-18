@@ -352,9 +352,23 @@ def build_oee_trends(records):
             "performance": oee["performance"],
             "quality": oee["quality"],
             "oee": oee["oee"],
-            "good_count": record.good_count,
-            "rejected_count": record.rejected_count,
-            "total_count": record.total_count,
+            # Coalesce the displayed counts to 0, the SAME basis calculate_oee_from_record
+            # (called just above, on this very record) reads them on and the SAME heal the
+            # sibling GET /production-records applies in its response (schemas
+            # .ProductionResponse._heal_counts). These three columns are
+            # Column(Integer, nullable=False) WITHOUT a default, so a raw-SQL / migration /
+            # legacy row can hold a genuine NULL (the constraint is not retro-applied). The
+            # OEE above already treats such a NULL as 0 (no measured production), but the
+            # raw columns were passed through untouched — so a single NULL-count row made
+            # /analytics/oee-trends emit a row whose oee is 0 while its good/total counts came
+            # back `null`: the row disagreed with its own OEE (rule-3) and leaked a null the
+            # trend chart's TS payload (number) must re-handle — the exact null
+            # ProductionResponse heals to 0 so the frontend never sees it. 0 reconciles the
+            # trend row with its own OEE and with the /production-records list for the same
+            # row; a real recorded 0 is unchanged (`0 or 0` is 0).
+            "good_count": record.good_count or 0,
+            "rejected_count": record.rejected_count or 0,
+            "total_count": record.total_count or 0,
         })
 
     return rows

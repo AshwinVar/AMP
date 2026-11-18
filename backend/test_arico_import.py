@@ -223,6 +223,35 @@ def main():
                 check(f"a {label} cell is refused, not crashed", False,
                       f"raw {type(e).__name__}: {e}")
 
+        # The DATE regex matches the SHAPE (dddd/dd/dd) but not the calendar, so a
+        # bad RTC / bit-flipped date field writes a shape-valid but IMPOSSIBLE day
+        # that strptime only rejects later in plan() -- ValueError nothing caught,
+        # a raw traceback where read_export promises a clean refusal. Each is now
+        # refused at read_export, like the non-finite cell above. 2026 is not a
+        # leap year, so 02/29 is one of these; 02/30 and month 13 never exist.
+        for bad_date in ("2026/02/30", "2026/13/01", "2026/00/00", "2026/02/29"):
+            corrupt = write("baddate.CSV", {bad_date: [208.0] * 24})
+            try:
+                days = arico_import.read_export(corrupt)
+                arico_import.plan(days, {}, "IMM-12")
+                check(f"the impossible date {bad_date} is refused, not crashed",
+                      False, "accepted")
+            except arico_import.AricoImportError as e:
+                check(f"the impossible date {bad_date} is refused, not crashed",
+                      "not a real date" in str(e), str(e))
+            except Exception as e:  # the pre-fix raw traceback this guards against
+                check(f"the impossible date {bad_date} is refused, not crashed",
+                      False, f"raw {type(e).__name__}: {e}")
+
+        # ...and a REAL leap day still imports: 2024 IS a leap year, so 02/29
+        # exists and its 24 producing hours must survive the new guard untouched.
+        leap = write("leapday.CSV", {"2024/02/29": [208.0] * 24})
+        leap_days = arico_import.read_export(leap)
+        leap_rows = arico_import.plan(leap_days, {}, "IMM-12")
+        check("a real leap day (2024/02/29) still reads and plans 24 hours",
+              sorted(leap_days) == ["2024/02/29"] and len(leap_rows) == 24,
+              f"{sorted(leap_days)} / {len(leap_rows)} rows")
+
         other = models.Machine(tenant_code="SOMEONE-ELSE", site="", name="THEIRS",
                                status="Idle")
         db.add(other)

@@ -23,6 +23,15 @@ are covered explicitly.
 
 Run:  python backend/test_loss_value.py     (exit 0 = pass)
 """
+import sys
+
+# This suite prints the ₹ symbol (and carries it in its assertions on the money
+# helper's honesty contract). Make stdout tolerant of a cp1252 Windows console so
+# the suite does not die AFTER passing on a non-UTF-8 terminal.
+# test_currency_single.py pins this for every suite carrying the symbol.
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+
 import loss_value as lv
 
 

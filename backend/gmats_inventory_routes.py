@@ -589,10 +589,39 @@ def gmats_undo_issue(pid: int, db: Session = Depends(get_db), current_user: dict
     if p.status not in ISSUED_STATUSES:
         raise HTTPException(status_code=400, detail="Only an issued proforma can be undone")
     lines = db.query(models.GmatsProformaLine).filter(models.GmatsProformaLine.proforma_id == pid).all()
+    # Bound the RESULTING physical_stock AND reserved_stock to MAX_QTY before restoring
+    # anything — the same ceiling every single-value GMATS write obeys (stock-in #772,
+    # JSON create/update via int_field, CSV import via int_cell). undo-issue ADDS the
+    # issued qty back onto BOTH accumulated columns, and #772's stock-in guard explicitly
+    # claimed it was "the one GMATS stock writer still missing" the cap — but this restore
+    # path and gmats_void_min accumulate too, and neither was capped. An item replenished
+    # near the ceiling between the issue and the undo (physical set to MAX_QTY, a legal
+    # stock, via /correct, stock-in or CSV import) then has the restore push the column
+    # past MAX_QTY and, on PostgreSQL's INTEGER column, past 2,147,483,647 into an
+    # `integer out of range` DataError — an unhandled 500 that aborts the session, the
+    # exact overflow stock-in now refuses with a clean 400. Summed per item (so duplicate
+    # lines for one item are covered, mirroring gmats_issue_proforma / gmats_create_min)
+    # and checked BEFORE any mutation, so a refused undo leaves every row untouched — the
+    # same pre-commit atomicity the sibling guards have. On realistic quantities the cap
+    # never fires and the undo is the exact inverse it was before.
+    from collections import defaultdict
+    restore: dict = defaultdict(int)
     for l in lines:
-        item = db.query(models.GmatsItem).filter(models.GmatsItem.id == l.item_id).first()
+        restore[l.item_id] += l.qty
+    items = {}
+    for item_id, qty in restore.items():
+        item = db.query(models.GmatsItem).filter(models.GmatsItem.id == item_id).first()
         if item:
             _heal_stock(item)
+            if item.physical_stock + qty > MAX_QTY or item.reserved_stock + qty > MAX_QTY:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Undoing {p.proforma_no} would take {item.item_code} past the "
+                           f"maximum stock of {MAX_QTY:,}")
+            items[item_id] = item
+    for l in lines:
+        item = items.get(l.item_id)
+        if item:
             item.physical_stock += l.qty      # back on the shelf
             item.reserved_stock += l.qty      # and still spoken for — the proforma is Open again
     undone = f"{p.proforma_no} issue undone"
@@ -774,10 +803,31 @@ def gmats_void_min(min_id: int, db: Session = Depends(get_db), current_user: dic
         raise HTTPException(status_code=404, detail="MIN not found")
     _guard_record(current_user, m.tenant_code)
     lines = db.query(models.GmatsMINLine).filter(models.GmatsMINLine.min_id == min_id).all()
+    # Bound the RESULTING physical_stock to MAX_QTY before restoring — the same ceiling
+    # every single-value GMATS write obeys, and the same overflow stock-in (#772) refuses
+    # with a 400. void-min ADDS the issued spares back onto physical_stock with no cap; an
+    # item replenished near MAX_QTY between the MIN and the void drives it past the INTEGER
+    # column's 2,147,483,647 into an `integer out of range` DataError — an unhandled 500.
+    # Summed per item (duplicate lines covered) and checked BEFORE any mutation, flush or
+    # delete, so a refused void restores nothing and deletes nothing.
+    from collections import defaultdict
+    restore: dict = defaultdict(int)
     for l in lines:
-        item = db.query(models.GmatsItem).filter(models.GmatsItem.id == l.item_id).first()
+        restore[l.item_id] += l.qty
+    items = {}
+    for item_id, qty in restore.items():
+        item = db.query(models.GmatsItem).filter(models.GmatsItem.id == item_id).first()
         if item:
             _heal_stock(item)
+            if item.physical_stock + qty > MAX_QTY:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Voiding {m.min_no} would take {item.item_code} past the "
+                           f"maximum stock of {MAX_QTY:,}")
+            items[item_id] = item
+    for l in lines:
+        item = items.get(l.item_id)
+        if item:
             item.physical_stock += l.qty                # restore the issued spares
     # The MIN and its lines are deleted below; capture them for the audit row first.
     tenant = m.tenant_code

@@ -791,7 +791,21 @@ def get_inventory_analytics(
 
     for item in items:
         stock = item.current_stock or 0
-        category_counts[item.category] = category_counts.get(item.category, 0) + stock
+        # Coalesce a missing category to a stable label BEFORE it becomes a
+        # displayed grouping key — the SAME heal supplier gets two lines down
+        # ("Unknown") and the quality defect breakdown applies ("No Defect").
+        # InventoryItem.category is Column(String, nullable=False) but that
+        # constraint is not retro-applied to a row written by raw SQL / a
+        # migration / a legacy insert, and InventoryItemCreate types it a bare
+        # `str` (no min_length), so a real NULL or an empty "" both reach here.
+        # Used RAW as a dict key, a NULL serialised to a literal "null" category
+        # bucket and an "" to a blank-labelled one — a stored non-value leaking
+        # straight into a displayed label (ADR-0010: a default/guard must never
+        # leak into a displayed value), while the sibling supplier bucket right
+        # below was already coalesced. The stock still lands in exactly ONE
+        # bucket, so the per-category parts still sum to total_stock_units.
+        category = item.category or "Uncategorized"
+        category_counts[category] = category_counts.get(category, 0) + stock
         supplier = item.supplier or "Unknown"
         supplier_counts[supplier] = supplier_counts.get(supplier, 0) + stock
 

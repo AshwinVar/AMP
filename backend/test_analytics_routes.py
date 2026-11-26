@@ -1040,6 +1040,42 @@ def test_inventory_analytics_transaction_count_is_tenant_scoped():
     print("PASS inventory analytics: transaction COUNT stays tenant-scoped (GMATS sees 2 of 3)")
 
 
+def test_inventory_analytics_missing_category_folds_into_one_honest_label():
+    # category_counts keyed on the RAW item.category leaked a stored non-value into
+    # a displayed grouping label (ADR-0010: a default/guard must never leak into a
+    # displayed value), while the sibling supplier_counts (same loop) already healed
+    # a missing supplier to "Unknown". InventoryItem.category is nullable=False, but
+    # that is not retro-applied to a raw-SQL / migration / legacy row (a true NULL),
+    # and InventoryItemCreate types it a bare `str` (no min_length), so an empty ""
+    # is valid API input too. Used raw, a NULL became a literal "null" category
+    # bucket and an "" a blank-labelled one. We exercise the reachable "" here (the
+    # live SQLite NOT NULL blocks reproducing the true NULL via create_all, exactly
+    # as the downtime-reason test notes for its "" fixture); both take the same `or`
+    # branch. Every number is derived by hand, not read back from the endpoint.
+    db = _fresh_session()
+    db.add(_inventory_item(id=1, item_code="ST1", category="Steel", supplier="ACME",
+                           current_stock=40, reorder_level=10))
+    db.add(_inventory_item(id=2, item_code="NC1", category="", supplier="ACME",
+                           current_stock=10, reorder_level=10))
+    db.add(_inventory_item(id=3, item_code="NC2", category="", supplier=None,
+                           current_stock=25, reorder_level=10))
+    db.commit()
+
+    out = analytics_routes.get_inventory_analytics(db=db, current_user={})
+    # The two blank-category items (10 + 25) fold into ONE honest "Uncategorized"
+    # bucket — never a "" or "null" key — beside the real "Steel" bucket (40).
+    assert out["category_counts"] == {"Steel": 40, "Uncategorized": 35}, out
+    assert "" not in out["category_counts"] and "null" not in out["category_counts"], out
+    assert None not in out["category_counts"], out
+    # Parts still sum to the whole: every item lands in exactly one bucket.
+    assert out["total_stock_units"] == 75, out
+    assert sum(out["category_counts"].values()) == out["total_stock_units"], out
+    # The sibling supplier breakdown is unchanged (a NULL supplier -> "Unknown").
+    assert out["supplier_counts"] == {"ACME": 50, "Unknown": 25}, out
+    print("PASS inventory analytics: blank/missing category folds into 'Uncategorized' "
+          "(no null/blank label), category parts sum to total (75)")
+
+
 def _escalation(**kw):
     kw.setdefault("title", "T")
     kw.setdefault("owner", "O")
@@ -2024,6 +2060,7 @@ if __name__ == "__main__":
     test_inventory_analytics_null_stock_and_bounded_transaction_count()
     test_inventory_analytics_empty_tables_are_zero_not_a_crash()
     test_inventory_analytics_transaction_count_is_tenant_scoped()
+    test_inventory_analytics_missing_category_folds_into_one_honest_label()
     test_escalation_analytics_buckets_and_reconciled_totals()
     test_escalation_analytics_empty_table_is_zero_not_a_crash()
     test_escalation_analytics_is_tenant_scoped()

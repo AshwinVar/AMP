@@ -255,12 +255,40 @@ def test_a_null_fg_stock_heals_to_zero_and_is_bounded():
           f"status={status2}")
 
 
+def test_a_recipe_naming_an_unstocked_finished_good_moves_on():
+    db = fresh_db()
+    print()
+    print("=" * 74)
+    print("6. A RECIPE WHOSE FINISHED GOOD IS NOT STOCKED NEITHER CRASHES NOR REFUSES")
+    print("=" * 74)
+    # The BOM's output_item_code points at an item this tenant does not stock
+    # (fg_item is None): the bound check must be skipped, the raw material still
+    # consumed, and nothing 500s — a stale finished-goods reference is not a
+    # reason to abort a completion or refuse it.
+    seed(db, "T", raw_start=100, fg_start=0, per_unit=1.0)
+    tok = tenancy.set_current_tenant(None)
+    db.query(models.InventoryItem).filter(
+        models.InventoryItem.tenant_code == "T",
+        models.InventoryItem.item_code == "FG-1").delete()
+    db.commit()
+    tenancy.reset_current_tenant(tok)
+
+    status = complete_expecting_refusal(db, "T", 40)
+    check("a missing finished-goods item does not refuse the completion",
+          status is None, f"status={status}")
+    check("the raw material was still consumed (100 - 40)",
+          stock(db, "T", "RM-1") == 60, str(stock(db, "T", "RM-1")))
+    check("one ledger row written (the issue only, no receive)", ledger_count(db) == 1,
+          str(ledger_count(db)))
+
+
 if __name__ == "__main__":
     test_a_completion_within_the_cap_still_receives()
     test_completion_exactly_at_the_cap_is_allowed()
     test_completion_one_over_the_cap_is_refused_and_atomic()
     test_an_already_capped_item_refuses_any_positive_completion()
     test_a_null_fg_stock_heals_to_zero_and_is_bounded()
+    test_a_recipe_naming_an_unstocked_finished_good_moves_on()
     print()
     print("=" * 74)
     if failures:

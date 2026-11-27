@@ -4,10 +4,13 @@ Reactions that used to live inline in HTTP handlers now live here as
 independent, testable handlers wired to domain events. Each handler receives
 the event and the caller's DB session and operates within its transaction.
 """
+from fastapi import HTTPException
+
 import bom
 import models
 import stock_events
 from events import ProductionCompleted, event_bus
+from payload_fields import MAX_QTY
 
 
 def move_bom_on_production_completed(event: ProductionCompleted, db) -> None:
@@ -50,6 +53,38 @@ def move_bom_on_production_completed(event: ProductionCompleted, db) -> None:
     # output, so it moves 0 — identical to the honest-zero path a genuine recorded
     # actual of 0 already takes (work_orders_routes).
     qty = max(event.quantity or 0, 0)
+
+    # Resolve the finished-goods item up front and REFUSE the completion — before
+    # any raw material is moved — if receiving `qty` units would push its stock
+    # past MAX_QTY. This is the finished-goods side of a work-order completion,
+    # and it was the one stock writer in the codebase with NO upper bound: a
+    # work order's target_quantity / actual_quantity carry no MAX_QTY guard
+    # (create/PATCH only reject negatives — work_orders_routes), so completing an
+    # order for a mistyped huge quantity drove `(current_stock or 0) + qty` past
+    # MAX_QTY and, on PostgreSQL's INTEGER column, past 2,147,483,647 into an
+    # `integer out of range` DataError. Because a subscriber error propagates by
+    # design (events.py) that was an unhandled 500 that aborted the whole
+    # completion write with a raw traceback; on SQLite it stored a stock the
+    # inventory endpoints would reject, corrupting the low-stock read-model
+    # (inventory_routes.generate_low_stock_escalations reads current_stock). Route
+    # the result through the SAME [0, MAX_QTY] ceiling every other stock writer
+    # enforces — the PO receipt (#779), gmats stock-in (#772) and the inventory
+    # ledger (#766) — so the completion is refused with a clean 400 instead of a
+    # 500 or a phantom figure. Checked BEFORE the consumption loop and the stock
+    # writes below, which the completion handler never commits on a raised
+    # exception, so a refused completion rolls back and persists nothing.
+    fg_item = None
+    if recipe.output_item_code:
+        fg_item = db.query(models.InventoryItem).filter(
+            models.InventoryItem.tenant_code == event.tenant_code,
+            models.InventoryItem.item_code == recipe.output_item_code,
+        ).first()
+        if fg_item is not None and (fg_item.current_stock or 0) + qty > MAX_QTY:
+            raise HTTPException(
+                status_code=400,
+                detail=(f"Completing this work order would raise finished-goods "
+                        f"stock of {recipe.output_item_code} past the maximum of "
+                        f"{MAX_QTY:,}. Check the completed quantity."))
 
     # ---- consume every component, at this tenant's own rate ------------------
     for component_code, per_unit, _unit in bom.components_of(recipe):
@@ -94,22 +129,19 @@ def move_bom_on_production_completed(event: ProductionCompleted, db) -> None:
         stock_events.stock_dropped(db, raw_item, current_stock)
 
     # ---- receive the finished good ------------------------------------------
-    if recipe.output_item_code:
-        fg_item = db.query(models.InventoryItem).filter(
-            models.InventoryItem.tenant_code == event.tenant_code,
-            models.InventoryItem.item_code == recipe.output_item_code,
-        ).first()
-        if fg_item:
-            # Same nullable-column guard as the component side: a NULL
-            # finished-goods stock must not TypeError-500 the completion write.
-            fg_item.current_stock = (fg_item.current_stock or 0) + qty
-            db.add(models.InventoryTransaction(
-                item_id=fg_item.id,
-                transaction_type="Receive",
-                quantity=qty,
-                reference=event.work_order_no,
-                notes=f"Auto-received from WO {event.work_order_no} completion",
-            ))
+    # fg_item was resolved and bound-checked above (so this never overflows the
+    # INTEGER column), reusing the one lookup rather than issuing it twice.
+    if fg_item is not None:
+        # Same nullable-column guard as the component side: a NULL
+        # finished-goods stock must not TypeError-500 the completion write.
+        fg_item.current_stock = (fg_item.current_stock or 0) + qty
+        db.add(models.InventoryTransaction(
+            item_id=fg_item.id,
+            transaction_type="Receive",
+            quantity=qty,
+            reference=event.work_order_no,
+            notes=f"Auto-received from WO {event.work_order_no} completion",
+        ))
 
 
 def register(bus=event_bus) -> None:

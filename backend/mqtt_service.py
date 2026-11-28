@@ -21,6 +21,7 @@ import oem_telemetry
 import telemetry_coverage
 import tenancy
 from machine_status import clamp_utilization, normalize_machine_status
+from payload_fields import MAX_QTY
 
 import logging_config
 
@@ -205,12 +206,33 @@ def _non_negative_int(value):
     (its status / breakdown-downtime write and live broadcast with it) instead of
     skipping just the production record. This is the same non-finite reading
     clamp_utilization already rejects via isfinite; here int() raises directly, so
-    catching OverflowError is the precise guard."""
+    catching OverflowError is the precise guard.
+
+    An UPPER bound is applied too, and it is not cosmetic. Every count/minute here
+    is written to a ProductionRecord column typed Column(Integer) — INT4 on
+    PostgreSQL, max 2,147,483,647. A glitching gateway (a runaway or mis-scaled
+    counter) can publish a finite, non-negative value past that ceiling; it clears
+    every check above, satisfies good + rejected == total if the others glitch in
+    step, and reaches the INSERT. SQLite (the test database) has no integer
+    ceiling and stores it happily, so this is invisible locally — but on Postgres
+    the flush raises DataError ("integer out of range"), which is NOT an
+    IntegrityError, so the production insert's `except IntegrityError` savepoint
+    does not catch it: the error escapes mid-handler and takes the rest of the
+    message down with it (the breakdown DowntimeLog, the DowntimeStarted event, the
+    commit and the live broadcast), the exact "one glitching field drops the whole
+    packet" failure every guard in this module exists to prevent. A value past the
+    storable range is not a real reading, so it maps to None like any other
+    unusable one — the record is cleanly skipped and the rest of the message lands.
+    MAX_QTY (1e9, well under the INT4 ceiling) is the SAME bound every JSON/CSV
+    quantity write already applies through payload_fields, so the two ingest paths
+    agree on what counts as a storable figure."""
     try:
         n = int(value)
     except (TypeError, ValueError, OverflowError):
         return None
-    return n if n >= 0 else None
+    if n < 0 or n > MAX_QTY:
+        return None
+    return n
 
 
 def _downtime_text(value):

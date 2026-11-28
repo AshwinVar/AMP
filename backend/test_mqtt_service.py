@@ -315,6 +315,57 @@ def test_non_negative_int_maps_infinity_and_nan_to_none():
     print("PASS _non_negative_int maps inf/-inf/NaN/garbage to None, keeps valid counts")
 
 
+def test_non_negative_int_rejects_values_past_the_storable_ceiling():
+    # A finite, non-negative count can still be too large to store: the
+    # ProductionRecord columns are Column(Integer) — INT4 on PostgreSQL, max
+    # 2,147,483,647 — and a glitching/mis-scaled gateway counter can exceed that.
+    # It clears the finite and non-negative checks, so without an upper bound it
+    # reaches the INSERT and DataErrors on Postgres (SQLite stores it silently,
+    # hiding the fault locally). MAX_QTY (1e9) is the shared ceiling every other
+    # quantity write already enforces, and the INT4 max itself is well past it.
+    from payload_fields import MAX_QTY
+    assert MAX_QTY == 1_000_000_000                          # the shared bound, reused
+    assert mqtt_service._non_negative_int(MAX_QTY + 1) is None
+    assert mqtt_service._non_negative_int(3_000_000_000) is None   # > INT4 max (2.147e9)
+    assert mqtt_service._non_negative_int(2_147_483_648) is None   # one past INT4 max
+    assert mqtt_service._non_negative_int(float(10 ** 12)) is None # huge finite float
+    # ...and a value AT the ceiling (and just under it) is a real, storable figure.
+    assert mqtt_service._non_negative_int(MAX_QTY) == MAX_QTY
+    assert mqtt_service._non_negative_int(MAX_QTY - 1) == MAX_QTY - 1
+    print("PASS _non_negative_int rejects a count past the storable ceiling, keeps one at it")
+
+
+def test_oversized_count_skips_production_and_still_logs_the_breakdown():
+    # The sibling of the infinite-count test, for the value that is finite and
+    # non-negative yet still unstorable: a count past the INT4 ceiling. It passes
+    # every pre-existing guard (finite, >= 0, and good + rejected == total if the
+    # others glitch in step), so before the ceiling bound it reached the INSERT and,
+    # on PostgreSQL, raised DataError mid-handler — which the production savepoint's
+    # `except IntegrityError` does NOT catch — taking the Idle->Breakdown transition's
+    # DowntimeLog and the status write down with the (rightly-skipped) record. The
+    # guard now maps it to None, so production is skipped and the rest of the message
+    # still lands. (SQLite stores the big int silently, so this asserts the
+    # behavioural contract — skip the record, keep the message — not the DB error.)
+    Session = _setup()
+    _send("Running")     # created Idle -> Running (baseline transition)
+
+    big = 3_000_000_000  # > INT4 max; good + rejected == total holds
+    _send_payload({"status": "Breakdown", "downtime": "30 min",
+                   "total_count": big, "good_count": big, "rejected_count": 0})
+
+    db = Session()
+    records = db.query(models.ProductionRecord).all()
+    logs = db.query(models.DowntimeLog).all()
+    machine = db.query(models.Machine).filter(models.Machine.name == "PRESS-01").first()
+    db.close()
+
+    assert len(records) == 0, len(records)                # oversized count -> no record
+    assert machine.status == "Breakdown", machine.status  # status still applied
+    assert len(logs) == 1, len(logs)                      # breakdown row still written
+    assert logs[0].reason == "Breakdown"
+    print("PASS MQTT skips an oversized (unstorable) count, still applies status and logs the breakdown")
+
+
 if __name__ == "__main__":
     test_breakdown_logs_once_per_transition_not_per_message()
     test_lowercase_breakdown_is_canonicalised_and_logs_downtime()
@@ -326,4 +377,6 @@ if __name__ == "__main__":
     test_non_numeric_count_skips_production_not_the_whole_message()
     test_infinite_count_skips_production_and_still_logs_the_breakdown()
     test_non_negative_int_maps_infinity_and_nan_to_none()
+    test_non_negative_int_rejects_values_past_the_storable_ceiling()
+    test_oversized_count_skips_production_and_still_logs_the_breakdown()
     print("MQTT SERVICE OK: downtime logged once per breakdown event")
